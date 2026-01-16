@@ -1,0 +1,741 @@
+// 40Study Database Schema - DBML Format
+// Paste vào https://dbdiagram.io để visualize
+// ============================================
+
+// ===========================================
+// 1. USERS & AUTHENTICATION
+// ===========================================
+
+Table users {
+  id uuid [pk, default: `gen_random_uuid()`]
+  email varchar(255) [unique, not null]
+  password_hash varchar(255) [not null]
+  user_name varchar(100) [not null]
+  full_name varchar(255)
+  avatar_url varchar(500)
+  phone varchar(20)
+  date_of_birth date
+  bio text
+  role varchar(20) [default: 'student', note: 'student, instructor, admin']
+  is_verified boolean [default: false]
+  is_active boolean [default: true]
+  last_login_at timestamp
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+  deleted_at timestamp
+
+  indexes {
+    email
+    role
+    is_active
+  }
+}
+
+Table refresh_tokens {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  token_hash varchar(255) [not null]
+  device_info varchar(255)
+  ip_address varchar(45)
+  expires_at timestamp [not null]
+  is_revoked boolean [default: false]
+  created_at timestamp [default: `now()`]
+}
+
+Table verification_codes {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  code varchar(10) [not null]
+  type varchar(20) [not null, note: 'email, phone, password_reset']
+  expires_at timestamp [not null]
+  is_used boolean [default: false]
+  created_at timestamp [default: `now()`]
+}
+
+Table user_oauth_providers {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  provider varchar(50) [not null, note: 'google, facebook, github']
+  provider_user_id varchar(255) [not null]
+  access_token text
+  refresh_token text
+  created_at timestamp [default: `now()`]
+
+  indexes {
+    (provider, provider_user_id) [unique]
+  }
+}
+
+// ===========================================
+// 2. CATEGORIES & TAGS
+// ===========================================
+
+Table categories {
+  id uuid [pk, default: `gen_random_uuid()`]
+  parent_id uuid [ref: > categories.id]
+  name varchar(100) [not null]
+  slug varchar(100) [unique, not null]
+  description text
+  icon_url varchar(500)
+  display_order int [default: 0]
+  is_active boolean [default: true]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table tags {
+  id uuid [pk, default: `gen_random_uuid()`]
+  name varchar(50) [unique, not null]
+  slug varchar(50) [unique, not null]
+  created_at timestamp [default: `now()`]
+}
+
+// ===========================================
+// 3. COURSES & LESSONS
+// ===========================================
+
+Table courses {
+  id uuid [pk, default: `gen_random_uuid()`]
+  instructor_id uuid [not null, ref: > users.id]
+  category_id uuid [ref: > categories.id]
+  title varchar(255) [not null]
+  slug varchar(255) [unique, not null]
+  short_description varchar(500)
+  description text
+  thumbnail_url varchar(500)
+  preview_video_url varchar(500)
+  level varchar(20) [default: 'beginner', note: 'beginner, intermediate, advanced, all_levels']
+  language varchar(10) [default: 'vi']
+  price decimal(12,2) [default: 0]
+  discount_price decimal(12,2)
+  discount_expires_at timestamp
+  total_duration_minutes int [default: 0]
+  total_lessons int [default: 0]
+  total_students int [default: 0]
+  average_rating decimal(2,1) [default: 0]
+  total_reviews int [default: 0]
+  requirements text[]
+  objectives text[]
+  target_audience text[]
+  status varchar(20) [default: 'draft', note: 'draft, pending_review, published, archived']
+  published_at timestamp
+  is_featured boolean [default: false]
+  is_free boolean [default: false]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+  deleted_at timestamp
+
+  indexes {
+    instructor_id
+    category_id
+    status
+    slug
+    price
+    average_rating
+  }
+}
+
+Table course_tags {
+  course_id uuid [ref: > courses.id]
+  tag_id uuid [ref: > tags.id]
+
+  indexes {
+    (course_id, tag_id) [pk]
+  }
+}
+
+Table sections {
+  id uuid [pk, default: `gen_random_uuid()`]
+  course_id uuid [not null, ref: > courses.id]
+  title varchar(255) [not null]
+  description text
+  display_order int [not null]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table lessons {
+  id uuid [pk, default: `gen_random_uuid()`]
+  section_id uuid [not null, ref: > sections.id]
+  title varchar(255) [not null]
+  description text
+  content_type varchar(20) [not null, note: 'video, article, quiz, assignment, livestream']
+  display_order int [not null]
+  duration_minutes int [default: 0]
+  is_preview boolean [default: false]
+  is_mandatory boolean [default: true]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    section_id
+    content_type
+  }
+}
+
+// ===========================================
+// 4. MEDIA CONTENT
+// ===========================================
+
+Table lesson_videos {
+  id uuid [pk, default: `gen_random_uuid()`]
+  lesson_id uuid [unique, not null, ref: - lessons.id]
+  video_url varchar(500) [not null, note: 'MinIO URL']
+  video_hls_url varchar(500) [note: 'HLS streaming URL']
+  thumbnail_url varchar(500)
+  duration_seconds int [not null]
+  resolution varchar(20)
+  file_size_bytes bigint
+  transcription text [note: 'AI-generated']
+  transcription_status varchar(20) [default: 'pending', note: 'pending, processing, completed, failed']
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table lesson_articles {
+  id uuid [pk, default: `gen_random_uuid()`]
+  lesson_id uuid [unique, not null, ref: - lessons.id]
+  content text [not null, note: 'Markdown content']
+  reading_time_minutes int [default: 5]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table lesson_attachments {
+  id uuid [pk, default: `gen_random_uuid()`]
+  lesson_id uuid [not null, ref: > lessons.id]
+  file_name varchar(255) [not null]
+  file_url varchar(500) [not null]
+  file_type varchar(50)
+  file_size_bytes bigint
+  download_count int [default: 0]
+  created_at timestamp [default: `now()`]
+}
+
+// ===========================================
+// 5. QUIZZES & ASSESSMENTS
+// ===========================================
+
+Table quizzes {
+  id uuid [pk, default: `gen_random_uuid()`]
+  lesson_id uuid [unique, ref: - lessons.id]
+  course_id uuid [ref: > courses.id]
+  title varchar(255) [not null]
+  description text
+  time_limit_minutes int
+  pass_percentage decimal(5,2) [default: 70.00]
+  max_attempts int [default: 3]
+  shuffle_questions boolean [default: true]
+  shuffle_answers boolean [default: true]
+  show_correct_answers boolean [default: true]
+  is_ai_generated boolean [default: false]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table questions {
+  id uuid [pk, default: `gen_random_uuid()`]
+  quiz_id uuid [not null, ref: > quizzes.id]
+  question_text text [not null]
+  question_type varchar(20) [not null, note: 'single_choice, multiple_choice, true_false, fill_blank, essay']
+  explanation text
+  points decimal(5,2) [default: 1.00]
+  display_order int [not null]
+  image_url varchar(500)
+  is_ai_generated boolean [default: false]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table question_answers {
+  id uuid [pk, default: `gen_random_uuid()`]
+  question_id uuid [not null, ref: > questions.id]
+  answer_text text [not null]
+  is_correct boolean [default: false]
+  display_order int [not null]
+  created_at timestamp [default: `now()`]
+}
+
+Table quiz_attempts {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  quiz_id uuid [not null, ref: > quizzes.id]
+  score decimal(5,2)
+  total_points decimal(5,2)
+  percentage decimal(5,2)
+  is_passed boolean
+  time_spent_seconds int
+  started_at timestamp [default: `now()`]
+  completed_at timestamp
+  created_at timestamp [default: `now()`]
+}
+
+Table quiz_attempt_answers {
+  id uuid [pk, default: `gen_random_uuid()`]
+  attempt_id uuid [not null, ref: > quiz_attempts.id]
+  question_id uuid [not null, ref: > questions.id]
+  selected_answer_ids uuid[]
+  text_answer text
+  is_correct boolean
+  points_earned decimal(5,2) [default: 0]
+  created_at timestamp [default: `now()`]
+}
+
+// ===========================================
+// 6. ENROLLMENTS & PROGRESS
+// ===========================================
+
+Table enrollments {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  course_id uuid [not null, ref: > courses.id]
+  enrolled_at timestamp [default: `now()`]
+  expires_at timestamp
+  progress_percentage decimal(5,2) [default: 0]
+  completed_at timestamp
+  last_accessed_at timestamp
+  certificate_id uuid [ref: > certificates.id]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    user_id
+    course_id
+    (user_id, course_id) [unique]
+  }
+}
+
+Table lesson_progress {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  lesson_id uuid [not null, ref: > lessons.id]
+  enrollment_id uuid [not null, ref: > enrollments.id]
+  status varchar(20) [default: 'not_started', note: 'not_started, in_progress, completed']
+  progress_percentage decimal(5,2) [default: 0]
+  video_watched_seconds int [default: 0]
+  completed_at timestamp
+  last_accessed_at timestamp [default: `now()`]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    user_id
+    lesson_id
+    status
+    (user_id, lesson_id) [unique]
+  }
+}
+
+Table user_notes {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  lesson_id uuid [not null, ref: > lessons.id]
+  content text [not null]
+  video_timestamp_seconds int
+  is_bookmarked boolean [default: false]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+// ===========================================
+// 7. AI & PERSONALIZATION
+// ===========================================
+
+Table learning_paths {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  title varchar(255) [not null]
+  description text
+  goal text
+  estimated_duration_days int
+  is_ai_generated boolean [default: true]
+  status varchar(20) [default: 'active', note: 'active, completed, paused, abandoned']
+  started_at timestamp [default: `now()`]
+  completed_at timestamp
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    user_id
+  }
+}
+
+Table learning_path_courses {
+  id uuid [pk, default: `gen_random_uuid()`]
+  learning_path_id uuid [not null, ref: > learning_paths.id]
+  course_id uuid [not null, ref: > courses.id]
+  display_order int [not null]
+  is_required boolean [default: true]
+  reason text [note: 'AI explanation']
+  created_at timestamp [default: `now()`]
+}
+
+Table ai_recommendations {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  recommendation_type varchar(30) [not null, note: 'course, lesson, quiz, learning_path, review']
+  target_id uuid [not null]
+  reason text
+  confidence_score decimal(3,2)
+  is_dismissed boolean [default: false]
+  is_acted_upon boolean [default: false]
+  created_at timestamp [default: `now()`]
+  expires_at timestamp
+
+  indexes {
+    user_id
+  }
+}
+
+Table ai_chat_sessions {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  course_id uuid [ref: > courses.id]
+  lesson_id uuid [ref: > lessons.id]
+  title varchar(255)
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    user_id
+  }
+}
+
+Table ai_chat_messages {
+  id uuid [pk, default: `gen_random_uuid()`]
+  session_id uuid [not null, ref: > ai_chat_sessions.id]
+  role varchar(10) [not null, note: 'user, assistant, system']
+  content text [not null]
+  tokens_used int
+  created_at timestamp [default: `now()`]
+}
+
+Table user_learning_analytics {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  analysis_date date [not null]
+  total_study_time_minutes int [default: 0]
+  lessons_completed int [default: 0]
+  quizzes_completed int [default: 0]
+  average_quiz_score decimal(5,2)
+  streak_days int [default: 0]
+  strong_topics text[]
+  weak_topics text[]
+  learning_style varchar(30) [note: 'visual, auditory, reading, kinesthetic']
+  ai_insights text
+  created_at timestamp [default: `now()`]
+
+  indexes {
+    (user_id, analysis_date) [unique]
+  }
+}
+
+// ===========================================
+// 8. REVIEWS & RATINGS
+// ===========================================
+
+Table reviews {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  course_id uuid [not null, ref: > courses.id]
+  rating int [not null, note: '1-5']
+  title varchar(255)
+  content text
+  is_verified_purchase boolean [default: true]
+  helpful_count int [default: 0]
+  reported_count int [default: 0]
+  instructor_reply text
+  instructor_replied_at timestamp
+  is_featured boolean [default: false]
+  is_hidden boolean [default: false]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    course_id
+    rating
+    (user_id, course_id) [unique]
+  }
+}
+
+Table review_reactions {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  review_id uuid [not null, ref: > reviews.id]
+  reaction_type varchar(20) [not null, note: 'helpful, not_helpful, report']
+  created_at timestamp [default: `now()`]
+
+  indexes {
+    (user_id, review_id) [unique]
+  }
+}
+
+// ===========================================
+// 9. PAYMENTS & TRANSACTIONS
+// ===========================================
+
+Table orders {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  order_number varchar(50) [unique, not null]
+  subtotal decimal(12,2) [not null]
+  discount_amount decimal(12,2) [default: 0]
+  tax_amount decimal(12,2) [default: 0]
+  total_amount decimal(12,2) [not null]
+  currency varchar(3) [default: 'VND']
+  status varchar(20) [default: 'pending', note: 'pending, processing, completed, failed, refunded, cancelled']
+  payment_method varchar(30)
+  payment_gateway varchar(30) [note: 'vnpay, momo, zalopay']
+  payment_transaction_id varchar(255)
+  paid_at timestamp
+  coupon_id uuid [ref: > coupons.id]
+  notes text
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+
+  indexes {
+    user_id
+    status
+    created_at
+  }
+}
+
+Table order_items {
+  id uuid [pk, default: `gen_random_uuid()`]
+  order_id uuid [not null, ref: > orders.id]
+  course_id uuid [not null, ref: > courses.id]
+  price decimal(12,2) [not null]
+  discount_amount decimal(12,2) [default: 0]
+  final_price decimal(12,2) [not null]
+  created_at timestamp [default: `now()`]
+}
+
+Table coupons {
+  id uuid [pk, default: `gen_random_uuid()`]
+  code varchar(50) [unique, not null]
+  description text
+  discount_type varchar(20) [not null, note: 'percentage, fixed_amount']
+  discount_value decimal(12,2) [not null]
+  min_purchase_amount decimal(12,2)
+  max_discount_amount decimal(12,2)
+  usage_limit int
+  usage_count int [default: 0]
+  per_user_limit int [default: 1]
+  applicable_course_ids uuid[]
+  starts_at timestamp
+  expires_at timestamp
+  is_active boolean [default: true]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table coupon_usages {
+  id uuid [pk, default: `gen_random_uuid()`]
+  coupon_id uuid [not null, ref: > coupons.id]
+  user_id uuid [not null, ref: > users.id]
+  order_id uuid [not null, ref: > orders.id]
+  discount_amount decimal(12,2) [not null]
+  created_at timestamp [default: `now()`]
+}
+
+Table instructor_payouts {
+  id uuid [pk, default: `gen_random_uuid()`]
+  instructor_id uuid [not null, ref: > users.id]
+  amount decimal(12,2) [not null]
+  currency varchar(3) [default: 'VND']
+  status varchar(20) [default: 'pending', note: 'pending, processing, completed, failed']
+  payment_method varchar(50)
+  bank_name varchar(100)
+  bank_account_number varchar(50)
+  bank_account_name varchar(255)
+  transaction_id varchar(255)
+  period_start date
+  period_end date
+  processed_at timestamp
+  notes text
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+// ===========================================
+// 10. CERTIFICATES
+// ===========================================
+
+Table certificates {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  course_id uuid [not null, ref: > courses.id]
+  enrollment_id uuid [not null, ref: > enrollments.id]
+  certificate_number varchar(50) [unique, not null]
+  certificate_url varchar(500)
+  issued_at timestamp [default: `now()`]
+  created_at timestamp [default: `now()`]
+}
+
+// ===========================================
+// 11. NOTIFICATIONS
+// ===========================================
+
+Table notifications {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  title varchar(255) [not null]
+  content text [not null]
+  notification_type varchar(30) [not null, note: 'course_update, new_lesson, quiz_reminder, certificate_earned, payment_success, payment_failed, promotion, system, ai_recommendation']
+  reference_type varchar(30)
+  reference_id uuid
+  is_read boolean [default: false]
+  read_at timestamp
+  created_at timestamp [default: `now()`]
+
+  indexes {
+    user_id
+    is_read
+    created_at
+  }
+}
+
+Table notification_settings {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [unique, not null, ref: - users.id]
+  email_course_updates boolean [default: true]
+  email_promotions boolean [default: true]
+  email_recommendations boolean [default: true]
+  push_course_updates boolean [default: true]
+  push_quiz_reminders boolean [default: true]
+  push_promotions boolean [default: false]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+// ===========================================
+// 12. DISCUSSIONS & COMMENTS
+// ===========================================
+
+Table discussions {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  lesson_id uuid [not null, ref: > lessons.id]
+  parent_id uuid [ref: > discussions.id]
+  content text [not null]
+  video_timestamp_seconds int
+  upvote_count int [default: 0]
+  is_pinned boolean [default: false]
+  is_instructor_answer boolean [default: false]
+  is_hidden boolean [default: false]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table discussion_votes {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  discussion_id uuid [not null, ref: > discussions.id]
+  vote_type varchar(10) [not null, note: 'upvote, downvote']
+  created_at timestamp [default: `now()`]
+
+  indexes {
+    (user_id, discussion_id) [unique]
+  }
+}
+
+// ===========================================
+// 13. WISHLIST & CART
+// ===========================================
+
+Table wishlists {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  course_id uuid [not null, ref: > courses.id]
+  created_at timestamp [default: `now()`]
+
+  indexes {
+    (user_id, course_id) [unique]
+  }
+}
+
+Table cart_items {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [not null, ref: > users.id]
+  course_id uuid [not null, ref: > courses.id]
+  added_at timestamp [default: `now()`]
+
+  indexes {
+    (user_id, course_id) [unique]
+  }
+}
+
+// ===========================================
+// 14. LIVESTREAM
+// ===========================================
+
+Table livestreams {
+  id uuid [pk, default: `gen_random_uuid()`]
+  instructor_id uuid [not null, ref: > users.id]
+  course_id uuid [ref: > courses.id]
+  lesson_id uuid [ref: > lessons.id]
+  title varchar(255) [not null]
+  description text
+  thumbnail_url varchar(500)
+  stream_key varchar(100) [unique]
+  stream_url varchar(500)
+  status varchar(20) [default: 'scheduled', note: 'scheduled, live, ended, cancelled']
+  scheduled_at timestamp
+  started_at timestamp
+  ended_at timestamp
+  max_viewers int [default: 0]
+  recording_url varchar(500)
+  is_recorded boolean [default: true]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table livestream_viewers {
+  id uuid [pk, default: `gen_random_uuid()`]
+  livestream_id uuid [not null, ref: > livestreams.id]
+  user_id uuid [not null, ref: > users.id]
+  joined_at timestamp [default: `now()`]
+  left_at timestamp
+  watch_duration_seconds int [default: 0]
+}
+
+Table livestream_chats {
+  id uuid [pk, default: `gen_random_uuid()`]
+  livestream_id uuid [not null, ref: > livestreams.id]
+  user_id uuid [not null, ref: > users.id]
+  message text [not null]
+  is_pinned boolean [default: false]
+  is_deleted boolean [default: false]
+  created_at timestamp [default: `now()`]
+}
+
+// ===========================================
+// 15. REPORTS & ANALYTICS (Admin)
+// ===========================================
+
+Table activity_logs {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [ref: > users.id]
+  action varchar(50) [not null]
+  entity_type varchar(50)
+  entity_id uuid
+  old_values jsonb
+  new_values jsonb
+  ip_address varchar(45)
+  user_agent text
+  created_at timestamp [default: `now()`]
+}
+
+Table reports {
+  id uuid [pk, default: `gen_random_uuid()`]
+  reporter_id uuid [not null, ref: > users.id]
+  reported_type varchar(30) [not null, note: 'course, review, discussion, user, livestream_chat']
+  reported_id uuid [not null]
+  reason varchar(50) [not null, note: 'spam, inappropriate, copyright, harassment, other']
+  description text
+  status varchar(20) [default: 'pending', note: 'pending, reviewing, resolved, dismissed']
+  admin_notes text
+  resolved_by uuid [ref: > users.id]
+  resolved_at timestamp
+  created_at timestamp [default: `now()`]
+}
