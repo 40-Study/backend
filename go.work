@@ -1,0 +1,10 @@
+go 1.22
+
+use (
+    ./gateway
+    ./user-service
+    ./course-service
+    ./media-service
+    ./ai-service
+    ./shared
+)
