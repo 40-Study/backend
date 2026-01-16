@@ -7,7 +7,6 @@ import (
 )
 
 func main() {
-	// Initialize and build the application
 	application, err := app.New()
 	if err != nil {
 		log.Fatalf("Failed to initialize application: %v", err)
