@@ -1,0 +1,94 @@
+[
+  {
+    "name": "SUPER_ADMIN",
+    "description": "Quản trị viên cấp cao nhất, có toàn quyền kiểm soát hệ thống",
+    "permissions": "*"
+  },
+  {
+    "name": "ADMIN",
+    "description": "Quản trị viên quản lý toàn bộ hệ thống bao gồm roles/permissions",
+    "permissions": [
+      "USERS_VIEW",
+      "USERS_CREATE",
+      "USERS_UPDATE",
+      "USERS_DELETE",
+      "USERS_BAN",
+      "ROLES_VIEW",
+      "ROLES_CREATE",
+      "ROLES_UPDATE",
+      "ROLES_DELETE",
+      "ROLES_ASSIGN",
+      "PERMISSIONS_VIEW",
+      "VOUCHERS_VIEW",
+      "VOUCHERS_CREATE",
+      "VOUCHERS_UPDATE",
+      "VOUCHERS_DELETE",
+      "TRANSACTIONS_VIEW_ALL",
+      "ORDERS_VIEW",
+      "ORDERS_CREATE",
+      "ORDERS_UPDATE",
+      "ORDERS_DELETE",
+      "MARKETING_VIEW",
+      "MARKETING_MANAGE",
+      "PRODUCTS_VIEW",
+      "PRODUCTS_CREATE",
+      "PRODUCTS_UPDATE",
+      "PRODUCTS_DELETE",
+      "REPORTS_VIEW",
+      "DASHBOARD_VIEW"
+    ]
+  },
+  {
+    "name": "MODERATOR",
+    "description": "Người kiểm duyệt, có quyền ban/khóa tài khoản và gán role",
+    "permissions": [
+      "USERS_VIEW",
+      "USERS_UPDATE",
+      "USERS_BAN",
+      "ROLES_VIEW",
+      "ROLES_ASSIGN",
+      "DASHBOARD_VIEW"
+    ]
+  },
+  {
+    "name": "MARKETING",
+    "description": "Nhân viên marketing, quản lý voucher và chiến dịch quảng cáo",
+    "permissions": [
+      "VOUCHERS_VIEW",
+      "VOUCHERS_CREATE",
+      "VOUCHERS_UPDATE",
+      "VOUCHERS_DELETE",
+      "MARKETING_VIEW",
+      "MARKETING_MANAGE",
+      "DASHBOARD_VIEW"
+    ]
+  },
+  {
+    "name": "ACCOUNTANT",
+    "description": "Kế toán, xem tất cả giao dịch và báo cáo tài chính",
+    "permissions": [
+      "TRANSACTIONS_VIEW_ALL",
+      "ORDERS_VIEW",
+      "REPORTS_VIEW",
+      "DASHBOARD_VIEW"
+    ]
+  },
+  {
+    "name": "SELLER",
+    "description": "Nhân viên bán hàng, quản lý đơn hàng và sản phẩm",
+    "permissions": [
+      "ORDERS_VIEW",
+      "ORDERS_CREATE",
+      "ORDERS_UPDATE",
+      "PRODUCTS_VIEW",
+      "PRODUCTS_CREATE",
+      "PRODUCTS_UPDATE",
+      "DASHBOARD_VIEW"
+    ]
+  },
+  {
+    "name": "CUSTOMER",
+    "description": "Khách hàng thông thường",
+    "permissions": []
+  }
+]
