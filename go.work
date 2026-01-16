@@ -2,9 +2,9 @@ go 1.22
 
 use (
     ./gateway
-    ./user-service
-    ./course-service
-    ./media-service
-    ./ai-service
+    ./services/user
+    ./services/course
+    ./services/media
+    ./services/ai
     ./shared
 )
