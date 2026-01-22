@@ -20,9 +20,3 @@ type PermissionListResponseDTO struct {
 	Page        int                     `json:"page"`
 	PageSize    int                     `json:"page_size"`
 }
-
-type PermissionQueryDTO struct {
-	Search   string `query:"search"`
-	Page     int    `query:"page" default:"1"`
-	PageSize int    `query:"page_size" default:"20"`
-}
