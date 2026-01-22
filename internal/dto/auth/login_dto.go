@@ -12,7 +12,6 @@ type UserResponseDto struct {
 	Email      string `json:"email" example:"student@example.com"`
 	FullName   string `json:"full_name" example:"Nguyen Van A"`
 	AvatarURL  string `json:"avatar_url,omitempty" example:"https://example.com/avatar.jpg"`
-	IsVerified bool   `json:"is_verified" example:"true"`
 	JoinedAt   string `json:"joined_at" example:"2023-01-01T00:00:00Z"`
 }
 
