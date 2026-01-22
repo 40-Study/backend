@@ -11,7 +11,7 @@ type RegisterRequestDto struct {
 }
 
 type VerifyOtpRequestDto struct {
-	OTP        string        `json:"otp" validate:"required,len=6,numeric" example:"123456"`
+	OTPRegister        string        `json:"otp_register" validate:"required,len=6,numeric" example:"123456"`
 	DeviceInfo DeviceInfoDTO `json:"device_info" validate:"required"`
 }
 
