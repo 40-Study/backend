@@ -31,3 +31,10 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Claude Kit
+claudekit-engineer/
+.claude/
+.opencode/
+plans/
+CLAUDE.md
