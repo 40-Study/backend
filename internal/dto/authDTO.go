@@ -8,8 +8,7 @@ type LoginDTO struct {
 	DeviceId uuid.UUID `json:"device_id" binding:"required"`
 
 	DeviceName string `json:"device_name" binding:"required"`
-	UserAgent  string `json:"user_agent" binding:"required"`
-	Platform   string `json:"platform" binding:"required"`
+	UserAgent  string `json:"user_agent" binding:"required"` 
 	IpAddress  string `json:"ip" binding:"required,ip"`
 }
 
