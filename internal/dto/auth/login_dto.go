@@ -17,9 +17,5 @@ type UserResponseDto struct {
 }
 
 type LoginResponseDto struct {
-	AccessToken  string          `json:"access_token" example:"eyJhbGciOiJIUzI1Ni..."`
-	RefreshToken string          `json:"refresh_token" example:"dcc417c8-..."`
-	ExpiresIn    int             `json:"expires_in" example:"3600"`
 	User         UserResponseDto `json:"user"`
-	SessionID    string          `json:"session_id" example:"550e8400-e29b-41d4-a716-446655440000"`
 }
