@@ -55,13 +55,13 @@ type ForgotPasswordRequestDto struct {
 
 type ResetPasswordRequestDto struct {
 	Token           string `json:"token" validate:"required,uuid" example:"550e8400-e29b-41d4-a716-446655440000"`
-	NewPassword     string `json:"new_password" validate:"required,min=8,max=72,containsany=!@#$%^&*()_+-=[]{}|;:,.<>?~" example:"SecureP@ssw0rd2024!"`
+	NewPassword     string `json:"new_password" validate:"required,min=8,max=72,containsany=!@#$%^&*()" example:"SecureP@ssw0rd2024!"`
 	ConfirmPassword string `json:"confirm_password" validate:"required,eqfield=NewPassword" example:"SecureP@ssw0rd2024!"`
 }
 
 type ChangePasswordRequestDto struct {
 	OldPassword     string        `json:"old_password" validate:"required,min=8,max=72" example:"OldPass123!"`
-	NewPassword     string        `json:"new_password" validate:"required,min=8,max=72,nefield=OldPassword,containsany=!@#$%^&*()_+-=[]{}|;:,.<>?~" example:"NewSecurePass123!"`
+	NewPassword     string        `json:"new_password" validate:"required,min=8,max=72,nefield=OldPassword,containsany=!@#$%^&*()" example:"NewSecurePass123!"`
 	ConfirmPassword string        `json:"confirm_password" validate:"required,eqfield=NewPassword" example:"NewSecurePass123!"`
 	DeviceInfo      DeviceInfoDTO `json:"device_info" validate:"required"`
 	RevokeOthers    bool          `json:"revoke_others" example:"true"`
@@ -71,7 +71,7 @@ type ChangePasswordRequestDto struct {
 type RegisterRequestDto struct {
 	FullName    string `json:"full_name" validate:"required,min=2,max=100" example:"Nguyen Van A"`
 	Username    string `json:"username" validate:"required,alphanum,min=3,max=30" example:"student123"`
-	Password    string `json:"password" validate:"required,min=8,max=72,nefield=Username,nefield=Email,containsany=!@#$%^&*()_+-=[]{}|;:,.<>?~" example:"ResilientP@ss!23"`
+	Password    string `json:"password" validate:"required,min=8,max=72,nefield=Username,nefield=Email,containsany=!@#$%^&*()" example:"ResilientP@ss!23"`
 	Phone       string `json:"phone" validate:"required,e164" example:"+84901234567"`
 	DateOfBirth string `json:"date_of_birth" validate:"required,datetime=2006-01-02" example:"2005-01-01"`
 	Gender      string `json:"gender" validate:"required,oneof=male female other" example:"male"`

@@ -12,7 +12,7 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	auth := api.Group("/auth")
 	auth.Post("/register/request", authHandler.RequestRegister)
 	auth.Post("/register", authHandler.Register)
-	auth.Post("/login", authHandler.Login)
+	auth.Post("/login", authHandler.Login) // done 
 	auth.Post("/reset-password/request", authHandler.RequestPasswordReset)
 	auth.Post("/reset-password", authHandler.ResetPassword)
 	auth.Post("/refresh-token", authHandler.RefreshToken)
@@ -23,7 +23,7 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	auth.Get("/me", authHandler.GetMe)// done 
 	auth.Post("/logout", authHandler.LogoutOneDevice) // done with logout one device
 	auth.Post("/logout-all", authHandler.LogoutAll) // done with logout all devices
-	auth.Put("/change-password", authHandler.UpdatePasswordHash)
+	auth.Put("/change-password", authHandler.ChangePassword) // done 
 	// update profile  
 
 

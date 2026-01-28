@@ -387,6 +387,55 @@ func (s *AuthService) GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserRes
 }
 
 func (s *AuthService) ChangePassword(ctx context.Context, userID uuid.UUID, req dto.ChangePasswordRequestDto) error {
+	// ===== 1. Get user from database =====
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	if user == nil {
+		return errors.New("user not found")
+	}
+
+	// ===== 2. Verify old password =====
+	if !utils.CheckPassword(req.OldPassword, user.PasswordHash) {
+		return errors.New("incorrect current password")
+	}
+
+	// ===== 3. Hash new password =====
+	newPasswordHash, err := utils.HashPassword(req.NewPassword)
+	if err != nil {
+		return errors.New("failed to hash new password")
+	}
+
+	// ===== 4. Update password in database =====
+	if err := s.userRepo.UpdatePasswordHash(ctx, userID, newPasswordHash); err != nil {
+		return err
+	}
+
+	// ===== 5. Invalidate user cache =====
+	if s.redisClient != nil {
+		userCacheKey := fmt.Sprintf("user_cache:%s", userID)
+		_ = s.redisClient.Del(ctx, userCacheKey).Err()
+	}
+
+	// ===== 6. Handle device sessions based on RevokeOthers flag =====
+	// FE can send revoke_others=true to logout all other devices after password change
+	if req.RevokeOthers && s.redisClient != nil {
+		// Increment user_version to invalidate all tokens
+		userVersionKey := fmt.Sprintf("user_version:%s", userID)
+		if err := s.redisClient.Incr(ctx, userVersionKey).Err(); err != nil {
+			return err
+		}
+
+		// Clean up all refresh tokens
+		refreshTokenPattern := fmt.Sprintf("refresh_token:%s:*", userID)
+		_ = s.deleteKeysByPattern(ctx, refreshTokenPattern)
+
+		// Delete all sessions
+		sessionKey := fmt.Sprintf("session:%s", userID)
+		_ = s.redisClient.Del(ctx, sessionKey).Err()
+	}
 
 	return nil
 }

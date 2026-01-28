@@ -303,7 +303,7 @@ func (h *AuthHandler) GetMe(c *fiber.Ctx) error {
 	})
 }
 
-func (h *AuthHandler) UpdatePasswordHash(c *fiber.Ctx) error {
+func (h *AuthHandler) ChangePassword(c *fiber.Ctx) error {
 	var req dto.ChangePasswordRequestDto
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{

@@ -58,5 +58,18 @@ func (r *UserRepository) UpdateUser(ctx context.Context, user *model.User) error
 }
 
 func (r *UserRepository) UpdatePasswordHash(ctx context.Context, userID uuid.UUID, newPasswordHash string) error {
+	result := r.db.WithContext(ctx).
+		Model(&model.User{}).
+		Where("id = ?", userID).
+		Update("password_hash", newPasswordHash)
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return errors.New("user not found")
+	}
+
 	return nil
 }
