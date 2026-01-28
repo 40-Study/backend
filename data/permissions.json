@@ -1,114 +1,310 @@
 [
   {
-    "name": "USERS_VIEW",
-    "description": "Xem danh sách người dùng và thông tin người dùng"
+    "name": "DASHBOARD_VIEW_GLOBAL",
+    "description": "Truy cập dashboard quản trị tổng quan của toàn hệ thống"
+  },
+  {
+    "name": "SYSTEM_INFO_VIEW",
+    "description": "Xem các trang thông tin chung về hệ thống (Giới thiệu, Liên hệ...)"
+  },
+  {
+    "name": "SYSTEM_SETTINGS_MANAGE",
+    "description": "Quản lý các cấu hình kỹ thuật của hệ thống (Cổng thanh toán, Email, Server)"
+  },
+  {
+    "name": "SYSTEM_LOGS_VIEW",
+    "description": "Xem nhật ký hoạt động (Audit Logs) để kiểm tra bảo mật"
+  },
+  
+  {
+    "name": "USERS_VIEW_ALL",
+    "description": "Xem danh sách và thông tin cơ bản của tất cả người dùng"
+  },
+  {
+    "name": "USERS_VIEW_SELF",
+    "description": "Xem thông tin cá nhân của chính mình"
   },
   {
     "name": "USERS_CREATE",
-    "description": "Tạo tài khoản người dùng mới"
+    "description": "Tạo tài khoản người dùng mới (Thủ công bởi Admin)"
   },
   {
-    "name": "USERS_UPDATE",
-    "description": "Cập nhật thông tin người dùng"
+    "name": "USERS_UPDATE_ALL",
+    "description": "Cập nhật thông tin của bất kỳ người dùng nào"
+  },
+  {
+    "name": "USERS_UPDATE_SELF",
+    "description": "Cập nhật thông tin cá nhân (Avatar, Bio, Mật khẩu) của chính mình"
+  },
+  {
+    "name": "USERS_UPDATE_SELF_LIMITED",
+    "description": "Cập nhật thông tin cá nhân nhưng bị giới hạn (Dành cho tài khoản trẻ em)"
   },
   {
     "name": "USERS_DELETE",
-    "description": "Xóa tài khoản người dùng"
+    "description": "Xóa tài khoản người dùng khỏi hệ thống"
   },
   {
     "name": "USERS_BAN",
-    "description": "Khóa/ban tài khoản người dùng vi phạm"
+    "description": "Khóa/Vô hiệu hóa tài khoản người dùng vi phạm"
   },
   {
+    "name": "RELATIONSHIPS_MANAGE",
+    "description": "Quản lý mối quan hệ gia đình (Liên kết/Hủy liên kết tài khoản con)"
+  },
+  
+  {
     "name": "ROLES_VIEW",
-    "description": "Xem danh sách roles và chi tiết roles"
+    "description": "Xem danh sách các Vai trò (Roles) trong hệ thống"
   },
   {
     "name": "ROLES_CREATE",
-    "description": "Tạo role mới với các permission"
+    "description": "Tạo vai trò mới"
   },
   {
     "name": "ROLES_UPDATE",
-    "description": "Cập nhật role và gán/xóa permissions"
+    "description": "Cập nhật quyền hạn cho vai trò"
   },
   {
-    "name": "ROLES_DELETE",
-    "description": "Xóa role khỏi hệ thống"
+    "name": "ROLES_ASSIGN_SYSTEM",
+    "description": "Gán vai trò hệ thống cho người dùng"
+  },
+  
+  {
+    "name": "ORG_VIEW_ALL",
+    "description": "Xem danh sách tất cả các Tổ chức/Trung tâm trên hệ thống"
   },
   {
-    "name": "ROLES_ASSIGN",
-    "description": "Gán/xóa role cho người dùng"
+    "name": "ORG_VIEW_OWN",
+    "description": "Xem thông tin chi tiết của tổ chức mình đang quản lý"
   },
   {
-    "name": "PERMISSIONS_VIEW",
-    "description": "Xem danh sách tất cả permissions trong hệ thống"
+    "name": "ORG_CREATE",
+    "description": "Tạo mới một tổ chức giáo dục"
   },
   {
-    "name": "VOUCHERS_VIEW",
-    "description": "Xem danh sách voucher"
+    "name": "ORG_DELETE",
+    "description": "Xóa bỏ một tổ chức giáo dục"
   },
   {
-    "name": "VOUCHERS_CREATE",
-    "description": "Tạo voucher mới"
+    "name": "ORG_UPDATE_SETTINGS",
+    "description": "Cập nhật thông tin, nhận diện thương hiệu của tổ chức"
   },
   {
-    "name": "VOUCHERS_UPDATE",
-    "description": "Cập nhật voucher"
+    "name": "ORG_MEMBERS_INVITE",
+    "description": "Mời thành viên (Giáo viên, Học sinh) vào tổ chức"
   },
   {
-    "name": "VOUCHERS_DELETE",
-    "description": "Xóa voucher"
+    "name": "ORG_MEMBERS_REMOVE",
+    "description": "Xóa thành viên khỏi tổ chức"
   },
   {
-    "name": "TRANSACTIONS_VIEW_ALL",
-    "description": "Xem tất cả giao dịch tài chính và lịch sử thanh toán trong hệ thống"
+    "name": "ORG_MEMBERS_ASSIGN_ROLE",
+    "description": "Phân vai trò (Giáo viên, Trợ giảng) cho thành viên trong tổ chức"
   },
   {
-    "name": "ORDERS_VIEW",
-    "description": "Xem danh sách đơn hàng"
+    "name": "ORG_ROLES_CREATE",
+    "description": "Tạo vai trò tùy chỉnh nội bộ trong tổ chức"
+  },
+  {
+    "name": "ORG_ROLES_UPDATE",
+    "description": "Cập nhật quyền hạn cho vai trò nội bộ tổ chức"
+  },
+
+  {
+    "name": "COURSES_VIEW_ALL",
+    "description": "Xem danh sách tất cả khóa học trên hệ thống (kể cả chưa public)"
+  },
+  {
+    "name": "COURSES_VIEW_PUBLIC",
+    "description": "Xem danh sách khóa học đang công khai"
+  },
+  {
+    "name": "COURSES_ACCESS_ASSIGNED",
+    "description": "Truy cập vào khóa học được tổ chức phân công (Dành cho Giáo viên/Trợ giảng)"
+  },
+  {
+    "name": "COURSES_LEARN",
+    "description": "Truy cập vào học (Xem video, bài giảng) các khóa đã đăng ký"
+  },
+  {
+    "name": "COURSES_CREATE",
+    "description": "Tạo mới khóa học cá nhân"
+  },
+  {
+    "name": "COURSES_CREATE_ORG",
+    "description": "Tạo mới khóa học thuộc sở hữu của tổ chức"
+  },
+  {
+    "name": "COURSES_UPDATE_ALL",
+    "description": "Chỉnh sửa nội dung bất kỳ khóa học nào (Admin)"
+  },
+  {
+    "name": "COURSES_UPDATE_OWN",
+    "description": "Chỉnh sửa nội dung khóa học do mình tạo ra"
+  },
+  {
+    "name": "COURSES_UPDATE_ORG",
+    "description": "Chỉnh sửa nội dung khóa học thuộc tổ chức quản lý"
+  },
+  {
+    "name": "COURSES_UPDATE_ASSIGNED",
+    "description": "Chỉnh sửa nội dung khóa học được phân công giảng dạy"
+  },
+  {
+    "name": "COURSES_DELETE_ALL",
+    "description": "Xóa bất kỳ khóa học nào"
+  },
+  {
+    "name": "COURSES_DELETE_OWN",
+    "description": "Xóa khóa học của chính mình"
+  },
+  {
+    "name": "COURSES_DELETE_ORG",
+    "description": "Xóa khóa học thuộc tổ chức"
+  },
+  {
+    "name": "COURSES_MODERATE",
+    "description": "Duyệt hoặc từ chối xuất bản khóa học"
+  },
+  {
+    "name": "CONTENT_MODERATE",
+    "description": "Kiểm duyệt các nội dung khác (Bình luận, Blog)"
+  },
+  {
+    "name": "LESSONS_MANAGE_OWN",
+    "description": "Thêm/Sửa/Xóa bài học trong khóa của mình"
+  },
+  {
+    "name": "LESSONS_MANAGE_ASSIGNED",
+    "description": "Thêm/Sửa/Xóa bài học trong khóa được phân công"
+  },
+  {
+    "name": "BLOGS_VIEW",
+    "description": "Xem bài viết blog"
+  },
+
+  {
+    "name": "LIVESTREAMS_HOST",
+    "description": "Tạo và bắt đầu buổi Livestream"
+  },
+  {
+    "name": "COMMENTS_CREATE",
+    "description": "Viết bình luận/đánh giá"
+  },
+  {
+    "name": "COMMENTS_REPLY",
+    "description": "Trả lời bình luận của học viên"
+  },
+  {
+    "name": "COMMENTS_DELETE_OWN",
+    "description": "Xóa bình luận của chính mình"
+  },
+  
+  {
+    "name": "SANDBOX_EXECUTE",
+    "description": "Thực thi mã nguồn trong môi trường Sandbox"
+  },
+  {
+    "name": "SANDBOX_DEBUG",
+    "description": "Sử dụng công cụ Debug code"
+  },
+  {
+    "name": "AI_CHAT",
+    "description": "Chat với trợ lý AI"
+  },
+  {
+    "name": "AI_FEEDBACK_RECEIVE",
+    "description": "Nhận phân tích và gợi ý sửa lỗi từ AI"
+  },
+  {
+    "name": "AI_CONFIG_MANAGE",
+    "description": "Cấu hình Model và Prompt cho AI"
+  },
+
+  {
+    "name": "REPORTS_VIEW_SYSTEM",
+    "description": "Xem báo cáo thống kê toàn hệ thống"
+  },
+  {
+    "name": "REPORTS_VIEW_ORG",
+    "description": "Xem báo cáo thống kê của tổ chức"
+  },
+  {
+    "name": "REPORTS_VIEW_SELF_REVENUE",
+    "description": "Xem báo cáo doanh thu cá nhân (Giáo viên tự do)"
+  },
+  {
+    "name": "TRACKING_VIEW_SELF",
+    "description": "Xem dữ liệu tracking học tập của bản thân"
+  },
+  {
+    "name": "TRACKING_VIEW_CHILD",
+    "description": "Xem dữ liệu tracking học tập của con cái"
+  },
+  {
+    "name": "TRACKING_VIEW_ORG_STUDENTS",
+    "description": "Xem dữ liệu tracking học sinh trong tổ chức"
+  },
+  {
+    "name": "TRACKING_VIEW_STUDENT_DETAILED",
+    "description": "Xem chi tiết lỗi code và tiến độ của học sinh (Giáo viên)"
+  },
+  {
+    "name": "ALERTS_RECEIVE",
+    "description": "Nhận các cảnh báo hệ thống (Học sinh bỏ học, spam...)"
+  },
+  {
+    "name": "APPLICATION_VIEW_STATUS",
+    "description": "Xem trạng thái hồ sơ đăng ký giáo viên"
+  },
+  {
+    "name": "TEACHER_PROFILE_UPDATE",
+    "description": "Cập nhật hồ sơ năng lực giáo viên (CV, Chứng chỉ)"
+  },
+  {
+    "name": "SUBMISSIONS_GRADE",
+    "description": "Chấm điểm bài tập nộp của học sinh"
+  },
+
+  {
+    "name": "VOUCHERS_CREATE_GLOBAL",
+    "description": "Tạo mã giảm giá hệ thống"
+  },
+  {
+    "name": "VOUCHERS_APPLY",
+    "description": "Sử dụng mã giảm giá"
   },
   {
     "name": "ORDERS_CREATE",
-    "description": "Tạo đơn hàng mới"
+    "description": "Tạo đơn hàng mua khóa học cho bản thân"
   },
   {
-    "name": "ORDERS_UPDATE",
-    "description": "Cập nhật trạng thái đơn hàng"
+    "name": "ORDERS_CREATE_FOR_CHILD",
+    "description": "Tạo đơn hàng mua khóa học cho con"
   },
   {
-    "name": "ORDERS_DELETE",
-    "description": "Hủy/xóa đơn hàng"
+    "name": "ORDERS_VIEW_SELF",
+    "description": "Xem lịch sử đơn hàng của bản thân"
   },
   {
-    "name": "MARKETING_VIEW",
-    "description": "Xem nội dung marketing"
+    "name": "ORDERS_VIEW_ALL",
+    "description": "Xem tất cả đơn hàng trên hệ thống (Kế toán)"
   },
   {
-    "name": "MARKETING_MANAGE",
-    "description": "Quản lý marketing: banner, quảng cáo, thông báo"
+    "name": "ORDERS_VIEW_ORG",
+    "description": "Xem các đơn hàng mua khóa học của tổ chức"
   },
   {
-    "name": "PRODUCTS_VIEW",
-    "description": "Xem danh sách sản phẩm"
+    "name": "PAYMENT_HISTORY_VIEW",
+    "description": "Xem lịch sử giao dịch thanh toán"
   },
   {
-    "name": "PRODUCTS_CREATE",
-    "description": "Thêm sản phẩm mới"
+    "name": "WISHLIST_MANAGE",
+    "description": "Quản lý danh sách yêu thích"
   },
   {
-    "name": "PRODUCTS_UPDATE",
-    "description": "Cập nhật thông tin sản phẩm"
-  },
-  {
-    "name": "PRODUCTS_DELETE",
-    "description": "Xóa sản phẩm"
-  },
-  {
-    "name": "REPORTS_VIEW",
-    "description": "Xem báo cáo thống kê, phân tích doanh thu"
-  },
-  {
-    "name": "DASHBOARD_VIEW",
-    "description": "Truy cập trang quản trị dashboard"
+    "name": "WISHLIST_ADD",
+    "description": "Thêm khóa học vào danh sách yêu thích"
   }
 ]
