@@ -35,6 +35,7 @@ func New() (*App, error) {
 		fiberApp,
 		resources.Config,
 		handlers.Auth,
+		handlers.RolePermission,
 		resources.Redis,
 		resources.MinioClient,
 	)

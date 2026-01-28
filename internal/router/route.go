@@ -12,6 +12,7 @@ func SetupAllRoutes(
 	app *fiber.App,
 	cfg *config.Config,
 	authHandler *handler.AuthHandler,
+	rolePermissionHandler *handler.RolePermissionHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 ) {
@@ -26,4 +27,5 @@ func SetupAllRoutes(
 	})
 
 	SetupAuthRoutes(api, cfg, authHandler, redis)
+	SetupRolePermissionRoutes(api, rolePermissionHandler)
 }
