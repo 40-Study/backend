@@ -10,18 +10,18 @@ import (
 )
 
 type Claims struct {
-	UserID   uuid.UUID `json:"user_id"`
-	DeviceID uuid.UUID `json:"device_id"`
-	Version  int64     `json:"version"`
+	UserID      uuid.UUID `json:"user_id"`
+	DeviceID    uuid.UUID `json:"device_id"`
+	UserVersion int64     `json:"user_version"` // For logout all devices
 	jwt.RegisteredClaims
 }
 
-func GenerateTokens(cfg *config.Config, userID uuid.UUID, deviceID uuid.UUID, version int64) (string, string, error) {
-	// Access Token
+func GenerateTokens(cfg *config.Config, userID uuid.UUID, deviceID uuid.UUID, userVersion int64) (string, string, error) {
+	// Access Token (short-lived: 15 minutes)
 	accessClaims := Claims{
-		UserID:   userID,
-		DeviceID: deviceID,
-		Version:  version,
+		UserID:      userID,
+		DeviceID:    deviceID,
+		UserVersion: userVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(cfg.JWTAccessExpiration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -33,11 +33,11 @@ func GenerateTokens(cfg *config.Config, userID uuid.UUID, deviceID uuid.UUID, ve
 		return "", "", err
 	}
 
-	// Refresh Token
+	// Refresh Token (long-lived: 7 days)
 	refreshClaims := Claims{
-		UserID:   userID,
-		DeviceID: deviceID,
-		Version:  version,
+		UserID:      userID,
+		DeviceID:    deviceID,
+		UserVersion: userVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(cfg.JWTRefreshExpiration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

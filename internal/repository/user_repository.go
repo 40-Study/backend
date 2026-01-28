@@ -38,12 +38,19 @@ func (r *UserRepository) FindUserByEmail(ctx context.Context, email string) (*mo
 		}
 		return nil, err
 	}
-	return nil, nil
+	return &user, nil
 }
 
 func (r *UserRepository) FindUserByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
-
-	return nil, nil
+	var user model.User
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&user).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &user, nil
 }
 
 func (r *UserRepository) UpdateUser(ctx context.Context, user *model.User) error {

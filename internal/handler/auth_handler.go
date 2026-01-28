@@ -1,13 +1,13 @@
 package handler
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/service"
+	"study.com/v1/internal/utils"
 )
 
 type AuthHandlerInterface interface {
@@ -34,13 +34,22 @@ func NewAuthHandler(authService service.AuthServiceInterface) *AuthHandler {
 }
 
 func (h *AuthHandler) Register(c *fiber.Ctx) error {
-	var req dto.RegisterDto
+	var req dto.VerifyOtpRequestDto
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid request body",
 			"error":   err.Error(),
 		})
 	}
+
+	// Validate request
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
 	response, err := h.authService.Register(c.Context(), req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -62,6 +71,15 @@ func (h *AuthHandler) RequestRegister(c *fiber.Ctx) error {
 			"error":   err.Error(),
 		})
 	}
+
+	// Validate request
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
 	err := h.authService.RequestRegister(c.Context(), req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -75,13 +93,22 @@ func (h *AuthHandler) RequestRegister(c *fiber.Ctx) error {
 }
 
 func (h *AuthHandler) Login(c *fiber.Ctx) error {
-	var req dto.LoginDTO
+	var req dto.LoginRequestDto
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid request body",
 			"error":   err.Error(),
 		})
 	}
+
+	// Validate request
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
 	response, err := h.authService.Login(c.Context(), req)
 	if err != nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -94,12 +121,16 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		Value:    response.AccessToken,
 		Expires:  time.Now().Add(15 * time.Minute),
 		HTTPOnly: true,
+		Secure:   true,
+		SameSite: "Lax",
 	})
 	c.Cookie(&fiber.Cookie{
 		Name:     "rfToken",
 		Value:    response.RefreshToken,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HTTPOnly: true,
+		Secure:   true,
+		SameSite: "Lax",
 	})
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Login successful",
@@ -110,7 +141,7 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 func (h *AuthHandler) LogoutOneDevice(c *fiber.Ctx) error {
 	user_id := c.Locals("user_id")
 	device_id := c.Locals("device_id")
-	fmt.Print(user_id, " ", device_id, "\n")
+
 	if user_id == nil || device_id == nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Empty userId or deviceID",
@@ -136,22 +167,28 @@ func (h *AuthHandler) LogoutOneDevice(c *fiber.Ctx) error {
 	}
 	err := h.authService.Logout(c.Context(), userID, deviceID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Logout service error",
 			"error":   err.Error(),
 		})
 	}
+	
+	// Clear cookies
 	c.Cookie(&fiber.Cookie{
 		Name:     "accessToken",
 		Value:    "",
 		Expires:  time.Now().Add(-1 * time.Hour),
 		HTTPOnly: true,
+		Secure:   true,
+		SameSite: "Lax",
 	})
 	c.Cookie(&fiber.Cookie{
 		Name:     "rfToken",
 		Value:    "",
 		Expires:  time.Now().Add(-1 * time.Hour),
 		HTTPOnly: true,
+		Secure:   true,
+		SameSite: "Lax",
 	})
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Logout successfully",
@@ -160,17 +197,43 @@ func (h *AuthHandler) LogoutOneDevice(c *fiber.Ctx) error {
 
 func (h *AuthHandler) LogoutAll(c *fiber.Ctx) error {
 	user_id := c.Locals("user_id")
-	uid := user_id.(uuid.UUID)
-	if uid == uuid.Nil {
+	if user_id == nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "userid invalid",
+			"message": "Empty userId",
 		})
 	}
+	
+	uid, ok := user_id.(uuid.UUID)
+	if !ok || uid == uuid.Nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid userId",
+		})
+	}
+	
 	if err := h.authService.LogoutAllDevice(c.Context(), uid); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "logout all device false",
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Logout all devices failed",
+			"error":   err.Error(),
 		})
 	}
+
+	// Clear cookies on current device
+	c.Cookie(&fiber.Cookie{
+		Name:     "accessToken",
+		Value:    "",
+		Expires:  time.Now().Add(-1 * time.Hour),
+		HTTPOnly: true,
+		Secure:   true,
+		SameSite: "Lax",
+	})
+	c.Cookie(&fiber.Cookie{
+		Name:     "rfToken",
+		Value:    "",
+		Expires:  time.Now().Add(-1 * time.Hour),
+		HTTPOnly: true,
+		Secure:   true,
+		SameSite: "Lax",
+	})
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Logout on all devices successfully",
@@ -179,10 +242,17 @@ func (h *AuthHandler) LogoutAll(c *fiber.Ctx) error {
 
 func (h *AuthHandler) RefreshToken(c *fiber.Ctx) error {
 	old_rfToken := c.Cookies("rfToken")
+	if old_rfToken == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Missing refresh token",
+		})
+	}
+	
 	response, err := h.authService.RefreshToken(c.Context(), old_rfToken)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "refresh token service false",
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Refresh token failed",
+			"error":   err.Error(),
 		})
 	}
 	c.Cookie(&fiber.Cookie{
@@ -190,15 +260,19 @@ func (h *AuthHandler) RefreshToken(c *fiber.Ctx) error {
 		Value:    response.AccessToken,
 		Expires:  time.Now().Add(15 * time.Minute),
 		HTTPOnly: true,
+		Secure:   true,
+		SameSite: "Lax",
 	})
 	c.Cookie(&fiber.Cookie{
 		Name:     "rfToken",
 		Value:    response.RefreshToken,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HTTPOnly: true,
+		Secure:   true,
+		SameSite: "Lax",
 	})
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "refresh token successfully",
+		"message": "Refresh token successfully",
 		"data":    response,
 	})
 }
@@ -230,18 +304,41 @@ func (h *AuthHandler) GetMe(c *fiber.Ctx) error {
 }
 
 func (h *AuthHandler) UpdatePasswordHash(c *fiber.Ctx) error {
-	var req dto.ChangePasswordDto
+	var req dto.ChangePasswordRequestDto
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid body",
+			"error":   err.Error(),
 		})
 	}
-	userId := c.Locals("user_id").(uuid.UUID)
+
+	// Validate request
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
+	user_id := c.Locals("user_id")
+	if user_id == nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Empty userId",
+		})
+	}
+
+	userId, ok := user_id.(uuid.UUID)
+	if !ok || userId == uuid.Nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid userId",
+		})
+	}
+
 	err := h.authService.ChangePassword(c.Context(), userId, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Change password service errors",
-			"errors":  err.Error(),
+			"message": "Change password failed",
+			"error":   err.Error(),
 		})
 	}
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -250,36 +347,54 @@ func (h *AuthHandler) UpdatePasswordHash(c *fiber.Ctx) error {
 }
 
 func (h *AuthHandler) RequestPasswordReset(c *fiber.Ctx) error {
-	var req dto.ResetPasswordRequestDto
+	var req dto.ForgotPasswordRequestDto
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Body invalid",
-			"errors":  err.Error(),
+			"message": "Invalid request body",
+			"error":   err.Error(),
 		})
 	}
+
+	// Validate request
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
 	if err := h.authService.RequestPasswordReset(c.Context(), req.Email); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Request reset password errors",
-			"errors":  err.Error(),
+			"message": "Request reset password failed",
+			"error":   err.Error(),
 		})
 	}
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "OTP have been send",
+		"message": "OTP has been sent",
 	})
 }
 
 func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {
-	var req dto.ResetPasswordDto
+	var req dto.ResetPasswordRequestDto
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Body invalid",
-			"errors":  err.Error(),
+			"message": "Invalid request body",
+			"error":   err.Error(),
 		})
 	}
+
+	// Validate request
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
 	if err := h.authService.ResetPassword(c.Context(), req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Reset password errors",
-			"errors":  err.Error(),
+			"message": "Reset password failed",
+			"error":   err.Error(),
 		})
 	}
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

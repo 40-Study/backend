@@ -12,7 +12,7 @@ import (
 
 func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-
+		// ===== 1. Get access token from cookie =====
 		accessToken := c.Cookies("accessToken")
 		if accessToken == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -20,6 +20,7 @@ func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 			})
 		}
 
+		// ===== 2. Parse and validate JWT =====
 		claims, err := utils.ParseToken(cfg, accessToken)
 		if err != nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -27,12 +28,12 @@ func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 			})
 		}
 
-		key := fmt.Sprintf("session_version:%s", claims.UserID)
-
-		versionStr, err := rdb.Get(c.Context(), key).Result()
+		// ===== 3. Check user_version (for logout all) =====
+		userVersionKey := fmt.Sprintf("user_version:%s", claims.UserID)
+		userVerStr, err := rdb.Get(c.Context(), userVersionKey).Result()
 		if err == redis.Nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"message": "Session not found or expired",
+				"message": "User session not found",
 				"error":   "Please login again",
 			})
 		}
@@ -43,28 +44,25 @@ func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 			})
 		}
 
-		versionInt, err := strconv.ParseInt(versionStr, 10, 64)
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"message": "Invalid session version format",
-				"error":   err.Error(),
-			})
-		}
-
-		if versionInt != claims.Version {
+		userVersion, _ := strconv.ParseInt(userVerStr, 10, 64)
+		if userVersion != claims.UserVersion {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"message": "Session revoked",
+				"message": "All sessions revoked",
 				"error":   "Please login again",
 			})
 		}
 
+		// ===== 4. Set user info in context =====
 		c.Locals("user_id", claims.UserID)
 		c.Locals("device_id", claims.DeviceID)
-		c.Locals("version", claims.Version)
 
 		return c.Next()
 	}
 }
+
+// Hybrid approach:
+// - Logout 1 device: Xóa refresh token từ Redis (access token vẫn valid đến hết hạn)
+// - Logout all devices: Increment userVersion → TẤT CẢ tokens invalid ngay lập tức
 
 func RequirePermissions(permissions ...string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
