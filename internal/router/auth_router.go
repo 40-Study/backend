@@ -15,7 +15,7 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	auth.Post("/login", authHandler.Login) // done 
 	auth.Post("/reset-password/request", authHandler.RequestPasswordReset)
 	auth.Post("/reset-password", authHandler.ResetPassword)
-	auth.Post("/refresh-token", authHandler.RefreshToken)
+	auth.Post("/refresh-token", authHandler.RefreshToken) // done
 
 	
 	auth.Use(middleware.AuthMiddleware(cfg, redis))

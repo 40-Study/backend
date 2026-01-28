@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/utils"
 )
@@ -30,29 +31,261 @@ type AuthServiceInterface interface {
 }
 
 type AuthService struct {
-	cfg         *config.Config
-	userRepo    repository.UserRepositoryInterface
-	redisClient *redis.Client
+	cfg          *config.Config
+	userRepo     repository.UserRepositoryInterface
+	userRoleRepo repository.UserRoleRepositoryInterface
+	redisClient  *redis.Client
 }
 
 func NewAuthService(
 	cfg *config.Config,
 	userRepo repository.UserRepositoryInterface,
+	userRoleRepo repository.UserRoleRepositoryInterface,
 	redisClient *redis.Client,
 ) *AuthService {
 	return &AuthService{
-		cfg:         cfg,
-		userRepo:    userRepo,
-		redisClient: redisClient,
+		cfg:          cfg,
+		userRepo:     userRepo,
+		userRoleRepo: userRoleRepo,
+		redisClient:  redisClient,
 	}
 }
 
+// PendingRegistration stores registration data temporarily in Redis
+type PendingRegistration struct {
+	FullName     string `json:"full_name"`
+	Username     string `json:"username"`
+	Email        string `json:"email"`
+	PasswordHash string `json:"password_hash"`
+	Phone        string `json:"phone"`
+	DateOfBirth  string `json:"date_of_birth,omitempty"`
+	RoleCode     string `json:"role_code"`
+	ParentPhone  string `json:"parent_phone,omitempty"`
+	OTP          string `json:"otp"`
+	CreatedAt    string `json:"created_at"`
+}
+
 func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterRequestDto) error {
+	// ===== 1. Check Redis client =====
+	if s.redisClient == nil {
+		return errors.New("redis client is not initialized")
+	}
+
+	// ===== 2. Check email already exists =====
+	existingUser, err := s.userRepo.FindUserByEmail(ctx, req.Email)
+	if err != nil {
+		return fmt.Errorf("failed to check email: %w", err)
+	}
+	if existingUser != nil {
+		return errors.New("email already registered")
+	}
+
+	// ===== 3. Check phone already exists =====
+	existingUserByPhone, err := s.userRepo.FindUserByPhone(ctx, req.Phone)
+	if err != nil {
+		return fmt.Errorf("failed to check phone: %w", err)
+	}
+	if existingUserByPhone != nil {
+		return errors.New("phone number already registered")
+	}
+
+	// ===== 4. Hash password =====
+	passwordHash, err := utils.HashPassword(req.Password)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	// ===== 5. Generate OTP (6 digits) =====
+	otp, err := utils.GenerateOTP(6)
+	if err != nil {
+		return fmt.Errorf("failed to generate OTP: %w", err)
+	}
+
+	// ===== 6. Create pending registration data =====
+	pendingData := PendingRegistration{
+		FullName:     req.FullName,
+		Username:     req.Username,
+		Email:        req.Email,
+		PasswordHash: passwordHash,
+		Phone:        req.Phone,
+		DateOfBirth:  req.DateOfBirth,
+		RoleCode:     req.RoleCode,
+		ParentPhone:  req.ParentPhone,
+		OTP:          otp,
+		CreatedAt:    time.Now().Format(time.RFC3339),
+	}
+
+	// ===== 7. Save to Redis with TTL (5 minutes) =====
+	pendingKey := fmt.Sprintf("register_pending:%s", req.Email)
+	pendingBytes, err := json.Marshal(pendingData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal pending data: %w", err)
+	}
+
+	otpTTL := 5 * time.Minute
+	if err := s.redisClient.Set(ctx, pendingKey, pendingBytes, otpTTL).Err(); err != nil {
+		return fmt.Errorf("failed to save pending registration: %w", err)
+	}
+
+	// ===== 8. Send OTP via email =====
+	// [DEBUG] Log OTP to console for testing
+	fmt.Printf("\n========== [DEBUG] REGISTER OTP ==========\n")
+	fmt.Printf("Email: %s\n", req.Email)
+	fmt.Printf("OTP: %s\n", otp)
+	fmt.Printf("Expires in: 5 minutes\n")
+	fmt.Printf("===========================================\n\n")
+
+	// Try to send email, but don't fail if SMTP is not configured
+	if err := utils.SendRegisterOTP(s.cfg, req.Email, otp); err != nil {
+		// Log warning but continue (OTP is saved in Redis)
+		fmt.Printf("[WARNING] Failed to send OTP email: %v\n", err)
+		fmt.Printf("[INFO] Use the OTP logged above for testing\n\n")
+	}
+
 	return nil
 }
 
 func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto) (*dto.RegisterResponseDto, error) {
-	return nil, nil
+	// ===== 1. Check Redis client =====
+	if s.redisClient == nil {
+		return nil, errors.New("redis client is not initialized")
+	}
+
+	// ===== 2. Get pending registration from Redis =====
+	pendingKey := fmt.Sprintf("register_pending:%s", req.Email)
+	pendingData, err := s.redisClient.Get(ctx, pendingKey).Result()
+	if err == redis.Nil {
+		return nil, errors.New("registration request not found or expired, please request again")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending registration: %w", err)
+	}
+
+	// ===== 3. Unmarshal pending data =====
+	var pending PendingRegistration
+	if err := json.Unmarshal([]byte(pendingData), &pending); err != nil {
+		return nil, fmt.Errorf("failed to parse pending registration: %w", err)
+	}
+
+	// ===== 4. Verify OTP =====
+	if pending.OTP != req.OTPRegister {
+		return nil, errors.New("invalid OTP")
+	}
+
+	// ===== 5. Get Role by code =====
+	role, err := s.userRoleRepo.FindByCode(ctx, pending.RoleCode)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find role: %w", err)
+	}
+	if role == nil {
+		return nil, errors.New("invalid role")
+	}
+
+	// ===== 6. Parse DateOfBirth if provided =====
+	var dateOfBirth *time.Time
+	if pending.DateOfBirth != "" {
+		dob, err := time.Parse("2006-01-02", pending.DateOfBirth)
+		if err == nil {
+			dateOfBirth = &dob
+		}
+	}
+
+	// ===== 7. Create user in database =====
+	user := &model.User{
+		Email:        pending.Email,
+		PasswordHash: pending.PasswordHash,
+		UserName:     pending.Username,
+		FullName:     &pending.FullName,
+		Phone:        &pending.Phone,
+		DateOfBirth:  dateOfBirth,
+		RoleID:       role.ID,
+		IsVerified:   true,
+		IsActive:     true,
+	}
+
+	// Set ParentPhone if provided
+	if pending.ParentPhone != "" {
+		user.ParentPhone = &pending.ParentPhone
+	}
+
+	if err := s.userRepo.CreateUser(ctx, user); err != nil {
+		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+
+	// ===== 8. Delete pending registration from Redis =====
+	_ = s.redisClient.Del(ctx, pendingKey).Err()
+
+	// ===== 9. Parse DeviceID =====
+	deviceID, err := uuid.Parse(req.DeviceInfo.DeviceID)
+	if err != nil {
+		return nil, errors.New("invalid device_id format")
+	}
+
+	// ===== 10. Set user_version for token management =====
+	userVersionKey := fmt.Sprintf("user_version:%s", user.ID)
+	userVersion := int64(1)
+	if err := s.redisClient.Set(ctx, userVersionKey, userVersion, 0).Err(); err != nil {
+		return nil, fmt.Errorf("failed to set user version: %w", err)
+	}
+
+	// ===== 11. Generate JWT tokens =====
+	accessToken, refreshToken, err := utils.GenerateTokens(s.cfg, user.ID, deviceID, userVersion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate tokens: %w", err)
+	}
+
+	// ===== 12. Store refresh token in Redis =====
+	refreshTokenKey := fmt.Sprintf("refresh_token:%s:%s", user.ID, deviceID)
+	if err := s.redisClient.Set(ctx, refreshTokenKey, refreshToken, s.cfg.JWTRefreshExpiration).Err(); err != nil {
+		return nil, fmt.Errorf("failed to store refresh token: %w", err)
+	}
+
+	// ===== 13. Save device session =====
+	type deviceSession struct {
+		DeviceID   uuid.UUID `json:"device_id"`
+		DeviceName string    `json:"device_name"`
+		UserAgent  string    `json:"user_agent"`
+		LoggedInAt string    `json:"logged_in_at"`
+	}
+
+	sessionKey := fmt.Sprintf("session:%s", user.ID)
+	sessionPayload := deviceSession{
+		DeviceID:   deviceID,
+		DeviceName: req.DeviceInfo.DeviceName,
+		UserAgent:  req.DeviceInfo.UserAgent,
+		LoggedInAt: time.Now().Format(time.RFC3339),
+	}
+
+	sessionBytes, err := json.Marshal(sessionPayload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal session: %w", err)
+	}
+
+	if err := s.redisClient.HSet(ctx, sessionKey, deviceID.String(), sessionBytes).Err(); err != nil {
+		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+
+	// ===== 14. Build response =====
+	status := "active"
+	var dob *string
+	if user.DateOfBirth != nil {
+		f := user.DateOfBirth.Format("2006-01-02")
+		dob = &f
+	}
+
+	return &dto.RegisterResponseDto{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		User: dto.UserResponseDto{
+			ID:          user.ID,
+			Username:    user.UserName,
+			Email:       user.Email,
+			Phone:       user.Phone,
+			DateOfBirth: dob,
+			Status:      &status,
+			CreatedAt:   user.CreatedAt.Format(time.RFC3339),
+		},
+	}, nil
 }
 
 func (s *AuthService) Login(

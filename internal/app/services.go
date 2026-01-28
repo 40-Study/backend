@@ -9,6 +9,6 @@ type Services struct {
 func InitServices(resources *Resources, repos *Repositories) *Services {
 
 	return &Services{
-		Auth: service.NewAuthService(resources.Config, repos.User, resources.Redis),
+		Auth: service.NewAuthService(resources.Config, repos.User, repos.UserRole, resources.Redis),
 	}
 }

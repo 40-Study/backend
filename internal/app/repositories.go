@@ -6,11 +6,13 @@ import (
 )
 
 type Repositories struct {
-	User *repository.UserRepository
+	User     *repository.UserRepository
+	UserRole *repository.UserRoleRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
 	return &Repositories{
-		User: repository.NewUserRepository(db),
+		User:     repository.NewUserRepository(db),
+		UserRole: repository.NewUserRoleRepository(db),
 	}
 }

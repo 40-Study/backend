@@ -12,6 +12,7 @@ import (
 type UserRepositoryInterface interface {
 	CreateUser(ctx context.Context, user *model.User) error
 	FindUserByEmail(ctx context.Context, email string) (*model.User, error)
+	FindUserByPhone(ctx context.Context, phone string) (*model.User, error)
 	FindUserByID(ctx context.Context, id uuid.UUID) (*model.User, error)
 	UpdateUser(ctx context.Context, user *model.User) error
 	UpdatePasswordHash(ctx context.Context, userID uuid.UUID, newPasswordHash string) error
@@ -26,12 +27,24 @@ func NewUserRepository(db *gorm.DB) *UserRepository {
 }
 
 func (r *UserRepository) CreateUser(ctx context.Context, user *model.User) error {
-	return nil
+	return r.db.WithContext(ctx).Create(user).Error
 }
 
 func (r *UserRepository) FindUserByEmail(ctx context.Context, email string) (*model.User, error) {
 	var user model.User
 	err := r.db.WithContext(ctx).Where("email = ?", email).First(&user).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (r *UserRepository) FindUserByPhone(ctx context.Context, phone string) (*model.User, error) {
+	var user model.User
+	err := r.db.WithContext(ctx).Where("phone = ?", phone).First(&user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

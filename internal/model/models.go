@@ -4,6 +4,7 @@ package model
 func AllModels() []interface{} {
 	return []interface{}{
 		// Users & Auth
+		&UserRole{}, // Must be before User (foreign key dependency)
 		&User{},
 		&VerificationCode{},
 		&UserOAuthProvider{},

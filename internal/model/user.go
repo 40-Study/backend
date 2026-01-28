@@ -14,13 +14,15 @@ type User struct {
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 	Email        string         `gorm:"type:varchar(255);uniqueIndex;not null" json:"email"`
 	PasswordHash string         `gorm:"type:varchar(255);not null;column:password_hash" json:"-"`
-	UserName     string         `gorm:"type:varchar(100);not null;column:username" json:"user_name"`
+	UserName     string         `gorm:"type:varchar(100);not null;column:user_name" json:"user_name"`
 	FullName     *string        `gorm:"type:varchar(255);column:full_name" json:"full_name,omitempty"`
 	AvatarURL    *string        `gorm:"type:varchar(500);column:avatar_url" json:"avatar_url,omitempty"`
 	Phone        *string        `gorm:"type:varchar(20)" json:"phone,omitempty"`
+	ParentPhone  *string        `gorm:"type:varchar(20);column:parent_phone" json:"parent_phone,omitempty"`
 	DateOfBirth  *time.Time     `gorm:"type:date;column:date_of_birth" json:"date_of_birth,omitempty"`
 	Bio          *string        `gorm:"type:text" json:"bio,omitempty"`
-	Role         string         `gorm:"type:varchar(20);default:'student';check:role IN ('student', 'instructor', 'admin');index" json:"role"`
+	RoleID       uint           `gorm:"not null;index;column:role_id" json:"role_id"`
+	Role         UserRole       `gorm:"foreignKey:RoleID" json:"role,omitempty"`
 	IsVerified   bool           `gorm:"default:false;column:is_verified" json:"is_verified"`
 	IsActive     bool           `gorm:"default:true;index;column:is_active" json:"is_active"`
 	LastLoginAt  *time.Time     `gorm:"column:last_login_at" json:"last_login_at,omitempty"`
