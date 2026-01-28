@@ -1,94 +1,47 @@
 [
   {
-    "name": "SUPER_ADMIN",
-    "description": "Quản trị viên cấp cao nhất, có toàn quyền kiểm soát hệ thống",
-    "permissions": "*"
+    "name": "SYSTEM_ADMIN",
+    "description": "Quản trị viên hệ thống, có quyền vận hành toàn bộ nền tảng, quản lý người dùng và kiểm duyệt nội dung",
+    "permissions": []
   },
   {
-    "name": "ADMIN",
-    "description": "Quản trị viên quản lý toàn bộ hệ thống bao gồm roles/permissions",
-    "permissions": [
-      "USERS_VIEW",
-      "USERS_CREATE",
-      "USERS_UPDATE",
-      "USERS_DELETE",
-      "USERS_BAN",
-      "ROLES_VIEW",
-      "ROLES_CREATE",
-      "ROLES_UPDATE",
-      "ROLES_DELETE",
-      "ROLES_ASSIGN",
-      "PERMISSIONS_VIEW",
-      "VOUCHERS_VIEW",
-      "VOUCHERS_CREATE",
-      "VOUCHERS_UPDATE",
-      "VOUCHERS_DELETE",
-      "TRANSACTIONS_VIEW_ALL",
-      "ORDERS_VIEW",
-      "ORDERS_CREATE",
-      "ORDERS_UPDATE",
-      "ORDERS_DELETE",
-      "MARKETING_VIEW",
-      "MARKETING_MANAGE",
-      "PRODUCTS_VIEW",
-      "PRODUCTS_CREATE",
-      "PRODUCTS_UPDATE",
-      "PRODUCTS_DELETE",
-      "REPORTS_VIEW",
-      "DASHBOARD_VIEW"
-    ]
+    "name": "ORG_OWNER",
+    "description": "Chủ tổ chức/trung tâm, quản lý tài nguyên, giáo viên và học sinh trong phạm vi tổ chức của mình",
+    "permissions": []
   },
   {
-    "name": "MODERATOR",
-    "description": "Người kiểm duyệt, có quyền ban/khóa tài khoản và gán role",
-    "permissions": [
-      "USERS_VIEW",
-      "USERS_UPDATE",
-      "USERS_BAN",
-      "ROLES_VIEW",
-      "ROLES_ASSIGN",
-      "DASHBOARD_VIEW"
-    ]
+    "name": "TEACHER_FREELANCE",
+    "description": "Giáo viên tự do, hoạt động độc lập, tự quản lý và sở hữu nội dung khóa học mình tạo ra",
+    "permissions": []
   },
   {
-    "name": "MARKETING",
-    "description": "Nhân viên marketing, quản lý voucher và chiến dịch quảng cáo",
-    "permissions": [
-      "VOUCHERS_VIEW",
-      "VOUCHERS_CREATE",
-      "VOUCHERS_UPDATE",
-      "VOUCHERS_DELETE",
-      "MARKETING_VIEW",
-      "MARKETING_MANAGE",
-      "DASHBOARD_VIEW"
-    ]
+    "name": "TEACHER_ORG",
+    "description": "Giáo viên thuộc tổ chức, giảng dạy dưới sự quản lý của chủ tổ chức, nội dung thuộc về tổ chức",
+    "permissions": []
   },
   {
-    "name": "ACCOUNTANT",
-    "description": "Kế toán, xem tất cả giao dịch và báo cáo tài chính",
-    "permissions": [
-      "TRANSACTIONS_VIEW_ALL",
-      "ORDERS_VIEW",
-      "REPORTS_VIEW",
-      "DASHBOARD_VIEW"
-    ]
+    "name": "TEACHER_APPLICANT",
+    "description": "Người dùng đang gửi yêu cầu đăng ký trở thành giáo viên, đang trong quá trình chờ xét duyệt hồ sơ",
+    "permissions": []
   },
   {
-    "name": "SELLER",
-    "description": "Nhân viên bán hàng, quản lý đơn hàng và sản phẩm",
-    "permissions": [
-      "ORDERS_VIEW",
-      "ORDERS_CREATE",
-      "ORDERS_UPDATE",
-      "PRODUCTS_VIEW",
-      "PRODUCTS_CREATE",
-      "PRODUCTS_UPDATE",
-      "DASHBOARD_VIEW"
-    ]
+    "name": "STUDENT_INDEPENDENT",
+    "description": "Học sinh tự chủ tài chính, có quyền tự thanh toán, mua khóa học và tự quản lý lộ trình học tập",
+    "permissions": []
   },
   {
-    "name": "CUSTOMER",
-    "description": "Khách hàng thông thường",
+    "name": "STUDENT_DEPENDENT",
+    "description": "Học sinh chưa tự chủ tài chính (trẻ em), tài khoản chịu sự giám sát của phụ huynh, hạn chế quyền thanh toán",
+    "permissions": []
+  },
+  {
+    "name": "PARENT",
+    "description": "Phụ huynh, quản lý tài khoản con cái, thực hiện thanh toán và xem báo cáo giám sát học tập",
+    "permissions": []
+  },
+  {
+    "name": "GUEST",
+    "description": "Khách vãng lai, người dùng chưa đăng nhập hoặc chưa có tài khoản, chỉ xem được nội dung công khai",
     "permissions": []
   }
 ]
