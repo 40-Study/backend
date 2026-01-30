@@ -18,6 +18,7 @@ type AuthHandlerInterface interface {
 	RequestPasswordReset(c *fiber.Ctx) error
 	ResetPassword(c *fiber.Ctx) error
 	GetMe(c *fiber.Ctx) error
+	GetAllDevices(c *fiber.Ctx) error
 	LogoutOneDevice(c *fiber.Ctx) error
 	LogoutAll(c *fiber.Ctx) error
 	ChangePassword(c *fiber.Ctx) error

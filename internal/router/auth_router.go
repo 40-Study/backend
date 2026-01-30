@@ -21,6 +21,7 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	auth.Use(middleware.AuthMiddleware(cfg, redis))
 	
 	auth.Get("/me", authHandler.GetMe)// done 
+	auth.Get("/devices", authHandler.GetAllDevices) // Get all active devices
 	auth.Post("/logout", authHandler.LogoutOneDevice) // done with logout one device
 	auth.Post("/logout-all", authHandler.LogoutAll) // done with logout all devices
 	auth.Put("/change-password", authHandler.ChangePassword) // done 

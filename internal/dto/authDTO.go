@@ -33,14 +33,14 @@ type DeviceSessionDto struct {
 	DeviceName string `json:"device_name" example:"iPhone 14 Pro"`
 	UserAgent  string `json:"user_agent,omitempty" example:"Mozilla/5.0..."`
 	LoggedInAt string `json:"logged_in_at" example:"2024-01-01T00:00:00Z"`
+	IsCurrent  bool   `json:"is_current,omitempty"`
 }
 
 type LoginResponseDto struct {
-	AccessToken   string            `json:"access_token"`
-	RefreshToken  string            `json:"refresh_token"`
-	User          UserResponseDto   `json:"user"`
-	CurrentDevice DeviceSessionDto  `json:"current_device"`
-	ActiveDevices []DeviceSessionDto `json:"active_devices,omitempty"`
+	AccessToken   string           `json:"access_token"`
+	RefreshToken  string           `json:"refresh_token"`
+	User          UserResponseDto  `json:"user"`
+	CurrentDevice DeviceSessionDto `json:"current_device"`
 }
 
 type RefreshTokenResponseDto struct {

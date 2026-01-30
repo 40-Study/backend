@@ -25,6 +25,7 @@ type AuthServiceInterface interface {
 	LogoutAllDevice(ctx context.Context, userId uuid.UUID) error
 	RefreshToken(ctx context.Context, oldRefreshToken string) (*dto.RefreshTokenResponseDto, error)
 	GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserResponseDto, error)
+	GetAllDevices(ctx context.Context, userID, currentDeviceID uuid.UUID) ([]dto.DeviceSessionDto, error)
 	ChangePassword(ctx context.Context, userID uuid.UUID, req dto.ChangePasswordRequestDto) error
 	RequestPasswordReset(ctx context.Context, email string) error
 	ResetPassword(ctx context.Context, req dto.ResetPasswordRequestDto) error
@@ -293,11 +294,7 @@ func (s *AuthService) Login(
 	req dto.LoginRequestDto,
 ) (*dto.LoginResponseDto, error) {
 
-	if s.redisClient == nil {
-		return nil, errors.New("redis client is not initialized")
-	}
-
-	// ===== 1. Check user =====
+	// ===== 1. Validate user credentials =====
 	user, err := s.userRepo.FindUserByEmail(ctx, req.Email)
 	if err != nil {
 		return nil, err
@@ -307,17 +304,18 @@ func (s *AuthService) Login(
 		return nil, errors.New("invalid email or password")
 	}
 
+	// ===== 2. Reject inactive users =====
 	if !user.IsActive {
 		return nil, errors.New("account is inactive")
 	}
 
-	// ===== 2. Parse DeviceID from string to UUID =====
+	// ===== 3. Parse device_id =====
 	deviceID, err := uuid.Parse(req.DeviceInfo.DeviceID)
 	if err != nil {
 		return nil, errors.New("invalid device_id format")
 	}
 
-	// ===== 3. Get/Set user_version (for logout all) =====
+	// ===== 4. Get or initialize user_version =====
 	userVersionKey := fmt.Sprintf("user_version:%s", user.ID)
 	userVersion := int64(1)
 
@@ -325,7 +323,6 @@ func (s *AuthService) Login(
 	if err == nil {
 		userVersion, _ = strconv.ParseInt(userVerStr, 10, 64)
 	} else if err == redis.Nil {
-		// First login ever → create user_version = 1
 		if err := s.redisClient.Set(ctx, userVersionKey, userVersion, 0).Err(); err != nil {
 			return nil, err
 		}
@@ -333,21 +330,24 @@ func (s *AuthService) Login(
 		return nil, err
 	}
 
-
-	// ===== 4. Generate JWT =====
+	// ===== 5. Generate JWT tokens =====
 	accessToken, refreshToken, err := utils.GenerateTokens(s.cfg, user.ID, deviceID, userVersion)
 	if err != nil {
 		return nil, err
 	}
 
-	// ===== 5. Store refresh token in Redis =====
-	// Key: refresh_token:{userId}:{deviceId}
-	refreshTokenKey := fmt.Sprintf("refresh_token:%s:%s", user.ID, deviceID)
-	if err := s.redisClient.Set(ctx, refreshTokenKey, refreshToken, s.cfg.JWTRefreshExpiration).Err(); err != nil {
+	// ===== 6. Store refresh token in Redis HSET (PLAINTEXT) =====
+	refreshKey := fmt.Sprintf("auth:refresh:%s", user.ID)
+	if err := s.redisClient.HSet(ctx, refreshKey, deviceID.String(), refreshToken).Err(); err != nil {
 		return nil, err
 	}
 
-	// ===== 6. Save device session metadata (optional - for device management) =====
+	// ===== 7. Set TTL on hash key =====
+	if err := s.redisClient.Expire(ctx, refreshKey, s.cfg.JWTRefreshExpiration).Err(); err != nil {
+		return nil, err
+	}
+
+	// ===== 8. Store device metadata in separate hash =====
 	type deviceSession struct {
 		DeviceID   uuid.UUID `json:"device_id"`
 		DeviceName string    `json:"device_name"`
@@ -368,35 +368,12 @@ func (s *AuthService) Login(
 		return nil, err
 	}
 
-	// Use HSet to store multiple devices per user
 	if err := s.redisClient.HSet(ctx, sessionKey, deviceID.String(), sessionBytes).Err(); err != nil {
 		return nil, err
 	}
 
-	// ===== 7. Get all active devices from Redis =====
-	allSessions, err := s.redisClient.HGetAll(ctx, sessionKey).Result()
-	if err != nil && err != redis.Nil {
-		return nil, err
-	}
-
-	var activeDevices []dto.DeviceSessionDto
-	for _, sessionData := range allSessions {
-		var session deviceSession
-		if err := json.Unmarshal([]byte(sessionData), &session); err == nil {
-			activeDevices = append(activeDevices, dto.DeviceSessionDto{
-				DeviceID:   session.DeviceID.String(),
-				DeviceName: session.DeviceName,
-				UserAgent:  session.UserAgent,
-				LoggedInAt: session.LoggedInAt,
-			})
-		}
-	}
-
-	// ===== 8. Build response =====
-	status := "inactive"
-	if user.IsActive {
-		status = "active"
-	}
+	// ===== 9. Build response =====
+	status := "active"
 
 	var dob *string
 	if user.DateOfBirth != nil {
@@ -404,12 +381,11 @@ func (s *AuthService) Login(
 		dob = &f
 	}
 
-
 	currentDevice := dto.DeviceSessionDto{
 		DeviceID:   deviceID.String(),
 		DeviceName: req.DeviceInfo.DeviceName,
 		UserAgent:  req.DeviceInfo.UserAgent,
-		LoggedInAt: sessionPayload.LoggedInAt,
+		LoggedInAt: time.Now().Format(time.RFC3339),
 	}
 
 	return &dto.LoginResponseDto{
@@ -426,7 +402,6 @@ func (s *AuthService) Login(
 			CreatedAt:   user.CreatedAt.Format(time.RFC3339),
 		},
 		CurrentDevice: currentDevice,
-		ActiveDevices: activeDevices,
 	}, nil
 }
 
