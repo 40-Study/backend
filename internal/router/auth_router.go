@@ -13,20 +13,17 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	auth.Post("/register/request", authHandler.RequestRegister)
 	auth.Post("/register", authHandler.Register)
 	auth.Post("/login", authHandler.Login) // done 
-	auth.Post("/reset-password/request", authHandler.RequestPasswordReset)
-	auth.Post("/reset-password", authHandler.ResetPassword)
+	auth.Post("/reset-password/request", authHandler.RequestPasswordReset)  // done
+	auth.Post("/reset-password", authHandler.ResetPassword) // done
 	auth.Post("/refresh-token", authHandler.RefreshToken) // done
 
 	
 	auth.Use(middleware.AuthMiddleware(cfg, redis))
 	
-	auth.Get("/me", authHandler.GetMe)// done 
-	auth.Get("/devices", authHandler.GetAllDevices) // Get all active devices
-	auth.Post("/logout", authHandler.LogoutOneDevice) // done with logout one device
-	auth.Post("/logout-all", authHandler.LogoutAll) // done with logout all devices
-	auth.Put("/change-password", authHandler.ChangePassword) // done 
-	// update profile  
-
-
-	// updata
+	auth.Get("/me", authHandler.GetMe)
+	auth.Put("/me", authHandler.UpdateMe)
+	auth.Get("/devices", authHandler.GetAllDevices)
+	auth.Post("/logout", authHandler.LogoutOneDevice)
+	auth.Post("/logout-all", authHandler.LogoutAll)
+	auth.Put("/change-password", authHandler.ChangePassword)
 }

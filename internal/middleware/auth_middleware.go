@@ -3,6 +3,7 @@ package middleware
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/redis/go-redis/v9"
@@ -12,8 +13,20 @@ import (
 
 func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// ===== 1. Get access token from cookie =====
-		accessToken := c.Cookies("accessToken")
+		// ===== 1. Get access token from Header or Cookie =====
+		var accessToken string
+
+		// Try Header first: Authorization: Bearer <token>
+		authHeader := c.Get("Authorization")
+		if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+			accessToken = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+
+		// Fallback to Cookie
+		if accessToken == "" {
+			accessToken = c.Cookies("accessToken")
+		}
+
 		if accessToken == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error": "Missing access token",

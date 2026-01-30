@@ -2,16 +2,23 @@ package repository
 
 import (
 	"context"
-	"errors"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"study.com/v1/internal/model"
 )
 
 type UserRoleRepositoryInterface interface {
-	FindByCode(ctx context.Context, code string) (*model.UserRole, error)
-	FindByID(ctx context.Context, id uint) (*model.UserRole, error)
-	GetAll(ctx context.Context) ([]model.UserRole, error)
+	// CreateUserRoles creates multiple user-role associations in a single transaction
+	CreateUserRoles(ctx context.Context, userRoles []model.UserRole) error
+	// CreateUserRole creates a single user-role association
+	CreateUserRole(ctx context.Context, userRole *model.UserRole) error
+	// FindByUserID finds all roles for a specific user
+	FindByUserID(ctx context.Context, userID uuid.UUID) ([]model.UserRole, error)
+	// FindByUserIDWithRoles finds all user_roles with preloaded Role data
+	FindByUserIDWithRoles(ctx context.Context, userID uuid.UUID) ([]model.UserRole, error)
+	// DeleteByUserID deletes all user-role associations for a user
+	DeleteByUserID(ctx context.Context, userID uuid.UUID) error
 }
 
 type UserRoleRepository struct {
@@ -22,35 +29,47 @@ func NewUserRoleRepository(db *gorm.DB) *UserRoleRepository {
 	return &UserRoleRepository{db: db}
 }
 
-func (r *UserRoleRepository) FindByCode(ctx context.Context, code string) (*model.UserRole, error) {
-	var role model.UserRole
-	err := r.db.WithContext(ctx).Where("code = ? AND is_active = ?", code, true).First(&role).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
+// CreateUserRoles creates multiple user-role associations
+func (r *UserRoleRepository) CreateUserRoles(ctx context.Context, userRoles []model.UserRole) error {
+	if len(userRoles) == 0 {
+		return nil
 	}
-	return &role, nil
+	return r.db.WithContext(ctx).Create(&userRoles).Error
 }
 
-func (r *UserRoleRepository) FindByID(ctx context.Context, id uint) (*model.UserRole, error) {
-	var role model.UserRole
-	err := r.db.WithContext(ctx).Where("id = ? AND is_active = ?", id, true).First(&role).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &role, nil
+// CreateUserRole creates a single user-role association
+func (r *UserRoleRepository) CreateUserRole(ctx context.Context, userRole *model.UserRole) error {
+	return r.db.WithContext(ctx).Create(userRole).Error
 }
 
-func (r *UserRoleRepository) GetAll(ctx context.Context) ([]model.UserRole, error) {
-	var roles []model.UserRole
-	err := r.db.WithContext(ctx).Where("is_active = ?", true).Find(&roles).Error
+// FindByUserID finds all user_roles entries for a user
+func (r *UserRoleRepository) FindByUserID(ctx context.Context, userID uuid.UUID) ([]model.UserRole, error) {
+	var userRoles []model.UserRole
+	err := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Find(&userRoles).Error
 	if err != nil {
 		return nil, err
 	}
-	return roles, nil
+	return userRoles, nil
+}
+
+// FindByUserIDWithRoles finds all user_roles with preloaded Role data
+func (r *UserRoleRepository) FindByUserIDWithRoles(ctx context.Context, userID uuid.UUID) ([]model.UserRole, error) {
+	var userRoles []model.UserRole
+	err := r.db.WithContext(ctx).
+		Preload("Role").
+		Where("user_id = ?", userID).
+		Find(&userRoles).Error
+	if err != nil {
+		return nil, err
+	}
+	return userRoles, nil
+}
+
+// DeleteByUserID deletes all user-role associations for a user
+func (r *UserRoleRepository) DeleteByUserID(ctx context.Context, userID uuid.UUID) error {
+	return r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Delete(&model.UserRole{}).Error
 }

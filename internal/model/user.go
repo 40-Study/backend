@@ -12,7 +12,7 @@ type User struct {
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
-	Email        string         `gorm:"type:varchar(255);uniqueIndex;not null" json:"email"`
+	Email string `gorm:"type:varchar(255);uniqueIndex:idx_users_email;not null"`
 	PasswordHash string         `gorm:"type:varchar(255);not null;column:password_hash" json:"-"`
 	UserName     string         `gorm:"type:varchar(100);not null;column:user_name" json:"user_name"`
 	FullName     *string        `gorm:"type:varchar(255);column:full_name" json:"full_name,omitempty"`
@@ -21,11 +21,12 @@ type User struct {
 	ParentPhone  *string        `gorm:"type:varchar(20);column:parent_phone" json:"parent_phone,omitempty"`
 	DateOfBirth  *time.Time     `gorm:"type:date;column:date_of_birth" json:"date_of_birth,omitempty"`
 	Bio          *string        `gorm:"type:text" json:"bio,omitempty"`
-	RoleID       uint           `gorm:"not null;index;column:role_id" json:"role_id"`
-	Role         UserRole       `gorm:"foreignKey:RoleID" json:"role,omitempty"`
 	IsVerified   bool           `gorm:"default:false;column:is_verified" json:"is_verified"`
 	IsActive     bool           `gorm:"default:true;index;column:is_active" json:"is_active"`
 	LastLoginAt  *time.Time     `gorm:"column:last_login_at" json:"last_login_at,omitempty"`
+
+	// Many-to-many relationship with roles via user_roles junction table
+	UserRoles []UserRole `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
 
 	// Relationships
 	VerificationCodes []VerificationCode  `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`

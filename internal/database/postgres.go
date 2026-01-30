@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"study.com/v1/internal/model"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -41,8 +42,17 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 }
 
 func Migrate(db *gorm.DB) error {
-	return db.AutoMigrate()
-}
+		return db.AutoMigrate(
+			// Core tables
+			&model.User{},
+			&model.Role{},
+	
+			// Junction table (PHẢI SAU User + Role)
+			&model.UserRole{},
+	
+			
+		)
+	}
 
 func Close(db *gorm.DB) error {
 	sqlDB, err := db.DB()

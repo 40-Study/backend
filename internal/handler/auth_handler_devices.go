@@ -3,8 +3,7 @@ package handler
 import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"study.com/v1/internal/service"
-)
+)	
 
 func (h *AuthHandler) GetAllDevices(c *fiber.Ctx) error {
 	// ===== 1. Get user_id from token (set by auth middleware) =====

@@ -18,6 +18,7 @@ type AuthHandlerInterface interface {
 	RequestPasswordReset(c *fiber.Ctx) error
 	ResetPassword(c *fiber.Ctx) error
 	GetMe(c *fiber.Ctx) error
+	UpdateMe(c *fiber.Ctx) error
 	GetAllDevices(c *fiber.Ctx) error
 	LogoutOneDevice(c *fiber.Ctx) error
 	LogoutAll(c *fiber.Ctx) error
@@ -34,6 +35,16 @@ func NewAuthHandler(authService service.AuthServiceInterface) *AuthHandler {
 	}
 }
 
+// Register handles POST /auth/register
+// Verifies OTP and creates user in database with assigned roles
+// @Summary Register new user (verify OTP)
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param request body dto.VerifyOtpRequestDto true "OTP verification"
+// @Success 201 {object} dto.RegisterResponseDto
+// @Failure 400 {object} map[string]interface{}
+// @Router /auth/register [post]
 func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	var req dto.VerifyOtpRequestDto
 	if err := c.BodyParser(&req); err != nil {
@@ -59,11 +70,21 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 		})
 	}
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message": "Register successfully",
+		"message": "User registered successfully",
 		"data":    response,
 	})
 }
 
+// RequestRegister handles POST /auth/register/request
+// Validates registration data and sends OTP to email
+// @Summary Request registration (send OTP)
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param request body dto.RegisterRequestDto true "Registration data"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Router /auth/register/request [post]
 func (h *AuthHandler) RequestRegister(c *fiber.Ctx) error {
 	var req dto.RegisterRequestDto
 	if err := c.BodyParser(&req); err != nil {
@@ -89,7 +110,7 @@ func (h *AuthHandler) RequestRegister(c *fiber.Ctx) error {
 		})
 	}
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "OTP sent to your email",
+		"message": "OTP sent to your email. Please verify within 5 minutes.",
 	})
 }
 
@@ -304,6 +325,55 @@ func (h *AuthHandler) GetMe(c *fiber.Ctx) error {
 	})
 }
 
+func (h *AuthHandler) UpdateMe(c *fiber.Ctx) error {
+	// ===== 1. Get user_id from token =====
+	user_id := c.Locals("user_id")
+	if user_id == nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Empty userId",
+		})
+	}
+
+	uid, ok := user_id.(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid userId",
+		})
+	}
+
+	// ===== 2. Parse request body =====
+	var req dto.UpdateMeRequestDto
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid request body",
+			"error":   err.Error(),
+		})
+	}
+
+	// ===== 3. Validate request =====
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
+	// ===== 4. Call service =====
+	user, err := h.authService.UpdateMe(c.Context(), uid, req)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Update user info failed",
+			"error":   err.Error(),
+		})
+	}
+
+	// ===== 5. Return response =====
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Update user info successfully",
+		"data":    user,
+	})
+}
+
 func (h *AuthHandler) ChangePassword(c *fiber.Ctx) error {
 	var req dto.ChangePasswordRequestDto
 	if err := c.BodyParser(&req); err != nil {
@@ -348,7 +418,7 @@ func (h *AuthHandler) ChangePassword(c *fiber.Ctx) error {
 }
 
 func (h *AuthHandler) RequestPasswordReset(c *fiber.Ctx) error {
-	var req dto.ForgotPasswordRequestDto
+	var req dto.RequestPasswordResetDto
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid request body",

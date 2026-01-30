@@ -3,61 +3,30 @@ package model
 import (
 	"time"
 
-	"gorm.io/gorm"
+	"github.com/google/uuid"
 )
 
-// Role code constants
-const (
-	RoleCodeStudentIndependent = "student_independent" // Học sinh tự chủ tài chính
-	RoleCodeStudentDependent   = "student_dependent"   // Học sinh chưa tự chủ tài chính
-	RoleCodeParent             = "parent"              // Phụ huynh
-)
-
+// UserRole represents the many-to-many relationship between users and roles
+// Based on 'user_roles' junction table in schema
 type UserRole struct {
-	ID          uint           `gorm:"primaryKey;autoIncrement" json:"id"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
-	Code        string         `gorm:"type:varchar(50);uniqueIndex;not null" json:"code"`
-	Name        string         `gorm:"type:varchar(100);not null" json:"name"`
-	Description *string        `gorm:"type:varchar(500)" json:"description,omitempty"`
-	IsActive    bool           `gorm:"default:true;index" json:"is_active"`
+	ID             uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	UserID         uuid.UUID  `gorm:"type:uuid;not null;index" json:"user_id"`
+	RoleID         uuid.UUID  `gorm:"type:uuid;not null;index" json:"role_id"`
+	OrganizationID *uuid.UUID `gorm:"type:uuid;index;column:organization_id" json:"organization_id,omitempty"`
+	GrantedAt      time.Time  `gorm:"default:CURRENT_TIMESTAMP;column:granted_at" json:"granted_at"`
+	ExpiresAt      *time.Time `gorm:"column:expires_at" json:"expires_at,omitempty"`
+	GrantedBy      *uuid.UUID `gorm:"type:uuid;column:granted_by" json:"granted_by,omitempty"`
+	Notes          *string    `gorm:"type:text" json:"notes,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 
-	// Relationships
-	Users []User `gorm:"foreignKey:RoleID" json:"-"`
+	// Relationships (for eager loading)
+	User *User `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	Role *Role `gorm:"foreignKey:RoleID" json:"role,omitempty"`
 }
 
 func (UserRole) TableName() string {
 	return "user_roles"
 }
 
-// DefaultUserRoles trả về danh sách role mặc định để seed vào database
-func DefaultUserRoles() []UserRole {
-	studentIndependentDesc := "Học sinh có khả năng tự quản lý tài chính cá nhân"
-	studentDependentDesc := "Học sinh cần sự giám sát tài chính từ phụ huynh"
-	parentDesc := "Phụ huynh giám sát tài chính của học sinh"
-
-	return []UserRole{
-		{
-			ID:          1,
-			Code:        RoleCodeStudentIndependent,
-			Name:        "Học sinh tự chủ tài chính",
-			Description: &studentIndependentDesc,
-			IsActive:    true,
-		},
-		{
-			ID:          2,
-			Code:        RoleCodeStudentDependent,
-			Name:        "Học sinh chưa tự chủ tài chính",
-			Description: &studentDependentDesc,
-			IsActive:    true,
-		},
-		{
-			ID:          3,
-			Code:        RoleCodeParent,
-			Name:        "Phụ huynh",
-			Description: &parentDesc,
-			IsActive:    true,
-		},
-	}
-}
+// UserRoleUniqueIndex represents the unique constraint: UNIQUE(user_id, role_id, organization_id)
+// This is handled by GORM migration or manually via SQL

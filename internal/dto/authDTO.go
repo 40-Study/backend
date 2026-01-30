@@ -2,6 +2,13 @@ package dto
 
 import "github.com/google/uuid"
 
+// RoleDto - Role information in responses
+type RoleDto struct {
+	ID   string `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Code string `json:"code" example:"student"`
+	Name string `json:"name" example:"Học sinh"`
+}
+
 type DeviceInfoDTO struct {
 	DeviceID   string `json:"device_id" validate:"required,uuid" example:"550e8400-e29b-41d4-a716-446655440000"`
 	DeviceName string `json:"device_name" validate:"required,min=2,max=100" example:"iPhone 14 Pro"`
@@ -49,15 +56,17 @@ type RefreshTokenResponseDto struct {
 }
 
 
-type ForgotPasswordRequestDto struct {
+type RequestPasswordResetDto struct {
 	Email string `json:"email" validate:"required,email" example:"student@example.com"`
 }
 
 type ResetPasswordRequestDto struct {
-	Token           string `json:"token" validate:"required,uuid" example:"550e8400-e29b-41d4-a716-446655440000"`
-	NewPassword     string `json:"new_password" validate:"required,min=8,max=72,containsany=!@#$%^&*()" example:"SecureP@ssw0rd2024!"`
-	ConfirmPassword string `json:"confirm_password" validate:"required,eqfield=NewPassword" example:"SecureP@ssw0rd2024!"`
+	Email           string `json:"email" validate:"required,email"`
+	Otp             string `json:"otp" validate:"required,len=6,numeric"`
+	NewPassword     string `json:"new_password" validate:"required,min=8,max=72"`
+	ConfirmPassword string `json:"confirm_password" validate:"required,eqfield=NewPassword"`
 }
+
 
 type ChangePasswordRequestDto struct {
 	OldPassword     string        `json:"old_password" validate:"required,min=8,max=72" example:"OldPass123!"`
@@ -68,30 +77,42 @@ type ChangePasswordRequestDto struct {
 }
 
 
+// RegisterRequestDto - Request body for POST /auth/register/request
+// Gửi thông tin đăng ký và nhận OTP qua email
 type RegisterRequestDto struct {
-	FullName        string `json:"full_name" validate:"required,min=2,max=100" example:"Nguyen Van A"`
-	Username        string `json:"username" validate:"required,alphanum,min=3,max=30" example:"student123"`
-	Email           string `json:"email" validate:"required,email,max=255" example:"student@example.com"`
-	Password        string `json:"password" validate:"required,min=8,max=72,nefield=Username,nefield=Email,containsany=!@#$%^&*()" example:"ResilientP@ss!23"`
-	ConfirmPassword string `json:"confirm_password" validate:"required,eqfield=Password" example:"ResilientP@ss!23"`
-	Phone           string `json:"phone" validate:"required,e164" example:"+84901234567"`
-	DateOfBirth     string `json:"date_of_birth,omitempty" validate:"omitempty,datetime=2006-01-02" example:"2005-01-01"`
-	RoleCode        string `json:"role_code" validate:"required,oneof=student_independent student_dependent parent" example:"student_independent"`
-	ParentPhone     string `json:"parent_phone,omitempty" validate:"required_if=RoleCode student_dependent,omitempty,e164" example:"+84901234568"`
+	Email           string   `json:"email" validate:"required,email,max=255" example:"student@example.com"`
+	Password        string   `json:"password" validate:"required,min=8,max=72" example:"SecurePass123!"`
+	ConfirmPassword string   `json:"confirm_password" validate:"required,eqfield=Password" example:"SecurePass123!"`
+	UserName        string   `json:"user_name" validate:"required,min=3,max=100" example:"student123"`
+	FullName        string   `json:"full_name,omitempty" validate:"omitempty,min=2,max=255" example:"Nguyen Van A"`
+	RoleCodes       []string `json:"role_codes" validate:"required,min=1,max=2,dive,oneof=student parent" example:"[\"student\"]"`
 }
 
+// RegisterResponseDto - Response for successful registration
 type RegisterResponseDto struct {
-	AccessToken  string          `json:"access_token"`
-	RefreshToken string          `json:"refresh_token"`
-	User         UserResponseDto `json:"user"`
+	ID        string   `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Email     string   `json:"email" example:"student@example.com"`
+	UserName  string   `json:"user_name" example:"student123"`
+	FullName  *string  `json:"full_name,omitempty" example:"Nguyen Van A"`
+	RoleCodes []string `json:"role_codes" example:"[\"student\"]"`
 }
 
+// VerifyOtpRequestDto - Request body for POST /auth/register
+// Xác thực OTP và tạo user thật trong database
 type VerifyOtpRequestDto struct {
-	Email       string        `json:"email" validate:"required,email" example:"student@example.com"`
-	OTPRegister string        `json:"otp_register" validate:"required,len=6,numeric" example:"123456"`
-	DeviceInfo  DeviceInfoDTO `json:"device_info" validate:"required"`
+	Email string `json:"email" validate:"required,email" example:"student@example.com"`
+	OTP   string `json:"otp" validate:"required,len=6,numeric" example:"123456"`
 }
 
+// VerifyOtpResponseDto - Response for OTP verification (kept for backward compatibility)
 type VerifyOtpResponseDto struct {
 	User UserResponseDto `json:"user"`
+}
+
+// UpdateMeRequestDto - Request body for updating user profile
+// All fields are optional (partial update)
+type UpdateMeRequestDto struct {
+	Username    *string `json:"username,omitempty" validate:"omitempty,alphanum,min=3,max=30" example:"student123"`
+	Phone       *string `json:"phone,omitempty" validate:"omitempty,e164" example:"+84901234567"`
+	DateOfBirth *string `json:"date_of_birth,omitempty" validate:"omitempty,datetime=2006-01-02" example:"2005-01-01"`
 }

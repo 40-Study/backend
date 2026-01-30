@@ -15,6 +15,7 @@ type UserRepositoryInterface interface {
 	FindUserByPhone(ctx context.Context, phone string) (*model.User, error)
 	FindUserByID(ctx context.Context, id uuid.UUID) (*model.User, error)
 	UpdateUser(ctx context.Context, user *model.User) error
+	UpdateUserProfile(ctx context.Context, userID uuid.UUID, updates map[string]interface{}) error
 	UpdatePasswordHash(ctx context.Context, userID uuid.UUID, newPasswordHash string) error
 }
 
@@ -67,6 +68,28 @@ func (r *UserRepository) FindUserByID(ctx context.Context, id uuid.UUID) (*model
 }
 
 func (r *UserRepository) UpdateUser(ctx context.Context, user *model.User) error {
+	return r.db.WithContext(ctx).Save(user).Error
+}
+
+// UpdateUserProfile updates only specified fields (partial update)
+func (r *UserRepository) UpdateUserProfile(ctx context.Context, userID uuid.UUID, updates map[string]interface{}) error {
+	if len(updates) == 0 {
+		return nil
+	}
+
+	result := r.db.WithContext(ctx).
+		Model(&model.User{}).
+		Where("id = ?", userID).
+		Updates(updates)
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return errors.New("user not found")
+	}
+
 	return nil
 }
 
