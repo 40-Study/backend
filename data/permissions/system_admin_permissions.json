@@ -1,0 +1,42 @@
+[
+  {
+    "name": "DASHBOARD_VIEW_GLOBAL",
+    "description": "Xem Dashboard thống kê toàn bộ hệ thống (User, Traffic, Revenue)"
+  },
+  {
+    "name": "USERS_VIEW_ALL",
+    "description": "Xem danh sách và thông tin chi tiết của mọi user trên hệ thống"
+  },
+  {
+    "name": "USERS_BAN",
+    "description": "Khóa (Ban) hoặc mở khóa tài khoản người dùng vi phạm"
+  },
+  {
+    "name": "ROLES_MANAGE_SYSTEM",
+    "description": "Tạo, sửa đổi cấu trúc Role và Permission của hệ thống"
+  },
+  {
+    "name": "ORG_CREATE",
+    "description": "Cấp phép tạo mới một Tổ chức (Organization) trên hệ thống"
+  },
+  {
+    "name": "ORG_DELETE",
+    "description": "Xóa hoặc đình chỉ hoạt động của một Tổ chức"
+  },
+  {
+    "name": "CATEGORIES_SYSTEM_MANAGE",
+    "description": "Thêm, sửa, xóa danh mục khóa học gốc (System Categories)"
+  },
+  {
+    "name": "COURSES_DELETE_ALL",
+    "description": "Xóa bất kỳ khóa học nào trên hệ thống (Dùng để xử lý vi phạm nội dung)"
+  },
+  {
+    "name": "COURSES_APPROVE_ALL",
+    "description": "Duyệt các khóa học của Giáo viên tự do để cho phép hiển thị lên sàn"
+  },
+  {
+    "name": "SYSTEM_SETTINGS_MANAGE",
+    "description": "Cấu hình tham số hệ thống (Cổng thanh toán, Email server, Storage)"
+  }
+]

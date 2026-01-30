@@ -1,153 +1,70 @@
 [
   {
-    "name": "SYSTEM_ADMIN",
+    "role": "SYSTEM_ADMIN",
     "description": "Quản trị viên hệ thống, có quyền vận hành toàn bộ nền tảng, quản lý người dùng và kiểm duyệt nội dung",
     "permissions": [
       "DASHBOARD_VIEW_GLOBAL",
       "USERS_VIEW_ALL",
-      "USERS_CREATE",
-      "USERS_UPDATE_ALL",
       "USERS_BAN",
-      "USERS_DELETE",
-      "ROLES_VIEW",
-      "ROLES_CREATE",
-      "ROLES_UPDATE",
-      "ROLES_ASSIGN_SYSTEM",
-      "ORG_VIEW_ALL",
+      "ROLES_MANAGE_SYSTEM",
       "ORG_CREATE",
       "ORG_DELETE",
-      "COURSES_VIEW_ALL",
-      "COURSES_UPDATE_ALL",
+      "CATEGORIES_SYSTEM_MANAGE",
       "COURSES_DELETE_ALL",
-      "COURSES_MODERATE",
-      "CONTENT_MODERATE",
-      "SYSTEM_SETTINGS_MANAGE",
-      "SYSTEM_LOGS_VIEW",
-      "REPORTS_VIEW_SYSTEM",
-      "VOUCHERS_CREATE_GLOBAL",
-      "AI_CONFIG_MANAGE"
+      "COURSES_APPROVE_ALL",
+      "SYSTEM_SETTINGS_MANAGE"
     ]
   },
   {
-    "name": "ORG_OWNER",
+    "role": "ORG_OWNER",
     "description": "Chủ tổ chức/trung tâm, quản lý tài nguyên, giáo viên và học sinh trong phạm vi tổ chức của mình",
     "permissions": [
       "ORG_VIEW_OWN",
       "ORG_UPDATE_SETTINGS",
-      "ORG_MEMBERS_INVITE",
-      "ORG_MEMBERS_REMOVE",
-      "ORG_MEMBERS_ASSIGN_ROLE",
-      "ORG_ROLES_CREATE",
-      "ORG_ROLES_UPDATE",
-      "COURSES_CREATE_ORG",
-      "COURSES_UPDATE_ORG",
+      "ORG_MEMBERS_MANAGE",
+      "ORG_ROLES_MANAGE",
+      "ORG_CATEGORIES_MANAGE",
+      "COURSES_APPROVE_OWN_ORG",
       "COURSES_DELETE_ORG",
       "REPORTS_VIEW_ORG",
-      "TRACKING_VIEW_ORG_STUDENTS",
-      "ORDERS_VIEW_ORG"
+      "TRACKING_VIEW_ORG_STUDENTS"
     ]
   },
   {
-    "name": "TEACHER_FREELANCE",
-    "description": "Giáo viên tự do, hoạt động độc lập, tự quản lý và sở hữu nội dung khóa học mình tạo ra",
+    "role": "TEACHER",
+    "description": "Người sáng tạo nội dung và giảng dạy.",
     "permissions": [
-      "USERS_UPDATE_SELF",
       "COURSES_CREATE",
       "COURSES_UPDATE_OWN",
       "COURSES_DELETE_OWN",
-      "LESSONS_MANAGE_OWN",
-      "LIVESTREAMS_HOST",
-      "SUBMISSIONS_GRADE",
-      "COMMENTS_REPLY",
-      "REPORTS_VIEW_SELF_REVENUE",
-      "TRACKING_VIEW_STUDENT_DETAILED",
-      "SANDBOX_EXECUTE",
-      "AI_CHAT"
+      "LESSONS_MANAGE"
     ]
   },
   {
-    "name": "TEACHER_ORG",
-    "description": "Giáo viên thuộc tổ chức, giảng dạy dưới sự quản lý của chủ tổ chức, nội dung thuộc về tổ chức",
+    "role": "TEACHER_APPLICANT",
+    "description": "Người dùng đã nộp hồ sơ đăng ký làm giáo viên, đang chờ xét duyệt. Quyền hạn rất hạn chế so với giáo viên.",
     "permissions": [
-      "USERS_UPDATE_SELF",
-      "COURSES_ACCESS_ASSIGNED",
-      "COURSES_UPDATE_ASSIGNED",
-      "LESSONS_MANAGE_ASSIGNED",
-      "LIVESTREAMS_HOST",
-      "SUBMISSIONS_GRADE",
-      "COMMENTS_REPLY",
-      "TRACKING_VIEW_STUDENT_DETAILED",
-      "SANDBOX_EXECUTE",
-      "AI_CHAT"
-    ]
-  },
-  {
-    "name": "TEACHER_APPLICANT",
-    "description": "Người dùng đang gửi yêu cầu đăng ký trở thành giáo viên, đang trong quá trình chờ xét duyệt hồ sơ",
-    "permissions": [
-      "USERS_VIEW_SELF",
-      "USERS_UPDATE_SELF",
       "TEACHER_PROFILE_UPDATE",
       "APPLICATION_VIEW_STATUS"
     ]
   },
   {
-    "name": "STUDENT_INDEPENDENT",
-    "description": "Học sinh tự chủ tài chính, có quyền tự thanh toán, mua khóa học và tự quản lý lộ trình học tập",
+    "role": "STUDENT",
+    "description": "Người học và tiêu thụ nội dung.",
     "permissions": [
-      "USERS_UPDATE_SELF",
-      "COURSES_VIEW_PUBLIC",
       "COURSES_LEARN",
-      "ORDERS_CREATE",
-      "ORDERS_VIEW_SELF",
-      "VOUCHERS_APPLY",
       "SANDBOX_EXECUTE",
-      "SANDBOX_DEBUG",
-      "AI_CHAT",
-      "AI_FEEDBACK_RECEIVE",
-      "TRACKING_VIEW_SELF",
-      "COMMENTS_CREATE",
-      "COMMENTS_DELETE_OWN",
-      "WISHLIST_MANAGE"
+      "SUBMISSIONS_CREATE",
+      "EXAMS_ATTEMPT"
     ]
   },
   {
-    "name": "STUDENT_DEPENDENT",
-    "description": "Học sinh chưa tự chủ tài chính (trẻ em), tài khoản chịu sự giám sát của phụ huynh, hạn chế quyền thanh toán",
+    "role": "PARENT",
+    "description": "Người giám sát và quản lý tài chính. Không tham gia học tập trực tiếp.",
     "permissions": [
-      "USERS_UPDATE_SELF_LIMITED",
-      "COURSES_VIEW_PUBLIC",
-      "COURSES_LEARN",
-      "SANDBOX_EXECUTE",
-      "SANDBOX_DEBUG",
-      "AI_CHAT",
-      "AI_FEEDBACK_RECEIVE",
-      "TRACKING_VIEW_SELF",
-      "COMMENTS_CREATE",
-      "WISHLIST_ADD"
-    ]
-  },
-  {
-    "name": "PARENT",
-    "description": "Phụ huynh, quản lý tài khoản con cái, thực hiện thanh toán và xem báo cáo giám sát học tập",
-    "permissions": [
-      "USERS_UPDATE_SELF",
-      "RELATIONSHIPS_MANAGE",
+      "CHILD_SETTINGS_UPDATE",
       "TRACKING_VIEW_CHILD",
-      "ALERTS_RECEIVE",
-      "COURSES_VIEW_PUBLIC",
-      "ORDERS_CREATE_FOR_CHILD",
-      "ORDERS_VIEW_SELF",
-      "PAYMENT_HISTORY_VIEW"
-    ]
-  },
-  {
-    "name": "GUEST",
-    "description": "Khách vãng lai, người dùng chưa đăng nhập hoặc chưa có tài khoản, chỉ xem được nội dung công khai",
-    "permissions": [
-      "COURSES_VIEW_PUBLIC",
-      "BLOGS_VIEW",
-      "SYSTEM_INFO_VIEW"
+      "ORDERS_PAY_FOR_CHILD"
     ]
   }
 ]

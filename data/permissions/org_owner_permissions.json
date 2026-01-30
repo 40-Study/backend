@@ -1,0 +1,38 @@
+[
+  {
+    "name": "ORG_VIEW_OWN",
+    "description": "Xem thông tin chi tiết và thống kê của tổ chức mình"
+  },
+  {
+    "name": "ORG_UPDATE_SETTINGS",
+    "description": "Cập nhật thông tin tổ chức (Logo, Banner, Giới thiệu)"
+  },
+  {
+    "name": "ORG_MEMBERS_MANAGE",
+    "description": "Mời giáo viên/học sinh vào tổ chức hoặc xóa họ khỏi tổ chức"
+  },
+  {
+    "name": "ORG_ROLES_MANAGE",
+    "description": "Tạo và phân quyền các vai trò nội bộ (VD: Trợ giảng, Quản lý lớp)"
+  },
+  {
+    "name": "ORG_CATEGORIES_MANAGE",
+    "description": "Tạo, sửa, xóa các danh mục khóa học nội bộ của tổ chức"
+  },
+  {
+    "name": "COURSES_APPROVE_OWN_ORG",
+    "description": "Duyệt các khóa học do giáo viên trong tổ chức tạo ra trước khi public"
+  },
+  {
+    "name": "COURSES_DELETE_ORG",
+    "description": "Quyền xóa hoặc lưu trữ các khóa học thuộc sở hữu của tổ chức"
+  },
+  {
+    "name": "REPORTS_VIEW_ORG",
+    "description": "Xem báo cáo tổng quan về doanh thu và tăng trưởng của tổ chức"
+  },
+  {
+    "name": "TRACKING_VIEW_ORG_STUDENTS",
+    "description": "Xem tiến độ học tập của toàn bộ học sinh thuộc tổ chức"
+  }
+]
