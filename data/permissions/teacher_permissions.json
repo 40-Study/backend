@@ -1,0 +1,18 @@
+[
+  {
+    "name": "COURSES_CREATE",
+    "description": "Khởi tạo khóa học mới"
+  },
+  {
+    "name": "COURSES_UPDATE_OWN",
+    "description": "Chỉnh sửa nội dung khóa học do mình sở hữu hoặc được tổ chức phân công"
+  },
+  {
+    "name": "COURSES_DELETE_OWN",
+    "description": "Xóa khóa học do mình sở hữu (Chỉ áp dụng cho GV Tự túc, không áp dụng cho GV Tổ chức)"
+  },
+  {
+    "name": "LESSONS_MANAGE",
+    "description": "Thêm, sửa, xóa chi tiết các bài giảng (Video, Tài liệu, Quiz) trong khóa học"
+  }
+]

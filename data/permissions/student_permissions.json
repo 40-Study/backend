@@ -1,0 +1,18 @@
+[
+  {
+    "name": "COURSES_LEARN",
+    "description": "Truy cập vào nội dung bài học, video và được hệ thống ghi nhận tiến độ học tập (Tracking)"
+  },
+  {
+    "name": "SANDBOX_EXECUTE",
+    "description": "Thực thi mã nguồn trong môi trường Sandbox/IDE tích hợp"
+  },
+  {
+    "name": "SUBMISSIONS_CREATE",
+    "description": "Nộp bài tập, gửi source code hoặc câu trả lời lên hệ thống để chấm điểm"
+  },
+  {
+    "name": "EXAMS_ATTEMPT",
+    "description": "Tham gia làm bài kiểm tra, bài thi (có tính giờ và chấm điểm)"
+  }
+]

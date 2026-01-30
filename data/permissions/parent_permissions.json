@@ -1,0 +1,14 @@
+[
+  {
+    "name": "CHILD_SETTINGS_UPDATE",
+    "description": "Cấu hình giới hạn thời gian học hoặc đặt lại mật khẩu cho tài khoản con"
+  },
+  {
+    "name": "TRACKING_VIEW_CHILD",
+    "description": "Xem báo cáo chi tiết, biểu đồ tiến độ và lịch sử lỗi sai của con"
+  },
+  {
+    "name": "ORDERS_PAY_FOR_CHILD",
+    "description": "Duyệt và thanh toán các đơn hàng/khóa học do tài khoản con yêu cầu"
+  }
+]
