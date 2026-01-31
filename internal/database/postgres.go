@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"study.com/v1/internal/config"
+	"study.com/v1/internal/model"
 )
 
 func Connect(cfg *config.Config) (*gorm.DB, error) {
@@ -41,7 +42,10 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 }
 
 func Migrate(db *gorm.DB) error {
-	return db.AutoMigrate()
+	return db.AutoMigrate(
+		&model.User{},
+		&model.UserPreference{},
+	)
 }
 
 func Close(db *gorm.DB) error {
