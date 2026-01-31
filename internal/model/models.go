@@ -3,6 +3,14 @@ package model
 // AllModels trả về tất cả models để dùng với AutoMigrate
 func AllModels() []interface{} {
 	return []interface{}{
+		// Roles & Permissions
+		&Permission{},
+		&Role{},
+		&RolePermission{},
+
+		// Organizations
+		&Organization{},
+
 		// Users & Auth
 		&User{},
 		&VerificationCode{},
