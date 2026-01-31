@@ -100,11 +100,17 @@ func (r *RoleRepository) UpdateRole(ctx context.Context, role *model.Role) error
 }
 
 func (r *RoleRepository) DeleteRole(ctx context.Context, id uuid.UUID, hardDelete bool) error {
-	query := r.db.WithContext(ctx)
 	if hardDelete {
-		query = query.Unscoped()
+		return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			// Xóa role_permissions trước
+			if err := tx.Where("role_id = ?", id).Delete(&model.RolePermission{}).Error; err != nil {
+				return err
+			}
+			// Xóa role (hard delete)
+			return tx.Unscoped().Delete(&model.Role{}, "id = ?", id).Error
+		})
 	}
-	return query.Delete(&model.Role{}, "id = ?", id).Error
+	return r.db.WithContext(ctx).Delete(&model.Role{}, "id = ?", id).Error
 }
 
 // ============ Role-Permission Management ============
@@ -168,24 +174,24 @@ func (r *RoleRepository) GetRoleWithPermissions(ctx context.Context, roleID uuid
 }
 
 func (r *RoleRepository) SetRolePermissions(ctx context.Context, roleID uuid.UUID, permissionIDs []uuid.UUID) error {
-	// Xóa tất cả permission cũ của role
-	if err := r.db.WithContext(ctx).
-		Where("role_id = ?", roleID).
-		Delete(&model.RolePermission{}).Error; err != nil {
-		return err
-	}
-
-	// Thêm permission mới
-	if len(permissionIDs) > 0 {
-		rolePermissions := make([]model.RolePermission, len(permissionIDs))
-		for i, permID := range permissionIDs {
-			rolePermissions[i] = model.RolePermission{
-				RoleID:       roleID,
-				PermissionID: permID,
-			}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Xóa tất cả permission cũ của role
+		if err := tx.Where("role_id = ?", roleID).Delete(&model.RolePermission{}).Error; err != nil {
+			return err
 		}
-		return r.db.WithContext(ctx).Create(&rolePermissions).Error
-	}
 
-	return nil
+		// Thêm permission mới
+		if len(permissionIDs) > 0 {
+			rolePermissions := make([]model.RolePermission, len(permissionIDs))
+			for i, permID := range permissionIDs {
+				rolePermissions[i] = model.RolePermission{
+					RoleID:       roleID,
+					PermissionID: permID,
+				}
+			}
+			return tx.Create(&rolePermissions).Error
+		}
+
+		return nil
+	})
 }

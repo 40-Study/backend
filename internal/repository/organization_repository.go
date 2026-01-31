@@ -93,11 +93,28 @@ func (r *OrganizationRepository) UpdateOrganization(ctx context.Context, org *mo
 }
 
 func (r *OrganizationRepository) DeleteOrganization(ctx context.Context, id uuid.UUID, hardDelete bool) error {
-	query := r.db.WithContext(ctx)
 	if hardDelete {
-		query = query.Unscoped()
+		return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			// Lấy danh sách role thuộc organization
+			var roleIDs []uuid.UUID
+			if err := tx.Model(&model.Role{}).Where("organization_id = ?", id).Pluck("id", &roleIDs).Error; err != nil {
+				return err
+			}
+			// Xóa role_permissions của các role thuộc organization
+			if len(roleIDs) > 0 {
+				if err := tx.Where("role_id IN ?", roleIDs).Delete(&model.RolePermission{}).Error; err != nil {
+					return err
+				}
+			}
+			// Xóa roles thuộc organization
+			if err := tx.Unscoped().Where("organization_id = ?", id).Delete(&model.Role{}).Error; err != nil {
+				return err
+			}
+			// Xóa organization
+			return tx.Unscoped().Delete(&model.Organization{}, "id = ?", id).Error
+		})
 	}
-	return query.Delete(&model.Organization{}, "id = ?", id).Error
+	return r.db.WithContext(ctx).Delete(&model.Organization{}, "id = ?", id).Error
 }
 
 func (r *OrganizationRepository) GetOrganizationWithRoles(ctx context.Context, orgID uuid.UUID) (*model.Organization, error) {
