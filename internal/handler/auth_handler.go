@@ -201,15 +201,16 @@ func (h *AuthHandler) LogoutOneDevice(c *fiber.Ctx) error {
 		Value:    "",
 		Expires:  time.Now().Add(-1 * time.Hour),
 		HTTPOnly: true,
-		Secure:   true,
-		SameSite: "Lax",
+		// Secure:   true, // lên https
+		SameSite: "Lax", // same site là khi user đăng nhập từ một trình duyệt, thì khi user 
+		// đăng nhập từ trình duyệt khác, thì cookie sẽ không được gửi đi
 	})
 	c.Cookie(&fiber.Cookie{
 		Name:     "rfToken",
 		Value:    "",
 		Expires:  time.Now().Add(-1 * time.Hour),
 		HTTPOnly: true,
-		Secure:   true,
+		// Secure:   true,
 		SameSite: "Lax",
 	})
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -263,13 +264,25 @@ func (h *AuthHandler) LogoutAll(c *fiber.Ctx) error {
 }
 
 func (h *AuthHandler) RefreshToken(c *fiber.Ctx) error {
+	// Try to get refresh token from: 1) Cookie, 2) Request body
 	old_rfToken := c.Cookies("rfToken")
+
+	// If not in cookie, try request body
+	if old_rfToken == "" {
+		var body struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := c.BodyParser(&body); err == nil && body.RefreshToken != "" {
+			old_rfToken = body.RefreshToken
+		}
+	}
+
 	if old_rfToken == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Missing refresh token",
 		})
 	}
-	
+
 	response, err := h.authService.RefreshToken(c.Context(), old_rfToken)
 	if err != nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{

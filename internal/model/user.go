@@ -19,6 +19,7 @@ type User struct {
 	AvatarURL    *string        `gorm:"type:varchar(500);column:avatar_url" json:"avatar_url,omitempty"`
 	Phone        *string        `gorm:"type:varchar(20)" json:"phone,omitempty"`
 	ParentPhone  *string        `gorm:"type:varchar(20);column:parent_phone" json:"parent_phone,omitempty"`
+	ParentEmail  *string        `gorm:"type:varchar(255);column:parent_email" json:"parent_email,omitempty"`
 	DateOfBirth  *time.Time     `gorm:"type:date;column:date_of_birth" json:"date_of_birth,omitempty"`
 	Bio          *string        `gorm:"type:text" json:"bio,omitempty"`
 	IsVerified   bool           `gorm:"default:false;column:is_verified" json:"is_verified"`

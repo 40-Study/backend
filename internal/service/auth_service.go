@@ -65,28 +65,37 @@ type PendingRegistration struct {
 	PasswordHash string   `json:"password_hash"`
 	UserName     string   `json:"user_name"`
 	FullName     string   `json:"full_name,omitempty"`
-	RoleCodes    []string `json:"role_codes"`
+	RoleIDs      []string `json:"role_ids"`
 	OTP          string   `json:"otp"`
 	CreatedAt    string   `json:"created_at"`
 }
 
 func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterRequestDto) error {
-	
-	// ===== 2. Validate role_codes (chỉ cho phép "student" hoặc "parent") =====
-	allowedRoles := map[string]bool{"student": true, "parent": true}
-	for _, code := range req.RoleCodes {
-		if !allowedRoles[code] {
-			return fmt.Errorf("invalid role code: %s, only 'student' or 'parent' allowed", code)
+	// ===== 2. Parse and validate role IDs =====
+	roleUUIDs := make([]uuid.UUID, len(req.RoleIDs))
+	for i, idStr := range req.RoleIDs {
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			return fmt.Errorf("invalid role_id format: %s", idStr)
 		}
+		roleUUIDs[i] = id
 	}
 
 	// ===== 3. Check if roles exist in database =====
-	roles, err := s.roleRepo.FindByCodes(ctx, req.RoleCodes)
+	roles, err := s.roleRepo.FindByIDs(ctx, roleUUIDs)
 	if err != nil {
 		return fmt.Errorf("failed to validate roles: %w", err)
 	}
-	if len(roles) != len(req.RoleCodes) {
-		return errors.New("one or more role codes are invalid")
+	if len(roles) != len(req.RoleIDs) {
+		return errors.New("one or more role IDs are invalid")
+	}
+
+	// ===== 3.1 Validate allowed roles (only student or parent) =====
+	allowedRoles := map[string]bool{"student": true, "parent": true}
+	for _, role := range roles {
+		if !allowedRoles[role.Code] {
+			return fmt.Errorf("role '%s' is not allowed for registration", role.Code)
+		}
 	}
 
 	// ===== 4. Check email already exists =====
@@ -116,7 +125,7 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 		PasswordHash: passwordHash,
 		UserName:     req.UserName,
 		FullName:     req.FullName,
-		RoleCodes:    req.RoleCodes,
+		RoleIDs:      req.RoleIDs,
 		OTP:          otp,
 		CreatedAt:    time.Now().Format(time.RFC3339),
 	}
@@ -145,11 +154,6 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 }
 
 func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto) (*dto.RegisterResponseDto, error) {
-	// ===== 1. Check Redis client =====
-	if s.redisClient == nil {
-		return nil, errors.New("redis client is not initialized")
-	}
-
 	// ===== 2. Get pending registration from Redis =====
 	pendingKey := fmt.Sprintf("register:otp:%s", req.Email)
 	pendingData, err := s.redisClient.Get(ctx, pendingKey).Result()
@@ -171,12 +175,21 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		return nil, errors.New("invalid OTP")
 	}
 
-	// ===== 5. Get Roles by codes =====
-	roles, err := s.roleRepo.FindByCodes(ctx, pending.RoleCodes)
+	// ===== 5. Parse and get Roles by IDs =====
+	roleUUIDs := make([]uuid.UUID, len(pending.RoleIDs))
+	for i, idStr := range pending.RoleIDs {
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid role_id in pending data: %s", idStr)
+		}
+		roleUUIDs[i] = id
+	}
+
+	roles, err := s.roleRepo.FindByIDs(ctx, roleUUIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find roles: %w", err)
 	}
-	if len(roles) != len(pending.RoleCodes) {
+	if len(roles) != len(pending.RoleIDs) {
 		return nil, errors.New("one or more roles are invalid")
 	}
 
@@ -223,19 +236,23 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 	// ===== 9. Delete pending registration from Redis =====
 	_ = s.redisClient.Del(ctx, pendingKey).Err()
 
-	// ===== 10. Collect role codes for response =====
-	roleCodes := make([]string, len(roles))
+	// ===== 10. Build roles response =====
+	roleDtos := make([]dto.RoleDto, len(roles))
 	for i, role := range roles {
-		roleCodes[i] = role.Code
+		roleDtos[i] = dto.RoleDto{
+			ID:   role.ID.String(),
+			Code: role.Code,
+			Name: role.Name,
+		}
 	}
 
 	// ===== 11. Build response =====
 	return &dto.RegisterResponseDto{
-		ID:        user.ID.String(),
-		Email:     user.Email,
-		UserName:  user.UserName,
-		FullName:  fullName,
-		RoleCodes: roleCodes,
+		ID:       user.ID.String(),
+		Email:    user.Email,
+		UserName: user.UserName,
+		FullName: fullName,
+		Roles:    roleDtos,
 	}, nil
 }
 
@@ -322,9 +339,6 @@ func (s *AuthService) Login(
 		return nil, err
 	}
 
-	// ===== 9. Build response =====
-	status := "active"
-
 	var dob *string
 	if user.DateOfBirth != nil {
 		f := user.DateOfBirth.Format("2006-01-02")
@@ -348,18 +362,14 @@ func (s *AuthService) Login(
 			Phone:       user.Phone,
 			AvatarUrl:   user.AvatarURL,
 			DateOfBirth: dob,
-			Status:      &status,
+			IsActive:    user.IsActive,
 			CreatedAt:   user.CreatedAt.Format(time.RFC3339),
 		},
 		CurrentDevice: currentDevice,
 	}, nil
 }
 
-
 func (s *AuthService) Logout(ctx context.Context, userId, deviceId uuid.UUID) error {
-	if s.redisClient == nil {
-		return errors.New("redis client is not initialized")
-	}
 
 	// 1. Remove refresh token of this device
 	refreshKey := fmt.Sprintf("auth:refresh:%s", userId)
@@ -376,19 +386,11 @@ func (s *AuthService) Logout(ctx context.Context, userId, deviceId uuid.UUID) er
 	return nil
 }
 
-
 func (s *AuthService) LogoutAllDevice(ctx context.Context, userId uuid.UUID) error {
-	if s.redisClient == nil {
-		return errors.New("redis client is not initialized")
-	}
 	return s.revokeAllSessions(ctx, userId)
 }
 
-
 func (s *AuthService) RefreshToken(ctx context.Context, oldRefreshToken string) (*dto.RefreshTokenResponseDto, error) {
-	if s.redisClient == nil {
-		return nil, errors.New("redis client is not initialized")
-	}
 
 	// ===== 1. Parse old refresh token =====
 	claims, err := utils.ParseToken(s.cfg, oldRefreshToken)
@@ -411,9 +413,10 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldRefreshToken string) 
 		return nil, errors.New("all sessions revoked - please login again")
 	}
 
-	// ===== 3. Check if refresh token exists in Redis =====
-	refreshTokenKey := fmt.Sprintf("refresh_token:%s:%s", claims.UserID, claims.DeviceID)
-	storedToken, err := s.redisClient.Get(ctx, refreshTokenKey).Result()
+	// ===== 3. Check if refresh token exists in Redis (Using HGET) =====
+	// Key used in Login: auth:refresh:{userID}
+	refreshTokenKey := fmt.Sprintf("auth:refresh:%s", claims.UserID)
+	storedToken, err := s.redisClient.HGet(ctx, refreshTokenKey, claims.DeviceID.String()).Result()
 	if err == redis.Nil {
 		return nil, errors.New("refresh token not found - please login again")
 	}
@@ -432,10 +435,12 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldRefreshToken string) 
 		return nil, err
 	}
 
-	// ===== 6. Update refresh token in Redis =====
-	if err := s.redisClient.Set(ctx, refreshTokenKey, newRefreshToken, s.cfg.JWTRefreshExpiration).Err(); err != nil {
+	// ===== 6. Update refresh token in Redis (Using HSET) =====
+	if err := s.redisClient.HSet(ctx, refreshTokenKey, claims.DeviceID.String(), newRefreshToken).Err(); err != nil {
 		return nil, err
 	}
+	// Extend TTL for the user's session
+	s.redisClient.Expire(ctx, refreshTokenKey, s.cfg.JWTRefreshExpiration)
 
 	return &dto.RefreshTokenResponseDto{
 		AccessToken:  newAccessToken,
@@ -472,11 +477,11 @@ func (s *AuthService) GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserRes
 		return nil, errors.New("user not found")
 	}
 
-	// ===== 3. Build response =====
-	status := "inactive"
-	if user.IsActive {
-		status = "active"
-	}
+	// // ===== 3. Build response =====
+	// status := "inactive"
+	// if user.IsActive {
+	// 	status = "active"
+	// }
 
 	var dob *string
 	if user.DateOfBirth != nil {
@@ -491,7 +496,7 @@ func (s *AuthService) GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserRes
 		Phone:       user.Phone,
 		AvatarUrl:   user.AvatarURL,
 		DateOfBirth: dob,
-		Status:      &status,
+		IsActive:    user.IsActive,
 		CreatedAt:   user.CreatedAt.Format(time.RFC3339),
 	}
 
@@ -621,20 +626,12 @@ type PasswordResetOTP struct {
 }
 
 const (
-	maxOTPAttempts   = 5
-	otpTTL           = 5 * time.Minute
-	otpRateLimitTTL  = 60 * time.Second // 1 request per minute
+	maxOTPAttempts = 5
+	otpTTL         = 5 * time.Minute
 )
 
 func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) error {
-	// ===== 1. Check rate limit (1 request per minute per email) =====
-	rateLimitKey := fmt.Sprintf("password_reset:rate:%s", email)
-	exists, _ := s.redisClient.Exists(ctx, rateLimitKey).Result()
-	if exists > 0 {
-		return errors.New("please wait before requesting another OTP")
-	}
-
-	// ===== 2. Find user by email (don't reveal if user exists) =====
+	// ===== 1. Find user by email (don't reveal if user exists) =====
 	user, err := s.userRepo.FindUserByEmail(ctx, email)
 	if err != nil {
 		// Log error internally but return generic message
@@ -646,10 +643,7 @@ func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) er
 		return nil
 	}
 
-	// ===== 3. Set rate limit =====
-	_ = s.redisClient.Set(ctx, rateLimitKey, "1", otpRateLimitTTL).Err()
-
-	// ===== 4. Generate 6-digit OTP =====
+	// ===== 2. Generate 6-digit OTP =====
 	otp, err := utils.GenerateOTP(6)
 	if err != nil {
 		return errors.New("failed to generate OTP")
@@ -753,10 +747,10 @@ func (s *AuthService) ResetPassword(ctx context.Context, req dto.ResetPasswordRe
 	// ===== 8. Delete OTP from Redis =====
 	_ = s.redisClient.Del(ctx, otpKey).Err()
 
-	// ===== 9. Invalidate all sessions (force re-login on all devices) =====
-	if err := s.revokeAllSessions(ctx, user.ID); err != nil {
-		log.Printf("[WARN] Failed to revoke sessions for user %s: %v", user.ID, err)
-	}
+	// // ===== 9. Invalidate all sessions (force re-login on all devices) =====
+	// if err := s.revokeAllSessions(ctx, user.ID); err != nil {
+	// 	log.Printf("[WARN] Failed to revoke sessions for user %s: %v", user.ID, err)
+	// } optional
 
 	// ===== 10. Invalidate user cache =====
 	userCacheKey := fmt.Sprintf("user_cache:%s", user.ID)

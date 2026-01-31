@@ -31,7 +31,7 @@ type UserResponseDto struct {
 	Phone       *string   `json:"phone,omitempty" example:"+84901234567"`
 	AvatarUrl   *string   `json:"avatar_url,omitempty" example:"https://example.com/avatar.jpg"`
 	DateOfBirth *string   `json:"date_of_birth,omitempty" example:"2005-01-01"`
-	Status      *string   `json:"status,omitempty" example:"active"`
+	IsActive    bool      `json:"is_active" example:"true"`
 	CreatedAt   string    `json:"created_at" example:"2023-01-01T00:00:00Z"`
 }
 
@@ -85,16 +85,16 @@ type RegisterRequestDto struct {
 	ConfirmPassword string   `json:"confirm_password" validate:"required,eqfield=Password" example:"SecurePass123!"`
 	UserName        string   `json:"user_name" validate:"required,min=3,max=100" example:"student123"`
 	FullName        string   `json:"full_name,omitempty" validate:"omitempty,min=2,max=255" example:"Nguyen Van A"`
-	RoleCodes       []string `json:"role_codes" validate:"required,min=1,max=2,dive,oneof=student parent" example:"[\"student\"]"`
+	RoleIDs         []string `json:"role_ids" validate:"required,min=1,max=2,dive,uuid" example:"[\"550e8400-e29b-41d4-a716-446655440000\"]"`
 }
 
 // RegisterResponseDto - Response for successful registration
 type RegisterResponseDto struct {
-	ID        string   `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
-	Email     string   `json:"email" example:"student@example.com"`
-	UserName  string   `json:"user_name" example:"student123"`
-	FullName  *string  `json:"full_name,omitempty" example:"Nguyen Van A"`
-	RoleCodes []string `json:"role_codes" example:"[\"student\"]"`
+	ID       string    `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Email    string    `json:"email" example:"student@example.com"`
+	UserName string    `json:"user_name" example:"student123"`
+	FullName *string   `json:"full_name,omitempty" example:"Nguyen Van A"`
+	Roles    []RoleDto `json:"roles"`
 }
 
 // VerifyOtpRequestDto - Request body for POST /auth/register

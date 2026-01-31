@@ -13,6 +13,7 @@ type RoleRepositoryInterface interface {
 	FindByCode(ctx context.Context, code string) (*model.Role, error)
 	FindByID(ctx context.Context, id uuid.UUID) (*model.Role, error)
 	FindByCodes(ctx context.Context, codes []string) ([]model.Role, error)
+	FindByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Role, error)
 	GetAll(ctx context.Context) ([]model.Role, error)
 }
 
@@ -59,6 +60,18 @@ func (r *RoleRepository) FindByCodes(ctx context.Context, codes []string) ([]mod
 	var roles []model.Role
 	err := r.db.WithContext(ctx).
 		Where("code IN ? AND is_active = ?", codes, true).
+		Find(&roles).Error
+	if err != nil {
+		return nil, err
+	}
+	return roles, nil
+}
+
+// FindByIDs finds multiple active roles by their IDs
+func (r *RoleRepository) FindByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Role, error) {
+	var roles []model.Role
+	err := r.db.WithContext(ctx).
+		Where("id IN ? AND is_active = ?", ids, true).
 		Find(&roles).Error
 	if err != nil {
 		return nil, err
