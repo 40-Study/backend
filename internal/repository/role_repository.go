@@ -99,88 +99,82 @@ func (r *RoleRepository) DeleteRole(ctx context.Context, id uuid.UUID) error {
 // ============ Role-Permission Management ============
 
 func (r *RoleRepository) AddPermissionsToRole(ctx context.Context, roleID uuid.UUID, permissionIDs []uuid.UUID) error {
-	role, err := r.GetRoleByID(ctx, roleID)
-	if err != nil {
-		return err
-	}
-	if role == nil {
-		return errors.New("role not found")
-	}
-
-	var permissions []model.Permission
-	if err := r.db.WithContext(ctx).Where("id IN ?", permissionIDs).Find(&permissions).Error; err != nil {
-		return err
+	rolePermissions := make([]model.RolePermission, len(permissionIDs))
+	for i, permID := range permissionIDs {
+		rolePermissions[i] = model.RolePermission{
+			RoleID:       roleID,
+			PermissionID: permID,
+		}
 	}
 
-	return r.db.WithContext(ctx).Model(role).Association("Permissions").Append(permissions)
+	return r.db.WithContext(ctx).Create(&rolePermissions).Error
 }
 
 func (r *RoleRepository) RemovePermissionsFromRole(ctx context.Context, roleID uuid.UUID, permissionIDs []uuid.UUID) error {
-	role, err := r.GetRoleByID(ctx, roleID)
-	if err != nil {
-		return err
-	}
-	if role == nil {
-		return errors.New("role not found")
-	}
-
-	var permissions []model.Permission
-	if err := r.db.WithContext(ctx).Where("id IN ?", permissionIDs).Find(&permissions).Error; err != nil {
-		return err
-	}
-
-	return r.db.WithContext(ctx).Model(role).Association("Permissions").Delete(permissions)
+	return r.db.WithContext(ctx).
+		Where("role_id = ? AND permission_id IN ?", roleID, permissionIDs).
+		Delete(&model.RolePermission{}).Error
 }
 
 func (r *RoleRepository) GetPermissionsByRoleID(ctx context.Context, roleID uuid.UUID) ([]model.Permission, error) {
-	var role model.Role
-	err := r.db.WithContext(ctx).
-		Preload("Permissions").
-		Where("id = ?", roleID).
-		First(&role).Error
-
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	return role.Permissions, nil
-}
-
-func (r *RoleRepository) GetRoleWithPermissions(ctx context.Context, roleID uuid.UUID) (*model.Role, error) {
-	var role model.Role
-	err := r.db.WithContext(ctx).
-		Preload("Permissions").
-		Where("id = ?", roleID).
-		First(&role).Error
-
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	return &role, nil
-}
-
-func (r *RoleRepository) SetRolePermissions(ctx context.Context, roleID uuid.UUID, permissionIDs []uuid.UUID) error {
+	// Kiểm tra role tồn tại
 	role, err := r.GetRoleByID(ctx, roleID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if role == nil {
-		return errors.New("role not found")
+		return nil, nil
 	}
 
 	var permissions []model.Permission
-	if len(permissionIDs) > 0 {
-		if err := r.db.WithContext(ctx).Where("id IN ?", permissionIDs).Find(&permissions).Error; err != nil {
-			return err
-		}
+	err = r.db.WithContext(ctx).
+		Joins("JOIN role_permissions ON role_permissions.permission_id = permissions.id").
+		Where("role_permissions.role_id = ?", roleID).
+		Find(&permissions).Error
+	if err != nil {
+		return nil, err
 	}
 
-	return r.db.WithContext(ctx).Model(role).Association("Permissions").Replace(permissions)
+	return permissions, nil
+}
+
+func (r *RoleRepository) GetRoleWithPermissions(ctx context.Context, roleID uuid.UUID) (*model.Role, error) {
+	role, err := r.GetRoleByID(ctx, roleID)
+	if err != nil {
+		return nil, err
+	}
+	if role == nil {
+		return nil, nil
+	}
+
+	permissions, err := r.GetPermissionsByRoleID(ctx, roleID)
+	if err != nil {
+		return nil, err
+	}
+	role.Permissions = permissions
+
+	return role, nil
+}
+
+func (r *RoleRepository) SetRolePermissions(ctx context.Context, roleID uuid.UUID, permissionIDs []uuid.UUID) error {
+	// Xóa tất cả permission cũ của role
+	if err := r.db.WithContext(ctx).
+		Where("role_id = ?", roleID).
+		Delete(&model.RolePermission{}).Error; err != nil {
+		return err
+	}
+
+	// Thêm permission mới
+	if len(permissionIDs) > 0 {
+		rolePermissions := make([]model.RolePermission, len(permissionIDs))
+		for i, permID := range permissionIDs {
+			rolePermissions[i] = model.RolePermission{
+				RoleID:       roleID,
+				PermissionID: permID,
+			}
+		}
+		return r.db.WithContext(ctx).Create(&rolePermissions).Error
+	}
+
+	return nil
 }

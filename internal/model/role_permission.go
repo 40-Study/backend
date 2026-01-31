@@ -16,7 +16,7 @@ type Permission struct {
 	UpdatedAt   time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 
 	// Relationships
-	Roles []Role `gorm:"many2many:role_permissions;" json:"-"`
+	Roles []Role `gorm:"-" json:"-"`
 }
 
 func (Permission) TableName() string {
@@ -31,8 +31,7 @@ type Role struct {
 	UpdatedAt   time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 
 	// Relationships
-	Permissions []Permission `gorm:"many2many:role_permissions;" json:"permissions,omitempty"`
-	Users       []User       `gorm:"many2many:user_roles;" json:"-"`
+	Permissions []Permission `gorm:"-" json:"permissions,omitempty"`
 }
 
 func (Role) TableName() string {
@@ -41,7 +40,7 @@ func (Role) TableName() string {
 
 type RolePermission struct {
 	RoleID       uuid.UUID `gorm:"type:uuid;primaryKey" json:"role_id"`
-	PermissionID uuid.UUID `gorm:"type:uuid;primaryKey" json:"permission_id"`
+	PermissionID uuid.UUID `gorm:"type:uuid;primaryKey;index:idx_permission_id" json:"permission_id"`
 	CreatedAt    time.Time `gorm:"autoCreateTime" json:"created_at"`
 
 	// Relationships
@@ -53,19 +52,6 @@ func (RolePermission) TableName() string {
 	return "role_permissions"
 }
 
-type UserRole struct {
-	UserID    uuid.UUID `gorm:"type:uuid;primaryKey" json:"user_id"`
-	RoleID    uuid.UUID `gorm:"type:uuid;primaryKey" json:"role_id"`
-	CreatedAt time.Time `gorm:"autoCreateTime" json:"assigned_at"`
-
-	// Relationships
-	User User `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user,omitempty"`
-	Role Role `gorm:"foreignKey:RoleID;constraint:OnDelete:CASCADE" json:"role,omitempty"`
-}
-
-func (UserRole) TableName() string {
-	return "user_roles"
-}
 
 // BeforeCreate hook for Permission
 func (p *Permission) BeforeCreate(tx *gorm.DB) error {
