@@ -8,6 +8,9 @@ func AllModels() []interface{} {
 		&Role{},
 		&RolePermission{},
 
+		// Organizations
+		&Organization{},
+
 		// Users & Auth
 		&User{},
 		&VerificationCode{},

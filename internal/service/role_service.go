@@ -33,16 +33,9 @@ func NewRoleService(repo repository.RoleRepositoryInterface) *RoleService {
 }
 
 func (s *RoleService) CreateRole(ctx context.Context, req dto.CreateRoleDTO) (*dto.RoleResponseDTO, error) {
-	existing, err := s.repo.GetRoleByName(ctx, req.Name)
-	if err != nil {
-		return nil, err
-	}
-	if existing != nil {
-		return nil, errors.New("role with this name already exists")
-	}
-
 	role := &model.Role{
-		Name: req.Name,
+		Name:           req.Name,
+		OrganizationID: req.OrganizationID,
 	}
 	if req.Description != "" {
 		role.Description.String = req.Description
@@ -104,13 +97,6 @@ func (s *RoleService) UpdateRole(ctx context.Context, id uuid.UUID, req dto.Upda
 	}
 
 	if req.Name != nil {
-		existing, err := s.repo.GetRoleByName(ctx, *req.Name)
-		if err != nil {
-			return nil, err
-		}
-		if existing != nil && existing.ID != id {
-			return nil, errors.New("role with this name already exists")
-		}
 		role.Name = *req.Name
 	}
 
@@ -200,11 +186,12 @@ func toRoleResponseDTO(role *model.Role) *dto.RoleResponseDTO {
 	}
 
 	return &dto.RoleResponseDTO{
-		ID:          role.ID,
-		Name:        role.Name,
-		Description: desc,
-		CreatedAt:   role.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   role.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		ID:             role.ID,
+		Name:           role.Name,
+		OrganizationID: role.OrganizationID,
+		Description:    desc,
+		CreatedAt:      role.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:      role.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 	}
 }
 
@@ -220,11 +207,12 @@ func toRoleDetailResponseDTO(role *model.Role) *dto.RoleDetailResponseDTO {
 	}
 
 	return &dto.RoleDetailResponseDTO{
-		ID:          role.ID,
-		Name:        role.Name,
-		Description: desc,
-		Permissions: permDTOs,
-		CreatedAt:   role.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   role.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		ID:             role.ID,
+		Name:           role.Name,
+		OrganizationID: role.OrganizationID,
+		Description:    desc,
+		Permissions:    permDTOs,
+		CreatedAt:      role.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:      role.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 	}
 }

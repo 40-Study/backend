@@ -3,8 +3,9 @@ package dto
 import "github.com/google/uuid"
 
 type CreateRoleDTO struct {
-	Name        string `json:"name" binding:"required,min=2,max=100"`
-	Description string `json:"description" binding:"max=500"`
+	Name           string     `json:"name" binding:"required,min=2,max=100"`
+	OrganizationID *uuid.UUID `json:"organization_id"`
+	Description    string     `json:"description" binding:"max=500"`
 }
 
 type UpdateRoleDTO struct {
@@ -21,20 +22,22 @@ type RemovePermissionsFromRoleDTO struct {
 }
 
 type RoleResponseDTO struct {
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`
-	Description *string   `json:"description,omitempty"`
-	CreatedAt   string    `json:"created_at"`
-	UpdatedAt   string    `json:"updated_at"`
+	ID             uuid.UUID  `json:"id"`
+	Name           string     `json:"name"`
+	OrganizationID *uuid.UUID `json:"organization_id,omitempty"`
+	Description    *string    `json:"description,omitempty"`
+	CreatedAt      string     `json:"created_at"`
+	UpdatedAt      string     `json:"updated_at"`
 }
 
 type RoleDetailResponseDTO struct {
-	ID          uuid.UUID               `json:"id"`
-	Name        string                  `json:"name"`
-	Description *string                 `json:"description,omitempty"`
-	Permissions []PermissionResponseDTO `json:"permissions"`
-	CreatedAt   string                  `json:"created_at"`
-	UpdatedAt   string                  `json:"updated_at"`
+	ID             uuid.UUID               `json:"id"`
+	Name           string                  `json:"name"`
+	OrganizationID *uuid.UUID              `json:"organization_id,omitempty"`
+	Description    *string                 `json:"description,omitempty"`
+	Permissions    []PermissionResponseDTO `json:"permissions"`
+	CreatedAt      string                  `json:"created_at"`
+	UpdatedAt      string                  `json:"updated_at"`
 }
 
 type RoleListResponseDTO struct {

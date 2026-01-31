@@ -37,6 +37,7 @@ func New() (*App, error) {
 		handlers.Auth,
 		handlers.Role,
 		handlers.Permission,
+		handlers.Organization,
 		resources.Redis,
 		resources.MinioClient,
 	)
