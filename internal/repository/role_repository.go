@@ -14,7 +14,7 @@ type RoleRepositoryInterface interface {
 	CreateRole(ctx context.Context, role *model.Role) error
 	GetRoleByID(ctx context.Context, id uuid.UUID) (*model.Role, error)
 	GetRoleByName(ctx context.Context, name string) (*model.Role, error)
-	GetAllRoles(ctx context.Context, page, pageSize int) ([]model.Role, int64, error)
+	GetAllRoles(ctx context.Context, page, pageSize int, keyword string) ([]model.Role, int64, error)
 	UpdateRole(ctx context.Context, role *model.Role) error
 	DeleteRole(ctx context.Context, id uuid.UUID) error
 
@@ -62,17 +62,22 @@ func (r *RoleRepository) GetRoleByName(ctx context.Context, name string) (*model
 	return &role, nil
 }
 
-func (r *RoleRepository) GetAllRoles(ctx context.Context, page, pageSize int) ([]model.Role, int64, error) {
+func (r *RoleRepository) GetAllRoles(ctx context.Context, page, pageSize int, keyword string) ([]model.Role, int64, error) {
 	var roles []model.Role
 	var total int64
 
 	offset := (page - 1) * pageSize
 
-	if err := r.db.WithContext(ctx).Model(&model.Role{}).Count(&total).Error; err != nil {
+	query := r.db.WithContext(ctx).Model(&model.Role{})
+	if keyword != "" {
+		query = query.Where("name ILIKE ?", "%"+keyword+"%")
+	}
+
+	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	if err := r.db.WithContext(ctx).
+	if err := query.
 		Offset(offset).
 		Limit(pageSize).
 		Order("created_at DESC").

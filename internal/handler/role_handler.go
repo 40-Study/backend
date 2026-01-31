@@ -79,8 +79,9 @@ func (h *RoleHandler) GetRole(c *fiber.Ctx) error {
 func (h *RoleHandler) GetAllRoles(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
+	keyword := c.Query("keyword")
 
-	roles, err := h.service.GetAllRoles(c.Context(), page, pageSize)
+	roles, err := h.service.GetAllRoles(c.Context(), page, pageSize, keyword)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve roles",

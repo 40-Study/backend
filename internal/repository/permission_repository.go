@@ -13,7 +13,7 @@ type PermissionRepositoryInterface interface {
 	CreatePermission(ctx context.Context, permission *model.Permission) error
 	GetPermissionByID(ctx context.Context, id uuid.UUID) (*model.Permission, error)
 	GetPermissionByName(ctx context.Context, name string) (*model.Permission, error)
-	GetAllPermissions(ctx context.Context, page, pageSize int) ([]model.Permission, int64, error)
+	GetAllPermissions(ctx context.Context, page, pageSize int, keyword string) ([]model.Permission, int64, error)
 	UpdatePermission(ctx context.Context, permission *model.Permission) error
 	DeletePermission(ctx context.Context, id uuid.UUID) error
 }
@@ -54,17 +54,22 @@ func (r *PermissionRepository) GetPermissionByName(ctx context.Context, name str
 	return &permission, nil
 }
 
-func (r *PermissionRepository) GetAllPermissions(ctx context.Context, page, pageSize int) ([]model.Permission, int64, error) {
+func (r *PermissionRepository) GetAllPermissions(ctx context.Context, page, pageSize int, keyword string) ([]model.Permission, int64, error) {
 	var permissions []model.Permission
 	var total int64
 
 	offset := (page - 1) * pageSize
 
-	if err := r.db.WithContext(ctx).Model(&model.Permission{}).Count(&total).Error; err != nil {
+	query := r.db.WithContext(ctx).Model(&model.Permission{})
+	if keyword != "" {
+		query = query.Where("name ILIKE ?", "%"+keyword+"%")
+	}
+
+	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	if err := r.db.WithContext(ctx).
+	if err := query.
 		Offset(offset).
 		Limit(pageSize).
 		Order("created_at DESC").
