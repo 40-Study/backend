@@ -2,25 +2,12 @@
   {
     "role": "SYSTEM_ADMIN",
     "description": "Quản trị viên hệ thống, có quyền vận hành toàn bộ nền tảng, quản lý người dùng và kiểm duyệt nội dung",
-    "permissions": [
-      "DASHBOARD_VIEW_GLOBAL",
-      "USERS_VIEW_ALL",
-      "USERS_BAN",
-      "ROLES_MANAGE_SYSTEM",
-      "ORG_CREATE",
-      "ORG_DELETE",
-      "CATEGORIES_SYSTEM_MANAGE",
-      "COURSES_DELETE_ALL",
-      "COURSES_APPROVE_ALL",
-      "SYSTEM_SETTINGS_MANAGE"
-    ]
+    "permissions": ["*"]
   },
   {
     "role": "ORG_OWNER",
     "description": "Chủ tổ chức/trung tâm, quản lý tài nguyên, giáo viên và học sinh trong phạm vi tổ chức của mình",
     "permissions": [
-      "ORG_VIEW_OWN",
-      "ORG_UPDATE_SETTINGS",
       "ORG_MEMBERS_MANAGE",
       "ORG_ROLES_MANAGE",
       "ORG_CATEGORIES_MANAGE",
@@ -34,6 +21,7 @@
     "role": "TEACHER",
     "description": "Người sáng tạo nội dung và giảng dạy.",
     "permissions": [
+      "ORG_CREATE",
       "COURSES_CREATE",
       "COURSES_UPDATE_OWN",
       "COURSES_DELETE_OWN",
@@ -41,30 +29,17 @@
     ]
   },
   {
-    "role": "TEACHER_APPLICANT",
-    "description": "Người dùng đã nộp hồ sơ đăng ký làm giáo viên, đang chờ xét duyệt. Quyền hạn rất hạn chế so với giáo viên.",
-    "permissions": [
-      "TEACHER_PROFILE_UPDATE",
-      "APPLICATION_VIEW_STATUS"
-    ]
-  },
-  {
     "role": "STUDENT",
     "description": "Người học và tiêu thụ nội dung.",
     "permissions": [
-      "COURSES_LEARN",
-      "SANDBOX_EXECUTE",
-      "SUBMISSIONS_CREATE",
-      "EXAMS_ATTEMPT"
+
     ]
   },
   {
     "role": "PARENT",
     "description": "Người giám sát và quản lý tài chính. Không tham gia học tập trực tiếp.",
     "permissions": [
-      "CHILD_SETTINGS_UPDATE",
-      "TRACKING_VIEW_CHILD",
-      "ORDERS_PAY_FOR_CHILD"
+
     ]
   }
 ]
