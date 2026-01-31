@@ -13,9 +13,9 @@ type OrganizationRepositoryInterface interface {
 	CreateOrganization(ctx context.Context, org *model.Organization) error
 	GetOrganizationByID(ctx context.Context, id uuid.UUID) (*model.Organization, error)
 	GetOrganizationByName(ctx context.Context, name string) (*model.Organization, error)
-	GetAllOrganizations(ctx context.Context, page, pageSize int, keyword string) ([]model.Organization, int64, error)
+	GetAllOrganizations(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.Organization, int64, error)
 	UpdateOrganization(ctx context.Context, org *model.Organization) error
-	DeleteOrganization(ctx context.Context, id uuid.UUID) error
+	DeleteOrganization(ctx context.Context, id uuid.UUID, hardDelete bool) error
 	GetOrganizationWithRoles(ctx context.Context, orgID uuid.UUID) (*model.Organization, error)
 }
 
@@ -55,13 +55,20 @@ func (r *OrganizationRepository) GetOrganizationByName(ctx context.Context, name
 	return &org, nil
 }
 
-func (r *OrganizationRepository) GetAllOrganizations(ctx context.Context, page, pageSize int, keyword string) ([]model.Organization, int64, error) {
+func (r *OrganizationRepository) GetAllOrganizations(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.Organization, int64, error) {
 	var orgs []model.Organization
 	var total int64
 
 	offset := (page - 1) * pageSize
 
 	query := r.db.WithContext(ctx).Model(&model.Organization{})
+	switch status {
+	case "deleted":
+		query = query.Unscoped().Where("deleted_at IS NOT NULL")
+	case "all":
+		query = query.Unscoped()
+	default: // "active" or empty
+	}
 	if keyword != "" {
 		query = query.Where("name ILIKE ?", "%"+keyword+"%")
 	}
@@ -85,8 +92,12 @@ func (r *OrganizationRepository) UpdateOrganization(ctx context.Context, org *mo
 	return r.db.WithContext(ctx).Save(org).Error
 }
 
-func (r *OrganizationRepository) DeleteOrganization(ctx context.Context, id uuid.UUID) error {
-	return r.db.WithContext(ctx).Delete(&model.Organization{}, "id = ?", id).Error
+func (r *OrganizationRepository) DeleteOrganization(ctx context.Context, id uuid.UUID, hardDelete bool) error {
+	query := r.db.WithContext(ctx)
+	if hardDelete {
+		query = query.Unscoped()
+	}
+	return query.Delete(&model.Organization{}, "id = ?", id).Error
 }
 
 func (r *OrganizationRepository) GetOrganizationWithRoles(ctx context.Context, orgID uuid.UUID) (*model.Organization, error) {

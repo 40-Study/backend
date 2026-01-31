@@ -12,7 +12,7 @@ import (
 
 type PermissionServiceInterface interface {
 	GetPermissionByID(ctx context.Context, id uuid.UUID) (*dto.PermissionResponseDTO, error)
-	GetAllPermissions(ctx context.Context, page, pageSize int, keyword string) (*dto.PermissionListResponseDTO, error)
+	GetAllPermissions(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.PermissionListResponseDTO, error)
 	UpdatePermission(ctx context.Context, id uuid.UUID, req dto.UpdatePermissionDTO) (*dto.PermissionResponseDTO, error)
 }
 
@@ -36,7 +36,7 @@ func (s *PermissionService) GetPermissionByID(ctx context.Context, id uuid.UUID)
 	return toPermissionResponseDTO(permission), nil
 }
 
-func (s *PermissionService) GetAllPermissions(ctx context.Context, page, pageSize int, keyword string) (*dto.PermissionListResponseDTO, error) {
+func (s *PermissionService) GetAllPermissions(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.PermissionListResponseDTO, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -44,7 +44,7 @@ func (s *PermissionService) GetAllPermissions(ctx context.Context, page, pageSiz
 		pageSize = 20
 	}
 
-	permissions, total, err := s.repo.GetAllPermissions(ctx, page, pageSize, keyword)
+	permissions, total, err := s.repo.GetAllPermissions(ctx, page, pageSize, keyword, status)
 	if err != nil {
 		return nil, err
 	}

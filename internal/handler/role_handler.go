@@ -80,8 +80,9 @@ func (h *RoleHandler) GetAllRoles(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 	keyword := c.Query("keyword")
+	status := c.Query("status")
 
-	roles, err := h.service.GetAllRoles(c.Context(), page, pageSize, keyword)
+	roles, err := h.service.GetAllRoles(c.Context(), page, pageSize, keyword, status)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve roles",
@@ -137,7 +138,9 @@ func (h *RoleHandler) DeleteRole(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteRole(c.Context(), id); err != nil {
+	hardDelete := c.QueryBool("hard_delete", false)
+
+	if err := h.service.DeleteRole(c.Context(), id, hardDelete); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete role",
 			"error":   err.Error(),

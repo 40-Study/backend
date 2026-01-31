@@ -49,8 +49,9 @@ func (h *PermissionHandler) GetAllPermissions(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 	keyword := c.Query("keyword")
+	status := c.Query("status")
 
-	permissions, err := h.service.GetAllPermissions(c.Context(), page, pageSize, keyword)
+	permissions, err := h.service.GetAllPermissions(c.Context(), page, pageSize, keyword, status)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve permissions",

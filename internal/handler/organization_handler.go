@@ -74,8 +74,9 @@ func (h *OrganizationHandler) GetAllOrganizations(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 	keyword := c.Query("keyword")
+	status := c.Query("status")
 
-	orgs, err := h.service.GetAllOrganizations(c.Context(), page, pageSize, keyword)
+	orgs, err := h.service.GetAllOrganizations(c.Context(), page, pageSize, keyword, status)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve organizations",
@@ -131,7 +132,9 @@ func (h *OrganizationHandler) DeleteOrganization(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteOrganization(c.Context(), id); err != nil {
+	hardDelete := c.QueryBool("hard_delete", false)
+
+	if err := h.service.DeleteOrganization(c.Context(), id, hardDelete); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete organization",
 			"error":   err.Error(),

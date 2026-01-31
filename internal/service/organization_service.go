@@ -13,9 +13,9 @@ import (
 type OrganizationServiceInterface interface {
 	CreateOrganization(ctx context.Context, req dto.CreateOrganizationDTO) (*dto.OrganizationResponseDTO, error)
 	GetOrganizationByID(ctx context.Context, id uuid.UUID) (*dto.OrganizationDetailResponseDTO, error)
-	GetAllOrganizations(ctx context.Context, page, pageSize int, keyword string) (*dto.OrganizationListResponseDTO, error)
+	GetAllOrganizations(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.OrganizationListResponseDTO, error)
 	UpdateOrganization(ctx context.Context, id uuid.UUID, req dto.UpdateOrganizationDTO) (*dto.OrganizationResponseDTO, error)
-	DeleteOrganization(ctx context.Context, id uuid.UUID) error
+	DeleteOrganization(ctx context.Context, id uuid.UUID, hardDelete bool) error
 }
 
 type OrganizationService struct {
@@ -62,7 +62,7 @@ func (s *OrganizationService) GetOrganizationByID(ctx context.Context, id uuid.U
 	return toOrganizationDetailResponseDTO(org), nil
 }
 
-func (s *OrganizationService) GetAllOrganizations(ctx context.Context, page, pageSize int, keyword string) (*dto.OrganizationListResponseDTO, error) {
+func (s *OrganizationService) GetAllOrganizations(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.OrganizationListResponseDTO, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -70,7 +70,7 @@ func (s *OrganizationService) GetAllOrganizations(ctx context.Context, page, pag
 		pageSize = 20
 	}
 
-	orgs, total, err := s.repo.GetAllOrganizations(ctx, page, pageSize, keyword)
+	orgs, total, err := s.repo.GetAllOrganizations(ctx, page, pageSize, keyword, status)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (s *OrganizationService) UpdateOrganization(ctx context.Context, id uuid.UU
 	return toOrganizationResponseDTO(org), nil
 }
 
-func (s *OrganizationService) DeleteOrganization(ctx context.Context, id uuid.UUID) error {
+func (s *OrganizationService) DeleteOrganization(ctx context.Context, id uuid.UUID, hardDelete bool) error {
 	org, err := s.repo.GetOrganizationByID(ctx, id)
 	if err != nil {
 		return err
@@ -129,7 +129,7 @@ func (s *OrganizationService) DeleteOrganization(ctx context.Context, id uuid.UU
 		return errors.New("organization not found")
 	}
 
-	return s.repo.DeleteOrganization(ctx, id)
+	return s.repo.DeleteOrganization(ctx, id, hardDelete)
 }
 
 // ============ Helper Methods ============

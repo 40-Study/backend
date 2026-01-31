@@ -13,9 +13,9 @@ type PermissionRepositoryInterface interface {
 	CreatePermission(ctx context.Context, permission *model.Permission) error
 	GetPermissionByID(ctx context.Context, id uuid.UUID) (*model.Permission, error)
 	GetPermissionByName(ctx context.Context, name string) (*model.Permission, error)
-	GetAllPermissions(ctx context.Context, page, pageSize int, keyword string) ([]model.Permission, int64, error)
+	GetAllPermissions(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.Permission, int64, error)
 	UpdatePermission(ctx context.Context, permission *model.Permission) error
-	DeletePermission(ctx context.Context, id uuid.UUID) error
+	DeletePermission(ctx context.Context, id uuid.UUID, hardDelete bool) error
 }
 
 type PermissionRepository struct {
@@ -54,13 +54,20 @@ func (r *PermissionRepository) GetPermissionByName(ctx context.Context, name str
 	return &permission, nil
 }
 
-func (r *PermissionRepository) GetAllPermissions(ctx context.Context, page, pageSize int, keyword string) ([]model.Permission, int64, error) {
+func (r *PermissionRepository) GetAllPermissions(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.Permission, int64, error) {
 	var permissions []model.Permission
 	var total int64
 
 	offset := (page - 1) * pageSize
 
 	query := r.db.WithContext(ctx).Model(&model.Permission{})
+	switch status {
+	case "deleted":
+		query = query.Unscoped().Where("deleted_at IS NOT NULL")
+	case "all":
+		query = query.Unscoped()
+	default: // "active" or empty
+	}
 	if keyword != "" {
 		query = query.Where("name ILIKE ?", "%"+keyword+"%")
 	}
@@ -84,6 +91,10 @@ func (r *PermissionRepository) UpdatePermission(ctx context.Context, permission 
 	return r.db.WithContext(ctx).Save(permission).Error
 }
 
-func (r *PermissionRepository) DeletePermission(ctx context.Context, id uuid.UUID) error {
-	return r.db.WithContext(ctx).Delete(&model.Permission{}, "id = ?", id).Error
+func (r *PermissionRepository) DeletePermission(ctx context.Context, id uuid.UUID, hardDelete bool) error {
+	query := r.db.WithContext(ctx)
+	if hardDelete {
+		query = query.Unscoped()
+	}
+	return query.Delete(&model.Permission{}, "id = ?", id).Error
 }

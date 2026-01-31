@@ -13,9 +13,9 @@ import (
 type RoleServiceInterface interface {
 	CreateRole(ctx context.Context, req dto.CreateRoleDTO) (*dto.RoleResponseDTO, error)
 	GetRoleByID(ctx context.Context, id uuid.UUID) (*dto.RoleDetailResponseDTO, error)
-	GetAllRoles(ctx context.Context, page, pageSize int, keyword string) (*dto.RoleListResponseDTO, error)
+	GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.RoleListResponseDTO, error)
 	UpdateRole(ctx context.Context, id uuid.UUID, req dto.UpdateRoleDTO) (*dto.RoleResponseDTO, error)
-	DeleteRole(ctx context.Context, id uuid.UUID) error
+	DeleteRole(ctx context.Context, id uuid.UUID, hardDelete bool) error
 
 	// Role-Permission management
 	AddPermissionsToRole(ctx context.Context, roleID uuid.UUID, req dto.AddPermissionsToRoleDTO) error
@@ -61,7 +61,7 @@ func (s *RoleService) GetRoleByID(ctx context.Context, id uuid.UUID) (*dto.RoleD
 	return toRoleDetailResponseDTO(role), nil
 }
 
-func (s *RoleService) GetAllRoles(ctx context.Context, page, pageSize int, keyword string) (*dto.RoleListResponseDTO, error) {
+func (s *RoleService) GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.RoleListResponseDTO, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -69,7 +69,7 @@ func (s *RoleService) GetAllRoles(ctx context.Context, page, pageSize int, keywo
 		pageSize = 20
 	}
 
-	roles, total, err := s.repo.GetAllRoles(ctx, page, pageSize, keyword)
+	roles, total, err := s.repo.GetAllRoles(ctx, page, pageSize, keyword, status)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (s *RoleService) UpdateRole(ctx context.Context, id uuid.UUID, req dto.Upda
 	return toRoleResponseDTO(role), nil
 }
 
-func (s *RoleService) DeleteRole(ctx context.Context, id uuid.UUID) error {
+func (s *RoleService) DeleteRole(ctx context.Context, id uuid.UUID, hardDelete bool) error {
 	role, err := s.repo.GetRoleByID(ctx, id)
 	if err != nil {
 		return err
@@ -121,7 +121,7 @@ func (s *RoleService) DeleteRole(ctx context.Context, id uuid.UUID) error {
 		return errors.New("role not found")
 	}
 
-	return s.repo.DeleteRole(ctx, id)
+	return s.repo.DeleteRole(ctx, id, hardDelete)
 }
 
 // ============ Role-Permission Management ============
