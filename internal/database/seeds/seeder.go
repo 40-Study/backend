@@ -3,8 +3,10 @@ package seeds
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
+	"path/filepath"
 
 	"gorm.io/gorm"
 	"study.com/v1/internal/model"
@@ -16,9 +18,9 @@ type PermissionSeed struct {
 }
 
 type RoleSeed struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Permissions interface{} `json:"permissions"`
+	Role        string   `json:"role"`
+	Description string   `json:"description"`
+	Permissions []string `json:"permissions"`
 }
 
 type Seeder struct {
@@ -59,7 +61,7 @@ func (s *Seeder) SeedPermissions(filePath string) error {
 		}
 	}
 
-	log.Printf("Successfully seeded %d permissions", len(permissions))
+	log.Printf("Successfully seeded %d permissions\n", len(permissions))
 	return nil
 }
 
@@ -88,55 +90,66 @@ func (s *Seeder) SeedRoles(filePath string) error {
 
 	for _, r := range roles {
 		role := model.Role{
-			Name: r.Name,
+			Name: r.Role,
 		}
 		role.Description.String = r.Description
 		role.Description.Valid = r.Description != ""
 
-		result := s.db.Where("name = ?", r.Name).FirstOrCreate(&role)
+		// Use FirstOrCreate to insert new role or get existing
+		result := s.db.Where("name = ?", r.Role).FirstOrCreate(&role)
 		if result.Error != nil {
-			return fmt.Errorf("failed to seed role %s: %w", r.Name, result.Error)
+			return fmt.Errorf("failed to seed role %s: %w", r.Role, result.Error)
 		}
 
-		if result.RowsAffected == 0 {
-			s.db.Model(&role).Where("name = ?", r.Name).Update("description", r.Description)
-			s.db.Where("name = ?", r.Name).First(&role)
+		// Always update description
+		if err := s.db.Model(&role).Update("description", r.Description).Error; err != nil {
+			return fmt.Errorf("failed to update role %s: %w", r.Role, err)
 		}
+
+		// Refresh role to get updated data
+		s.db.Where("name = ?", r.Role).First(&role)
 
 		var rolePermissions []model.Permission
-
-		switch perms := r.Permissions.(type) {
-		case string:
-			if perms == "*" {
-				rolePermissions = allPermissions
-			}
-		case []interface{}:
-			for _, permName := range perms {
-				if name, ok := permName.(string); ok {
-					if perm, exists := permissionMap[name]; exists {
-						rolePermissions = append(rolePermissions, perm)
-					} else {
-						log.Printf("Warning: Permission %s not found for role %s", name, r.Name)
-					}
-				}
+		for _, permKey := range r.Permissions {
+			if perm, exists := permissionMap[permKey]; exists {
+				rolePermissions = append(rolePermissions, perm)
+			} else {
+				log.Printf("Warning: Permission %s not found for role %s\n", permKey, r.Role)
 			}
 		}
 
+		// Replace permissions for this role
 		if err := s.db.Model(&role).Association("Permissions").Replace(rolePermissions); err != nil {
-			return fmt.Errorf("failed to assign permissions to role %s: %w", r.Name, err)
+			return fmt.Errorf("failed to assign permissions to role %s: %w", r.Role, err)
 		}
+
+		log.Printf("Seeded role: %s with %d permissions\n", r.Role, len(rolePermissions))
 	}
 
-	log.Printf("Successfully seeded %d roles", len(roles))
+	log.Printf("Successfully seeded %d roles\n", len(roles))
 	return nil
 }
 
 func (s *Seeder) SeedAll(dataDir string) error {
-	if err := s.SeedPermissions(dataDir + "/permissions.json"); err != nil {
-		return err
+	// Seed all permission files from permissions folder
+	permissionsDir := filepath.Join(dataDir, "permissions")
+	files, err := ioutil.ReadDir(permissionsDir)
+	if err != nil {
+		return fmt.Errorf("failed to read permissions directory: %w", err)
 	}
 
-	if err := s.SeedRoles(dataDir + "/roles.json"); err != nil {
+	for _, file := range files {
+		if filepath.Ext(file.Name()) == ".json" {
+			filePath := filepath.Join(permissionsDir, file.Name())
+			if err := s.SeedPermissions(filePath); err != nil {
+				return fmt.Errorf("failed to seed permissions from %s: %w", file.Name(), err)
+			}
+		}
+	}
+
+	// Seed roles
+	rolesFilePath := filepath.Join(dataDir, "roles.json")
+	if err := s.SeedRoles(rolesFilePath); err != nil {
 		return err
 	}
 

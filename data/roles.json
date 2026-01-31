@@ -1,94 +1,45 @@
 [
   {
-    "name": "SUPER_ADMIN",
-    "description": "Quản trị viên cấp cao nhất, có toàn quyền kiểm soát hệ thống",
-    "permissions": "*"
+    "role": "SYSTEM_ADMIN",
+    "description": "Quản trị viên hệ thống, có quyền vận hành toàn bộ nền tảng, quản lý người dùng và kiểm duyệt nội dung",
+    "permissions": ["*"]
   },
   {
-    "name": "ADMIN",
-    "description": "Quản trị viên quản lý toàn bộ hệ thống bao gồm roles/permissions",
+    "role": "ORG_OWNER",
+    "description": "Chủ tổ chức/trung tâm, quản lý tài nguyên, giáo viên và học sinh trong phạm vi tổ chức của mình",
     "permissions": [
-      "USERS_VIEW",
-      "USERS_CREATE",
-      "USERS_UPDATE",
-      "USERS_DELETE",
-      "USERS_BAN",
-      "ROLES_VIEW",
-      "ROLES_CREATE",
-      "ROLES_UPDATE",
-      "ROLES_DELETE",
-      "ROLES_ASSIGN",
-      "PERMISSIONS_VIEW",
-      "VOUCHERS_VIEW",
-      "VOUCHERS_CREATE",
-      "VOUCHERS_UPDATE",
-      "VOUCHERS_DELETE",
-      "TRANSACTIONS_VIEW_ALL",
-      "ORDERS_VIEW",
-      "ORDERS_CREATE",
-      "ORDERS_UPDATE",
-      "ORDERS_DELETE",
-      "MARKETING_VIEW",
-      "MARKETING_MANAGE",
-      "PRODUCTS_VIEW",
-      "PRODUCTS_CREATE",
-      "PRODUCTS_UPDATE",
-      "PRODUCTS_DELETE",
-      "REPORTS_VIEW",
-      "DASHBOARD_VIEW"
+      "ORG_MEMBERS_MANAGE",
+      "ORG_ROLES_MANAGE",
+      "ORG_CATEGORIES_MANAGE",
+      "COURSES_APPROVE_OWN_ORG",
+      "COURSES_DELETE_ORG",
+      "REPORTS_VIEW_ORG",
+      "TRACKING_VIEW_ORG_STUDENTS"
     ]
   },
   {
-    "name": "MODERATOR",
-    "description": "Người kiểm duyệt, có quyền ban/khóa tài khoản và gán role",
+    "role": "TEACHER",
+    "description": "Người sáng tạo nội dung và giảng dạy.",
     "permissions": [
-      "USERS_VIEW",
-      "USERS_UPDATE",
-      "USERS_BAN",
-      "ROLES_VIEW",
-      "ROLES_ASSIGN",
-      "DASHBOARD_VIEW"
+      "ORG_CREATE",
+      "COURSES_CREATE",
+      "COURSES_UPDATE_OWN",
+      "COURSES_DELETE_OWN",
+      "LESSONS_MANAGE"
     ]
   },
   {
-    "name": "MARKETING",
-    "description": "Nhân viên marketing, quản lý voucher và chiến dịch quảng cáo",
+    "role": "STUDENT",
+    "description": "Người học và tiêu thụ nội dung.",
     "permissions": [
-      "VOUCHERS_VIEW",
-      "VOUCHERS_CREATE",
-      "VOUCHERS_UPDATE",
-      "VOUCHERS_DELETE",
-      "MARKETING_VIEW",
-      "MARKETING_MANAGE",
-      "DASHBOARD_VIEW"
+
     ]
   },
   {
-    "name": "ACCOUNTANT",
-    "description": "Kế toán, xem tất cả giao dịch và báo cáo tài chính",
+    "role": "PARENT",
+    "description": "Người giám sát và quản lý tài chính. Không tham gia học tập trực tiếp.",
     "permissions": [
-      "TRANSACTIONS_VIEW_ALL",
-      "ORDERS_VIEW",
-      "REPORTS_VIEW",
-      "DASHBOARD_VIEW"
+
     ]
-  },
-  {
-    "name": "SELLER",
-    "description": "Nhân viên bán hàng, quản lý đơn hàng và sản phẩm",
-    "permissions": [
-      "ORDERS_VIEW",
-      "ORDERS_CREATE",
-      "ORDERS_UPDATE",
-      "PRODUCTS_VIEW",
-      "PRODUCTS_CREATE",
-      "PRODUCTS_UPDATE",
-      "DASHBOARD_VIEW"
-    ]
-  },
-  {
-    "name": "CUSTOMER",
-    "description": "Khách hàng thông thường",
-    "permissions": []
   }
 ]
