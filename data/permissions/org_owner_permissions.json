@@ -1,13 +1,5 @@
 [
   {
-    "name": "ORG_VIEW_OWN",
-    "description": "Xem thông tin chi tiết và thống kê của tổ chức mình"
-  },
-  {
-    "name": "ORG_UPDATE_SETTINGS",
-    "description": "Cập nhật thông tin tổ chức (Logo, Banner, Giới thiệu)"
-  },
-  {
     "name": "ORG_MEMBERS_MANAGE",
     "description": "Mời giáo viên/học sinh vào tổ chức hoặc xóa họ khỏi tổ chức"
   },
