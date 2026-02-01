@@ -92,8 +92,8 @@ func (s *Seeder) SeedRoles(filePath string) error {
 		role := model.Role{
 			Name: r.Role,
 		}
-		role.Description.String = r.Description
-		role.Description.Valid = r.Description != ""
+		// role.Description.String = r.Description
+		// role.Description.Valid = r.Description != ""
 
 		// Use FirstOrCreate to insert new role or get existing
 		result := s.db.Where("name = ?", r.Role).FirstOrCreate(&role)

@@ -82,20 +82,12 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 	}
 
 	// ===== 3. Check if roles exist in database =====
-	roles, err := s.roleRepo.FindByIDs(ctx, roleUUIDs)
+	roles, err := s.roleRepo.GetRoleByIDs(ctx, roleUUIDs)
 	if err != nil {
 		return fmt.Errorf("failed to validate roles: %w", err)
 	}
 	if len(roles) != len(req.RoleIDs) {
 		return errors.New("one or more role IDs are invalid")
-	}
-
-	// ===== 3.1 Validate allowed roles (only student or parent) =====
-	allowedRoles := map[string]bool{"student": true, "parent": true}
-	for _, role := range roles {
-		if !allowedRoles[role.Code] {
-			return fmt.Errorf("role '%s' is not allowed for registration", role.Code)
-		}
 	}
 
 	// ===== 4. Check email already exists =====
@@ -185,7 +177,7 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		roleUUIDs[i] = id
 	}
 
-	roles, err := s.roleRepo.FindByIDs(ctx, roleUUIDs)
+	roles, err := s.roleRepo.GetRoleByIDs(ctx, roleUUIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find roles: %w", err)
 	}
@@ -241,7 +233,6 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 	for i, role := range roles {
 		roleDtos[i] = dto.RoleDto{
 			ID:   role.ID.String(),
-			Code: role.Code,
 			Name: role.Name,
 		}
 	}
