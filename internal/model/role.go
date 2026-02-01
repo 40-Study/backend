@@ -11,7 +11,6 @@ import (
 // Based on 'roles' table in schema
 type Role struct {
 	ID             uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	Code           string         `gorm:"type:varchar(50);uniqueIndex;not null" json:"code"`
 	Name           string         `gorm:"type:varchar(100);not null" json:"name"`
 	Description    *string        `gorm:"type:text" json:"description,omitempty"`
 	IsSystemRole   bool           `gorm:"default:false;column:is_system_role" json:"is_system_role"`
