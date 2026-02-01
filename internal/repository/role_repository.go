@@ -13,6 +13,7 @@ type RoleRepositoryInterface interface {
 	// Role CRUD
 	CreateRole(ctx context.Context, role *model.Role) error
 	GetRoleByID(ctx context.Context, id uuid.UUID) (*model.Role, error)
+	GetRoleByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Role, error)
 	GetRoleByName(ctx context.Context, name string) (*model.Role, error)
 	GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.Role, int64, error)
 	UpdateRole(ctx context.Context, role *model.Role) error
@@ -63,7 +64,12 @@ func (r *RoleRepository) GetRoleByName(ctx context.Context, name string) (*model
 }
 
 func (r *RoleRepository) GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.Role, int64, error) {
+// GetRoleByIDs finds multiple active roles by their IDs
+func (r *RoleRepository) GetRoleByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Role, error) {
 	var roles []model.Role
+	err := r.db.WithContext(ctx).
+		Where("id IN ? AND is_active = ?", ids, true).
+		Find(&roles).Error
 	var total int64
 
 	offset := (page - 1) * pageSize
@@ -151,47 +157,5 @@ func (r *RoleRepository) GetPermissionsByRoleID(ctx context.Context, roleID uuid
 	if err != nil {
 		return nil, err
 	}
-
-	return permissions, nil
-}
-
-func (r *RoleRepository) GetRoleWithPermissions(ctx context.Context, roleID uuid.UUID) (*model.Role, error) {
-	role, err := r.GetRoleByID(ctx, roleID)
-	if err != nil {
-		return nil, err
-	}
-	if role == nil {
-		return nil, nil
-	}
-
-	permissions, err := r.GetPermissionsByRoleID(ctx, roleID)
-	if err != nil {
-		return nil, err
-	}
-	role.Permissions = permissions
-
-	return role, nil
-}
-
-func (r *RoleRepository) SetRolePermissions(ctx context.Context, roleID uuid.UUID, permissionIDs []uuid.UUID) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Xóa tất cả permission cũ của role
-		if err := tx.Where("role_id = ?", roleID).Delete(&model.RolePermission{}).Error; err != nil {
-			return err
-		}
-
-		// Thêm permission mới
-		if len(permissionIDs) > 0 {
-			rolePermissions := make([]model.RolePermission, len(permissionIDs))
-			for i, permID := range permissionIDs {
-				rolePermissions[i] = model.RolePermission{
-					RoleID:       roleID,
-					PermissionID: permID,
-				}
-			}
-			return tx.Create(&rolePermissions).Error
-		}
-
-		return nil
-	})
+	return roles, nil
 }

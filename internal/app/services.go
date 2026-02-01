@@ -11,12 +11,18 @@ type Services struct {
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
-
 	return &Services{
 		Auth:         service.NewAuthService(resources.Config, repos.User, resources.Redis),
 		Role:         service.NewRoleService(repos.Role, repos.Permission),
 		SystemRole:   service.NewSystemRoleService(repos.SystemRole, repos.Permission),
 		Permission:   service.NewPermissionService(repos.Permission),
 		Organization: service.NewOrganizationService(repos.Organization),
+		Auth: service.NewAuthService(
+			resources.Config,
+			repos.User,
+			repos.Role,
+			repos.UserRole,
+			resources.Redis,
+		),
 	}
 }

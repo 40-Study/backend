@@ -12,14 +12,18 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	auth := api.Group("/auth")
 	auth.Post("/register/request", authHandler.RequestRegister)
 	auth.Post("/register", authHandler.Register)
-	auth.Post("/login", authHandler.Login)
-	auth.Post("/reset-password/request", authHandler.RequestPasswordReset)
-	auth.Post("/reset-password", authHandler.ResetPassword)
-	auth.Post("/refresh-token", authHandler.RefreshToken)
+	auth.Post("/login", authHandler.Login) // done 
+	auth.Post("/reset-password/request", authHandler.RequestPasswordReset)  // done
+	auth.Post("/reset-password", authHandler.ResetPassword) // done
+	auth.Post("/refresh-token", authHandler.RefreshToken) // done
 
+	
 	auth.Use(middleware.AuthMiddleware(cfg, redis))
+	
 	auth.Get("/me", authHandler.GetMe)
+	auth.Put("/me", authHandler.UpdateMe)
+	auth.Get("/devices", authHandler.GetAllDevices)
 	auth.Post("/logout", authHandler.LogoutOneDevice)
 	auth.Post("/logout-all", authHandler.LogoutAll)
-	auth.Put("/change-password", authHandler.UpdatePasswordHash)
+	auth.Put("/change-password", authHandler.ChangePassword)
 }
