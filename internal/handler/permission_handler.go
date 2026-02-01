@@ -8,7 +8,7 @@ import (
 )
 
 type PermissionHandlerInterface interface {
-	GetPermission(c *fiber.Ctx) error
+	GetPermissionByID(c *fiber.Ctx) error
 	GetAllPermissions(c *fiber.Ctx) error
 	UpdatePermission(c *fiber.Ctx) error
 }
@@ -21,7 +21,7 @@ func NewPermissionHandler(service service.PermissionServiceInterface) *Permissio
 	return &PermissionHandler{service: service}
 }
 
-func (h *PermissionHandler) GetPermission(c *fiber.Ctx) error {
+func (h *PermissionHandler) GetPermissionByID(c *fiber.Ctx) error {
 	idStr := c.Params("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {

@@ -13,7 +13,7 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 
 	return &Services{
 		Auth:         service.NewAuthService(resources.Config, repos.User, resources.Redis),
-		Role:         service.NewRoleService(repos.Role),
+		Role:         service.NewRoleService(repos.Role, repos.Permission),
 		Permission:   service.NewPermissionService(repos.Permission),
 		Organization: service.NewOrganizationService(repos.Organization),
 	}

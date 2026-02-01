@@ -25,11 +25,12 @@ type RoleServiceInterface interface {
 }
 
 type RoleService struct {
-	repo repository.RoleRepositoryInterface
+	repo           repository.RoleRepositoryInterface
+	permissionRepo repository.PermissionRepositoryInterface
 }
 
-func NewRoleService(repo repository.RoleRepositoryInterface) *RoleService {
-	return &RoleService{repo: repo}
+func NewRoleService(repo repository.RoleRepositoryInterface, permissionRepo repository.PermissionRepositoryInterface) *RoleService {
+	return &RoleService{repo: repo, permissionRepo: permissionRepo}
 }
 
 func (s *RoleService) CreateRole(ctx context.Context, req dto.CreateRoleDTO) (*dto.RoleResponseDTO, error) {
@@ -135,6 +136,14 @@ func (s *RoleService) AddPermissionsToRole(ctx context.Context, roleID uuid.UUID
 		return errors.New("role not found")
 	}
 
+	count, err := s.permissionRepo.CountPermissionsByIDs(ctx, req.PermissionIDs)
+	if err != nil {
+		return err
+	}
+	if int(count) != len(req.PermissionIDs) {
+		return errors.New("one or more permission IDs do not exist")
+	}
+
 	return s.repo.AddPermissionsToRole(ctx, roleID, req.PermissionIDs)
 }
 
@@ -157,6 +166,14 @@ func (s *RoleService) SetRolePermissions(ctx context.Context, roleID uuid.UUID, 
 	}
 	if role == nil {
 		return errors.New("role not found")
+	}
+
+	count, err := s.permissionRepo.CountPermissionsByIDs(ctx, req.PermissionIDs)
+	if err != nil {
+		return err
+	}
+	if int(count) != len(req.PermissionIDs) {
+		return errors.New("one or more permission IDs do not exist")
 	}
 
 	return s.repo.SetRolePermissions(ctx, roleID, req.PermissionIDs)

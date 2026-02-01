@@ -12,7 +12,7 @@ func SetupPermissionRoutes(
 	permissions := api.Group("/permissions")
 	{
 		permissions.Get("/", permissionHandler.GetAllPermissions)
-		permissions.Get("/:id", permissionHandler.GetPermission)
+		permissions.Get("/:id", permissionHandler.GetPermissionByID)
 		permissions.Put("/:id", permissionHandler.UpdatePermission)
 	}
 }

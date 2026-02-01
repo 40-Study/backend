@@ -16,6 +16,7 @@ type PermissionRepositoryInterface interface {
 	GetAllPermissions(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.Permission, int64, error)
 	UpdatePermission(ctx context.Context, permission *model.Permission) error
 	DeletePermission(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	CountPermissionsByIDs(ctx context.Context, ids []uuid.UUID) (int64, error)
 }
 
 type PermissionRepository struct {
@@ -97,4 +98,10 @@ func (r *PermissionRepository) DeletePermission(ctx context.Context, id uuid.UUI
 		query = query.Unscoped()
 	}
 	return query.Delete(&model.Permission{}, "id = ?", id).Error
+}
+
+func (r *PermissionRepository) CountPermissionsByIDs(ctx context.Context, ids []uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Permission{}).Where("id IN ?", ids).Count(&count).Error
+	return count, err
 }
