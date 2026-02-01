@@ -91,6 +91,7 @@ func toPermissionResponseDTO(permission *model.Permission) *dto.PermissionRespon
 		ID:          permission.ID,
 		Name:        permission.Name,
 		Description: desc,
+		Status:      permission.Status,
 		CreatedAt:   permission.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:   permission.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 	}

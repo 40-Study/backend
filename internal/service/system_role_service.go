@@ -203,6 +203,7 @@ func toSystemRoleResponseDTO(role *model.SystemRole) *dto.SystemRoleResponseDTO 
 		ID:          role.ID,
 		Name:        role.Name,
 		Description: desc,
+		Status:      role.Status,
 		CreatedAt:   role.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:   role.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 	}
@@ -223,6 +224,7 @@ func toSystemRoleDetailResponseDTO(role *model.SystemRole) *dto.SystemRoleDetail
 		ID:          role.ID,
 		Name:        role.Name,
 		Description: desc,
+		Status:      role.Status,
 		Permissions: permDTOs,
 		CreatedAt:   role.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:   role.UpdatedAt.Format("2006-01-02T15:04:05Z"),

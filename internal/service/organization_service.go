@@ -144,6 +144,7 @@ func toOrganizationResponseDTO(org *model.Organization) *dto.OrganizationRespons
 		ID:          org.ID,
 		Name:        org.Name,
 		Description: desc,
+		Status:      org.Status,
 		CreatedAt:   org.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:   org.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 	}
@@ -164,6 +165,7 @@ func toOrganizationDetailResponseDTO(org *model.Organization) *dto.OrganizationD
 		ID:          org.ID,
 		Name:        org.Name,
 		Description: desc,
+		Status:      org.Status,
 		Roles:       roleDTOs,
 		CreatedAt:   org.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:   org.UpdatedAt.Format("2006-01-02T15:04:05Z"),

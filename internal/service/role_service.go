@@ -207,6 +207,7 @@ func toRoleResponseDTO(role *model.Role) *dto.RoleResponseDTO {
 		Name:           role.Name,
 		OrganizationID: role.OrganizationID,
 		Description:    desc,
+		Status:         role.Status,
 		CreatedAt:      role.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:      role.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 	}
@@ -228,6 +229,7 @@ func toRoleDetailResponseDTO(role *model.Role) *dto.RoleDetailResponseDTO {
 		Name:           role.Name,
 		OrganizationID: role.OrganizationID,
 		Description:    desc,
+		Status:         role.Status,
 		Permissions:    permDTOs,
 		CreatedAt:      role.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:      role.UpdatedAt.Format("2006-01-02T15:04:05Z"),
