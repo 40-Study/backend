@@ -1,0 +1,24 @@
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+COPY transaction/requirements.txt .
+
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY --from=builder /root/.local /root/.local
+
+COPY transaction/api.py .
+
+ENV PATH=/root/.local/bin:$PATH \
+    MB_USERNAME="" \
+    MB_PASSWORD="" \
+    MB_ACCOUNT_NO=""
+
+EXPOSE 8000
+
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
