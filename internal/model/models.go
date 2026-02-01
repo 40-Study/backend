@@ -7,6 +7,8 @@ func AllModels() []interface{} {
 		&Permission{},
 		&Role{},
 		&RolePermission{},
+		&SystemRole{},
+		&SystemRolePermission{},
 
 		// Organizations
 		&Organization{},

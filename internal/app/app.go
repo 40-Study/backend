@@ -36,6 +36,7 @@ func New() (*App, error) {
 		resources.Config,
 		handlers.Auth,
 		handlers.Role,
+		handlers.SystemRole,
 		handlers.Permission,
 		handlers.Organization,
 		resources.Redis,

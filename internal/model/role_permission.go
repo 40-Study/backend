@@ -27,7 +27,7 @@ func (Permission) TableName() string {
 type Role struct {
 	ID             uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	Name           string         `gorm:"type:varchar(100);not null;uniqueIndex:idx_role_name_org" json:"name"`
-	OrganizationID *uuid.UUID     `gorm:"type:uuid;uniqueIndex:idx_role_name_org;index:idx_role_org_id" json:"organization_id"`
+	OrganizationID uuid.UUID      `gorm:"type:uuid;not null;uniqueIndex:idx_role_name_org;index:idx_role_org_id" json:"organization_id"`
 	Description    sql.NullString `gorm:"type:varchar(500)" json:"description,omitempty"`
 	CreatedAt      time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt      time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
