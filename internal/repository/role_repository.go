@@ -51,6 +51,17 @@ func (r *RoleRepository) GetRoleByID(ctx context.Context, id uuid.UUID) (*model.
 	return &role, nil
 }
 
+func (r *RoleRepository) GetRoleByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Role, error) {
+	var roles []model.Role
+	err := r.db.WithContext(ctx).
+		Where("id IN ?", ids).
+		Find(&roles).Error
+	if err != nil {
+		return nil, err
+	}
+	return roles, nil
+}
+
 func (r *RoleRepository) GetRoleByName(ctx context.Context, name string) (*model.Role, error) {
 	var role model.Role
 	err := r.db.WithContext(ctx).Where("name = ?", name).First(&role).Error
@@ -64,12 +75,7 @@ func (r *RoleRepository) GetRoleByName(ctx context.Context, name string) (*model
 }
 
 func (r *RoleRepository) GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.Role, int64, error) {
-// GetRoleByIDs finds multiple active roles by their IDs
-func (r *RoleRepository) GetRoleByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Role, error) {
 	var roles []model.Role
-	err := r.db.WithContext(ctx).
-		Where("id IN ? AND is_active = ?", ids, true).
-		Find(&roles).Error
 	var total int64
 
 	offset := (page - 1) * pageSize
@@ -108,11 +114,9 @@ func (r *RoleRepository) UpdateRole(ctx context.Context, role *model.Role) error
 func (r *RoleRepository) DeleteRole(ctx context.Context, id uuid.UUID, hardDelete bool) error {
 	if hardDelete {
 		return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			// Xóa role_permissions trước
 			if err := tx.Where("role_id = ?", id).Delete(&model.RolePermission{}).Error; err != nil {
 				return err
 			}
-			// Xóa role (hard delete)
 			return tx.Unscoped().Delete(&model.Role{}, "id = ?", id).Error
 		})
 	}
@@ -129,7 +133,6 @@ func (r *RoleRepository) AddPermissionsToRole(ctx context.Context, roleID uuid.U
 			PermissionID: permID,
 		}
 	}
-
 	return r.db.WithContext(ctx).Create(&rolePermissions).Error
 }
 
@@ -140,7 +143,6 @@ func (r *RoleRepository) RemovePermissionsFromRole(ctx context.Context, roleID u
 }
 
 func (r *RoleRepository) GetPermissionsByRoleID(ctx context.Context, roleID uuid.UUID) ([]model.Permission, error) {
-	// Kiểm tra role tồn tại
 	role, err := r.GetRoleByID(ctx, roleID)
 	if err != nil {
 		return nil, err
@@ -157,5 +159,45 @@ func (r *RoleRepository) GetPermissionsByRoleID(ctx context.Context, roleID uuid
 	if err != nil {
 		return nil, err
 	}
-	return roles, nil
+
+	return permissions, nil
+}
+
+func (r *RoleRepository) GetRoleWithPermissions(ctx context.Context, roleID uuid.UUID) (*model.Role, error) {
+	role, err := r.GetRoleByID(ctx, roleID)
+	if err != nil {
+		return nil, err
+	}
+	if role == nil {
+		return nil, nil
+	}
+
+	permissions, err := r.GetPermissionsByRoleID(ctx, roleID)
+	if err != nil {
+		return nil, err
+	}
+	role.Permissions = permissions
+
+	return role, nil
+}
+
+func (r *RoleRepository) SetRolePermissions(ctx context.Context, roleID uuid.UUID, permissionIDs []uuid.UUID) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("role_id = ?", roleID).Delete(&model.RolePermission{}).Error; err != nil {
+			return err
+		}
+
+		if len(permissionIDs) > 0 {
+			rolePermissions := make([]model.RolePermission, len(permissionIDs))
+			for i, permID := range permissionIDs {
+				rolePermissions[i] = model.RolePermission{
+					RoleID:       roleID,
+					PermissionID: permID,
+				}
+			}
+			return tx.Create(&rolePermissions).Error
+		}
+
+		return nil
+	})
 }

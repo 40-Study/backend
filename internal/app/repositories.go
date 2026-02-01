@@ -9,21 +9,17 @@ type Repositories struct {
 	User         *repository.UserRepository
 	Role         *repository.RoleRepository
 	SystemRole   *repository.SystemRoleRepository
+	UserRole     *repository.UserRoleRepository
 	Permission   *repository.PermissionRepository
 	Organization *repository.OrganizationRepository
-	User     *repository.UserRepository
-	Role     *repository.RoleRepository
-	UserRole *repository.UserRoleRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
 	return &Repositories{
-		User:     repository.NewUserRepository(db),
-		Role:     repository.NewRoleRepository(db),
-		UserRole: repository.NewUserRoleRepository(db),
 		User:         repository.NewUserRepository(db),
 		Role:         repository.NewRoleRepository(db),
 		SystemRole:   repository.NewSystemRoleRepository(db),
+		UserRole:     repository.NewUserRoleRepository(db),
 		Permission:   repository.NewPermissionRepository(db),
 		Organization: repository.NewOrganizationRepository(db),
 	}

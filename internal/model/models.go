@@ -15,10 +15,7 @@ func AllModels() []interface{} {
 
 		// Users & Auth
 		&User{},
-		// Users & Auth (order matters for foreign key dependencies)
-		&Role{},     // Must be before UserRole (foreign key dependency)
-		&User{},     // Must be before UserRole (foreign key dependency)
-		&UserRole{}, // Junction table for user-role many-to-many
+		&UserRole{},
 		&VerificationCode{},
 		&UserOAuthProvider{},
 
