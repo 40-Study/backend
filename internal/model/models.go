@@ -3,10 +3,19 @@ package model
 // AllModels trả về tất cả models để dùng với AutoMigrate
 func AllModels() []interface{} {
 	return []interface{}{
-		// Users & Auth (order matters for foreign key dependencies)
-		&Role{},     // Must be before UserRole (foreign key dependency)
-		&User{},     // Must be before UserRole (foreign key dependency)
-		&UserRole{}, // Junction table for user-role many-to-many
+		// Roles & Permissions
+		&Permission{},
+		&Role{},
+		&RolePermission{},
+		&SystemRole{},
+		&SystemRolePermission{},
+
+		// Organizations
+		&Organization{},
+
+		// Users & Auth
+		&User{},
+		&UserRole{},
 		&VerificationCode{},
 		&UserOAuthProvider{},
 

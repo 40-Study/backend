@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 )
 
-type Permission struct {
+type Organization struct {
 	ID          uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	Name        string         `gorm:"type:varchar(100);uniqueIndex;not null" json:"name"`
 	Description sql.NullString `gorm:"type:varchar(500)" json:"description,omitempty"`
@@ -18,16 +18,16 @@ type Permission struct {
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// Relationships
-	Roles []Role `gorm:"-" json:"-"`
+	Roles []Role `gorm:"foreignKey:OrganizationID" json:"roles,omitempty"`
 }
 
-func (Permission) TableName() string {
-	return "permissions"
+func (Organization) TableName() string {
+	return "organizations"
 }
 
-func (p *Permission) BeforeCreate(tx *gorm.DB) error {
-	if p.ID == uuid.Nil {
-		p.ID = uuid.New()
+func (o *Organization) BeforeCreate(tx *gorm.DB) error {
+	if o.ID == uuid.Nil {
+		o.ID = uuid.New()
 	}
 	return nil
 }
