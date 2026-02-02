@@ -5,17 +5,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 type SystemRole struct {
-	ID          uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	BaseModel
 	Name        string         `gorm:"type:varchar(100);uniqueIndex;not null" json:"name"`
 	Description sql.NullString `gorm:"type:varchar(500)" json:"description,omitempty"`
 	Status      string         `gorm:"type:varchar(20);default:'active';not null;index" json:"status"`
-	CreatedAt   time.Time      `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt   time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// Relationships
 	Permissions []Permission `gorm:"-" json:"permissions,omitempty"`
@@ -23,13 +19,6 @@ type SystemRole struct {
 
 func (SystemRole) TableName() string {
 	return "system_roles"
-}
-
-func (r *SystemRole) BeforeCreate(tx *gorm.DB) error {
-	if r.ID == uuid.Nil {
-		r.ID = uuid.New()
-	}
-	return nil
 }
 
 type SystemRolePermission struct {

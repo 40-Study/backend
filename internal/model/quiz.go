@@ -6,12 +6,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/shopspring/decimal"
-	"gorm.io/gorm"
 )
 
 type Quiz struct {
-	gorm.Model
-	ID                 uuid.UUID       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	BaseModel
 	LessonID           *uuid.UUID      `gorm:"type:uuid;uniqueIndex" json:"lesson_id,omitempty"`
 	CourseID           *uuid.UUID      `gorm:"type:uuid;index" json:"course_id,omitempty"`
 	Title              string          `gorm:"type:varchar(255);not null" json:"title"`
@@ -36,8 +34,7 @@ func (Quiz) TableName() string {
 }
 
 type Question struct {
-	gorm.Model
-	ID            uuid.UUID       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	BaseModel
 	QuizID        uuid.UUID       `gorm:"type:uuid;not null;index" json:"quiz_id"`
 	QuestionText  string          `gorm:"type:text;not null" json:"question_text"`
 	QuestionType  string          `gorm:"type:varchar(20);not null;check:question_type IN ('single_choice', 'multiple_choice', 'true_false', 'fill_blank', 'essay')" json:"question_type"`

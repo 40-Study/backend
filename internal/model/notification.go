@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 type Notification struct {
@@ -28,8 +27,7 @@ func (Notification) TableName() string {
 }
 
 type NotificationSettings struct {
-	gorm.Model
-	ID                   uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	BaseModel
 	UserID               uuid.UUID `gorm:"type:uuid;uniqueIndex;not null" json:"user_id"`
 	EmailCourseUpdates   bool      `gorm:"default:true" json:"email_course_updates"`
 	EmailPromotions      bool      `gorm:"default:true" json:"email_promotions"`

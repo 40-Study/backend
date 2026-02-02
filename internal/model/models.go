@@ -39,8 +39,8 @@ func AllModels() []interface{} {
 		// Enrollment & Progress
 		&Enrollment{},
 		&LessonProgress{},
-		&UserNote{},
 		&Certificate{},
+		&UserNote{},
 
 		// Reviews & Discussions
 		&Review{},

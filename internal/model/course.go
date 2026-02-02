@@ -6,12 +6,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/shopspring/decimal"
-	"gorm.io/gorm"
 )
 
 type Category struct {
-	gorm.Model
-	ID           uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	BaseModel
 	ParentID     *uuid.UUID `gorm:"type:uuid;index" json:"parent_id,omitempty"`
 	Name         string     `gorm:"type:varchar(100);not null" json:"name"`
 	Slug         string     `gorm:"type:varchar(100);uniqueIndex;not null" json:"slug"`
@@ -45,8 +43,7 @@ func (Tag) TableName() string {
 }
 
 type Course struct {
-	gorm.Model
-	ID                uuid.UUID        `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	BaseModel
 	InstructorID      uuid.UUID        `gorm:"type:uuid;not null;index" json:"instructor_id"`
 	CategoryID        *uuid.UUID       `gorm:"type:uuid;index" json:"category_id,omitempty"`
 	Title             string           `gorm:"type:varchar(255);not null" json:"title"`
@@ -87,8 +84,7 @@ func (Course) TableName() string {
 }
 
 type Section struct {
-	gorm.Model
-	ID           uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	BaseModel
 	CourseID     uuid.UUID `gorm:"type:uuid;not null;index" json:"course_id"`
 	Title        string    `gorm:"type:varchar(255);not null" json:"title"`
 	Description  *string   `gorm:"type:text" json:"description,omitempty"`
