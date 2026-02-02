@@ -70,25 +70,6 @@ func (r *TeacherRepository) GetTeacherByID(ctx context.Context, id uuid.UUID) (*
 	return &teacher, nil
 }
 
-func (r *TeacherRepository) CreateTeacher(ctx context.Context, user *model.User, systemRoleName string) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(user).Error; err != nil {
-			return err
-		}
-
-		var systemRole model.SystemRole
-		if err := tx.Where("name = ?", systemRoleName).First(&systemRole).Error; err != nil {
-			return err
-		}
-
-		userRole := model.UserRole{
-			UserID: user.ID,
-			RoleID: systemRole.ID,
-		}
-		return tx.Create(&userRole).Error
-	})
-}
-
 func (r *TeacherRepository) UpdateTeacher(ctx context.Context, user *model.User) error {
 	return r.db.WithContext(ctx).Save(user).Error
 }

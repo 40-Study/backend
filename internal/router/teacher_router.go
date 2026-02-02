@@ -11,7 +11,6 @@ func SetupTeacherRoutes(
 ) {
 	teachers := api.Group("/teachers")
 	{
-		teachers.Post("/", teacherHandler.CreateTeacher)
 		teachers.Get("/", teacherHandler.GetAllTeachers)
 		teachers.Get("/:id", teacherHandler.GetTeacher)
 		teachers.Put("/:id", teacherHandler.UpdateTeacher)

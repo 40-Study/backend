@@ -10,7 +10,6 @@ import (
 type TeacherHandlerInterface interface {
 	GetAllTeachers(c *fiber.Ctx) error
 	GetTeacher(c *fiber.Ctx) error
-	CreateTeacher(c *fiber.Ctx) error
 	UpdateTeacher(c *fiber.Ctx) error
 	DeleteTeacher(c *fiber.Ctx) error
 }
@@ -21,29 +20,6 @@ type TeacherHandler struct {
 
 func NewTeacherHandler(service service.TeacherServiceInterface) *TeacherHandler {
 	return &TeacherHandler{service: service}
-}
-
-func (h *TeacherHandler) CreateTeacher(c *fiber.Ctx) error {
-	var req dto.CreateTeacherDTO
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
-	}
-
-	teacher, err := h.service.CreateTeacher(c.Context(), req)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to create teacher",
-			"error":   err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message": "Teacher created successfully",
-		"data":    teacher,
-	})
 }
 
 func (h *TeacherHandler) GetTeacher(c *fiber.Ctx) error {

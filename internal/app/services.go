@@ -24,6 +24,6 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		SystemRole:   service.NewSystemRoleService(repos.SystemRole, repos.Permission),
 		Permission:   service.NewPermissionService(repos.Permission),
 		Organization: service.NewOrganizationService(repos.Organization),
-		Teacher:      service.NewTeacherService(repos.Teacher, repos.User),
+		Teacher:      service.NewTeacherService(repos.Teacher),
 	}
 }
