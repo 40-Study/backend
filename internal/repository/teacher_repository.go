@@ -30,7 +30,7 @@ func (r *TeacherRepository) teacherQuery(ctx context.Context) *gorm.DB {
 		Model(&model.User{}).
 		Joins("JOIN user_roles ON user_roles.user_id = users.id").
 		Joins("JOIN system_roles ON system_roles.id = user_roles.role_id").
-		Where("system_roles.name = ?", "teacher")
+		Where("system_roles.name = ?", "TEACHER")
 }
 
 func (r *TeacherRepository) GetAllTeachers(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.User, int64, error) {

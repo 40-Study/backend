@@ -106,7 +106,7 @@ func (s *TeacherService) CreateTeacher(ctx context.Context, req dto.CreateTeache
 		user.DateOfBirth = &dob
 	}
 
-	if err := s.repo.CreateTeacher(ctx, user, "teacher"); err != nil {
+	if err := s.repo.CreateTeacher(ctx, user, "TEACHER"); err != nil {
 		return nil, err
 	}
 
