@@ -9,6 +9,7 @@ type Handlers struct {
 	SystemRole   *handler.SystemRoleHandler
 	Permission   *handler.PermissionHandler
 	Organization *handler.OrganizationHandler
+	Teacher      *handler.TeacherHandler
 }
 
 // InitHandlers initializes all handlers
@@ -19,5 +20,6 @@ func InitHandlers(services *Services) *Handlers {
 		SystemRole:   handler.NewSystemRoleHandler(services.SystemRole),
 		Permission:   handler.NewPermissionHandler(services.Permission),
 		Organization: handler.NewOrganizationHandler(services.Organization),
+		Teacher:      handler.NewTeacherHandler(services.Teacher),
 	}
 }

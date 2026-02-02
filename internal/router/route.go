@@ -16,6 +16,7 @@ func SetupAllRoutes(
 	systemRoleHandler *handler.SystemRoleHandler,
 	permissionHandler *handler.PermissionHandler,
 	organizationHandler *handler.OrganizationHandler,
+	teacherHandler *handler.TeacherHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 ) {
@@ -34,4 +35,5 @@ func SetupAllRoutes(
 	SetupSystemRoleRoutes(api, systemRoleHandler)
 	SetupPermissionRoutes(api, permissionHandler)
 	SetupOrganizationRoutes(api, organizationHandler)
+	SetupTeacherRoutes(api, teacherHandler)
 }
