@@ -6,14 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type UpdateTeacherDTO struct {
-	UserName    *string `json:"user_name" binding:"omitempty,min=2,max=100"`
-	FullName    *string `json:"full_name" binding:"omitempty,max=255"`
-	Phone       *string `json:"phone" binding:"omitempty,max=20"`
-	Bio         *string `json:"bio"`
-	DateOfBirth *string `json:"date_of_birth"`
-}
-
 type TeacherResponseDTO struct {
 	ID          uuid.UUID  `json:"id"`
 	Email       string     `json:"email"`

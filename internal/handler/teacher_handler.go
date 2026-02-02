@@ -3,14 +3,12 @@ package handler
 import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"study.com/v1/internal/dto"
 	"study.com/v1/internal/service"
 )
 
 type TeacherHandlerInterface interface {
 	GetAllTeachers(c *fiber.Ctx) error
 	GetTeacher(c *fiber.Ctx) error
-	UpdateTeacher(c *fiber.Ctx) error
 	DeleteTeacher(c *fiber.Ctx) error
 }
 
@@ -63,38 +61,6 @@ func (h *TeacherHandler) GetAllTeachers(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Teachers retrieved successfully",
 		"data":    teachers,
-	})
-}
-
-func (h *TeacherHandler) UpdateTeacher(c *fiber.Ctx) error {
-	idStr := c.Params("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid teacher ID",
-			"error":   err.Error(),
-		})
-	}
-
-	var req dto.UpdateTeacherDTO
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
-	}
-
-	teacher, err := h.service.UpdateTeacher(c.Context(), id, req)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to update teacher",
-			"error":   err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Teacher updated successfully",
-		"data":    teacher,
 	})
 }
 

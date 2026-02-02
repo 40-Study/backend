@@ -13,7 +13,6 @@ func SetupTeacherRoutes(
 	{
 		teachers.Get("/", teacherHandler.GetAllTeachers)
 		teachers.Get("/:id", teacherHandler.GetTeacher)
-		teachers.Put("/:id", teacherHandler.UpdateTeacher)
 		teachers.Delete("/:id", teacherHandler.DeleteTeacher)
 	}
 }

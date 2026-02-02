@@ -13,7 +13,6 @@ import (
 type TeacherRepositoryInterface interface {
 	GetAllTeachers(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.User, int64, error)
 	GetTeacherByID(ctx context.Context, id uuid.UUID) (*model.User, error)
-	UpdateTeacher(ctx context.Context, user *model.User) error
 	DeleteTeacher(ctx context.Context, id uuid.UUID, hardDelete bool) error
 }
 
@@ -68,10 +67,6 @@ func (r *TeacherRepository) GetTeacherByID(ctx context.Context, id uuid.UUID) (*
 		return nil, err
 	}
 	return &teacher, nil
-}
-
-func (r *TeacherRepository) UpdateTeacher(ctx context.Context, user *model.User) error {
-	return r.db.WithContext(ctx).Save(user).Error
 }
 
 func (r *TeacherRepository) DeleteTeacher(ctx context.Context, id uuid.UUID, hardDelete bool) error {
