@@ -17,6 +17,10 @@ func SetupAllRoutes(
 	permissionHandler *handler.PermissionHandler,
 	organizationHandler *handler.OrganizationHandler,
 	teacherHandler *handler.TeacherHandler,
+	teacherProfileHandler *handler.TeacherProfileHandler,
+	classHandler *handler.ClassHandler,
+	classScheduleHandler *handler.ClassScheduleHandler,
+	attendanceHandler *handler.AttendanceHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 ) {
@@ -36,4 +40,6 @@ func SetupAllRoutes(
 	SetupPermissionRoutes(api, permissionHandler)
 	SetupOrganizationRoutes(api, organizationHandler)
 	SetupTeacherRoutes(api, teacherHandler)
+	SetupTeacherProfileRoutes(api, teacherProfileHandler)
+	SetupClassRoutes(api, classHandler, classScheduleHandler, attendanceHandler)
 }
