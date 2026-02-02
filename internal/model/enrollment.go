@@ -5,12 +5,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	"gorm.io/gorm"
 )
 
 type Enrollment struct {
-	gorm.Model
-	ID              uuid.UUID       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	BaseModel
 	UserID          uuid.UUID       `gorm:"type:uuid;not null;index;uniqueIndex:idx_user_course" json:"user_id"`
 	CourseID        uuid.UUID       `gorm:"type:uuid;not null;index;uniqueIndex:idx_user_course" json:"course_id"`
 	EnrolledAt      time.Time       `gorm:"default:CURRENT_TIMESTAMP" json:"enrolled_at"`
@@ -32,8 +30,7 @@ func (Enrollment) TableName() string {
 }
 
 type LessonProgress struct {
-	gorm.Model
-	ID               uuid.UUID       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	BaseModel
 	UserID           uuid.UUID       `gorm:"type:uuid;not null;index;uniqueIndex:idx_user_lesson" json:"user_id"`
 	LessonID         uuid.UUID       `gorm:"type:uuid;not null;index;uniqueIndex:idx_user_lesson" json:"lesson_id"`
 	EnrollmentID     uuid.UUID       `gorm:"type:uuid;not null;index" json:"enrollment_id"`
@@ -54,8 +51,7 @@ func (LessonProgress) TableName() string {
 }
 
 type UserNote struct {
-	gorm.Model
-	ID                 uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	BaseModel
 	UserID             uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
 	LessonID           uuid.UUID `gorm:"type:uuid;not null;index" json:"lesson_id"`
 	Content            string    `gorm:"type:text;not null" json:"content"`
