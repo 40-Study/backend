@@ -7,12 +7,12 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/utils"
 )
 
 type TeacherRepositoryInterface interface {
 	GetAllTeachers(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.User, int64, error)
 	GetTeacherByID(ctx context.Context, id uuid.UUID) (*model.User, error)
-	CreateTeacher(ctx context.Context, user *model.User, systemRoleName string) error
 	UpdateTeacher(ctx context.Context, user *model.User) error
 	DeleteTeacher(ctx context.Context, id uuid.UUID, hardDelete bool) error
 }
@@ -37,31 +37,16 @@ func (r *TeacherRepository) GetAllTeachers(ctx context.Context, page, pageSize i
 	var teachers []model.User
 	var total int64
 
-	offset := (page - 1) * pageSize
-
 	query := r.teacherQuery(ctx)
-
-	switch status {
-	case "inactive":
-		query = query.Where("users.is_active = ?", false)
-	case "all":
-		// no filter
-	default: // "active" or empty
-		query = query.Where("users.is_active = ?", true)
-	}
-
-	if keyword != "" {
-		query = query.Where("users.user_name ILIKE ? OR users.email ILIKE ? OR users.full_name ILIKE ?", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
-	}
+	query = utils.ApplySoftDeleteStatus(query, status)
+	query = utils.ApplyKeywordSearch(query, keyword, "users.user_name", "users.email", "users.full_name")
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	if err := query.
+	if err := utils.ApplyPagination(query, page, pageSize).
 		Select("users.*").
-		Offset(offset).
-		Limit(pageSize).
 		Order("users.created_at DESC").
 		Find(&teachers).Error; err != nil {
 		return nil, 0, err
