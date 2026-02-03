@@ -34,26 +34,26 @@ type AuthServiceInterface interface {
 }
 
 type AuthService struct {
-	cfg          *config.Config
-	userRepo     repository.UserRepositoryInterface
-	roleRepo     repository.RoleRepositoryInterface
-	userRoleRepo repository.UserRoleRepositoryInterface
-	redisClient  *redis.Client
+	cfg         *config.Config
+	userRepo    repository.UserRepositoryInterface
+	roleRepo    repository.RoleRepositoryInterface
+	userOrgRole repository.UserOrganizationRoleRepositoryInterface
+	redisClient *redis.Client
 }
 
 func NewAuthService(
 	cfg *config.Config,
 	userRepo repository.UserRepositoryInterface,
 	roleRepo repository.RoleRepositoryInterface,
-	userRoleRepo repository.UserRoleRepositoryInterface,
+	userOrgRole repository.UserOrganizationRoleRepositoryInterface,
 	redisClient *redis.Client,
 ) *AuthService {
 	return &AuthService{
-		cfg:          cfg,
-		userRepo:     userRepo,
-		roleRepo:     roleRepo,
-		userRoleRepo: userRoleRepo,
-		redisClient:  redisClient,
+		cfg:         cfg,
+		userRepo:    userRepo,
+		roleRepo:    roleRepo,
+		userOrgRole: userOrgRole,
+		redisClient: redisClient,
 	}
 }
 
@@ -205,22 +205,23 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	// ===== 8. Create user_roles entries =====
+	// ===== 8. Create user_organization_roles entries =====
 	now := time.Now()
-	userRoles := make([]model.UserRole, len(roles))
+	userOrgRoles := make([]model.UserOrganizationRole, len(roles))
 	for i, role := range roles {
-		userRoles[i] = model.UserRole{
+		userOrgRoles[i] = model.UserOrganizationRole{
 			UserID:         user.ID,
 			RoleID:         role.ID,
-			OrganizationID: nil, // NULL = global role
+			OrganizationID: role.OrganizationID,
 			GrantedAt:      now,
 			GrantedBy:      nil, // Self-registered
 			Notes:          nil,
+			Status:         model.UserOrgRoleStatusActive,
 		}
 	}
 
-	if err := s.userRoleRepo.CreateUserRoles(ctx, userRoles); err != nil {
-		// Rollback: delete user if user_roles creation fails
+	if err := s.userOrgRole.CreateUserRoles(ctx, userOrgRoles); err != nil {
+		// Rollback: delete user if user_organization_roles creation fails
 		// In production, use database transaction
 		return nil, fmt.Errorf("failed to assign roles: %w", err)
 	}

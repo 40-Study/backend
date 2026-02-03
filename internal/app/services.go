@@ -3,11 +3,13 @@ package app
 import "study.com/v1/internal/service"
 
 type Services struct {
-	Auth         *service.AuthService
-	Role         *service.RoleService
-	SystemRole   *service.SystemRoleService
-	Permission   *service.PermissionService
-	Organization *service.OrganizationService
+	Auth                 *service.AuthService
+	Role                 *service.RoleService
+	SystemRole           *service.SystemRoleService
+	UserSystemRole       *service.UserSystemRoleService
+	UserOrganizationRole *service.UserOrganizationRoleService
+	Permission           *service.PermissionService
+	Organization         *service.OrganizationService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
@@ -16,11 +18,22 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			resources.Config,
 			repos.User,
 			repos.Role,
-			repos.UserRole,
+			repos.UserOrganizationRole,
 			resources.Redis,
 		),
-		Role:         service.NewRoleService(repos.Role, repos.Permission),
-		SystemRole:   service.NewSystemRoleService(repos.SystemRole, repos.Permission),
+		Role:       service.NewRoleService(repos.Role, repos.Permission),
+		SystemRole: service.NewSystemRoleService(repos.SystemRole, repos.Permission),
+		UserSystemRole: service.NewUserSystemRoleService(
+			repos.UserSystemRole,
+			repos.User,
+			repos.SystemRole,
+		),
+		UserOrganizationRole: service.NewUserOrganizationRoleService(
+			repos.UserOrganizationRole,
+			repos.User,
+			repos.Role,
+			repos.Organization,
+		),
 		Permission:   service.NewPermissionService(repos.Permission),
 		Organization: service.NewOrganizationService(repos.Organization),
 	}

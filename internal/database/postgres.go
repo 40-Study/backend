@@ -42,17 +42,17 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 }
 
 func Migrate(db *gorm.DB) error {
-		return db.AutoMigrate(
-			// Core tables
-			&model.User{},
-			&model.Role{},
-	
-			// Junction table (PHẢI SAU User + Role)
-			&model.UserRole{},
-	
-			
-		)
-	}
+	return db.AutoMigrate(
+		// Core tables
+		&model.User{},
+		&model.Role{},
+		&model.SystemRole{},
+
+		// Junction tables (PHẢI SAU User + Role)
+		&model.UserOrganizationRole{},
+		&model.UserSystemRole{},
+	)
+}
 
 func Close(db *gorm.DB) error {
 	sqlDB, err := db.DB()

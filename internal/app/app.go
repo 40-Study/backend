@@ -38,6 +38,8 @@ func New() (*App, error) {
 		handlers.Auth,
 		handlers.Role,
 		handlers.SystemRole,
+		handlers.UserSystemRole,
+		handlers.UserOrganizationRole,
 		handlers.Permission,
 		handlers.Organization,
 		resources.Redis,

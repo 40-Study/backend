@@ -14,6 +14,8 @@ func SetupAllRoutes(
 	authHandler *handler.AuthHandler,
 	roleHandler *handler.RoleHandler,
 	systemRoleHandler *handler.SystemRoleHandler,
+	userSystemRoleHandler *handler.UserSystemRoleHandler,
+	userOrgRoleHandler *handler.UserOrganizationRoleHandler,
 	permissionHandler *handler.PermissionHandler,
 	organizationHandler *handler.OrganizationHandler,
 	redis *redis.Client,
@@ -32,6 +34,8 @@ func SetupAllRoutes(
 	SetupAuthRoutes(api, cfg, authHandler, redis)
 	SetupRoleRoutes(api, roleHandler)
 	SetupSystemRoleRoutes(api, systemRoleHandler)
+	SetupUserSystemRoleRoutes(api, cfg, userSystemRoleHandler, redis)
+	SetupUserOrganizationRoleRoutes(api, cfg, userOrgRoleHandler, redis)
 	SetupPermissionRoutes(api, permissionHandler)
 	SetupOrganizationRoutes(api, organizationHandler)
 }
