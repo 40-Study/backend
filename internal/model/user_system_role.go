@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// UserSystemRole represents the assignment of system roles to users
+// UserSystemRole đại diện cho việc gán vai trò hệ thống cho người dùng
 type UserSystemRole struct {
 	ID           uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	UserID       uuid.UUID      `gorm:"type:uuid;not null;uniqueIndex:idx_usr_user_role,priority:1;index:idx_usr_user_id" json:"user_id"`
@@ -22,7 +22,7 @@ type UserSystemRole struct {
 	UpdatedAt    time.Time      `json:"updated_at"`
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 
-	// Relationships
+	// Các mối quan hệ
 	User       *User       `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user,omitempty"`
 	SystemRole *SystemRole `gorm:"foreignKey:SystemRoleID;constraint:OnDelete:CASCADE" json:"system_role,omitempty"`
 	Granter    *User       `gorm:"foreignKey:GrantedBy" json:"granter,omitempty"`
@@ -33,7 +33,7 @@ func (UserSystemRole) TableName() string {
 	return "user_system_roles"
 }
 
-// UserSystemRole status constants
+// Các hằng số trạng thái UserSystemRole
 const (
 	UserSystemRoleStatusActive    = "active"
 	UserSystemRoleStatusSuspended = "suspended"

@@ -122,7 +122,7 @@ func (s *SystemRoleService) DeleteSystemRole(ctx context.Context, id uuid.UUID, 
 	return s.repo.DeleteSystemRole(ctx, id, hardDelete)
 }
 
-// ============ SystemRole-Permission Management ============
+// ============ Quản Lý Quyền-Vai Trò Hệ Thống ============
 
 func (s *SystemRoleService) AddPermissionsToSystemRole(ctx context.Context, roleID uuid.UUID, req dto.AddPermissionsToSystemRoleDTO) error {
 	role, err := s.repo.GetSystemRoleByID(ctx, roleID)

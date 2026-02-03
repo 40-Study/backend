@@ -16,59 +16,59 @@ func SetupUserOrganizationRoleRoutes(
 ) {
 	authMiddleware := middleware.AuthMiddleware(cfg, redis)
 
-	// User organization roles management (under /users/:user_id)
+	// Quản lý vai trò tổ chức người dùng (dưới /users/:user_id)
 	users := api.Group("/users")
 	{
-		// Organization roles of a user
+		// Các vai trò tổ chức của một người dùng
 		userOrgRoles := users.Group("/:user_id/organization-roles", authMiddleware)
 		{
-			// GET /users/:user_id/organization-roles - Get all org roles of a user
+			// GET /users/:user_id/organization-roles - Lấy tất cả vai trò tổ chức của người dùng
 			userOrgRoles.Get("/", userOrgRoleHandler.GetUserOrgRoles)
 
-			// POST /users/:user_id/organization-roles - Assign org roles to user (single or multiple)
+			// POST /users/:user_id/organization-roles - Gán vai trò tổ chức cho người dùng (đơn hoặc đa)
 			userOrgRoles.Post("/", userOrgRoleHandler.AssignOrgRolesToUser)
 
-			// DELETE /users/:user_id/organization-roles - Remove all org roles from user
+			// DELETE /users/:user_id/organization-roles - Xóa tất cả vai trò tổ chức khỏi người dùng
 			userOrgRoles.Delete("/", userOrgRoleHandler.RemoveAllOrgRolesFromUser)
 		}
 
-		// User roles in a specific organization
+		// Vai trò người dùng trong một tổ chức cụ thể
 		userOrgs := users.Group("/:user_id/organizations", authMiddleware)
 		{
-			// GET /users/:user_id/organizations/:organization_id/roles - Get user roles in organization
+			// GET /users/:user_id/organizations/:organization_id/roles - Lấy vai trò người dùng trong tổ chức
 			userOrgs.Get("/:organization_id/roles", userOrgRoleHandler.GetUserOrgRolesInOrganization)
 
-			// GET /users/:user_id/organizations/:organization_id/roles/:role_id/check - Check if user has role in org
+			// GET /users/:user_id/organizations/:organization_id/roles/:role_id/check - Kiểm tra xem người dùng có vai trò trong tổ chức không
 			userOrgs.Get("/:organization_id/roles/:role_id/check", userOrgRoleHandler.CheckUserHasOrgRole)
 
-			// DELETE /users/:user_id/organizations/:organization_id - Remove user from organization
+			// DELETE /users/:user_id/organizations/:organization_id - Xóa người dùng khỏi tổ chức
 			userOrgs.Delete("/:organization_id", userOrgRoleHandler.RemoveUserFromOrganization)
 		}
 	}
 
-	// Organization members management (under /organizations/:organization_id)
+	// Quản lý thành viên tổ chức (dưới /organizations/:organization_id)
 	organizations := api.Group("/organizations")
 	{
 		orgMembers := organizations.Group("/:organization_id", authMiddleware)
 		{
-			// GET /organizations/:organization_id/members - Get all members of organization
+			// GET /organizations/:organization_id/members - Lấy tất cả thành viên của tổ chức
 			orgMembers.Get("/members", userOrgRoleHandler.GetOrganizationMembers)
 
-			// GET /organizations/:organization_id/roles/:role_id/users - Get users with role in org
+			// GET /organizations/:organization_id/roles/:role_id/users - Lấy người dùng có vai trò trong tổ chức
 			orgMembers.Get("/roles/:role_id/users", userOrgRoleHandler.GetUsersWithOrgRole)
 		}
 	}
 
-	// Direct user organization role operations (under /user-organization-roles)
+	// Các thao tác trực tiếp với vai trò tổ chức người dùng (dưới /user-organization-roles)
 	userOrgRolesGroup := api.Group("/user-organization-roles", authMiddleware)
 	{
-		// GET /user-organization-roles/:id - Get user org role by ID
+		// GET /user-organization-roles/:id - Lấy vai trò tổ chức người dùng theo ID
 		userOrgRolesGroup.Get("/:id", userOrgRoleHandler.GetUserOrgRoleByID)
 
-		// PATCH /user-organization-roles/:id/status - Update status
+		// PATCH /user-organization-roles/:id/status - Cập nhật trạng thái
 		userOrgRolesGroup.Patch("/:id/status", userOrgRoleHandler.UpdateUserOrgRoleStatus)
 
-		// DELETE /user-organization-roles/:id - Remove a specific org role from user
+		// DELETE /user-organization-roles/:id - Xóa một vai trò tổ chức cụ thể khỏi người dùng
 		userOrgRolesGroup.Delete("/:id", userOrgRoleHandler.RemoveOrgRoleFromUser)
 	}
 }

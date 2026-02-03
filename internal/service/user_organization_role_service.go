@@ -12,10 +12,10 @@ import (
 )
 
 type UserOrganizationRoleServiceInterface interface {
-	// Assign operations
+	// Các thao tác gán quyền
 	AssignOrgRolesToUser(ctx context.Context, userID uuid.UUID, req dto.AssignOrgRolesToUserDTO, grantedBy uuid.UUID) ([]dto.UserOrgRoleResponseDTO, error)
 
-	// Query operations
+	// Các thao tác truy vấn
 	GetUserOrgRoleByID(ctx context.Context, id uuid.UUID) (*dto.UserOrgRoleResponseDTO, error)
 	GetUserOrgRoles(ctx context.Context, userID uuid.UUID, status string) ([]dto.UserOrgRoleResponseDTO, error)
 	GetUserOrgRolesInOrganization(ctx context.Context, userID, organizationID uuid.UUID, status string) ([]dto.UserOrgRoleResponseDTO, error)
@@ -23,20 +23,20 @@ type UserOrganizationRoleServiceInterface interface {
 	GetOrganizationMembers(ctx context.Context, organizationID uuid.UUID, page, pageSize int, status string) (*dto.UserOrgRoleListResponseDTO, error)
 	CheckUserHasOrgRole(ctx context.Context, userID, roleID, organizationID uuid.UUID) (bool, error)
 
-	// Status operations
+	// Các thao tác cập nhật trạng thái
 	UpdateUserOrgRoleStatus(ctx context.Context, id uuid.UUID, req dto.UpdateUserOrgRoleStatusDTO, updatedBy uuid.UUID) (*dto.UserOrgRoleResponseDTO, error)
 
-	// Delete operations
+	// Các thao tác xóa
 	RemoveOrgRoleFromUser(ctx context.Context, id uuid.UUID) error
 	RemoveAllOrgRolesFromUser(ctx context.Context, userID uuid.UUID) error
 	RemoveUserFromOrganization(ctx context.Context, userID, organizationID uuid.UUID) error
 }
 
 type UserOrganizationRoleService struct {
-	repo       repository.UserOrganizationRoleRepositoryInterface
-	userRepo   repository.UserRepositoryInterface
-	roleRepo   repository.RoleRepositoryInterface
-	orgRepo    repository.OrganizationRepositoryInterface
+	repo     repository.UserOrganizationRoleRepositoryInterface
+	userRepo repository.UserRepositoryInterface
+	roleRepo repository.RoleRepositoryInterface
+	orgRepo  repository.OrganizationRepositoryInterface
 }
 
 func NewUserOrganizationRoleService(
@@ -53,10 +53,10 @@ func NewUserOrganizationRoleService(
 	}
 }
 
-// ============ Assign Operations ============
+// ============ Các Thao Tác Gán Quyền ============
 
 func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, userID uuid.UUID, req dto.AssignOrgRolesToUserDTO, grantedBy uuid.UUID) ([]dto.UserOrgRoleResponseDTO, error) {
-	// Validate user exists
+	// Kiểm tra người dùng tồn tại
 	user, err := s.userRepo.FindUserByID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -65,7 +65,7 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 		return nil, errors.New("user not found")
 	}
 
-	// Validate organization exists
+	// Kiểm tra tổ chức tồn tại
 	org, err := s.orgRepo.GetOrganizationByID(ctx, req.OrganizationID)
 	if err != nil {
 		return nil, err
@@ -74,7 +74,7 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 		return nil, errors.New("organization not found")
 	}
 
-	// Validate all roles exist and not already assigned
+	// Kiểm tra tất cả các vai trò tồn tại và chưa được gán
 	for _, roleID := range req.RoleIDs {
 		role, err := s.roleRepo.GetRoleByID(ctx, roleID)
 		if err != nil {
@@ -93,7 +93,7 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 		}
 	}
 
-	// Create assignments
+	// Tạo các gán quyền
 	now := time.Now()
 	userOrgRoles := make([]model.UserOrganizationRole, len(req.RoleIDs))
 	for i, roleID := range req.RoleIDs {
@@ -112,7 +112,7 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 		return nil, err
 	}
 
-	// Fetch all user roles in this organization
+	// Lấy tất cả vai trò người dùng trong tổ chức này
 	created, err := s.repo.FindByUserAndOrganization(ctx, userID, req.OrganizationID, "active")
 	if err != nil {
 		return nil, err
@@ -126,7 +126,7 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 	return result, nil
 }
 
-// ============ Query Operations ============
+// ============ Các Thao Tác Truy Vấn ============
 
 func (s *UserOrganizationRoleService) GetUserOrgRoleByID(ctx context.Context, id uuid.UUID) (*dto.UserOrgRoleResponseDTO, error) {
 	userOrgRole, err := s.repo.FindByIDWithDetails(ctx, id)
@@ -176,7 +176,7 @@ func (s *UserOrganizationRoleService) GetUsersWithOrgRole(ctx context.Context, r
 		pageSize = 20
 	}
 
-	// Get role info
+	// Lấy thông tin vai trò
 	role, err := s.roleRepo.GetRoleByID(ctx, roleID)
 	if err != nil {
 		return nil, err
@@ -185,13 +185,13 @@ func (s *UserOrganizationRoleService) GetUsersWithOrgRole(ctx context.Context, r
 		return nil, errors.New("role not found")
 	}
 
-	// Get users with this role in organization
+	// Lấy danh sách người dùng có vai trò này trong tổ chức
 	userOrgRoles, total, err := s.repo.FindByRoleID(ctx, roleID, page, pageSize, status)
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter by organization if specified
+	// Lọc theo tổ chức nếu được chỉ định
 	filteredRoles := make([]model.UserOrganizationRole, 0)
 	for _, uor := range userOrgRoles {
 		if uor.OrganizationID == organizationID {
@@ -199,7 +199,7 @@ func (s *UserOrganizationRoleService) GetUsersWithOrgRole(ctx context.Context, r
 		}
 	}
 
-	// Build response
+	// Tạo phản hồi
 	users := make([]dto.UserWithOrgRolesResponseDTO, len(filteredRoles))
 	for i, uor := range filteredRoles {
 		users[i] = dto.UserWithOrgRolesResponseDTO{
@@ -255,7 +255,7 @@ func (s *UserOrganizationRoleService) CheckUserHasOrgRole(ctx context.Context, u
 	return userOrgRole != nil && userOrgRole.Status == "active", nil
 }
 
-// ============ Status Operations ============
+// ============ Các Thao Tác Cập Nhật Trạng Thái ============
 
 func (s *UserOrganizationRoleService) UpdateUserOrgRoleStatus(ctx context.Context, id uuid.UUID, req dto.UpdateUserOrgRoleStatusDTO, updatedBy uuid.UUID) (*dto.UserOrgRoleResponseDTO, error) {
 	userOrgRole, err := s.repo.FindByID(ctx, id)
@@ -275,7 +275,7 @@ func (s *UserOrganizationRoleService) UpdateUserOrgRoleStatus(ctx context.Contex
 		return nil, err
 	}
 
-	// Fetch updated record
+	// Lấy bản ghi đã cập nhật
 	updated, err := s.repo.FindByIDWithDetails(ctx, id)
 	if err != nil {
 		return nil, err
@@ -284,7 +284,7 @@ func (s *UserOrganizationRoleService) UpdateUserOrgRoleStatus(ctx context.Contex
 	return toUserOrgRoleResponseDTO(updated), nil
 }
 
-// ============ Delete Operations ============
+// ============ Các Thao Tác Xóa ============
 
 func (s *UserOrganizationRoleService) RemoveOrgRoleFromUser(ctx context.Context, id uuid.UUID) error {
 	userOrgRole, err := s.repo.FindByID(ctx, id)
@@ -303,13 +303,13 @@ func (s *UserOrganizationRoleService) RemoveAllOrgRolesFromUser(ctx context.Cont
 }
 
 func (s *UserOrganizationRoleService) RemoveUserFromOrganization(ctx context.Context, userID, organizationID uuid.UUID) error {
-	// Get all roles of user in this organization
+	// Lấy tất cả vai trò của người dùng trong tổ chức này
 	userOrgRoles, err := s.repo.FindByUserAndOrganization(ctx, userID, organizationID, "")
 	if err != nil {
 		return err
 	}
 
-	// Delete each assignment
+	// Xóa từng gán quyền
 	for _, uor := range userOrgRoles {
 		if err := s.repo.Delete(ctx, uor.ID); err != nil {
 			return err
@@ -319,7 +319,7 @@ func (s *UserOrganizationRoleService) RemoveUserFromOrganization(ctx context.Con
 	return nil
 }
 
-// ============ Helper Functions ============
+// ============ Các Hàm Hỗ Trợ ============
 
 func toUserOrgRoleResponseDTO(uor *model.UserOrganizationRole) *dto.UserOrgRoleResponseDTO {
 	result := &dto.UserOrgRoleResponseDTO{

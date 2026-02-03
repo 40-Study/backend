@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// UserOrganizationRole represents the assignment of organization roles to users
+// UserOrganizationRole đại diện cho việc gán vai trò tổ chức cho người dùng
 type UserOrganizationRole struct {
 	ID             uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	UserID         uuid.UUID      `gorm:"type:uuid;not null;uniqueIndex:idx_uor_user_role_org,priority:1;index:idx_uor_user_id" json:"user_id"`
@@ -23,7 +23,7 @@ type UserOrganizationRole struct {
 	UpdatedAt      time.Time      `json:"updated_at"`
 	DeletedAt      gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 
-	// Relationships
+	// Các mối quan hệ
 	User         *User         `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user,omitempty"`
 	Role         *Role         `gorm:"foreignKey:RoleID;constraint:OnDelete:CASCADE" json:"role,omitempty"`
 	Organization *Organization `gorm:"foreignKey:OrganizationID;constraint:OnDelete:CASCADE" json:"organization,omitempty"`
@@ -35,7 +35,7 @@ func (UserOrganizationRole) TableName() string {
 	return "user_organization_roles"
 }
 
-// UserOrganizationRole status constants
+// Các hằng số trạng thái UserOrganizationRole
 const (
 	UserOrgRoleStatusActive    = "active"
 	UserOrgRoleStatusSuspended = "suspended"
