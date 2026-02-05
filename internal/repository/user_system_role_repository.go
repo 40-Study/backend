@@ -10,7 +10,7 @@ import (
 )
 
 type UserSystemRoleRepositoryInterface interface {
-	// Các thao tác CRUD
+	// CRUD
 	Create(ctx context.Context, userSystemRole *model.UserSystemRole) error
 	CreateBatch(ctx context.Context, userSystemRoles []model.UserSystemRole) error
 	FindByID(ctx context.Context, id uuid.UUID) (*model.UserSystemRole, error)
@@ -19,7 +19,7 @@ type UserSystemRoleRepositoryInterface interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	HardDelete(ctx context.Context, id uuid.UUID) error
 
-	// Các thao tác truy vấn
+	// Truy van
 	FindByUserID(ctx context.Context, userID uuid.UUID, status string) ([]model.UserSystemRole, error)
 	FindByUserIDWithDetails(ctx context.Context, userID uuid.UUID, status string) ([]model.UserSystemRole, error)
 	FindBySystemRoleID(ctx context.Context, systemRoleID uuid.UUID, page, pageSize int, status string) ([]model.UserSystemRole, int64, error)
@@ -27,14 +27,14 @@ type UserSystemRoleRepositoryInterface interface {
 	FindByUserAndSystemRoleIDs(ctx context.Context, userID uuid.UUID, systemRoleIDs []uuid.UUID) ([]model.UserSystemRole, error)
 	ExistsByUserAndSystemRole(ctx context.Context, userID, systemRoleID uuid.UUID) (bool, error)
 
-	// Các thao tác trạng thái
+	// Trang thai
 	UpdateStatus(ctx context.Context, id uuid.UUID, status string, revokedBy *uuid.UUID) error
 
-	// Các thao tác hàng loạt
+	// Hang loat
 	DeleteByUserID(ctx context.Context, userID uuid.UUID) error
 	DeleteBySystemRoleID(ctx context.Context, systemRoleID uuid.UUID) error
 
-	// Transaction operations
+	// Transaction
 	AssignRolesWithTx(ctx context.Context, toReactivate []*model.UserSystemRole, toCreate []model.UserSystemRole) error
 }
 
@@ -46,7 +46,7 @@ func NewUserSystemRoleRepository(db *gorm.DB) *UserSystemRoleRepository {
 	return &UserSystemRoleRepository{db: db}
 }
 
-// ============ Các Thao Tác CRUD ============
+// CRUD
 
 func (r *UserSystemRoleRepository) Create(ctx context.Context, userSystemRole *model.UserSystemRole) error {
 	return r.db.WithContext(ctx).Create(userSystemRole).Error
@@ -101,7 +101,7 @@ func (r *UserSystemRoleRepository) HardDelete(ctx context.Context, id uuid.UUID)
 	return r.db.WithContext(ctx).Unscoped().Delete(&model.UserSystemRole{}, "id = ?", id).Error
 }
 
-// ============ Các Thao Tác Truy Vấn ============
+// Truy van
 
 func (r *UserSystemRoleRepository) FindByUserID(ctx context.Context, userID uuid.UUID, status string) ([]model.UserSystemRole, error) {
 	var userSystemRoles []model.UserSystemRole
@@ -180,15 +180,15 @@ func (r *UserSystemRoleRepository) FindByUserAndSystemRole(ctx context.Context, 
 	return &userSystemRole, nil
 }
 
-// FindByUserAndSystemRoleIDs finds all mappings for a user with given system role IDs (single query)
-// Includes soft-deleted records (Unscoped) for checking duplicates
+// FindByUserAndSystemRoleIDs tim cac mapping theo user va danh sach role IDs
+// Bao gom ca soft-deleted de kiem tra reactivation
 func (r *UserSystemRoleRepository) FindByUserAndSystemRoleIDs(ctx context.Context, userID uuid.UUID, systemRoleIDs []uuid.UUID) ([]model.UserSystemRole, error) {
 	if len(systemRoleIDs) == 0 {
 		return []model.UserSystemRole{}, nil
 	}
 	var userSystemRoles []model.UserSystemRole
 	err := r.db.WithContext(ctx).
-		Unscoped(). // Include soft-deleted to check for reactivation
+		Unscoped().
 		Where("user_id = ? AND system_role_id IN ?", userID, systemRoleIDs).
 		Find(&userSystemRoles).Error
 	if err != nil {
@@ -199,7 +199,6 @@ func (r *UserSystemRoleRepository) FindByUserAndSystemRoleIDs(ctx context.Contex
 
 func (r *UserSystemRoleRepository) ExistsByUserAndSystemRole(ctx context.Context, userID, systemRoleID uuid.UUID) (bool, error) {
 	var count int64
-	// Sử dụng Unscoped() để bao gồm các bản ghi đã xóa mềm vì ràng buộc duy nhất bao gồm chúng
 	err := r.db.WithContext(ctx).
 		Unscoped().
 		Model(&model.UserSystemRole{}).
@@ -211,7 +210,7 @@ func (r *UserSystemRoleRepository) ExistsByUserAndSystemRole(ctx context.Context
 	return count > 0, nil
 }
 
-// ============ Các Thao Tác Trạng Thái ============
+// Trang thai
 
 func (r *UserSystemRoleRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status string, revokedBy *uuid.UUID) error {
 	updates := map[string]interface{}{
@@ -229,7 +228,7 @@ func (r *UserSystemRoleRepository) UpdateStatus(ctx context.Context, id uuid.UUI
 		Updates(updates).Error
 }
 
-// ============ Các Thao Tác Hàng Loạt ============
+// Hang loat
 
 func (r *UserSystemRoleRepository) DeleteByUserID(ctx context.Context, userID uuid.UUID) error {
 	return r.db.WithContext(ctx).
@@ -243,19 +242,19 @@ func (r *UserSystemRoleRepository) DeleteBySystemRoleID(ctx context.Context, sys
 		Delete(&model.UserSystemRole{}).Error
 }
 
-// ============ Transaction Operations ============
+// Transaction
 
-// AssignRolesWithTx reactivates and creates mappings in a single transaction
+// AssignRolesWithTx reactivate va tao mappings trong 1 transaction
 func (r *UserSystemRoleRepository) AssignRolesWithTx(ctx context.Context, toReactivate []*model.UserSystemRole, toCreate []model.UserSystemRole) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Reactivate inactive mappings
+		// Reactivate cac mapping inactive
 		for _, mapping := range toReactivate {
 			if err := tx.Save(mapping).Error; err != nil {
 				return err
 			}
 		}
 
-		// Batch create new mappings
+		// Batch create cac mapping moi
 		if len(toCreate) > 0 {
 			if err := tx.Create(&toCreate).Error; err != nil {
 				return err

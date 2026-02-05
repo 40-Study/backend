@@ -13,18 +13,11 @@ import (
 )
 
 type UserOrganizationRoleServiceInterface interface {
-	// User APIs
 	GetMyOrgRoles(ctx context.Context, userID uuid.UUID, orgID *uuid.UUID) ([]dto.UserOrgRoleResponseDTO, error)
-
-	// Admin APIs
 	GetUserOrgRoles(ctx context.Context, userID uuid.UUID, status string) ([]dto.UserOrgRoleResponseDTO, error)
 	AssignOrgRolesToUser(ctx context.Context, userID uuid.UUID, req dto.AssignOrgRolesToUserDTO, grantedBy uuid.UUID) ([]dto.UserOrgRoleResponseDTO, error)
 	RevokeOrgRoleFromUser(ctx context.Context, userID, orgRoleID, revokedBy uuid.UUID) error
-
-	// Role Management
 	GetUsersWithOrgRoleByRoleID(ctx context.Context, roleID uuid.UUID, page, pageSize int, status string) (*dto.UserOrgRoleListResponseDTO, error)
-
-	// Organization Members
 	GetOrganizationMembers(ctx context.Context, organizationID uuid.UUID, page, pageSize int, status string) (*dto.UserOrgRoleListResponseDTO, error)
 	GetUsersWithOrgRole(ctx context.Context, roleID, organizationID uuid.UUID, page, pageSize int, status string) (*dto.UsersWithOrgRoleResponseDTO, error)
 }
@@ -50,9 +43,7 @@ func NewUserOrganizationRoleService(
 	}
 }
 
-// ============ User APIs ============
-
-// GetMyOrgRoles - GET /me/org-roles
+// GetMyOrgRoles lay organization roles cua chinh minh
 func (s *UserOrganizationRoleService) GetMyOrgRoles(ctx context.Context, userID uuid.UUID, orgID *uuid.UUID) ([]dto.UserOrgRoleResponseDTO, error) {
 	user, err := s.userRepo.FindUserByID(ctx, userID)
 	if err != nil {
@@ -82,11 +73,9 @@ func (s *UserOrganizationRoleService) GetMyOrgRoles(ctx context.Context, userID 
 	return result, nil
 }
 
-// ============ Admin APIs ============
-
-// GetUserOrgRoles - GET /users/:user_id/org-roles
+// GetUserOrgRoles lay organization roles cua mot user
 func (s *UserOrganizationRoleService) GetUserOrgRoles(ctx context.Context, userID uuid.UUID, status string) ([]dto.UserOrgRoleResponseDTO, error) {
-	// Verify user exists
+	// Kiem tra user ton tai
 	user, err := s.userRepo.FindUserByID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -108,9 +97,9 @@ func (s *UserOrganizationRoleService) GetUserOrgRoles(ctx context.Context, userI
 	return result, nil
 }
 
-// AssignOrgRolesToUser - POST /users/:user_id/org-roles
+// AssignOrgRolesToUser gan organization roles cho user
 func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, userID uuid.UUID, req dto.AssignOrgRolesToUserDTO, grantedBy uuid.UUID) ([]dto.UserOrgRoleResponseDTO, error) {
-	// 1. Verify user exists
+	// Kiem tra user ton tai
 	user, err := s.userRepo.FindUserByID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -119,7 +108,7 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 		return nil, errors.New("user not found")
 	}
 
-	// 2. Verify organization exists
+	// Kiem tra organization ton tai
 	org, err := s.orgRepo.GetOrganizationByID(ctx, req.OrganizationID)
 	if err != nil {
 		return nil, err
@@ -128,7 +117,7 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 		return nil, errors.New("organization not found")
 	}
 
-	// 3. Validate all roles exist, are active, and belong to the organization
+	// Validate cac roles ton tai va active va thuoc organization
 	validRoles, err := s.roleRepo.GetRoleByIDs(ctx, req.RoleIDs)
 	if err != nil {
 		return nil, err
@@ -146,19 +135,19 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 		}
 	}
 
-	// 4. Load existing mappings in one query (N+1 optimization)
+	// Load cac mapping hien co trong 1 query
 	existingMappings, err := s.repo.FindByUserAndRoleIDsInOrg(ctx, userID, req.OrganizationID, req.RoleIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	// 5. Build map for O(1) lookup
+	// Tao map de lookup O(1)
 	existingMap := make(map[uuid.UUID]*model.UserOrganizationRole, len(existingMappings))
 	for i := range existingMappings {
 		existingMap[existingMappings[i].RoleID] = &existingMappings[i]
 	}
 
-	// 6. Process roles: reactivate inactive, error if active, collect new
+	// Xu ly roles: reactivate inactive, error neu active, collect new
 	var rolesToAssign []model.UserOrganizationRole
 	var rolesToReactivate []*model.UserOrganizationRole
 	var alreadyActiveRoles []string
@@ -193,19 +182,19 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 		})
 	}
 
-	// 7. Return error if any role already active
+	// Tra loi neu co role da active
 	if len(alreadyActiveRoles) > 0 {
 		return nil, fmt.Errorf("roles already assigned to user: %v", alreadyActiveRoles)
 	}
 
-	// 8. Execute in transaction
+	// Thuc hien trong transaction
 	if len(rolesToReactivate) > 0 || len(rolesToAssign) > 0 {
 		if err := s.repo.AssignRolesWithTx(ctx, rolesToReactivate, rolesToAssign); err != nil {
 			return nil, err
 		}
 	}
 
-	// 9. Return updated list
+	// Tra ve danh sach moi
 	created, err := s.repo.FindByUserAndOrganization(ctx, userID, req.OrganizationID, model.UserOrgRoleStatusActive)
 	if err != nil {
 		return nil, err
@@ -219,7 +208,7 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 	return result, nil
 }
 
-// RevokeOrgRoleFromUser - DELETE /users/:user_id/org-roles/:org_role_id
+// RevokeOrgRoleFromUser thu hoi organization role tu user
 func (s *UserOrganizationRoleService) RevokeOrgRoleFromUser(ctx context.Context, userID, orgRoleID, revokedBy uuid.UUID) error {
 	user, err := s.userRepo.FindUserByID(ctx, userID)
 	if err != nil {
@@ -248,9 +237,7 @@ func (s *UserOrganizationRoleService) RevokeOrgRoleFromUser(ctx context.Context,
 	return s.repo.UpdateStatus(ctx, orgRoleID, model.UserOrgRoleStatusInactive, &revokedBy)
 }
 
-// ============ Role Management ============
-
-// GetUsersWithOrgRoleByRoleID - GET /org-roles/:role_id/users
+// GetUsersWithOrgRoleByRoleID lay users theo organization role
 func (s *UserOrganizationRoleService) GetUsersWithOrgRoleByRoleID(ctx context.Context, roleID uuid.UUID, page, pageSize int, status string) (*dto.UserOrgRoleListResponseDTO, error) {
 	if page < 1 {
 		page = 1
@@ -285,9 +272,7 @@ func (s *UserOrganizationRoleService) GetUsersWithOrgRoleByRoleID(ctx context.Co
 	}, nil
 }
 
-// ============ Organization Members ============
-
-// GetOrganizationMembers - GET /organizations/:organization_id/members
+// GetOrganizationMembers lay thanh vien cua organization
 func (s *UserOrganizationRoleService) GetOrganizationMembers(ctx context.Context, organizationID uuid.UUID, page, pageSize int, status string) (*dto.UserOrgRoleListResponseDTO, error) {
 	if page < 1 {
 		page = 1
@@ -296,7 +281,7 @@ func (s *UserOrganizationRoleService) GetOrganizationMembers(ctx context.Context
 		pageSize = 20
 	}
 
-	// Verify organization exists
+	// Kiem tra organization ton tai
 	org, err := s.orgRepo.GetOrganizationByID(ctx, organizationID)
 	if err != nil {
 		return nil, err
@@ -323,7 +308,7 @@ func (s *UserOrganizationRoleService) GetOrganizationMembers(ctx context.Context
 	}, nil
 }
 
-// GetUsersWithOrgRole - GET /organizations/:organization_id/roles/:role_id/users
+// GetUsersWithOrgRole lay users theo role trong organization
 func (s *UserOrganizationRoleService) GetUsersWithOrgRole(ctx context.Context, roleID, organizationID uuid.UUID, page, pageSize int, status string) (*dto.UsersWithOrgRoleResponseDTO, error) {
 	if page < 1 {
 		page = 1
@@ -332,7 +317,7 @@ func (s *UserOrganizationRoleService) GetUsersWithOrgRole(ctx context.Context, r
 		pageSize = 20
 	}
 
-	// Verify organization exists
+	// Kiem tra organization ton tai
 	org, err := s.orgRepo.GetOrganizationByID(ctx, organizationID)
 	if err != nil {
 		return nil, err
@@ -341,7 +326,7 @@ func (s *UserOrganizationRoleService) GetUsersWithOrgRole(ctx context.Context, r
 		return nil, errors.New("organization not found")
 	}
 
-	// Verify role exists
+	// Kiem tra role ton tai
 	role, err := s.roleRepo.GetRoleByID(ctx, roleID)
 	if err != nil {
 		return nil, err
@@ -350,7 +335,7 @@ func (s *UserOrganizationRoleService) GetUsersWithOrgRole(ctx context.Context, r
 		return nil, errors.New("role not found")
 	}
 
-	// Query with both role_id and organization_id filter at DB level
+	// Query voi ca role_id va organization_id
 	userOrgRoles, total, err := s.repo.FindByRoleIDAndOrgID(ctx, roleID, organizationID, page, pageSize, status)
 	if err != nil {
 		return nil, err
@@ -377,7 +362,7 @@ func (s *UserOrganizationRoleService) GetUsersWithOrgRole(ctx context.Context, r
 	}, nil
 }
 
-// ============ Helper ============
+// Helper
 
 func toUserOrgRoleResponseDTO(uor *model.UserOrganizationRole) *dto.UserOrgRoleResponseDTO {
 	result := &dto.UserOrgRoleResponseDTO{

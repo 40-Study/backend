@@ -1,27 +1,21 @@
 package handler
 
 import (
+	"strings"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
-	"strings"
 )
 
 type UserOrganizationRoleHandlerInterface interface {
-	// User APIs
 	GetMyOrgRoles(c *fiber.Ctx) error
-
-	// Admin APIs
 	GetUserOrgRoles(c *fiber.Ctx) error
 	AssignOrgRolesToUser(c *fiber.Ctx) error
 	RevokeOrgRoleFromUser(c *fiber.Ctx) error
-
-	// Role Management
 	GetUsersWithOrgRoleSimple(c *fiber.Ctx) error
-
-	// Organization Members
 	GetOrganizationMembers(c *fiber.Ctx) error
 	GetUsersWithOrgRole(c *fiber.Ctx) error
 }
@@ -34,9 +28,8 @@ func NewUserOrganizationRoleHandler(service service.UserOrganizationRoleServiceI
 	return &UserOrganizationRoleHandler{service: service}
 }
 
-// ============ User APIs ============
-
-// GetMyOrgRoles - GET /me/org-roles
+// GetMyOrgRoles lay organization roles cua chinh minh
+// GET /me/org-roles
 func (h *UserOrganizationRoleHandler) GetMyOrgRoles(c *fiber.Ctx) error {
 	userID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok || userID == uuid.Nil {
@@ -71,9 +64,8 @@ func (h *UserOrganizationRoleHandler) GetMyOrgRoles(c *fiber.Ctx) error {
 	})
 }
 
-// ============ Admin APIs ============
-
-// GetUserOrgRoles - GET /users/:user_id/org-roles
+// GetUserOrgRoles lay organization roles cua mot user
+// GET /users/:user_id/org-roles
 func (h *UserOrganizationRoleHandler) GetUserOrgRoles(c *fiber.Ctx) error {
 	userIDStr := c.Params("user_id")
 	userID, err := uuid.Parse(userIDStr)
@@ -104,7 +96,8 @@ func (h *UserOrganizationRoleHandler) GetUserOrgRoles(c *fiber.Ctx) error {
 	})
 }
 
-// AssignOrgRolesToUser - POST /users/:user_id/org-roles
+// AssignOrgRolesToUser gan organization roles cho user
+// POST /users/:user_id/org-roles
 func (h *UserOrganizationRoleHandler) AssignOrgRolesToUser(c *fiber.Ctx) error {
 	userIDStr := c.Params("user_id")
 	userID, err := uuid.Parse(userIDStr)
@@ -161,7 +154,8 @@ func (h *UserOrganizationRoleHandler) AssignOrgRolesToUser(c *fiber.Ctx) error {
 	})
 }
 
-// RevokeOrgRoleFromUser - DELETE /users/:user_id/org-roles/:org_role_id
+// RevokeOrgRoleFromUser thu hoi organization role tu user
+// DELETE /users/:user_id/org-roles/:org_role_id
 func (h *UserOrganizationRoleHandler) RevokeOrgRoleFromUser(c *fiber.Ctx) error {
 	userIDStr := c.Params("user_id")
 	userID, err := uuid.Parse(userIDStr)
@@ -209,9 +203,8 @@ func (h *UserOrganizationRoleHandler) RevokeOrgRoleFromUser(c *fiber.Ctx) error 
 	})
 }
 
-// ============ Role Management ============
-
-// GetUsersWithOrgRoleSimple - GET /org-roles/:role_id/users
+// GetUsersWithOrgRoleSimple lay users theo organization role
+// GET /org-roles/:role_id/users
 func (h *UserOrganizationRoleHandler) GetUsersWithOrgRoleSimple(c *fiber.Ctx) error {
 	roleIDStr := c.Params("role_id")
 	roleID, err := uuid.Parse(roleIDStr)
@@ -244,9 +237,8 @@ func (h *UserOrganizationRoleHandler) GetUsersWithOrgRoleSimple(c *fiber.Ctx) er
 	})
 }
 
-// ============ Organization Members ============
-
-// GetOrganizationMembers - GET /organizations/:organization_id/members
+// GetOrganizationMembers lay thanh vien cua organization
+// GET /organizations/:organization_id/members
 func (h *UserOrganizationRoleHandler) GetOrganizationMembers(c *fiber.Ctx) error {
 	organizationIDStr := c.Params("organization_id")
 	organizationID, err := uuid.Parse(organizationIDStr)
@@ -279,7 +271,8 @@ func (h *UserOrganizationRoleHandler) GetOrganizationMembers(c *fiber.Ctx) error
 	})
 }
 
-// GetUsersWithOrgRole - GET /organizations/:organization_id/roles/:role_id/users
+// GetUsersWithOrgRole lay users theo role trong organization
+// GET /organizations/:organization_id/roles/:role_id/users
 func (h *UserOrganizationRoleHandler) GetUsersWithOrgRole(c *fiber.Ctx) error {
 	organizationIDStr := c.Params("organization_id")
 	organizationID, err := uuid.Parse(organizationIDStr)

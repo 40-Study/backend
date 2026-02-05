@@ -10,7 +10,7 @@ import (
 )
 
 type UserOrganizationRoleRepositoryInterface interface {
-	// Các thao tác CRUD
+	// CRUD
 	Create(ctx context.Context, userOrgRole *model.UserOrganizationRole) error
 	CreateBatch(ctx context.Context, userOrgRoles []model.UserOrganizationRole) error
 	FindByID(ctx context.Context, id uuid.UUID) (*model.UserOrganizationRole, error)
@@ -19,7 +19,7 @@ type UserOrganizationRoleRepositoryInterface interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	HardDelete(ctx context.Context, id uuid.UUID) error
 
-	// Các thao tác truy vấn
+	// Truy van
 	FindByUserID(ctx context.Context, userID uuid.UUID, status string) ([]model.UserOrganizationRole, error)
 	FindByUserIDWithDetails(ctx context.Context, userID uuid.UUID, status string) ([]model.UserOrganizationRole, error)
 	FindByRoleID(ctx context.Context, roleID uuid.UUID, page, pageSize int, status string) ([]model.UserOrganizationRole, int64, error)
@@ -30,18 +30,18 @@ type UserOrganizationRoleRepositoryInterface interface {
 	FindByUserAndRoleIDsInOrg(ctx context.Context, userID, orgID uuid.UUID, roleIDs []uuid.UUID) ([]model.UserOrganizationRole, error)
 	ExistsByUserRoleAndOrg(ctx context.Context, userID, roleID, organizationID uuid.UUID) (bool, error)
 
-	// Các thao tác trạng thái
+	// Trang thai
 	UpdateStatus(ctx context.Context, id uuid.UUID, status string, revokedBy *uuid.UUID) error
 
-	// Các thao tác hàng loạt
+	// Hang loat
 	DeleteByUserID(ctx context.Context, userID uuid.UUID) error
 	DeleteByRoleID(ctx context.Context, roleID uuid.UUID) error
 	DeleteByOrganizationID(ctx context.Context, organizationID uuid.UUID) error
 
-	// Transaction operations
+	// Transaction
 	AssignRolesWithTx(ctx context.Context, toReactivate []*model.UserOrganizationRole, toCreate []model.UserOrganizationRole) error
 
-	// Các phương thức cũ (để tương thích ngược)
+	// Tuong thich nguoc
 	CreateUserRoles(ctx context.Context, userRoles []model.UserOrganizationRole) error
 	CreateUserRole(ctx context.Context, userRole *model.UserOrganizationRole) error
 	FindByUserIDWithRoles(ctx context.Context, userID uuid.UUID) ([]model.UserOrganizationRole, error)
@@ -55,7 +55,7 @@ func NewUserOrganizationRoleRepository(db *gorm.DB) *UserOrganizationRoleReposit
 	return &UserOrganizationRoleRepository{db: db}
 }
 
-// ============ Các Thao Tác CRUD ============
+// CRUD
 
 func (r *UserOrganizationRoleRepository) Create(ctx context.Context, userOrgRole *model.UserOrganizationRole) error {
 	return r.db.WithContext(ctx).Create(userOrgRole).Error
@@ -111,7 +111,7 @@ func (r *UserOrganizationRoleRepository) HardDelete(ctx context.Context, id uuid
 	return r.db.WithContext(ctx).Unscoped().Delete(&model.UserOrganizationRole{}, "id = ?", id).Error
 }
 
-// ============ Các Thao Tác Truy Vấn ============
+// Truy van
 
 func (r *UserOrganizationRoleRepository) FindByUserID(ctx context.Context, userID uuid.UUID, status string) ([]model.UserOrganizationRole, error) {
 	var userOrgRoles []model.UserOrganizationRole
@@ -275,7 +275,7 @@ func (r *UserOrganizationRoleRepository) FindByUserRoleAndOrg(ctx context.Contex
 
 func (r *UserOrganizationRoleRepository) ExistsByUserRoleAndOrg(ctx context.Context, userID, roleID, organizationID uuid.UUID) (bool, error) {
 	var count int64
-	// Sử dụng Unscoped() để bao gồm các bản ghi đã xóa mềm vì ràng buộc duy nhất bao gồm chúng
+	// Dung Unscoped de bao gom ca soft-deleted
 	err := r.db.WithContext(ctx).
 		Unscoped().
 		Model(&model.UserOrganizationRole{}).
@@ -287,15 +287,15 @@ func (r *UserOrganizationRoleRepository) ExistsByUserRoleAndOrg(ctx context.Cont
 	return count > 0, nil
 }
 
-// FindByUserAndRoleIDsInOrg finds all mappings for a user with given role IDs in an organization (single query)
-// Includes soft-deleted records (Unscoped) for checking duplicates and reactivation
+// FindByUserAndRoleIDsInOrg tim cac mapping theo user va danh sach role IDs trong org
+// Bao gom ca soft-deleted de kiem tra reactivation
 func (r *UserOrganizationRoleRepository) FindByUserAndRoleIDsInOrg(ctx context.Context, userID, orgID uuid.UUID, roleIDs []uuid.UUID) ([]model.UserOrganizationRole, error) {
 	if len(roleIDs) == 0 {
 		return []model.UserOrganizationRole{}, nil
 	}
 	var userOrgRoles []model.UserOrganizationRole
 	err := r.db.WithContext(ctx).
-		Unscoped(). // Include soft-deleted to check for reactivation
+		Unscoped().
 		Where("user_id = ? AND organization_id = ? AND role_id IN ?", userID, orgID, roleIDs).
 		Find(&userOrgRoles).Error
 	if err != nil {
@@ -304,20 +304,20 @@ func (r *UserOrganizationRoleRepository) FindByUserAndRoleIDsInOrg(ctx context.C
 	return userOrgRoles, nil
 }
 
-// ============ Các Thao Tác Trạng Thái ============
+// Trang thai
 
 func (r *UserOrganizationRoleRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status string, revokedBy *uuid.UUID) error {
 	updates := map[string]interface{}{
 		"status": status,
 	}
 
-	// Handle revoke/inactive - set revoked_by and revoked_at
+	// Xu ly revoke/inactive
 	if (status == model.UserOrgRoleStatusInactive || status == "revoked") && revokedBy != nil {
 		updates["revoked_by"] = revokedBy
 		updates["revoked_at"] = gorm.Expr("NOW()")
 	}
 
-	// Handle reactivate - clear revoked fields
+	// Xu ly reactivate
 	if status == model.UserOrgRoleStatusActive {
 		updates["revoked_by"] = nil
 		updates["revoked_at"] = nil
@@ -329,7 +329,7 @@ func (r *UserOrganizationRoleRepository) UpdateStatus(ctx context.Context, id uu
 		Updates(updates).Error
 }
 
-// ============ Các Thao Tác Hàng Loạt ============
+// Hang loat
 
 func (r *UserOrganizationRoleRepository) DeleteByUserID(ctx context.Context, userID uuid.UUID) error {
 	return r.db.WithContext(ctx).
@@ -349,19 +349,19 @@ func (r *UserOrganizationRoleRepository) DeleteByOrganizationID(ctx context.Cont
 		Delete(&model.UserOrganizationRole{}).Error
 }
 
-// ============ Transaction Operations ============
+// Transaction
 
-// AssignRolesWithTx reactivates and creates mappings in a single transaction
+// AssignRolesWithTx reactivate va tao mappings trong 1 transaction
 func (r *UserOrganizationRoleRepository) AssignRolesWithTx(ctx context.Context, toReactivate []*model.UserOrganizationRole, toCreate []model.UserOrganizationRole) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Reactivate inactive mappings
+		// Reactivate cac mapping inactive
 		for _, mapping := range toReactivate {
 			if err := tx.Save(mapping).Error; err != nil {
 				return err
 			}
 		}
 
-		// Batch create new mappings
+		// Batch create cac mapping moi
 		if len(toCreate) > 0 {
 			if err := tx.Create(&toCreate).Error; err != nil {
 				return err
@@ -372,7 +372,7 @@ func (r *UserOrganizationRoleRepository) AssignRolesWithTx(ctx context.Context, 
 	})
 }
 
-// ============ Các Phương Thức Cũ (để tương thích ngược) ============
+// Tuong thich nguoc
 
 func (r *UserOrganizationRoleRepository) CreateUserRoles(ctx context.Context, userRoles []model.UserOrganizationRole) error {
 	return r.CreateBatch(ctx, userRoles)
