@@ -23,9 +23,11 @@ type UserOrganizationRoleRepositoryInterface interface {
 	FindByUserID(ctx context.Context, userID uuid.UUID, status string) ([]model.UserOrganizationRole, error)
 	FindByUserIDWithDetails(ctx context.Context, userID uuid.UUID, status string) ([]model.UserOrganizationRole, error)
 	FindByRoleID(ctx context.Context, roleID uuid.UUID, page, pageSize int, status string) ([]model.UserOrganizationRole, int64, error)
+	FindByRoleIDAndOrgID(ctx context.Context, roleID, organizationID uuid.UUID, page, pageSize int, status string) ([]model.UserOrganizationRole, int64, error)
 	FindByOrganizationID(ctx context.Context, organizationID uuid.UUID, page, pageSize int, status string) ([]model.UserOrganizationRole, int64, error)
 	FindByUserAndOrganization(ctx context.Context, userID, organizationID uuid.UUID, status string) ([]model.UserOrganizationRole, error)
 	FindByUserRoleAndOrg(ctx context.Context, userID, roleID, organizationID uuid.UUID) (*model.UserOrganizationRole, error)
+	FindByUserAndRoleIDsInOrg(ctx context.Context, userID, orgID uuid.UUID, roleIDs []uuid.UUID) ([]model.UserOrganizationRole, error)
 	ExistsByUserRoleAndOrg(ctx context.Context, userID, roleID, organizationID uuid.UUID) (bool, error)
 
 	// Các thao tác trạng thái
@@ -35,6 +37,9 @@ type UserOrganizationRoleRepositoryInterface interface {
 	DeleteByUserID(ctx context.Context, userID uuid.UUID) error
 	DeleteByRoleID(ctx context.Context, roleID uuid.UUID) error
 	DeleteByOrganizationID(ctx context.Context, organizationID uuid.UUID) error
+
+	// Transaction operations
+	AssignRolesWithTx(ctx context.Context, toReactivate []*model.UserOrganizationRole, toCreate []model.UserOrganizationRole) error
 
 	// Các phương thức cũ (để tương thích ngược)
 	CreateUserRoles(ctx context.Context, userRoles []model.UserOrganizationRole) error
@@ -173,6 +178,39 @@ func (r *UserOrganizationRoleRepository) FindByRoleID(ctx context.Context, roleI
 	return userOrgRoles, total, nil
 }
 
+func (r *UserOrganizationRoleRepository) FindByRoleIDAndOrgID(ctx context.Context, roleID, organizationID uuid.UUID, page, pageSize int, status string) ([]model.UserOrganizationRole, int64, error) {
+	var userOrgRoles []model.UserOrganizationRole
+	var total int64
+
+	offset := (page - 1) * pageSize
+
+	query := r.db.WithContext(ctx).Model(&model.UserOrganizationRole{}).
+		Where("role_id = ? AND organization_id = ?", roleID, organizationID)
+
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := query.
+		Preload("User").
+		Preload("Role").
+		Preload("Organization").
+		Preload("Granter").
+		Offset(offset).
+		Limit(pageSize).
+		Order("granted_at DESC").
+		Find(&userOrgRoles).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return userOrgRoles, total, nil
+}
+
 func (r *UserOrganizationRoleRepository) FindByOrganizationID(ctx context.Context, organizationID uuid.UUID, page, pageSize int, status string) ([]model.UserOrganizationRole, int64, error) {
 	var userOrgRoles []model.UserOrganizationRole
 	var total int64
@@ -249,6 +287,23 @@ func (r *UserOrganizationRoleRepository) ExistsByUserRoleAndOrg(ctx context.Cont
 	return count > 0, nil
 }
 
+// FindByUserAndRoleIDsInOrg finds all mappings for a user with given role IDs in an organization (single query)
+// Includes soft-deleted records (Unscoped) for checking duplicates and reactivation
+func (r *UserOrganizationRoleRepository) FindByUserAndRoleIDsInOrg(ctx context.Context, userID, orgID uuid.UUID, roleIDs []uuid.UUID) ([]model.UserOrganizationRole, error) {
+	if len(roleIDs) == 0 {
+		return []model.UserOrganizationRole{}, nil
+	}
+	var userOrgRoles []model.UserOrganizationRole
+	err := r.db.WithContext(ctx).
+		Unscoped(). // Include soft-deleted to check for reactivation
+		Where("user_id = ? AND organization_id = ? AND role_id IN ?", userID, orgID, roleIDs).
+		Find(&userOrgRoles).Error
+	if err != nil {
+		return nil, err
+	}
+	return userOrgRoles, nil
+}
+
 // ============ Các Thao Tác Trạng Thái ============
 
 func (r *UserOrganizationRoleRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status string, revokedBy *uuid.UUID) error {
@@ -256,9 +311,16 @@ func (r *UserOrganizationRoleRepository) UpdateStatus(ctx context.Context, id uu
 		"status": status,
 	}
 
-	if status == "revoked" && revokedBy != nil {
+	// Handle revoke/inactive - set revoked_by and revoked_at
+	if (status == model.UserOrgRoleStatusInactive || status == "revoked") && revokedBy != nil {
 		updates["revoked_by"] = revokedBy
 		updates["revoked_at"] = gorm.Expr("NOW()")
+	}
+
+	// Handle reactivate - clear revoked fields
+	if status == model.UserOrgRoleStatusActive {
+		updates["revoked_by"] = nil
+		updates["revoked_at"] = nil
 	}
 
 	return r.db.WithContext(ctx).
@@ -285,6 +347,29 @@ func (r *UserOrganizationRoleRepository) DeleteByOrganizationID(ctx context.Cont
 	return r.db.WithContext(ctx).
 		Where("organization_id = ?", organizationID).
 		Delete(&model.UserOrganizationRole{}).Error
+}
+
+// ============ Transaction Operations ============
+
+// AssignRolesWithTx reactivates and creates mappings in a single transaction
+func (r *UserOrganizationRoleRepository) AssignRolesWithTx(ctx context.Context, toReactivate []*model.UserOrganizationRole, toCreate []model.UserOrganizationRole) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Reactivate inactive mappings
+		for _, mapping := range toReactivate {
+			if err := tx.Save(mapping).Error; err != nil {
+				return err
+			}
+		}
+
+		// Batch create new mappings
+		if len(toCreate) > 0 {
+			if err := tx.Create(&toCreate).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
 
 // ============ Các Phương Thức Cũ (để tương thích ngược) ============

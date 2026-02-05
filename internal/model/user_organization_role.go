@@ -38,6 +38,6 @@ func (UserOrganizationRole) TableName() string {
 // Các hằng số trạng thái UserOrganizationRole
 const (
 	UserOrgRoleStatusActive    = "active"
-	UserOrgRoleStatusSuspended = "suspended"
-	UserOrgRoleStatusRevoked   = "revoked"
+	UserOrgRoleStatusInactive = "inactive"
+	
 )
