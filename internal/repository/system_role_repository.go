@@ -12,6 +12,7 @@ import (
 type SystemRoleRepositoryInterface interface {
 	CreateSystemRole(ctx context.Context, role *model.SystemRole) error
 	GetSystemRoleByID(ctx context.Context, id uuid.UUID) (*model.SystemRole, error)
+	GetSystemRoleByIDs(ctx context.Context, ids []uuid.UUID) ([]model.SystemRole, error)
 	GetSystemRoleByName(ctx context.Context, name string) (*model.SystemRole, error)
 	GetAllSystemRoles(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.SystemRole, int64, error)
 	UpdateSystemRole(ctx context.Context, role *model.SystemRole) error
@@ -47,6 +48,19 @@ func (r *SystemRoleRepository) GetSystemRoleByID(ctx context.Context, id uuid.UU
 		return nil, err
 	}
 	return &role, nil
+}
+
+// GetSystemRoleByIDs finds multiple system roles by IDs (single query)
+func (r *SystemRoleRepository) GetSystemRoleByIDs(ctx context.Context, ids []uuid.UUID) ([]model.SystemRole, error) {
+	if len(ids) == 0 {
+		return []model.SystemRole{}, nil
+	}
+	var roles []model.SystemRole
+	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&roles).Error
+	if err != nil {
+		return nil, err
+	}
+	return roles, nil
 }
 
 func (r *SystemRoleRepository) GetSystemRoleByName(ctx context.Context, name string) (*model.SystemRole, error) {

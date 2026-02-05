@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,45 +13,39 @@ import (
 )
 
 type UserSystemRoleServiceInterface interface {
-	// Các thao tác gán quyền
+	// User APIs
+	GetMySystemRoles(ctx context.Context, userID uuid.UUID) ([]dto.UserSystemRoleResponseDTO, error)
+
+	// Admin APIs
 	AssignSystemRolesToUser(ctx context.Context, userID uuid.UUID, req dto.AssignSystemRolesToUserDTO, grantedBy uuid.UUID) ([]dto.UserSystemRoleResponseDTO, error)
-
-	// Các thao tác truy vấn
-	GetUserSystemRoleByID(ctx context.Context, id uuid.UUID) (*dto.UserSystemRoleResponseDTO, error)
+	RevokeSystemRoleFromUser(ctx context.Context, userID, systemRoleID, revokedBy uuid.UUID) error
 	GetUserSystemRoles(ctx context.Context, userID uuid.UUID, status string) ([]dto.UserSystemRoleResponseDTO, error)
-	GetUsersWithSystemRole(ctx context.Context, systemRoleID uuid.UUID, page, pageSize int, status string) (*dto.UsersWithSystemRoleResponseDTO, error)
-	CheckUserHasSystemRole(ctx context.Context, userID, systemRoleID uuid.UUID) (bool, error)
-
-	// Các thao tác cập nhật trạng thái
-	UpdateUserSystemRoleStatus(ctx context.Context, id uuid.UUID, req dto.UpdateUserSystemRoleStatusDTO, updatedBy uuid.UUID) (*dto.UserSystemRoleResponseDTO, error)
-
-	// Các thao tác xóa
-	RemoveSystemRoleFromUser(ctx context.Context, id uuid.UUID) error
-	RemoveAllSystemRolesFromUser(ctx context.Context, userID uuid.UUID) error
+	GetUsersBySystemRole(ctx context.Context, systemRoleID uuid.UUID, page, pageSize int, status string) (*dto.UserSystemRoleListResponseDTO, error)
 }
 
 type UserSystemRoleService struct {
-	repo           repository.UserSystemRoleRepositoryInterface
-	userRepo       repository.UserRepositoryInterface
-	systemRoleRepo repository.SystemRoleRepositoryInterface
+	userRepo           repository.UserRepositoryInterface
+	systemRoleRepo     repository.SystemRoleRepositoryInterface
+	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface
 }
 
 func NewUserSystemRoleService(
-	repo repository.UserSystemRoleRepositoryInterface,
+	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface,
 	userRepo repository.UserRepositoryInterface,
 	systemRoleRepo repository.SystemRoleRepositoryInterface,
 ) *UserSystemRoleService {
 	return &UserSystemRoleService{
-		repo:           repo,
-		userRepo:       userRepo,
-		systemRoleRepo: systemRoleRepo,
+		userRepo:           userRepo,
+		systemRoleRepo:     systemRoleRepo,
+		userSystemRoleRepo: userSystemRoleRepo,
 	}
 }
 
-// ============ Các Thao Tác Gán Quyền ============
+// ============ User APIs ============
 
-func (s *UserSystemRoleService) AssignSystemRolesToUser(ctx context.Context, userID uuid.UUID, req dto.AssignSystemRolesToUserDTO, grantedBy uuid.UUID) ([]dto.UserSystemRoleResponseDTO, error) {
-	// Kiểm tra người dùng tồn tại
+// GetMySystemRoles - Lấy danh sách system roles của chính mình
+func (s *UserSystemRoleService) GetMySystemRoles(ctx context.Context, userID uuid.UUID) ([]dto.UserSystemRoleResponseDTO, error) {
+	// 1. Verify user exists
 	user, err := s.userRepo.FindUserByID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -59,87 +54,197 @@ func (s *UserSystemRoleService) AssignSystemRolesToUser(ctx context.Context, use
 		return nil, errors.New("user not found")
 	}
 
-	// Kiểm tra tất cả các vai trò hệ thống tồn tại
-	for _, roleID := range req.SystemRoleIDs {
-		systemRole, err := s.systemRoleRepo.GetSystemRoleByID(ctx, roleID)
-		if err != nil {
-			return nil, err
-		}
-		if systemRole == nil {
-			return nil, errors.New("system role not found: " + roleID.String())
-		}
+	// 2. Get user system roles with details (only active)
+	userSystemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, model.UserSystemRoleStatusActive)
+	if err != nil {
+		return nil, err
+	}
 
-		// Kiểm tra xem đã được gán chưa
-		exists, err := s.repo.ExistsByUserAndSystemRole(ctx, userID, roleID)
-		if err != nil {
-			return nil, err
-		}
-		if exists {
-			return nil, errors.New("user already has system role: " + roleID.String())
+	// 3. Map to response DTOs
+	return s.mapToResponseDTOs(userSystemRoles), nil
+}
+
+// ============ Admin APIs ============
+
+// AssignSystemRolesToUser - Gán system roles cho user
+func (s *UserSystemRoleService) AssignSystemRolesToUser(
+	ctx context.Context,
+	userID uuid.UUID,
+	req dto.AssignSystemRolesToUserDTO,
+	grantedBy uuid.UUID,
+) ([]dto.UserSystemRoleResponseDTO, error) {
+	// 1. Verify target user exists
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("user not found")
+	}
+
+	// 2. Validate all system roles exist and are active (single query)
+	validRoles, err := s.systemRoleRepo.GetSystemRoleByIDs(ctx, req.SystemRoleIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(validRoles) != len(req.SystemRoleIDs) {
+		return nil, errors.New("one or more system roles not found")
+	}
+	// Check all roles are active
+	for _, role := range validRoles {
+		if role.Status != "active" {
+			return nil, errors.New("system role is not active: " + role.Name)
 		}
 	}
 
-	// Tạo các gán quyền
+	// 3. Load existing mappings in one query (includes soft-deleted)
+	existingMappings, err := s.userSystemRoleRepo.FindByUserAndSystemRoleIDs(ctx, userID, req.SystemRoleIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// 4. Build map[systemRoleID]*UserSystemRole for O(1) lookup
+	existingMap := make(map[uuid.UUID]*model.UserSystemRole, len(existingMappings))
+	for i := range existingMappings {
+		existingMap[existingMappings[i].SystemRoleID] = &existingMappings[i]
+	}
+
+	// 5. Process roles: reactivate inactive, error if active, collect new
+	var rolesToAssign []model.UserSystemRole
+	var rolesToReactivate []*model.UserSystemRole
+	var alreadyActiveRoles []string
 	now := time.Now()
-	userSystemRoles := make([]model.UserSystemRole, len(req.SystemRoleIDs))
-	for i, roleID := range req.SystemRoleIDs {
-		userSystemRoles[i] = model.UserSystemRole{
+
+	for _, role := range validRoles {
+		existing, exists := existingMap[role.ID]
+
+		if exists {
+			if existing.Status == model.UserSystemRoleStatusInactive {
+				// Prepare for reactivation
+				existing.Status = model.UserSystemRoleStatusActive
+				existing.GrantedAt = now
+				existing.GrantedBy = &grantedBy
+				existing.Notes = req.Notes
+				existing.RevokedAt = nil
+				existing.RevokedBy = nil
+				rolesToReactivate = append(rolesToReactivate, existing)
+			} else {
+				// Already active - collect for error message
+				alreadyActiveRoles = append(alreadyActiveRoles, role.Name)
+			}
+			continue
+		}
+
+		// New assignment
+		rolesToAssign = append(rolesToAssign, model.UserSystemRole{
 			UserID:       userID,
-			SystemRoleID: roleID,
+			SystemRoleID: role.ID,
 			GrantedAt:    now,
 			GrantedBy:    &grantedBy,
 			Notes:        req.Notes,
-			Status:       "active",
+			Status:       model.UserSystemRoleStatusActive,
+		})
+	}
+
+	// 6. Return error if any role already active
+	if len(alreadyActiveRoles) > 0 {
+		return nil, fmt.Errorf("roles already assigned to user: %v", alreadyActiveRoles)
+	}
+
+	// 7. Execute reactivations and inserts in single transaction
+	if len(rolesToReactivate) > 0 || len(rolesToAssign) > 0 {
+		if err := s.userSystemRoleRepo.AssignRolesWithTx(ctx, rolesToReactivate, rolesToAssign); err != nil {
+			return nil, err
 		}
 	}
 
-	if err := s.repo.CreateBatch(ctx, userSystemRoles); err != nil {
-		return nil, err
+	// 8. Return updated list
+	return s.GetUserSystemRoles(ctx, userID, model.UserSystemRoleStatusActive)
+}
+
+// RevokeSystemRoleFromUser - Gỡ system role khỏi user (soft delete/revoke)
+func (s *UserSystemRoleService) RevokeSystemRoleFromUser(
+	ctx context.Context,
+	userID, systemRoleID, revokedBy uuid.UUID,
+) error {
+	// 1. Verify user exists
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("user not found")
 	}
 
-	// Lấy tất cả kèm chi tiết
-	created, err := s.repo.FindByUserIDWithDetails(ctx, userID, "active")
+	// 2. Verify system role exists
+	role, err := s.systemRoleRepo.GetSystemRoleByID(ctx, systemRoleID)
+	if err != nil {
+		return err
+	}
+	if role == nil {
+		return errors.New("system role not found")
+	}
+
+	// 3. Find the assignment
+	assignment, err := s.userSystemRoleRepo.FindByUserAndSystemRole(ctx, userID, systemRoleID)
+	if err != nil {
+		return err
+	}
+	if assignment == nil {
+		return errors.New("user does not have this system role")
+	}
+
+	// 4. Check if already inactive/revoked
+	if assignment.Status == model.UserSystemRoleStatusInactive {
+		return errors.New("system role already inactive for this user")
+	}
+
+	// 5. Revoke (soft delete via status change)
+	return s.userSystemRoleRepo.UpdateStatus(ctx, assignment.ID, model.UserSystemRoleStatusInactive, &revokedBy)
+}
+
+// GetUserSystemRoles - Lấy system roles của một user (Admin view)
+func (s *UserSystemRoleService) GetUserSystemRoles(
+	ctx context.Context,
+	userID uuid.UUID,
+	status string,
+) ([]dto.UserSystemRoleResponseDTO, error) {
+	// 1. Verify user exists
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.New("user not found")
+	}
+
+	// 2. Get user system roles with details
+	userSystemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, status)
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]dto.UserSystemRoleResponseDTO, len(created))
-	for i, usr := range created {
-		result[i] = *toUserSystemRoleResponseDTO(&usr)
-	}
-
-	return result, nil
+	// 3. Map to response DTOs
+	return s.mapToResponseDTOs(userSystemRoles), nil
 }
 
-// ============ Các Thao Tác Truy Vấn ============
-
-func (s *UserSystemRoleService) GetUserSystemRoleByID(ctx context.Context, id uuid.UUID) (*dto.UserSystemRoleResponseDTO, error) {
-	userSystemRole, err := s.repo.FindByIDWithDetails(ctx, id)
+// GetUsersBySystemRole - Lấy danh sách users theo system role
+func (s *UserSystemRoleService) GetUsersBySystemRole(
+	ctx context.Context,
+	systemRoleID uuid.UUID,
+	page, pageSize int,
+	status string,
+) (*dto.UserSystemRoleListResponseDTO, error) {
+	// 1. Verify system role exists
+	role, err := s.systemRoleRepo.GetSystemRoleByID(ctx, systemRoleID)
 	if err != nil {
 		return nil, err
 	}
-	if userSystemRole == nil {
-		return nil, errors.New("user system role not found")
+	if role == nil {
+		return nil, errors.New("system role not found")
 	}
 
-	return toUserSystemRoleResponseDTO(userSystemRole), nil
-}
-
-func (s *UserSystemRoleService) GetUserSystemRoles(ctx context.Context, userID uuid.UUID, status string) ([]dto.UserSystemRoleResponseDTO, error) {
-	userSystemRoles, err := s.repo.FindByUserIDWithDetails(ctx, userID, status)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]dto.UserSystemRoleResponseDTO, len(userSystemRoles))
-	for i, usr := range userSystemRoles {
-		result[i] = *toUserSystemRoleResponseDTO(&usr)
-	}
-
-	return result, nil
-}
-
-func (s *UserSystemRoleService) GetUsersWithSystemRole(ctx context.Context, systemRoleID uuid.UUID, page, pageSize int, status string) (*dto.UsersWithSystemRoleResponseDTO, error) {
+	// 2. Set defaults
 	if page < 1 {
 		page = 1
 	}
@@ -147,121 +252,68 @@ func (s *UserSystemRoleService) GetUsersWithSystemRole(ctx context.Context, syst
 		pageSize = 20
 	}
 
-	// Lấy thông tin vai trò hệ thống
-	systemRole, err := s.systemRoleRepo.GetSystemRoleByID(ctx, systemRoleID)
-	if err != nil {
-		return nil, err
-	}
-	if systemRole == nil {
-		return nil, errors.New("system role not found")
-	}
-
-	// Lấy danh sách người dùng có vai trò này
-	userSystemRoles, total, err := s.repo.FindBySystemRoleID(ctx, systemRoleID, page, pageSize, status)
+	// 3. Get users with this system role
+	userSystemRoles, total, err := s.userSystemRoleRepo.FindBySystemRoleID(ctx, systemRoleID, page, pageSize, status)
 	if err != nil {
 		return nil, err
 	}
 
-	// Tạo phản hồi
-	users := make([]dto.UserWithSystemRolesResponseDTO, len(userSystemRoles))
-	for i, usr := range userSystemRoles {
-		users[i] = dto.UserWithSystemRolesResponseDTO{
-			UserID:      usr.UserID,
-			Username:    usr.User.UserName,
-			Email:       usr.User.Email,
-			SystemRoles: []dto.UserSystemRoleResponseDTO{*toUserSystemRoleResponseDTO(&usr)},
-		}
-	}
-
-	return &dto.UsersWithSystemRoleResponseDTO{
-		SystemRoleID:   systemRoleID,
-		SystemRoleName: systemRole.Name,
-		Users:          users,
-		Total:          total,
-		Page:           page,
-		PageSize:       pageSize,
+	// 4. Map to response
+	return &dto.UserSystemRoleListResponseDTO{
+		UserSystemRoles: s.mapToResponseDTOs(userSystemRoles),
+		Total:           total,
+		Page:            page,
+		PageSize:        pageSize,
 	}, nil
 }
 
-func (s *UserSystemRoleService) CheckUserHasSystemRole(ctx context.Context, userID, systemRoleID uuid.UUID) (bool, error) {
-	userSystemRole, err := s.repo.FindByUserAndSystemRole(ctx, userID, systemRoleID)
-	if err != nil {
-		return false, err
+// ============ Helper Methods ============
+
+func (s *UserSystemRoleService) mapToResponseDTOs(userSystemRoles []model.UserSystemRole) []dto.UserSystemRoleResponseDTO {
+	result := make([]dto.UserSystemRoleResponseDTO, len(userSystemRoles))
+
+	for i, usr := range userSystemRoles {
+		result[i] = s.mapToResponseDTO(usr)
 	}
-	return userSystemRole != nil && userSystemRole.Status == "active", nil
+
+	return result
 }
 
-// ============ Các Thao Tác Cập Nhật Trạng Thái ============
-
-func (s *UserSystemRoleService) UpdateUserSystemRoleStatus(ctx context.Context, id uuid.UUID, req dto.UpdateUserSystemRoleStatusDTO, updatedBy uuid.UUID) (*dto.UserSystemRoleResponseDTO, error) {
-	userSystemRole, err := s.repo.FindByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if userSystemRole == nil {
-		return nil, errors.New("user system role not found")
-	}
-
-	var revokedBy *uuid.UUID
-	if req.Status == "revoked" {
-		revokedBy = &updatedBy
-	}
-
-	if err := s.repo.UpdateStatus(ctx, id, req.Status, revokedBy); err != nil {
-		return nil, err
-	}
-
-	// Lấy bản ghi đã cập nhật
-	updated, err := s.repo.FindByIDWithDetails(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
-	return toUserSystemRoleResponseDTO(updated), nil
-}
-
-// ============ Các Thao Tác Xóa ============
-
-func (s *UserSystemRoleService) RemoveSystemRoleFromUser(ctx context.Context, id uuid.UUID) error {
-	userSystemRole, err := s.repo.FindByID(ctx, id)
-	if err != nil {
-		return err
-	}
-	if userSystemRole == nil {
-		return errors.New("user system role not found")
-	}
-
-	return s.repo.Delete(ctx, id)
-}
-
-func (s *UserSystemRoleService) RemoveAllSystemRolesFromUser(ctx context.Context, userID uuid.UUID) error {
-	return s.repo.DeleteByUserID(ctx, userID)
-}
-
-// ============ Các Hàm Hỗ Trợ ============
-
-func toUserSystemRoleResponseDTO(usr *model.UserSystemRole) *dto.UserSystemRoleResponseDTO {
-	result := &dto.UserSystemRoleResponseDTO{
+func (s *UserSystemRoleService) mapToResponseDTO(usr model.UserSystemRole) dto.UserSystemRoleResponseDTO {
+	response := dto.UserSystemRoleResponseDTO{
 		ID:           usr.ID,
 		UserID:       usr.UserID,
 		SystemRoleID: usr.SystemRoleID,
-		GrantedAt:    usr.GrantedAt.Format("2006-01-02T15:04:05Z"),
+		GrantedAt:    usr.GrantedAt.Format(time.RFC3339),
 		GrantedBy:    usr.GrantedBy,
 		Notes:        usr.Notes,
 		Status:       usr.Status,
 		RevokedBy:    usr.RevokedBy,
-		CreatedAt:    usr.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:    usr.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:    usr.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:    usr.UpdatedAt.Format(time.RFC3339),
 	}
 
+	// Map RevokedAt
 	if usr.RevokedAt != nil {
-		revokedAt := usr.RevokedAt.Format("2006-01-02T15:04:05Z")
-		result.RevokedAt = &revokedAt
+		revokedAt := usr.RevokedAt.Format(time.RFC3339)
+		response.RevokedAt = &revokedAt
 	}
 
+	// Map SystemRole if loaded
 	if usr.SystemRole != nil {
-		result.SystemRole = toSystemRoleResponseDTO(usr.SystemRole)
+		var desc *string
+		if usr.SystemRole.Description.Valid {
+			desc = &usr.SystemRole.Description.String
+		}
+		response.SystemRole = &dto.SystemRoleResponseDTO{
+			ID:          usr.SystemRole.ID,
+			Name:        usr.SystemRole.Name,
+			Description: desc,
+			Status:      usr.SystemRole.Status,
+			CreatedAt:   usr.SystemRole.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:   usr.SystemRole.UpdatedAt.Format(time.RFC3339),
+		}
 	}
 
-	return result
+	return response
 }

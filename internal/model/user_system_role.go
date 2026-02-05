@@ -36,6 +36,5 @@ func (UserSystemRole) TableName() string {
 // Các hằng số trạng thái UserSystemRole
 const (
 	UserSystemRoleStatusActive    = "active"
-	UserSystemRoleStatusSuspended = "suspended"
-	UserSystemRoleStatusRevoked   = "revoked"
+	UserSystemRoleStatusInactive = "inactive"
 )

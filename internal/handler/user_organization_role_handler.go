@@ -129,7 +129,7 @@ func (h *UserOrganizationRoleHandler) GetUserOrgRoles(c *fiber.Ctx) error {
 
 	status := c.Query("status")
 
-	result, err := h.service.GetUserOrgRoles(c.Context(), userID, status)
+	result, err := h.service.GetUserOrgRoles(c.Context(), userID, status) // thêm limit offset 
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve user organization roles",

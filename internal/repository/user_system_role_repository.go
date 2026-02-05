@@ -24,6 +24,7 @@ type UserSystemRoleRepositoryInterface interface {
 	FindByUserIDWithDetails(ctx context.Context, userID uuid.UUID, status string) ([]model.UserSystemRole, error)
 	FindBySystemRoleID(ctx context.Context, systemRoleID uuid.UUID, page, pageSize int, status string) ([]model.UserSystemRole, int64, error)
 	FindByUserAndSystemRole(ctx context.Context, userID, systemRoleID uuid.UUID) (*model.UserSystemRole, error)
+	FindByUserAndSystemRoleIDs(ctx context.Context, userID uuid.UUID, systemRoleIDs []uuid.UUID) ([]model.UserSystemRole, error)
 	ExistsByUserAndSystemRole(ctx context.Context, userID, systemRoleID uuid.UUID) (bool, error)
 
 	// Các thao tác trạng thái
@@ -32,6 +33,9 @@ type UserSystemRoleRepositoryInterface interface {
 	// Các thao tác hàng loạt
 	DeleteByUserID(ctx context.Context, userID uuid.UUID) error
 	DeleteBySystemRoleID(ctx context.Context, systemRoleID uuid.UUID) error
+
+	// Transaction operations
+	AssignRolesWithTx(ctx context.Context, toReactivate []*model.UserSystemRole, toCreate []model.UserSystemRole) error
 }
 
 type UserSystemRoleRepository struct {
@@ -176,6 +180,23 @@ func (r *UserSystemRoleRepository) FindByUserAndSystemRole(ctx context.Context, 
 	return &userSystemRole, nil
 }
 
+// FindByUserAndSystemRoleIDs finds all mappings for a user with given system role IDs (single query)
+// Includes soft-deleted records (Unscoped) for checking duplicates
+func (r *UserSystemRoleRepository) FindByUserAndSystemRoleIDs(ctx context.Context, userID uuid.UUID, systemRoleIDs []uuid.UUID) ([]model.UserSystemRole, error) {
+	if len(systemRoleIDs) == 0 {
+		return []model.UserSystemRole{}, nil
+	}
+	var userSystemRoles []model.UserSystemRole
+	err := r.db.WithContext(ctx).
+		Unscoped(). // Include soft-deleted to check for reactivation
+		Where("user_id = ? AND system_role_id IN ?", userID, systemRoleIDs).
+		Find(&userSystemRoles).Error
+	if err != nil {
+		return nil, err
+	}
+	return userSystemRoles, nil
+}
+
 func (r *UserSystemRoleRepository) ExistsByUserAndSystemRole(ctx context.Context, userID, systemRoleID uuid.UUID) (bool, error) {
 	var count int64
 	// Sử dụng Unscoped() để bao gồm các bản ghi đã xóa mềm vì ràng buộc duy nhất bao gồm chúng
@@ -220,4 +241,27 @@ func (r *UserSystemRoleRepository) DeleteBySystemRoleID(ctx context.Context, sys
 	return r.db.WithContext(ctx).
 		Where("system_role_id = ?", systemRoleID).
 		Delete(&model.UserSystemRole{}).Error
+}
+
+// ============ Transaction Operations ============
+
+// AssignRolesWithTx reactivates and creates mappings in a single transaction
+func (r *UserSystemRoleRepository) AssignRolesWithTx(ctx context.Context, toReactivate []*model.UserSystemRole, toCreate []model.UserSystemRole) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Reactivate inactive mappings
+		for _, mapping := range toReactivate {
+			if err := tx.Save(mapping).Error; err != nil {
+				return err
+			}
+		}
+
+		// Batch create new mappings
+		if len(toCreate) > 0 {
+			if err := tx.Create(&toCreate).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
