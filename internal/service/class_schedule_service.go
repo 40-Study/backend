@@ -18,14 +18,30 @@ type ClassScheduleServiceInterface interface {
 }
 
 type ClassScheduleService struct {
-	repo repository.ClassScheduleRepositoryInterface
+	repo      repository.ClassScheduleRepositoryInterface
+	classRepo repository.ClassRepositoryInterface
 }
 
-func NewClassScheduleService(repo repository.ClassScheduleRepositoryInterface) *ClassScheduleService {
-	return &ClassScheduleService{repo: repo}
+func NewClassScheduleService(
+	repo repository.ClassScheduleRepositoryInterface,
+	classRepo repository.ClassRepositoryInterface,
+) *ClassScheduleService {
+	return &ClassScheduleService{
+		repo:      repo,
+		classRepo: classRepo,
+	}
 }
 
 func (s *ClassScheduleService) Create(ctx context.Context, classID uuid.UUID, req dto.CreateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error) {
+	// Check class exists
+	exists, err := s.classRepo.Exists(ctx, classID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, errors.New("class not found")
+	}
+
 	schedule := &model.ClassSchedule{
 		ID:        uuid.New(),
 		ClassID:   classID,
@@ -49,9 +65,10 @@ func (s *ClassScheduleService) GetAllByClassID(ctx context.Context, classID uuid
 	}
 
 	result := make([]dto.ClassScheduleResponseDTO, len(schedules))
-	for i, sc := range schedules {
-		result[i] = *toClassScheduleResponseDTO(&sc)
+	for i, sch := range schedules {
+		result[i] = *toClassScheduleResponseDTO(&sch)
 	}
+
 	return result, nil
 }
 

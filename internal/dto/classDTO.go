@@ -56,6 +56,10 @@ type AssignTeacherDTO struct {
 	Role      string    `json:"role" binding:"omitempty,oneof=primary assistant"`
 }
 
+type AssignTeachersDTO struct {
+	Teachers []AssignTeacherDTO `json:"teachers" binding:"required,min=1,dive"`
+}
+
 type TeacherClassResponseDTO struct {
 	ID         uuid.UUID           `json:"id"`
 	TeacherID  uuid.UUID           `json:"teacher_id"`
@@ -63,6 +67,13 @@ type TeacherClassResponseDTO struct {
 	Role       string              `json:"role"`
 	AssignedAt string              `json:"assigned_at"`
 	Teacher    *TeacherResponseDTO `json:"teacher,omitempty"`
+}
+
+type TeacherClassListResponseDTO struct {
+	Teachers []TeacherClassResponseDTO `json:"teachers"`
+	Total    int64                     `json:"total"`
+	Page     int                       `json:"page"`
+	PageSize int                       `json:"page_size"`
 }
 
 // StudentClass DTOs
@@ -81,4 +92,11 @@ type StudentClassResponseDTO struct {
 	Email      string    `json:"email"`
 	FullName   *string   `json:"full_name,omitempty"`
 	AvatarURL  *string   `json:"avatar_url,omitempty"`
+}
+
+type StudentClassListResponseDTO struct {
+	Students []StudentClassResponseDTO `json:"students"`
+	Total    int64                     `json:"total"`
+	Page     int                       `json:"page"`
+	PageSize int                       `json:"page_size"`
 }

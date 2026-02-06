@@ -220,7 +220,10 @@ func (h *ClassHandler) GetTeachers(c *fiber.Ctx) error {
 		})
 	}
 
-	teachers, err := h.service.GetTeachers(c.Context(), classID)
+	page := c.QueryInt("page", 1)
+	pageSize := c.QueryInt("page_size", 20)
+
+	teachers, err := h.service.GetTeachers(c.Context(), classID, page, pageSize)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve teachers",
@@ -305,7 +308,10 @@ func (h *ClassHandler) GetStudents(c *fiber.Ctx) error {
 		})
 	}
 
-	students, err := h.service.GetStudents(c.Context(), classID)
+	page := c.QueryInt("page", 1)
+	pageSize := c.QueryInt("page_size", 20)
+
+	students, err := h.service.GetStudents(c.Context(), classID, page, pageSize)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve students",

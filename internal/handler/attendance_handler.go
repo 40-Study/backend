@@ -8,7 +8,7 @@ import (
 )
 
 type AttendanceHandlerInterface interface {
-	BulkCreate(c *fiber.Ctx) error
+	MarkAttendance(c *fiber.Ctx) error
 	GetAll(c *fiber.Ctx) error
 	GetByID(c *fiber.Ctx) error
 	Update(c *fiber.Ctx) error
@@ -23,7 +23,7 @@ func NewAttendanceHandler(service service.AttendanceServiceInterface) *Attendanc
 	return &AttendanceHandler{service: service}
 }
 
-func (h *AttendanceHandler) BulkCreate(c *fiber.Ctx) error {
+func (h *AttendanceHandler) MarkAttendance(c *fiber.Ctx) error {
 	classID, err := uuid.Parse(c.Params("classId"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -40,16 +40,16 @@ func (h *AttendanceHandler) BulkCreate(c *fiber.Ctx) error {
 		})
 	}
 
-	attendances, err := h.service.BulkCreate(c.Context(), classID, req)
+	attendances, err := h.service.MarkAttendance(c.Context(), classID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to create attendances",
+			"message": "Failed to mark attendances",
 			"error":   err.Error(),
 		})
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message": "Attendances created successfully",
+		"message": "Attendances marked successfully",
 		"data":    attendances,
 	})
 }

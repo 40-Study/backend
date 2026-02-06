@@ -30,8 +30,8 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		Organization:   service.NewOrganizationService(repos.Organization),
 		Teacher:        service.NewTeacherService(repos.Teacher),
 		TeacherProfile: service.NewTeacherProfileService(repos.TeacherProfile),
-		Class:          service.NewClassService(repos.Class),
-		ClassSchedule:  service.NewClassScheduleService(repos.ClassSchedule),
+		Class:          service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student),
+		ClassSchedule:  service.NewClassScheduleService(repos.ClassSchedule, repos.Class),
 		Attendance:     service.NewAttendanceService(repos.Attendance),
 	}
 }

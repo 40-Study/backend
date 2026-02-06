@@ -19,23 +19,51 @@ type ClassServiceInterface interface {
 	Delete(ctx context.Context, id uuid.UUID, hardDelete bool) error
 
 	AssignTeacher(ctx context.Context, classID uuid.UUID, req dto.AssignTeacherDTO) (*dto.TeacherClassResponseDTO, error)
+	AssignTeachers(ctx context.Context, classID uuid.UUID, req dto.AssignTeachersDTO) ([]dto.TeacherClassResponseDTO, error)
 	RemoveTeacher(ctx context.Context, classID, teacherID uuid.UUID) error
-	GetTeachers(ctx context.Context, classID uuid.UUID) ([]dto.TeacherClassResponseDTO, error)
+	GetTeachers(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.TeacherClassListResponseDTO, error)
 
 	EnrollStudent(ctx context.Context, classID uuid.UUID, req dto.EnrollStudentDTO) (*dto.StudentClassResponseDTO, error)
 	RemoveStudent(ctx context.Context, classID, studentID uuid.UUID) error
-	GetStudents(ctx context.Context, classID uuid.UUID) ([]dto.StudentClassResponseDTO, error)
+	GetStudents(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.StudentClassListResponseDTO, error)
 }
 
 type ClassService struct {
-	repo repository.ClassRepositoryInterface
+	classRepo   repository.ClassRepositoryInterface
+	courseRepo  repository.CourseRepositoryInterface
+	teacherRepo repository.TeacherRepositoryInterface
+	studentRepo repository.StudentRepositoryInterface
 }
 
-func NewClassService(repo repository.ClassRepositoryInterface) *ClassService {
-	return &ClassService{repo: repo}
+func NewClassService(
+	classRepo repository.ClassRepositoryInterface,
+	courseRepo repository.CourseRepositoryInterface,
+	teacherRepo repository.TeacherRepositoryInterface,
+	studentRepo repository.StudentRepositoryInterface,
+) *ClassService {
+	return &ClassService{
+		classRepo:   classRepo,
+		courseRepo:  courseRepo,
+		teacherRepo: teacherRepo,
+		studentRepo: studentRepo,
+	}
 }
 
 func (s *ClassService) Create(ctx context.Context, req dto.CreateClassDTO) (*dto.ClassResponseDTO, error) {
+	// Validate CourseID exists if provided
+	if req.CourseID != nil {
+		exists, err := s.courseRepo.Exists(ctx, *req.CourseID)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, errors.New("course not found")
+		}
+	}
+
+	// Class luôn bắt đầu với status "draft".
+	// Để chuyển sang "active" (lớp thật), cần gọi API Update với status = "active"
+	// khi lớp đã sẵn sàng hoạt động (có đủ giáo viên, lịch học, etc.)
 	class := &model.Class{
 		Name:        req.Name,
 		Description: req.Description,
@@ -59,7 +87,7 @@ func (s *ClassService) Create(ctx context.Context, req dto.CreateClassDTO) (*dto
 		class.EndDate = &t
 	}
 
-	if err := s.repo.Create(ctx, class); err != nil {
+	if err := s.classRepo.Create(ctx, class); err != nil {
 		return nil, err
 	}
 
@@ -74,7 +102,7 @@ func (s *ClassService) GetAll(ctx context.Context, page, pageSize int, keyword s
 		pageSize = 20
 	}
 
-	classes, total, err := s.repo.GetAll(ctx, page, pageSize, keyword, status)
+	classes, total, err := s.classRepo.GetAll(ctx, page, pageSize, keyword, status)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +121,7 @@ func (s *ClassService) GetAll(ctx context.Context, page, pageSize int, keyword s
 }
 
 func (s *ClassService) GetByID(ctx context.Context, id uuid.UUID) (*dto.ClassResponseDTO, error) {
-	class, err := s.repo.GetByID(ctx, id)
+	class, err := s.classRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +132,7 @@ func (s *ClassService) GetByID(ctx context.Context, id uuid.UUID) (*dto.ClassRes
 }
 
 func (s *ClassService) Update(ctx context.Context, id uuid.UUID, req dto.UpdateClassDTO) (*dto.ClassResponseDTO, error) {
-	class, err := s.repo.GetByID(ctx, id)
+	class, err := s.classRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -112,14 +140,23 @@ func (s *ClassService) Update(ctx context.Context, id uuid.UUID, req dto.UpdateC
 		return nil, errors.New("class not found")
 	}
 
+	// Validate CourseID exists if being updated
+	if req.CourseID != nil {
+		exists, err := s.courseRepo.Exists(ctx, *req.CourseID)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, errors.New("course not found")
+		}
+		class.CourseID = req.CourseID
+	}
+
 	if req.Name != nil {
 		class.Name = *req.Name
 	}
 	if req.Description != nil {
 		class.Description = req.Description
-	}
-	if req.CourseID != nil {
-		class.CourseID = req.CourseID
 	}
 	if req.Status != nil {
 		class.Status = *req.Status
@@ -142,7 +179,7 @@ func (s *ClassService) Update(ctx context.Context, id uuid.UUID, req dto.UpdateC
 		class.EndDate = &t
 	}
 
-	if err := s.repo.Update(ctx, class); err != nil {
+	if err := s.classRepo.Update(ctx, class); err != nil {
 		return nil, err
 	}
 
@@ -150,25 +187,48 @@ func (s *ClassService) Update(ctx context.Context, id uuid.UUID, req dto.UpdateC
 }
 
 func (s *ClassService) Delete(ctx context.Context, id uuid.UUID, hardDelete bool) error {
-	class, err := s.repo.GetByID(ctx, id)
+	class, err := s.classRepo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
 	if class == nil {
 		return errors.New("class not found")
 	}
-	return s.repo.Delete(ctx, id, hardDelete)
+	return s.classRepo.Delete(ctx, id, hardDelete)
 }
 
 // Teacher-Class
 
+// AssignTeacher assigns a single teacher to a class.
+// Role can be:
+// - "primary": Giáo viên chính, chịu trách nhiệm chính cho lớp học
+// - "assistant": Trợ giảng, hỗ trợ giáo viên chính
 func (s *ClassService) AssignTeacher(ctx context.Context, classID uuid.UUID, req dto.AssignTeacherDTO) (*dto.TeacherClassResponseDTO, error) {
-	class, err := s.repo.GetByID(ctx, classID)
+	// Check class exists
+	class, err := s.classRepo.GetByID(ctx, classID)
 	if err != nil {
 		return nil, err
 	}
 	if class == nil {
 		return nil, errors.New("class not found")
+	}
+
+	// Check teacher exists
+	exists, err := s.teacherRepo.Exists(ctx, req.TeacherID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, errors.New("teacher not found")
+	}
+
+	// Check if teacher is already assigned to this class
+	alreadyAssigned, err := s.classRepo.TeacherClassExists(ctx, classID, req.TeacherID)
+	if err != nil {
+		return nil, err
+	}
+	if alreadyAssigned {
+		return nil, errors.New("teacher is already assigned to this class")
 	}
 
 	role := req.Role
@@ -183,7 +243,7 @@ func (s *ClassService) AssignTeacher(ctx context.Context, classID uuid.UUID, req
 		Role:      role,
 	}
 
-	if err := s.repo.AssignTeacher(ctx, tc); err != nil {
+	if err := s.classRepo.AssignTeacher(ctx, tc); err != nil {
 		return nil, err
 	}
 
@@ -196,12 +256,109 @@ func (s *ClassService) AssignTeacher(ctx context.Context, classID uuid.UUID, req
 	}, nil
 }
 
-func (s *ClassService) RemoveTeacher(ctx context.Context, classID, teacherID uuid.UUID) error {
-	return s.repo.RemoveTeacher(ctx, classID, teacherID)
+// AssignTeachers assigns multiple teachers to a class at once
+func (s *ClassService) AssignTeachers(ctx context.Context, classID uuid.UUID, req dto.AssignTeachersDTO) ([]dto.TeacherClassResponseDTO, error) {
+	// Check class exists
+	class, err := s.classRepo.GetByID(ctx, classID)
+	if err != nil {
+		return nil, err
+	}
+	if class == nil {
+		return nil, errors.New("class not found")
+	}
+
+	// Validate all teachers and check for duplicates
+	tcs := make([]*model.TeacherClass, 0, len(req.Teachers))
+	for _, t := range req.Teachers {
+		// Check teacher exists
+		exists, err := s.teacherRepo.Exists(ctx, t.TeacherID)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, errors.New("teacher not found: " + t.TeacherID.String())
+		}
+
+		// Check if teacher is already assigned
+		alreadyAssigned, err := s.classRepo.TeacherClassExists(ctx, classID, t.TeacherID)
+		if err != nil {
+			return nil, err
+		}
+		if alreadyAssigned {
+			return nil, errors.New("teacher is already assigned to this class: " + t.TeacherID.String())
+		}
+
+		role := t.Role
+		if role == "" {
+			role = "primary"
+		}
+
+		tcs = append(tcs, &model.TeacherClass{
+			ID:        uuid.New(),
+			TeacherID: t.TeacherID,
+			ClassID:   classID,
+			Role:      role,
+		})
+	}
+
+	if err := s.classRepo.AssignTeachers(ctx, tcs); err != nil {
+		return nil, err
+	}
+
+	result := make([]dto.TeacherClassResponseDTO, len(tcs))
+	for i, tc := range tcs {
+		result[i] = dto.TeacherClassResponseDTO{
+			ID:         tc.ID,
+			TeacherID:  tc.TeacherID,
+			ClassID:    tc.ClassID,
+			Role:       tc.Role,
+			AssignedAt: tc.AssignedAt.Format("2006-01-02T15:04:05Z"),
+		}
+	}
+
+	return result, nil
 }
 
-func (s *ClassService) GetTeachers(ctx context.Context, classID uuid.UUID) ([]dto.TeacherClassResponseDTO, error) {
-	teachers, err := s.repo.GetTeachers(ctx, classID)
+func (s *ClassService) RemoveTeacher(ctx context.Context, classID, teacherID uuid.UUID) error {
+	// Check class exists
+	class, err := s.classRepo.GetByID(ctx, classID)
+	if err != nil {
+		return err
+	}
+	if class == nil {
+		return errors.New("class not found")
+	}
+
+	// Check teacher-class assignment exists
+	exists, err := s.classRepo.TeacherClassExists(ctx, classID, teacherID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("teacher is not assigned to this class")
+	}
+
+	return s.classRepo.RemoveTeacher(ctx, classID, teacherID)
+}
+
+func (s *ClassService) GetTeachers(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.TeacherClassListResponseDTO, error) {
+	// Check class exists
+	class, err := s.classRepo.GetByID(ctx, classID)
+	if err != nil {
+		return nil, err
+	}
+	if class == nil {
+		return nil, errors.New("class not found")
+	}
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	teachers, total, err := s.classRepo.GetTeachers(ctx, classID, page, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -222,13 +379,20 @@ func (s *ClassService) GetTeachers(ctx context.Context, classID uuid.UUID) ([]dt
 			},
 		}
 	}
-	return result, nil
+
+	return &dto.TeacherClassListResponseDTO{
+		Teachers: result,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
 }
 
 // Student-Class
 
 func (s *ClassService) EnrollStudent(ctx context.Context, classID uuid.UUID, req dto.EnrollStudentDTO) (*dto.StudentClassResponseDTO, error) {
-	class, err := s.repo.GetByID(ctx, classID)
+	// Check class exists
+	class, err := s.classRepo.GetByID(ctx, classID)
 	if err != nil {
 		return nil, err
 	}
@@ -236,14 +400,22 @@ func (s *ClassService) EnrollStudent(ctx context.Context, classID uuid.UUID, req
 		return nil, errors.New("class not found")
 	}
 
-	if class.MaxStudents != nil {
-		count, err := s.repo.GetStudentCount(ctx, classID)
-		if err != nil {
-			return nil, err
-		}
-		if count >= int64(*class.MaxStudents) {
-			return nil, errors.New("class is full")
-		}
+	// Check student exists
+	exists, err := s.studentRepo.Exists(ctx, req.StudentID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, errors.New("student not found")
+	}
+
+	// Check if student is already enrolled
+	alreadyEnrolled, err := s.classRepo.StudentClassExists(ctx, classID, req.StudentID)
+	if err != nil {
+		return nil, err
+	}
+	if alreadyEnrolled {
+		return nil, errors.New("student is already enrolled in this class")
 	}
 
 	sc := &model.StudentClass{
@@ -253,7 +425,8 @@ func (s *ClassService) EnrollStudent(ctx context.Context, classID uuid.UUID, req
 		Status:    "active",
 	}
 
-	if err := s.repo.EnrollStudent(ctx, sc); err != nil {
+	// Use EnrollStudentWithLock to prevent race condition when checking MaxStudents
+	if err := s.classRepo.EnrollStudentWithLock(ctx, sc, class.MaxStudents); err != nil {
 		return nil, err
 	}
 
@@ -267,11 +440,45 @@ func (s *ClassService) EnrollStudent(ctx context.Context, classID uuid.UUID, req
 }
 
 func (s *ClassService) RemoveStudent(ctx context.Context, classID, studentID uuid.UUID) error {
-	return s.repo.RemoveStudent(ctx, classID, studentID)
+	// Check class exists
+	class, err := s.classRepo.GetByID(ctx, classID)
+	if err != nil {
+		return err
+	}
+	if class == nil {
+		return errors.New("class not found")
+	}
+
+	// Check student-class enrollment exists
+	exists, err := s.classRepo.StudentClassExists(ctx, classID, studentID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("student is not enrolled in this class")
+	}
+
+	return s.classRepo.RemoveStudent(ctx, classID, studentID)
 }
 
-func (s *ClassService) GetStudents(ctx context.Context, classID uuid.UUID) ([]dto.StudentClassResponseDTO, error) {
-	students, err := s.repo.GetStudents(ctx, classID)
+func (s *ClassService) GetStudents(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.StudentClassListResponseDTO, error) {
+	// Check class exists
+	class, err := s.classRepo.GetByID(ctx, classID)
+	if err != nil {
+		return nil, err
+	}
+	if class == nil {
+		return nil, errors.New("class not found")
+	}
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	students, total, err := s.classRepo.GetStudents(ctx, classID, page, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -290,12 +497,18 @@ func (s *ClassService) GetStudents(ctx context.Context, classID uuid.UUID) ([]dt
 			AvatarURL:  sc.Student.AvatarURL,
 		}
 	}
-	return result, nil
+
+	return &dto.StudentClassListResponseDTO{
+		Students: result,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
 }
 
 func (s *ClassService) toClassResponseDTO(ctx context.Context, class *model.Class) *dto.ClassResponseDTO {
-	teacherCount, _ := s.repo.GetTeacherCount(ctx, class.ID)
-	studentCount, _ := s.repo.GetStudentCount(ctx, class.ID)
+	teacherCount, _ := s.classRepo.GetTeacherCount(ctx, class.ID)
+	studentCount, _ := s.classRepo.GetStudentCount(ctx, class.ID)
 
 	return &dto.ClassResponseDTO{
 		ID:           class.ID,

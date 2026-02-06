@@ -12,7 +12,7 @@ import (
 )
 
 type AttendanceServiceInterface interface {
-	BulkCreate(ctx context.Context, classID uuid.UUID, req dto.BulkCreateAttendanceDTO) ([]dto.AttendanceResponseDTO, error)
+	MarkAttendance(ctx context.Context, classID uuid.UUID, req dto.BulkCreateAttendanceDTO) ([]dto.AttendanceResponseDTO, error)
 	GetAll(ctx context.Context, classID uuid.UUID, dateStr string, page, pageSize int) (*dto.AttendanceListResponseDTO, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*dto.AttendanceResponseDTO, error)
 	Update(ctx context.Context, id uuid.UUID, req dto.UpdateAttendanceDTO) (*dto.AttendanceResponseDTO, error)
@@ -27,7 +27,9 @@ func NewAttendanceService(repo repository.AttendanceRepositoryInterface) *Attend
 	return &AttendanceService{repo: repo}
 }
 
-func (s *AttendanceService) BulkCreate(ctx context.Context, classID uuid.UUID, req dto.BulkCreateAttendanceDTO) ([]dto.AttendanceResponseDTO, error) {
+// MarkAttendance records attendance for multiple students in a class for a specific date.
+// This is used by teachers to mark student presence/absence.
+func (s *AttendanceService) MarkAttendance(ctx context.Context, classID uuid.UUID, req dto.BulkCreateAttendanceDTO) ([]dto.AttendanceResponseDTO, error) {
 	date, err := time.Parse("2006-01-02", req.Date)
 	if err != nil {
 		return nil, errors.New("invalid date format, expected YYYY-MM-DD")

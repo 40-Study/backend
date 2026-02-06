@@ -11,11 +11,11 @@ import (
 )
 
 type TeacherProfileServiceInterface interface {
-	Create(ctx context.Context, req dto.CreateTeacherProfileDTO) (*dto.TeacherProfileResponseDTO, error)
-	GetAll(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.TeacherProfileListResponseDTO, error)
-	GetByID(ctx context.Context, id uuid.UUID) (*dto.TeacherProfileResponseDTO, error)
-	Update(ctx context.Context, id uuid.UUID, req dto.UpdateTeacherProfileDTO) (*dto.TeacherProfileResponseDTO, error)
-	Delete(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	CreateTeacherProfile(ctx context.Context, req dto.CreateTeacherProfileDTO) (*dto.TeacherProfileResponseDTO, error)
+	GetAllTeacherProfiles(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.TeacherProfileListResponseDTO, error)
+	GetTeacherProfileByID(ctx context.Context, id uuid.UUID) (*dto.TeacherProfileResponseDTO, error)
+	UpdateTeacherProfile(ctx context.Context, id uuid.UUID, req dto.UpdateTeacherProfileDTO) (*dto.TeacherProfileResponseDTO, error)
+	DeleteTeacherProfile(ctx context.Context, id uuid.UUID, hardDelete bool) error
 }
 
 type TeacherProfileService struct {
@@ -26,7 +26,7 @@ func NewTeacherProfileService(repo repository.TeacherProfileRepositoryInterface)
 	return &TeacherProfileService{repo: repo}
 }
 
-func (s *TeacherProfileService) Create(ctx context.Context, req dto.CreateTeacherProfileDTO) (*dto.TeacherProfileResponseDTO, error) {
+func (s *TeacherProfileService) CreateTeacherProfile(ctx context.Context, req dto.CreateTeacherProfileDTO) (*dto.TeacherProfileResponseDTO, error) {
 	existing, err := s.repo.GetByUserID(ctx, req.UserID)
 	if err != nil {
 		return nil, err
@@ -51,7 +51,7 @@ func (s *TeacherProfileService) Create(ctx context.Context, req dto.CreateTeache
 	return toTeacherProfileResponseDTO(profile), nil
 }
 
-func (s *TeacherProfileService) GetAll(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.TeacherProfileListResponseDTO, error) {
+func (s *TeacherProfileService) GetAllTeacherProfiles(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.TeacherProfileListResponseDTO, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -77,7 +77,7 @@ func (s *TeacherProfileService) GetAll(ctx context.Context, page, pageSize int, 
 	}, nil
 }
 
-func (s *TeacherProfileService) GetByID(ctx context.Context, id uuid.UUID) (*dto.TeacherProfileResponseDTO, error) {
+func (s *TeacherProfileService) GetTeacherProfileByID(ctx context.Context, id uuid.UUID) (*dto.TeacherProfileResponseDTO, error) {
 	profile, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -88,7 +88,7 @@ func (s *TeacherProfileService) GetByID(ctx context.Context, id uuid.UUID) (*dto
 	return toTeacherProfileResponseDTO(profile), nil
 }
 
-func (s *TeacherProfileService) Update(ctx context.Context, id uuid.UUID, req dto.UpdateTeacherProfileDTO) (*dto.TeacherProfileResponseDTO, error) {
+func (s *TeacherProfileService) UpdateTeacherProfile(ctx context.Context, id uuid.UUID, req dto.UpdateTeacherProfileDTO) (*dto.TeacherProfileResponseDTO, error) {
 	profile, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -120,7 +120,7 @@ func (s *TeacherProfileService) Update(ctx context.Context, id uuid.UUID, req dt
 	return toTeacherProfileResponseDTO(profile), nil
 }
 
-func (s *TeacherProfileService) Delete(ctx context.Context, id uuid.UUID, hardDelete bool) error {
+func (s *TeacherProfileService) DeleteTeacherProfile(ctx context.Context, id uuid.UUID, hardDelete bool) error {
 	profile, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err

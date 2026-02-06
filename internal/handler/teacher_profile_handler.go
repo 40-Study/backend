@@ -32,7 +32,7 @@ func (h *TeacherProfileHandler) Create(c *fiber.Ctx) error {
 		})
 	}
 
-	profile, err := h.service.Create(c.Context(), req)
+	profile, err := h.service.CreateTeacherProfile(c.Context(), req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create teacher profile",
@@ -52,7 +52,7 @@ func (h *TeacherProfileHandler) GetAll(c *fiber.Ctx) error {
 	keyword := c.Query("keyword")
 	status := c.Query("status")
 
-	profiles, err := h.service.GetAll(c.Context(), page, pageSize, keyword, status)
+	profiles, err := h.service.GetAllTeacherProfiles(c.Context(), page, pageSize, keyword, status)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve teacher profiles",
@@ -75,7 +75,7 @@ func (h *TeacherProfileHandler) GetByID(c *fiber.Ctx) error {
 		})
 	}
 
-	profile, err := h.service.GetByID(c.Context(), id)
+	profile, err := h.service.GetTeacherProfileByID(c.Context(), id)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Teacher profile not found",
@@ -106,7 +106,7 @@ func (h *TeacherProfileHandler) Update(c *fiber.Ctx) error {
 		})
 	}
 
-	profile, err := h.service.Update(c.Context(), id, req)
+	profile, err := h.service.UpdateTeacherProfile(c.Context(), id, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update teacher profile",
@@ -131,7 +131,7 @@ func (h *TeacherProfileHandler) Delete(c *fiber.Ctx) error {
 
 	hardDelete := c.QueryBool("hard_delete", false)
 
-	if err := h.service.Delete(c.Context(), id, hardDelete); err != nil {
+	if err := h.service.DeleteTeacherProfile(c.Context(), id, hardDelete); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete teacher profile",
 			"error":   err.Error(),

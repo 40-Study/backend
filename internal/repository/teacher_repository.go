@@ -14,6 +14,7 @@ type TeacherRepositoryInterface interface {
 	GetAllTeachers(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.User, int64, error)
 	GetTeacherByID(ctx context.Context, id uuid.UUID) (*model.User, error)
 	DeleteTeacher(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	Exists(ctx context.Context, id uuid.UUID) (bool, error)
 }
 
 type TeacherRepository struct {
@@ -82,4 +83,12 @@ func (r *TeacherRepository) DeleteTeacher(ctx context.Context, id uuid.UUID, har
 		Model(&model.User{}).
 		Where("id = ?", id).
 		Update("is_active", false).Error
+}
+
+func (r *TeacherRepository) Exists(ctx context.Context, id uuid.UUID) (bool, error) {
+	var count int64
+	err := r.teacherQuery(ctx).
+		Where("users.id = ?", id).
+		Count(&count).Error
+	return count > 0, err
 }

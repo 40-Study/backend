@@ -41,7 +41,7 @@ func SetupClassRoutes(
 		// Attendances
 		attendances := classes.Group("/:classId/attendances")
 		{
-			attendances.Post("/", attendanceHandler.BulkCreate)
+			attendances.Post("/", attendanceHandler.MarkAttendance)
 			attendances.Get("/", attendanceHandler.GetAll)
 			attendances.Get("/:id", attendanceHandler.GetByID)
 			attendances.Put("/:id", attendanceHandler.Update)
