@@ -18,6 +18,7 @@ func SetupAllRoutes(
 	userOrgRoleHandler *handler.UserOrganizationRoleHandler,
 	permissionHandler *handler.PermissionHandler,
 	organizationHandler *handler.OrganizationHandler,
+	profileHandler *handler.ProfileHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 ) {
@@ -38,4 +39,5 @@ func SetupAllRoutes(
 	SetupUserOrganizationRoleRoutes(api, cfg, userOrgRoleHandler, redis)
 	SetupPermissionRoutes(api, permissionHandler)
 	SetupOrganizationRoutes(api, organizationHandler)
+	SetupProfileRoutes(api, cfg, profileHandler, redis)
 }

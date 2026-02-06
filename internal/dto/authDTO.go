@@ -43,10 +43,34 @@ type DeviceSessionDto struct {
 	IsCurrent  bool   `json:"is_current,omitempty"`
 }
 
+// SystemRoleDto - System role (STUDENT, TEACHER, PARENT, ORG_OWNER)
+type SystemRoleDto struct {
+	ID   string `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Name string `json:"name" example:"STUDENT"`
+}
+
+// OrgRoleDto - Organization role với context
+type OrgRoleDto struct {
+	ID               string `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	RoleName         string `json:"role_name" example:"Admin"`
+	OrganizationID   string `json:"organization_id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	OrganizationName string `json:"organization_name" example:"Trường THPT ABC"`
+}
+
+// EntryContext - Gợi ý FE navigate đến đâu sau login
+type EntryContext struct {
+	PrimaryRole   string `json:"primary_role" example:"STUDENT"`              // STUDENT, TEACHER, PARENT, ORG_OWNER
+	RequiresSetup bool   `json:"requires_setup" example:"false"`              // true nếu PARENT hoặc ORG_OWNER
+	SetupEndpoint string `json:"setup_endpoint,omitempty" example:"/me/children"` // /me/children hoặc /me/organizations
+}
+
 type LoginResponseDto struct {
 	AccessToken   string           `json:"access_token"`
 	RefreshToken  string           `json:"refresh_token"`
 	User          UserResponseDto  `json:"user"`
+	SystemRoles   []SystemRoleDto  `json:"system_roles"`            // System roles của user
+	OrgRoles      []OrgRoleDto     `json:"org_roles"`               // Organization roles của user
+	EntryContext  *EntryContext    `json:"entry_context,omitempty"` // Gợi ý navigation
 	CurrentDevice DeviceSessionDto `json:"current_device"`
 }
 

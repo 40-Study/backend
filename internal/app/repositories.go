@@ -13,6 +13,7 @@ type Repositories struct {
 	UserOrganizationRole *repository.UserOrganizationRoleRepository
 	Permission           *repository.PermissionRepository
 	Organization         *repository.OrganizationRepository
+	ParentStudent        *repository.ParentStudentRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -24,5 +25,6 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		UserOrganizationRole: repository.NewUserOrganizationRoleRepository(db),
 		Permission:           repository.NewPermissionRepository(db),
 		Organization:         repository.NewOrganizationRepository(db),
+		ParentStudent:        repository.NewParentStudentRepository(db),
 	}
 }

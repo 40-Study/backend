@@ -10,6 +10,7 @@ type Services struct {
 	UserOrganizationRole *service.UserOrganizationRoleService
 	Permission           *service.PermissionService
 	Organization         *service.OrganizationService
+	Profile              *service.ProfileService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
@@ -19,6 +20,7 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			repos.User,
 			repos.Role,
 			repos.UserOrganizationRole,
+			repos.UserSystemRole,
 			resources.Redis,
 		),
 		Role:       service.NewRoleService(repos.Role, repos.Permission),
@@ -36,5 +38,9 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		),
 		Permission:   service.NewPermissionService(repos.Permission),
 		Organization: service.NewOrganizationService(repos.Organization),
+		Profile: service.NewProfileService(
+			repos.ParentStudent,
+			repos.UserOrganizationRole,
+		),
 	}
 }

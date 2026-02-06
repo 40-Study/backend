@@ -6,7 +6,6 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"study.com/v1/internal/router"
-
 )
 
 // App is the main application structure
@@ -42,6 +41,7 @@ func New() (*App, error) {
 		handlers.UserOrganizationRole,
 		handlers.Permission,
 		handlers.Organization,
+		handlers.Profile,
 		resources.Redis,
 		resources.MinioClient,
 	)

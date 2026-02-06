@@ -34,26 +34,29 @@ type AuthServiceInterface interface {
 }
 
 type AuthService struct {
-	cfg         *config.Config
-	userRepo    repository.UserRepositoryInterface
-	roleRepo    repository.RoleRepositoryInterface
-	userOrgRole repository.UserOrganizationRoleRepositoryInterface
-	redisClient *redis.Client
+	cfg               *config.Config
+	userRepo          repository.UserRepositoryInterface
+	roleRepo          repository.RoleRepositoryInterface
+	userOrgRoleRepo   repository.UserOrganizationRoleRepositoryInterface
+	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface
+	redisClient       *redis.Client
 }
 
 func NewAuthService(
 	cfg *config.Config,
 	userRepo repository.UserRepositoryInterface,
 	roleRepo repository.RoleRepositoryInterface,
-	userOrgRole repository.UserOrganizationRoleRepositoryInterface,
+	userOrgRoleRepo repository.UserOrganizationRoleRepositoryInterface,
+	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface,
 	redisClient *redis.Client,
 ) *AuthService {
 	return &AuthService{
-		cfg:         cfg,
-		userRepo:    userRepo,
-		roleRepo:    roleRepo,
-		userOrgRole: userOrgRole,
-		redisClient: redisClient,
+		cfg:               cfg,
+		userRepo:          userRepo,
+		roleRepo:          roleRepo,
+		userOrgRoleRepo:   userOrgRoleRepo,
+		userSystemRoleRepo: userSystemRoleRepo,
+		redisClient:       redisClient,
 	}
 }
 
@@ -220,7 +223,7 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		}
 	}
 
-	if err := s.userOrgRole.CreateUserRoles(ctx, userOrgRoles); err != nil {
+	if err := s.userOrgRoleRepo.CreateUserRoles(ctx, userOrgRoles); err != nil {
 		// Rollback: delete user if user_organization_roles creation fails
 		// In production, use database transaction
 		return nil, fmt.Errorf("failed to assign roles: %w", err)
@@ -344,6 +347,42 @@ func (s *AuthService) Login(
 		LoggedInAt: time.Now().Format(time.RFC3339),
 	}
 
+	// ===== 9. Load system roles =====
+	systemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, user.ID, "active")
+	if err != nil {
+		// Log but don't fail - roles are optional for login
+		log.Printf("[WARN] Failed to load system roles for user %s: %v", user.ID, err)
+		systemRoles = []model.UserSystemRole{}
+	}
+
+	systemRoleDtos := make([]dto.SystemRoleDto, len(systemRoles))
+	for i, sr := range systemRoles {
+		systemRoleDtos[i] = dto.SystemRoleDto{
+			ID:   sr.SystemRole.ID.String(),
+			Name: sr.SystemRole.Name,
+		}
+	}
+
+	// ===== 10. Load org roles =====
+	orgRoles, err := s.userOrgRoleRepo.FindByUserIDWithDetails(ctx, user.ID, "active")
+	if err != nil {
+		log.Printf("[WARN] Failed to load org roles for user %s: %v", user.ID, err)
+		orgRoles = []model.UserOrganizationRole{}
+	}
+
+	orgRoleDtos := make([]dto.OrgRoleDto, len(orgRoles))
+	for i, or := range orgRoles {
+		orgRoleDtos[i] = dto.OrgRoleDto{
+			ID:               or.ID.String(),
+			RoleName:         or.Role.Name,
+			OrganizationID:   or.Organization.ID.String(),
+			OrganizationName: or.Organization.Name,
+		}
+	}
+
+	// ===== 11. Determine entry context =====
+	entryContext := s.determineEntryContext(systemRoleDtos)
+
 	return &dto.LoginResponseDto{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -357,6 +396,9 @@ func (s *AuthService) Login(
 			IsActive:    user.IsActive,
 			CreatedAt:   user.CreatedAt.Format(time.RFC3339),
 		},
+		SystemRoles:   systemRoleDtos,
+		OrgRoles:      orgRoleDtos,
+		EntryContext:  entryContext,
 		CurrentDevice: currentDevice,
 	}, nil
 }
@@ -608,6 +650,50 @@ func (s *AuthService) revokeAllSessions(ctx context.Context, userID uuid.UUID) e
 	_ = s.redisClient.Del(ctx, sessionKey).Err()
 
 	return nil
+}
+
+// determineEntryContext xác định context điều hướng dựa trên system roles
+func (s *AuthService) determineEntryContext(systemRoles []dto.SystemRoleDto) *dto.EntryContext {
+	if len(systemRoles) == 0 {
+		return nil
+	}
+
+	// Priority mapping: ORG_OWNER > PARENT > TEACHER > STUDENT
+	priorityMap := map[string]int{
+		"ORG_OWNER": 4,
+		"PARENT":    3,
+		"TEACHER":   2,
+		"STUDENT":   1,
+	}
+
+	var primaryRole string
+	maxPriority := 0
+
+	for _, role := range systemRoles {
+		if p, ok := priorityMap[role.Name]; ok && p > maxPriority {
+			maxPriority = p
+			primaryRole = role.Name
+		}
+	}
+
+	if primaryRole == "" {
+		primaryRole = systemRoles[0].Name
+	}
+
+	ctx := &dto.EntryContext{PrimaryRole: primaryRole}
+
+	switch primaryRole {
+	case "PARENT":
+		ctx.RequiresSetup = true
+		ctx.SetupEndpoint = "/profile/children"
+	case "ORG_OWNER":
+		ctx.RequiresSetup = true
+		ctx.SetupEndpoint = "/profile/organizations"
+	default:
+		ctx.RequiresSetup = false
+	}
+
+	return ctx
 }
 
 // PasswordResetOTP represents the OTP data stored in Redis

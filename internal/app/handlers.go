@@ -11,6 +11,7 @@ type Handlers struct {
 	UserOrganizationRole *handler.UserOrganizationRoleHandler
 	Permission           *handler.PermissionHandler
 	Organization         *handler.OrganizationHandler
+	Profile              *handler.ProfileHandler
 }
 
 // InitHandlers initializes all handlers
@@ -23,5 +24,6 @@ func InitHandlers(services *Services) *Handlers {
 		UserOrganizationRole: handler.NewUserOrganizationRoleHandler(services.UserOrganizationRole),
 		Permission:           handler.NewPermissionHandler(services.Permission),
 		Organization:         handler.NewOrganizationHandler(services.Organization),
+		Profile:              handler.NewProfileHandler(services.Profile),
 	}
 }
