@@ -12,20 +12,20 @@ import (
 )
 
 type ClassServiceInterface interface {
-	Create(ctx context.Context, req dto.CreateClassDTO) (*dto.ClassResponseDTO, error)
-	GetAll(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.ClassListResponseDTO, error)
-	GetByID(ctx context.Context, id uuid.UUID) (*dto.ClassResponseDTO, error)
-	Update(ctx context.Context, id uuid.UUID, req dto.UpdateClassDTO) (*dto.ClassResponseDTO, error)
-	Delete(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	CreateClass(ctx context.Context, req dto.CreateClassDTO) (*dto.ClassResponseDTO, error)
+	GetAllClasses(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.ClassListResponseDTO, error)
+	GetClassByID(ctx context.Context, id uuid.UUID) (*dto.ClassResponseDTO, error)
+	UpdateClass(ctx context.Context, id uuid.UUID, req dto.UpdateClassDTO) (*dto.ClassResponseDTO, error)
+	DeleteClass(ctx context.Context, id uuid.UUID, hardDelete bool) error
 
-	AssignTeacher(ctx context.Context, classID uuid.UUID, req dto.AssignTeacherDTO) (*dto.TeacherClassResponseDTO, error)
-	AssignTeachers(ctx context.Context, classID uuid.UUID, req dto.AssignTeachersDTO) ([]dto.TeacherClassResponseDTO, error)
-	RemoveTeacher(ctx context.Context, classID, teacherID uuid.UUID) error
-	GetTeachers(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.TeacherClassListResponseDTO, error)
+	AssignTeacherToClass(ctx context.Context, classID uuid.UUID, req dto.AssignTeacherDTO) (*dto.TeacherClassResponseDTO, error)
+	AssignTeachersToClass(ctx context.Context, classID uuid.UUID, req dto.AssignTeachersDTO) ([]dto.TeacherClassResponseDTO, error)
+	RemoveTeacherFromClass(ctx context.Context, classID, teacherID uuid.UUID) error
+	GetTeachersByClass(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.TeacherClassListResponseDTO, error)
 
-	EnrollStudent(ctx context.Context, classID uuid.UUID, req dto.EnrollStudentDTO) (*dto.StudentClassResponseDTO, error)
-	RemoveStudent(ctx context.Context, classID, studentID uuid.UUID) error
-	GetStudents(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.StudentClassListResponseDTO, error)
+	EnrollStudentToClass(ctx context.Context, classID uuid.UUID, req dto.EnrollStudentDTO) (*dto.StudentClassResponseDTO, error)
+	RemoveStudentFromClass(ctx context.Context, classID, studentID uuid.UUID) error
+	GetStudentsByClass(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.StudentClassListResponseDTO, error)
 }
 
 type ClassService struct {
@@ -49,7 +49,7 @@ func NewClassService(
 	}
 }
 
-func (s *ClassService) Create(ctx context.Context, req dto.CreateClassDTO) (*dto.ClassResponseDTO, error) {
+func (s *ClassService) CreateClass(ctx context.Context, req dto.CreateClassDTO) (*dto.ClassResponseDTO, error) {
 	// Validate CourseID exists if provided
 	if req.CourseID != nil {
 		exists, err := s.courseRepo.Exists(ctx, *req.CourseID)
@@ -94,7 +94,7 @@ func (s *ClassService) Create(ctx context.Context, req dto.CreateClassDTO) (*dto
 	return s.toClassResponseDTO(ctx, class), nil
 }
 
-func (s *ClassService) GetAll(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.ClassListResponseDTO, error) {
+func (s *ClassService) GetAllClasses(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.ClassListResponseDTO, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -120,7 +120,7 @@ func (s *ClassService) GetAll(ctx context.Context, page, pageSize int, keyword s
 	}, nil
 }
 
-func (s *ClassService) GetByID(ctx context.Context, id uuid.UUID) (*dto.ClassResponseDTO, error) {
+func (s *ClassService) GetClassByID(ctx context.Context, id uuid.UUID) (*dto.ClassResponseDTO, error) {
 	class, err := s.classRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -131,7 +131,7 @@ func (s *ClassService) GetByID(ctx context.Context, id uuid.UUID) (*dto.ClassRes
 	return s.toClassResponseDTO(ctx, class), nil
 }
 
-func (s *ClassService) Update(ctx context.Context, id uuid.UUID, req dto.UpdateClassDTO) (*dto.ClassResponseDTO, error) {
+func (s *ClassService) UpdateClass(ctx context.Context, id uuid.UUID, req dto.UpdateClassDTO) (*dto.ClassResponseDTO, error) {
 	class, err := s.classRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -186,7 +186,7 @@ func (s *ClassService) Update(ctx context.Context, id uuid.UUID, req dto.UpdateC
 	return s.toClassResponseDTO(ctx, class), nil
 }
 
-func (s *ClassService) Delete(ctx context.Context, id uuid.UUID, hardDelete bool) error {
+func (s *ClassService) DeleteClass(ctx context.Context, id uuid.UUID, hardDelete bool) error {
 	class, err := s.classRepo.GetByID(ctx, id)
 	if err != nil {
 		return err
@@ -203,7 +203,7 @@ func (s *ClassService) Delete(ctx context.Context, id uuid.UUID, hardDelete bool
 // Role can be:
 // - "primary": Giáo viên chính, chịu trách nhiệm chính cho lớp học
 // - "assistant": Trợ giảng, hỗ trợ giáo viên chính
-func (s *ClassService) AssignTeacher(ctx context.Context, classID uuid.UUID, req dto.AssignTeacherDTO) (*dto.TeacherClassResponseDTO, error) {
+func (s *ClassService) AssignTeacherToClass(ctx context.Context, classID uuid.UUID, req dto.AssignTeacherDTO) (*dto.TeacherClassResponseDTO, error) {
 	// Check class exists
 	class, err := s.classRepo.GetByID(ctx, classID)
 	if err != nil {
@@ -257,7 +257,7 @@ func (s *ClassService) AssignTeacher(ctx context.Context, classID uuid.UUID, req
 }
 
 // AssignTeachers assigns multiple teachers to a class at once
-func (s *ClassService) AssignTeachers(ctx context.Context, classID uuid.UUID, req dto.AssignTeachersDTO) ([]dto.TeacherClassResponseDTO, error) {
+func (s *ClassService) AssignTeachersToClass(ctx context.Context, classID uuid.UUID, req dto.AssignTeachersDTO) ([]dto.TeacherClassResponseDTO, error) {
 	// Check class exists
 	class, err := s.classRepo.GetByID(ctx, classID)
 	if err != nil {
@@ -319,7 +319,7 @@ func (s *ClassService) AssignTeachers(ctx context.Context, classID uuid.UUID, re
 	return result, nil
 }
 
-func (s *ClassService) RemoveTeacher(ctx context.Context, classID, teacherID uuid.UUID) error {
+func (s *ClassService) RemoveTeacherFromClass(ctx context.Context, classID, teacherID uuid.UUID) error {
 	// Check class exists
 	class, err := s.classRepo.GetByID(ctx, classID)
 	if err != nil {
@@ -341,7 +341,7 @@ func (s *ClassService) RemoveTeacher(ctx context.Context, classID, teacherID uui
 	return s.classRepo.RemoveTeacher(ctx, classID, teacherID)
 }
 
-func (s *ClassService) GetTeachers(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.TeacherClassListResponseDTO, error) {
+func (s *ClassService) GetTeachersByClass(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.TeacherClassListResponseDTO, error) {
 	// Check class exists
 	class, err := s.classRepo.GetByID(ctx, classID)
 	if err != nil {
@@ -390,7 +390,7 @@ func (s *ClassService) GetTeachers(ctx context.Context, classID uuid.UUID, page,
 
 // Student-Class
 
-func (s *ClassService) EnrollStudent(ctx context.Context, classID uuid.UUID, req dto.EnrollStudentDTO) (*dto.StudentClassResponseDTO, error) {
+func (s *ClassService) EnrollStudentToClass(ctx context.Context, classID uuid.UUID, req dto.EnrollStudentDTO) (*dto.StudentClassResponseDTO, error) {
 	// Check class exists
 	class, err := s.classRepo.GetByID(ctx, classID)
 	if err != nil {
@@ -439,7 +439,7 @@ func (s *ClassService) EnrollStudent(ctx context.Context, classID uuid.UUID, req
 	}, nil
 }
 
-func (s *ClassService) RemoveStudent(ctx context.Context, classID, studentID uuid.UUID) error {
+func (s *ClassService) RemoveStudentFromClass(ctx context.Context, classID, studentID uuid.UUID) error {
 	// Check class exists
 	class, err := s.classRepo.GetByID(ctx, classID)
 	if err != nil {
@@ -461,7 +461,7 @@ func (s *ClassService) RemoveStudent(ctx context.Context, classID, studentID uui
 	return s.classRepo.RemoveStudent(ctx, classID, studentID)
 }
 
-func (s *ClassService) GetStudents(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.StudentClassListResponseDTO, error) {
+func (s *ClassService) GetStudentsByClass(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.StudentClassListResponseDTO, error) {
 	// Check class exists
 	class, err := s.classRepo.GetByID(ctx, classID)
 	if err != nil {

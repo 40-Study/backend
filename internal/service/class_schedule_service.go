@@ -11,10 +11,10 @@ import (
 )
 
 type ClassScheduleServiceInterface interface {
-	Create(ctx context.Context, classID uuid.UUID, req dto.CreateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error)
-	GetAllByClassID(ctx context.Context, classID uuid.UUID) ([]dto.ClassScheduleResponseDTO, error)
-	Update(ctx context.Context, id uuid.UUID, req dto.UpdateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error)
-	Delete(ctx context.Context, id uuid.UUID) error
+	CreateClassSchedule(ctx context.Context, classID uuid.UUID, req dto.CreateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error)
+	GetAllClassSchedulesByClassID(ctx context.Context, classID uuid.UUID) ([]dto.ClassScheduleResponseDTO, error)
+	UpdateClassSchedule(ctx context.Context, id uuid.UUID, req dto.UpdateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error)
+	DeleteClassSchedule(ctx context.Context, id uuid.UUID) error
 }
 
 type ClassScheduleService struct {
@@ -32,7 +32,7 @@ func NewClassScheduleService(
 	}
 }
 
-func (s *ClassScheduleService) Create(ctx context.Context, classID uuid.UUID, req dto.CreateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error) {
+func (s *ClassScheduleService) CreateClassSchedule(ctx context.Context, classID uuid.UUID, req dto.CreateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error) {
 	// Check class exists
 	exists, err := s.classRepo.Exists(ctx, classID)
 	if err != nil {
@@ -58,7 +58,7 @@ func (s *ClassScheduleService) Create(ctx context.Context, classID uuid.UUID, re
 	return toClassScheduleResponseDTO(schedule), nil
 }
 
-func (s *ClassScheduleService) GetAllByClassID(ctx context.Context, classID uuid.UUID) ([]dto.ClassScheduleResponseDTO, error) {
+func (s *ClassScheduleService) GetAllClassSchedulesByClassID(ctx context.Context, classID uuid.UUID) ([]dto.ClassScheduleResponseDTO, error) {
 	schedules, err := s.repo.GetAllByClassID(ctx, classID)
 	if err != nil {
 		return nil, err
@@ -72,7 +72,7 @@ func (s *ClassScheduleService) GetAllByClassID(ctx context.Context, classID uuid
 	return result, nil
 }
 
-func (s *ClassScheduleService) Update(ctx context.Context, id uuid.UUID, req dto.UpdateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error) {
+func (s *ClassScheduleService) UpdateClassSchedule(ctx context.Context, id uuid.UUID, req dto.UpdateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error) {
 	schedule, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -101,7 +101,7 @@ func (s *ClassScheduleService) Update(ctx context.Context, id uuid.UUID, req dto
 	return toClassScheduleResponseDTO(schedule), nil
 }
 
-func (s *ClassScheduleService) Delete(ctx context.Context, id uuid.UUID) error {
+func (s *ClassScheduleService) DeleteClassSchedule(ctx context.Context, id uuid.UUID) error {
 	schedule, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err

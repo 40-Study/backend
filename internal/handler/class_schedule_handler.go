@@ -8,10 +8,10 @@ import (
 )
 
 type ClassScheduleHandlerInterface interface {
-	Create(c *fiber.Ctx) error
-	GetAll(c *fiber.Ctx) error
-	Update(c *fiber.Ctx) error
-	Delete(c *fiber.Ctx) error
+	CreateClassSchedule(c *fiber.Ctx) error
+	GetAllClassSchedules(c *fiber.Ctx) error
+	UpdateClassSchedule(c *fiber.Ctx) error
+	DeleteClassSchedule(c *fiber.Ctx) error
 }
 
 type ClassScheduleHandler struct {
@@ -22,7 +22,7 @@ func NewClassScheduleHandler(service service.ClassScheduleServiceInterface) *Cla
 	return &ClassScheduleHandler{service: service}
 }
 
-func (h *ClassScheduleHandler) Create(c *fiber.Ctx) error {
+func (h *ClassScheduleHandler) CreateClassSchedule(c *fiber.Ctx) error {
 	classID, err := uuid.Parse(c.Params("classId"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -39,7 +39,7 @@ func (h *ClassScheduleHandler) Create(c *fiber.Ctx) error {
 		})
 	}
 
-	schedule, err := h.service.Create(c.Context(), classID, req)
+	schedule, err := h.service.CreateClassSchedule(c.Context(), classID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create schedule",
@@ -53,7 +53,7 @@ func (h *ClassScheduleHandler) Create(c *fiber.Ctx) error {
 	})
 }
 
-func (h *ClassScheduleHandler) GetAll(c *fiber.Ctx) error {
+func (h *ClassScheduleHandler) GetAllClassSchedules(c *fiber.Ctx) error {
 	classID, err := uuid.Parse(c.Params("classId"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -62,7 +62,7 @@ func (h *ClassScheduleHandler) GetAll(c *fiber.Ctx) error {
 		})
 	}
 
-	schedules, err := h.service.GetAllByClassID(c.Context(), classID)
+	schedules, err := h.service.GetAllClassSchedulesByClassID(c.Context(), classID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve schedules",
@@ -76,7 +76,7 @@ func (h *ClassScheduleHandler) GetAll(c *fiber.Ctx) error {
 	})
 }
 
-func (h *ClassScheduleHandler) Update(c *fiber.Ctx) error {
+func (h *ClassScheduleHandler) UpdateClassSchedule(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -93,7 +93,7 @@ func (h *ClassScheduleHandler) Update(c *fiber.Ctx) error {
 		})
 	}
 
-	schedule, err := h.service.Update(c.Context(), id, req)
+	schedule, err := h.service.UpdateClassSchedule(c.Context(), id, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update schedule",
@@ -107,7 +107,7 @@ func (h *ClassScheduleHandler) Update(c *fiber.Ctx) error {
 	})
 }
 
-func (h *ClassScheduleHandler) Delete(c *fiber.Ctx) error {
+func (h *ClassScheduleHandler) DeleteClassSchedule(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -116,7 +116,7 @@ func (h *ClassScheduleHandler) Delete(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.Delete(c.Context(), id); err != nil {
+	if err := h.service.DeleteClassSchedule(c.Context(), id); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete schedule",
 			"error":   err.Error(),

@@ -13,10 +13,10 @@ import (
 
 type AttendanceServiceInterface interface {
 	MarkAttendance(ctx context.Context, classID uuid.UUID, req dto.BulkCreateAttendanceDTO) ([]dto.AttendanceResponseDTO, error)
-	GetAll(ctx context.Context, classID uuid.UUID, dateStr string, page, pageSize int) (*dto.AttendanceListResponseDTO, error)
-	GetByID(ctx context.Context, id uuid.UUID) (*dto.AttendanceResponseDTO, error)
-	Update(ctx context.Context, id uuid.UUID, req dto.UpdateAttendanceDTO) (*dto.AttendanceResponseDTO, error)
-	Delete(ctx context.Context, id uuid.UUID) error
+	GetAllAttendances(ctx context.Context, classID uuid.UUID, dateStr string, page, pageSize int) (*dto.AttendanceListResponseDTO, error)
+	GetAttendanceByID(ctx context.Context, id uuid.UUID) (*dto.AttendanceResponseDTO, error)
+	UpdateAttendance(ctx context.Context, id uuid.UUID, req dto.UpdateAttendanceDTO) (*dto.AttendanceResponseDTO, error)
+	DeleteAttendance(ctx context.Context, id uuid.UUID) error
 }
 
 type AttendanceService struct {
@@ -56,7 +56,7 @@ func (s *AttendanceService) MarkAttendance(ctx context.Context, classID uuid.UUI
 	return result, nil
 }
 
-func (s *AttendanceService) GetAll(ctx context.Context, classID uuid.UUID, dateStr string, page, pageSize int) (*dto.AttendanceListResponseDTO, error) {
+func (s *AttendanceService) GetAllAttendances(ctx context.Context, classID uuid.UUID, dateStr string, page, pageSize int) (*dto.AttendanceListResponseDTO, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -91,7 +91,7 @@ func (s *AttendanceService) GetAll(ctx context.Context, classID uuid.UUID, dateS
 	}, nil
 }
 
-func (s *AttendanceService) GetByID(ctx context.Context, id uuid.UUID) (*dto.AttendanceResponseDTO, error) {
+func (s *AttendanceService) GetAttendanceByID(ctx context.Context, id uuid.UUID) (*dto.AttendanceResponseDTO, error) {
 	attendance, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -102,7 +102,7 @@ func (s *AttendanceService) GetByID(ctx context.Context, id uuid.UUID) (*dto.Att
 	return toAttendanceResponseDTO(attendance), nil
 }
 
-func (s *AttendanceService) Update(ctx context.Context, id uuid.UUID, req dto.UpdateAttendanceDTO) (*dto.AttendanceResponseDTO, error) {
+func (s *AttendanceService) UpdateAttendance(ctx context.Context, id uuid.UUID, req dto.UpdateAttendanceDTO) (*dto.AttendanceResponseDTO, error) {
 	attendance, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -125,7 +125,7 @@ func (s *AttendanceService) Update(ctx context.Context, id uuid.UUID, req dto.Up
 	return toAttendanceResponseDTO(attendance), nil
 }
 
-func (s *AttendanceService) Delete(ctx context.Context, id uuid.UUID) error {
+func (s *AttendanceService) DeleteAttendance(ctx context.Context, id uuid.UUID) error {
 	attendance, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err

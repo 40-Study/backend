@@ -11,10 +11,10 @@ func SetupTeacherProfileRoutes(
 ) {
 	profiles := api.Group("/teacher-profiles")
 	{
-		profiles.Post("/", teacherProfileHandler.Create)
-		profiles.Get("/", teacherProfileHandler.GetAll)
-		profiles.Get("/:id", teacherProfileHandler.GetByID)
-		profiles.Put("/:id", teacherProfileHandler.Update)
-		profiles.Delete("/:id", teacherProfileHandler.Delete)
+		profiles.Post("/", teacherProfileHandler.CreateTeacherProfile)
+		profiles.Get("/", teacherProfileHandler.GetAllTeacherProfiles)
+		profiles.Get("/:id", teacherProfileHandler.GetTeacherProfileByID)
+		profiles.Put("/:id", teacherProfileHandler.UpdateTeacherProfile)
+		profiles.Delete("/:id", teacherProfileHandler.DeleteTeacherProfile)
 	}
 }

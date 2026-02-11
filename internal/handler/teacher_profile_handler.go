@@ -8,11 +8,11 @@ import (
 )
 
 type TeacherProfileHandlerInterface interface {
-	Create(c *fiber.Ctx) error
-	GetAll(c *fiber.Ctx) error
-	GetByID(c *fiber.Ctx) error
-	Update(c *fiber.Ctx) error
-	Delete(c *fiber.Ctx) error
+	CreateTeacherProfile(c *fiber.Ctx) error
+	GetAllTeacherProfiles(c *fiber.Ctx) error
+	GetTeacherProfileByID(c *fiber.Ctx) error
+	UpdateTeacherProfile(c *fiber.Ctx) error
+	DeleteTeacherProfile(c *fiber.Ctx) error
 }
 
 type TeacherProfileHandler struct {
@@ -23,7 +23,7 @@ func NewTeacherProfileHandler(service service.TeacherProfileServiceInterface) *T
 	return &TeacherProfileHandler{service: service}
 }
 
-func (h *TeacherProfileHandler) Create(c *fiber.Ctx) error {
+func (h *TeacherProfileHandler) CreateTeacherProfile(c *fiber.Ctx) error {
 	var req dto.CreateTeacherProfileDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -46,7 +46,7 @@ func (h *TeacherProfileHandler) Create(c *fiber.Ctx) error {
 	})
 }
 
-func (h *TeacherProfileHandler) GetAll(c *fiber.Ctx) error {
+func (h *TeacherProfileHandler) GetAllTeacherProfiles(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 	keyword := c.Query("keyword")
@@ -66,7 +66,7 @@ func (h *TeacherProfileHandler) GetAll(c *fiber.Ctx) error {
 	})
 }
 
-func (h *TeacherProfileHandler) GetByID(c *fiber.Ctx) error {
+func (h *TeacherProfileHandler) GetTeacherProfileByID(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -89,7 +89,7 @@ func (h *TeacherProfileHandler) GetByID(c *fiber.Ctx) error {
 	})
 }
 
-func (h *TeacherProfileHandler) Update(c *fiber.Ctx) error {
+func (h *TeacherProfileHandler) UpdateTeacherProfile(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -120,7 +120,7 @@ func (h *TeacherProfileHandler) Update(c *fiber.Ctx) error {
 	})
 }
 
-func (h *TeacherProfileHandler) Delete(c *fiber.Ctx) error {
+func (h *TeacherProfileHandler) DeleteTeacherProfile(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{

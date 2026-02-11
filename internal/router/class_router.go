@@ -13,39 +13,39 @@ func SetupClassRoutes(
 ) {
 	classes := api.Group("/classes")
 	{
-		classes.Post("/", classHandler.Create)
-		classes.Get("/", classHandler.GetAll)
-		classes.Get("/:id", classHandler.GetByID)
-		classes.Put("/:id", classHandler.Update)
-		classes.Delete("/:id", classHandler.Delete)
+		classes.Post("/", classHandler.CreateClass)
+		classes.Get("/", classHandler.GetAllClasses)
+		classes.Get("/:id", classHandler.GetClassByID)
+		classes.Put("/:id", classHandler.UpdateClass)
+		classes.Delete("/:id", classHandler.DeleteClass)
 
 		// Teacher-Class
-		classes.Post("/:id/teachers", classHandler.AssignTeacher)
-		classes.Delete("/:id/teachers/:teacherId", classHandler.RemoveTeacher)
-		classes.Get("/:id/teachers", classHandler.GetTeachers)
+		classes.Post("/:id/teachers", classHandler.AssignTeacherToClass)
+		classes.Delete("/:id/teachers/:teacherId", classHandler.RemoveTeacherFromClass)
+		classes.Get("/:id/teachers", classHandler.GetTeachersByClass)
 
 		// Student-Class
-		classes.Post("/:id/students", classHandler.EnrollStudent)
-		classes.Delete("/:id/students/:studentId", classHandler.RemoveStudent)
-		classes.Get("/:id/students", classHandler.GetStudents)
+		classes.Post("/:id/students", classHandler.EnrollStudentToClass)
+		classes.Delete("/:id/students/:studentId", classHandler.RemoveStudentFromClass)
+		classes.Get("/:id/students", classHandler.GetStudentsByClass)
 
 		// Schedules
 		schedules := classes.Group("/:classId/schedules")
 		{
-			schedules.Post("/", classScheduleHandler.Create)
-			schedules.Get("/", classScheduleHandler.GetAll)
-			schedules.Put("/:id", classScheduleHandler.Update)
-			schedules.Delete("/:id", classScheduleHandler.Delete)
+			schedules.Post("/", classScheduleHandler.CreateClassSchedule)
+			schedules.Get("/", classScheduleHandler.GetAllClassSchedules)
+			schedules.Put("/:id", classScheduleHandler.UpdateClassSchedule)
+			schedules.Delete("/:id", classScheduleHandler.DeleteClassSchedule)
 		}
 
 		// Attendances
 		attendances := classes.Group("/:classId/attendances")
 		{
 			attendances.Post("/", attendanceHandler.MarkAttendance)
-			attendances.Get("/", attendanceHandler.GetAll)
-			attendances.Get("/:id", attendanceHandler.GetByID)
-			attendances.Put("/:id", attendanceHandler.Update)
-			attendances.Delete("/:id", attendanceHandler.Delete)
+			attendances.Get("/", attendanceHandler.GetAllAttendances)
+			attendances.Get("/:id", attendanceHandler.GetAttendanceByID)
+			attendances.Put("/:id", attendanceHandler.UpdateAttendance)
+			attendances.Delete("/:id", attendanceHandler.DeleteAttendance)
 		}
 	}
 }

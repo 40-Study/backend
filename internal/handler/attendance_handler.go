@@ -9,10 +9,10 @@ import (
 
 type AttendanceHandlerInterface interface {
 	MarkAttendance(c *fiber.Ctx) error
-	GetAll(c *fiber.Ctx) error
-	GetByID(c *fiber.Ctx) error
-	Update(c *fiber.Ctx) error
-	Delete(c *fiber.Ctx) error
+	GetAllAttendances(c *fiber.Ctx) error
+	GetAttendanceByID(c *fiber.Ctx) error
+	UpdateAttendance(c *fiber.Ctx) error
+	DeleteAttendance(c *fiber.Ctx) error
 }
 
 type AttendanceHandler struct {
@@ -54,7 +54,7 @@ func (h *AttendanceHandler) MarkAttendance(c *fiber.Ctx) error {
 	})
 }
 
-func (h *AttendanceHandler) GetAll(c *fiber.Ctx) error {
+func (h *AttendanceHandler) GetAllAttendances(c *fiber.Ctx) error {
 	classID, err := uuid.Parse(c.Params("classId"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -67,7 +67,7 @@ func (h *AttendanceHandler) GetAll(c *fiber.Ctx) error {
 	pageSize := c.QueryInt("page_size", 20)
 	date := c.Query("date")
 
-	attendances, err := h.service.GetAll(c.Context(), classID, date, page, pageSize)
+	attendances, err := h.service.GetAllAttendances(c.Context(), classID, date, page, pageSize)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to retrieve attendances",
@@ -81,7 +81,7 @@ func (h *AttendanceHandler) GetAll(c *fiber.Ctx) error {
 	})
 }
 
-func (h *AttendanceHandler) GetByID(c *fiber.Ctx) error {
+func (h *AttendanceHandler) GetAttendanceByID(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -90,7 +90,7 @@ func (h *AttendanceHandler) GetByID(c *fiber.Ctx) error {
 		})
 	}
 
-	attendance, err := h.service.GetByID(c.Context(), id)
+	attendance, err := h.service.GetAttendanceByID(c.Context(), id)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Attendance not found",
@@ -104,7 +104,7 @@ func (h *AttendanceHandler) GetByID(c *fiber.Ctx) error {
 	})
 }
 
-func (h *AttendanceHandler) Update(c *fiber.Ctx) error {
+func (h *AttendanceHandler) UpdateAttendance(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -121,7 +121,7 @@ func (h *AttendanceHandler) Update(c *fiber.Ctx) error {
 		})
 	}
 
-	attendance, err := h.service.Update(c.Context(), id, req)
+	attendance, err := h.service.UpdateAttendance(c.Context(), id, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update attendance",
@@ -135,7 +135,7 @@ func (h *AttendanceHandler) Update(c *fiber.Ctx) error {
 	})
 }
 
-func (h *AttendanceHandler) Delete(c *fiber.Ctx) error {
+func (h *AttendanceHandler) DeleteAttendance(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -144,7 +144,7 @@ func (h *AttendanceHandler) Delete(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.Delete(c.Context(), id); err != nil {
+	if err := h.service.DeleteAttendance(c.Context(), id); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete attendance",
 			"error":   err.Error(),

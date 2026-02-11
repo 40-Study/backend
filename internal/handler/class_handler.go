@@ -8,17 +8,17 @@ import (
 )
 
 type ClassHandlerInterface interface {
-	Create(c *fiber.Ctx) error
-	GetAll(c *fiber.Ctx) error
-	GetByID(c *fiber.Ctx) error
-	Update(c *fiber.Ctx) error
-	Delete(c *fiber.Ctx) error
-	AssignTeacher(c *fiber.Ctx) error
-	RemoveTeacher(c *fiber.Ctx) error
-	GetTeachers(c *fiber.Ctx) error
-	EnrollStudent(c *fiber.Ctx) error
-	RemoveStudent(c *fiber.Ctx) error
-	GetStudents(c *fiber.Ctx) error
+	CreateClass(c *fiber.Ctx) error
+	GetAllClasses(c *fiber.Ctx) error
+	GetClassByID(c *fiber.Ctx) error
+	UpdateClass(c *fiber.Ctx) error
+	DeleteClass(c *fiber.Ctx) error
+	AssignTeacherToClass(c *fiber.Ctx) error
+	RemoveTeacherFromClass(c *fiber.Ctx) error
+	GetTeachersByClass(c *fiber.Ctx) error
+	EnrollStudentToClass(c *fiber.Ctx) error
+	RemoveStudentFromClass(c *fiber.Ctx) error
+	GetStudentsByClass(c *fiber.Ctx) error
 }
 
 type ClassHandler struct {
@@ -29,7 +29,7 @@ func NewClassHandler(service service.ClassServiceInterface) *ClassHandler {
 	return &ClassHandler{service: service}
 }
 
-func (h *ClassHandler) Create(c *fiber.Ctx) error {
+func (h *ClassHandler) CreateClass(c *fiber.Ctx) error {
 	var req dto.CreateClassDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -38,7 +38,7 @@ func (h *ClassHandler) Create(c *fiber.Ctx) error {
 		})
 	}
 
-	class, err := h.service.Create(c.Context(), req)
+	class, err := h.service.CreateClass(c.Context(), req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create class",
@@ -52,13 +52,13 @@ func (h *ClassHandler) Create(c *fiber.Ctx) error {
 	})
 }
 
-func (h *ClassHandler) GetAll(c *fiber.Ctx) error {
+func (h *ClassHandler) GetAllClasses(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 	keyword := c.Query("keyword")
 	status := c.Query("status")
 
-	classes, err := h.service.GetAll(c.Context(), page, pageSize, keyword, status)
+	classes, err := h.service.GetAllClasses(c.Context(), page, pageSize, keyword, status)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve classes",
@@ -72,7 +72,7 @@ func (h *ClassHandler) GetAll(c *fiber.Ctx) error {
 	})
 }
 
-func (h *ClassHandler) GetByID(c *fiber.Ctx) error {
+func (h *ClassHandler) GetClassByID(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -81,7 +81,7 @@ func (h *ClassHandler) GetByID(c *fiber.Ctx) error {
 		})
 	}
 
-	class, err := h.service.GetByID(c.Context(), id)
+	class, err := h.service.GetClassByID(c.Context(), id)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Class not found",
@@ -95,7 +95,7 @@ func (h *ClassHandler) GetByID(c *fiber.Ctx) error {
 	})
 }
 
-func (h *ClassHandler) Update(c *fiber.Ctx) error {
+func (h *ClassHandler) UpdateClass(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -112,7 +112,7 @@ func (h *ClassHandler) Update(c *fiber.Ctx) error {
 		})
 	}
 
-	class, err := h.service.Update(c.Context(), id, req)
+	class, err := h.service.UpdateClass(c.Context(), id, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update class",
@@ -126,7 +126,7 @@ func (h *ClassHandler) Update(c *fiber.Ctx) error {
 	})
 }
 
-func (h *ClassHandler) Delete(c *fiber.Ctx) error {
+func (h *ClassHandler) DeleteClass(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -137,7 +137,7 @@ func (h *ClassHandler) Delete(c *fiber.Ctx) error {
 
 	hardDelete := c.QueryBool("hard_delete", false)
 
-	if err := h.service.Delete(c.Context(), id, hardDelete); err != nil {
+	if err := h.service.DeleteClass(c.Context(), id, hardDelete); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete class",
 			"error":   err.Error(),
@@ -151,7 +151,7 @@ func (h *ClassHandler) Delete(c *fiber.Ctx) error {
 
 // Teacher-Class
 
-func (h *ClassHandler) AssignTeacher(c *fiber.Ctx) error {
+func (h *ClassHandler) AssignTeacherToClass(c *fiber.Ctx) error {
 	classID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -168,7 +168,7 @@ func (h *ClassHandler) AssignTeacher(c *fiber.Ctx) error {
 		})
 	}
 
-	tc, err := h.service.AssignTeacher(c.Context(), classID, req)
+	tc, err := h.service.AssignTeacherToClass(c.Context(), classID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to assign teacher",
@@ -182,7 +182,7 @@ func (h *ClassHandler) AssignTeacher(c *fiber.Ctx) error {
 	})
 }
 
-func (h *ClassHandler) RemoveTeacher(c *fiber.Ctx) error {
+func (h *ClassHandler) RemoveTeacherFromClass(c *fiber.Ctx) error {
 	classID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -199,7 +199,7 @@ func (h *ClassHandler) RemoveTeacher(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.RemoveTeacher(c.Context(), classID, teacherID); err != nil {
+	if err := h.service.RemoveTeacherFromClass(c.Context(), classID, teacherID); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to remove teacher",
 			"error":   err.Error(),
@@ -211,7 +211,7 @@ func (h *ClassHandler) RemoveTeacher(c *fiber.Ctx) error {
 	})
 }
 
-func (h *ClassHandler) GetTeachers(c *fiber.Ctx) error {
+func (h *ClassHandler) GetTeachersByClass(c *fiber.Ctx) error {
 	classID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -223,7 +223,7 @@ func (h *ClassHandler) GetTeachers(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 
-	teachers, err := h.service.GetTeachers(c.Context(), classID, page, pageSize)
+	teachers, err := h.service.GetTeachersByClass(c.Context(), classID, page, pageSize)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve teachers",
@@ -239,7 +239,7 @@ func (h *ClassHandler) GetTeachers(c *fiber.Ctx) error {
 
 // Student-Class
 
-func (h *ClassHandler) EnrollStudent(c *fiber.Ctx) error {
+func (h *ClassHandler) EnrollStudentToClass(c *fiber.Ctx) error {
 	classID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -256,7 +256,7 @@ func (h *ClassHandler) EnrollStudent(c *fiber.Ctx) error {
 		})
 	}
 
-	sc, err := h.service.EnrollStudent(c.Context(), classID, req)
+	sc, err := h.service.EnrollStudentToClass(c.Context(), classID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to enroll student",
@@ -270,7 +270,7 @@ func (h *ClassHandler) EnrollStudent(c *fiber.Ctx) error {
 	})
 }
 
-func (h *ClassHandler) RemoveStudent(c *fiber.Ctx) error {
+func (h *ClassHandler) RemoveStudentFromClass(c *fiber.Ctx) error {
 	classID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -287,7 +287,7 @@ func (h *ClassHandler) RemoveStudent(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.RemoveStudent(c.Context(), classID, studentID); err != nil {
+	if err := h.service.RemoveStudentFromClass(c.Context(), classID, studentID); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to remove student",
 			"error":   err.Error(),
@@ -299,7 +299,7 @@ func (h *ClassHandler) RemoveStudent(c *fiber.Ctx) error {
 	})
 }
 
-func (h *ClassHandler) GetStudents(c *fiber.Ctx) error {
+func (h *ClassHandler) GetStudentsByClass(c *fiber.Ctx) error {
 	classID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -311,7 +311,7 @@ func (h *ClassHandler) GetStudents(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 
-	students, err := h.service.GetStudents(c.Context(), classID, page, pageSize)
+	students, err := h.service.GetStudentsByClass(c.Context(), classID, page, pageSize)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve students",
