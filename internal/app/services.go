@@ -21,6 +21,7 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			repos.Role,
 			repos.UserOrganizationRole,
 			repos.UserSystemRole,
+			repos.SystemRole,
 			resources.Redis,
 		),
 		Role:       service.NewRoleService(repos.Role, repos.Permission),

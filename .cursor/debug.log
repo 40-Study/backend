@@ -1,0 +1,2 @@
+{"data":{"configFileUsed":"/Users/duongwthuj/develop/backend/.env","dbHost":"100.93.87.80","dbName":"study_db","dbPort":"5432","dbUser":"study_user","envDBHost":"","testDbHost":""},"hypothesisId":"A","id":"log_config_load","location":"config.go:LoadConfig","message":"DB config source trace","runId":"run1","timestamp":1772387122339}
+{"data":{"dbHost":"100.93.87.80","dbName":"study_db","dbPort":"5432","dbUser":"study_user"},"hypothesisId":"A","id":"log_db_connect","location":"postgres.go:Connect","message":"DB connect attempt","runId":"run1","timestamp":1772387122339}

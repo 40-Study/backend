@@ -24,6 +24,6 @@ func InitHandlers(services *Services) *Handlers {
 		UserOrganizationRole: handler.NewUserOrganizationRoleHandler(services.UserOrganizationRole),
 		Permission:           handler.NewPermissionHandler(services.Permission),
 		Organization:         handler.NewOrganizationHandler(services.Organization),
-		Profile:              handler.NewProfileHandler(services.Profile),
+		Profile:              handler.NewProfileHandler(services.Profile, services.UserOrganizationRole),
 	}
 }

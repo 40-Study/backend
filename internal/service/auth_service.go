@@ -34,12 +34,13 @@ type AuthServiceInterface interface {
 }
 
 type AuthService struct {
-	cfg               *config.Config
-	userRepo          repository.UserRepositoryInterface
-	roleRepo          repository.RoleRepositoryInterface
-	userOrgRoleRepo   repository.UserOrganizationRoleRepositoryInterface
+	cfg                *config.Config
+	userRepo           repository.UserRepositoryInterface
+	roleRepo           repository.RoleRepositoryInterface
+	userOrgRoleRepo    repository.UserOrganizationRoleRepositoryInterface
 	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface
-	redisClient       *redis.Client
+	systemRoleRepo     repository.SystemRoleRepositoryInterface
+	redisClient        *redis.Client
 }
 
 func NewAuthService(
@@ -48,15 +49,17 @@ func NewAuthService(
 	roleRepo repository.RoleRepositoryInterface,
 	userOrgRoleRepo repository.UserOrganizationRoleRepositoryInterface,
 	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface,
+	systemRoleRepo repository.SystemRoleRepositoryInterface,
 	redisClient *redis.Client,
 ) *AuthService {
 	return &AuthService{
-		cfg:               cfg,
-		userRepo:          userRepo,
-		roleRepo:          roleRepo,
-		userOrgRoleRepo:   userOrgRoleRepo,
+		cfg:                cfg,
+		userRepo:           userRepo,
+		roleRepo:           roleRepo,
+		userOrgRoleRepo:    userOrgRoleRepo,
 		userSystemRoleRepo: userSystemRoleRepo,
-		redisClient:       redisClient,
+		systemRoleRepo:     systemRoleRepo,
+		redisClient:        redisClient,
 	}
 }
 
@@ -74,26 +77,29 @@ type PendingRegistration struct {
 }
 
 func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterRequestDto) error {
-	// ===== 2. Parse and validate role IDs =====
-	roleUUIDs := make([]uuid.UUID, len(req.RoleIDs))
-	for i, idStr := range req.RoleIDs {
-		id, err := uuid.Parse(idStr)
-		if err != nil {
-			return fmt.Errorf("invalid role_id format: %s", idStr)
+	if len(req.RoleIDs) > 0 {
+		roleUUIDs := make([]uuid.UUID, len(req.RoleIDs))
+		for i, idStr := range req.RoleIDs {
+			id, err := uuid.Parse(idStr)
+			if err != nil {
+				return fmt.Errorf("invalid role_id: %s", idStr)
+			}
+			roleUUIDs[i] = id
 		}
-		roleUUIDs[i] = id
+		roles, err := s.systemRoleRepo.GetSystemRoleByIDs(ctx, roleUUIDs)
+		if err != nil {
+			return fmt.Errorf("failed to validate system roles: %w", err)
+		}
+		if len(roles) != len(req.RoleIDs) {
+			return errors.New("one or more role IDs are invalid")
+		}
+		for _, r := range roles {
+			if r.Status != "active" {
+				return errors.New("system role is not active: " + r.Name)
+			}
+		}
 	}
 
-	// ===== 3. Check if roles exist in database =====
-	roles, err := s.roleRepo.GetRoleByIDs(ctx, roleUUIDs)
-	if err != nil {
-		return fmt.Errorf("failed to validate roles: %w", err)
-	}
-	if len(roles) != len(req.RoleIDs) {
-		return errors.New("one or more role IDs are invalid")
-	}
-
-	// ===== 4. Check email already exists =====
 	existingUser, err := s.userRepo.FindUserByEmail(ctx, req.Email)
 	if err != nil {
 		return fmt.Errorf("failed to check email: %w", err)
@@ -114,7 +120,6 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 		return fmt.Errorf("failed to generate OTP: %w", err)
 	}
 
-	// ===== 7. Create pending registration data =====
 	pendingData := PendingRegistration{
 		Email:        req.Email,
 		PasswordHash: passwordHash,
@@ -165,30 +170,11 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		return nil, fmt.Errorf("failed to parse pending registration: %w", err)
 	}
 
-	// ===== 4. Verify OTP =====
 	if pending.OTP != req.OTP {
 		return nil, errors.New("invalid OTP")
 	}
 
-	// ===== 5. Parse and get Roles by IDs =====
-	roleUUIDs := make([]uuid.UUID, len(pending.RoleIDs))
-	for i, idStr := range pending.RoleIDs {
-		id, err := uuid.Parse(idStr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid role_id in pending data: %s", idStr)
-		}
-		roleUUIDs[i] = id
-	}
-
-	roles, err := s.roleRepo.GetRoleByIDs(ctx, roleUUIDs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find roles: %w", err)
-	}
-	if len(roles) != len(pending.RoleIDs) {
-		return nil, errors.New("one or more roles are invalid")
-	}
-
-	// ===== 6. Prepare FullName pointer =====
+	// Prepare FullName pointer
 	var fullName *string
 	if pending.FullName != "" {
 		fullName = &pending.FullName
@@ -208,46 +194,37 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	// ===== 8. Create user_organization_roles entries =====
-	now := time.Now()
-	userOrgRoles := make([]model.UserOrganizationRole, len(roles))
-	for i, role := range roles {
-		userOrgRoles[i] = model.UserOrganizationRole{
-			UserID:         user.ID,
-			RoleID:         role.ID,
-			OrganizationID: role.OrganizationID,
-			GrantedAt:      now,
-			GrantedBy:      nil, // Self-registered
-			Notes:          nil,
-			Status:         model.UserOrgRoleStatusActive,
+	if len(pending.RoleIDs) > 0 {
+		roleUUIDs := make([]uuid.UUID, len(pending.RoleIDs))
+		for i, idStr := range pending.RoleIDs {
+			id, _ := uuid.Parse(idStr)
+			roleUUIDs[i] = id
+		}
+		sysRoles, _ := s.systemRoleRepo.GetSystemRoleByIDs(ctx, roleUUIDs)
+		now := time.Now()
+		for _, r := range sysRoles {
+			if r.Status != "active" {
+				continue
+			}
+			_ = s.userSystemRoleRepo.Create(ctx, &model.UserSystemRole{
+				UserID:       user.ID,
+				SystemRoleID: r.ID,
+				GrantedAt:    now,
+				GrantedBy:    nil,
+				Status:       model.UserSystemRoleStatusActive,
+			})
 		}
 	}
 
-	if err := s.userOrgRoleRepo.CreateUserRoles(ctx, userOrgRoles); err != nil {
-		// Rollback: delete user if user_organization_roles creation fails
-		// In production, use database transaction
-		return nil, fmt.Errorf("failed to assign roles: %w", err)
-	}
-
-	// ===== 9. Delete pending registration from Redis =====
 	_ = s.redisClient.Del(ctx, pendingKey).Err()
 
-	// ===== 10. Build roles response =====
-	roleDtos := make([]dto.RoleDto, len(roles))
-	for i, role := range roles {
-		roleDtos[i] = dto.RoleDto{
-			ID:   role.ID.String(),
-			Name: role.Name,
-		}
-	}
-
-	// ===== 11. Build response =====
 	return &dto.RegisterResponseDto{
 		ID:       user.ID.String(),
 		Email:    user.Email,
 		UserName: user.UserName,
 		FullName: fullName,
-		Roles:    roleDtos,
+		RoleIDs:  pending.RoleIDs,
+		Roles:    []dto.RoleDto{},
 	}, nil
 }
 

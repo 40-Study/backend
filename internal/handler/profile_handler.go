@@ -11,29 +11,22 @@ import (
 type ProfileHandlerInterface interface {
 	GetChildren(c *fiber.Ctx) error
 	GetOrganizations(c *fiber.Ctx) error
+	GetMyOrgRoles(c *fiber.Ctx) error
 }
 
 type ProfileHandler struct {
-	profileService service.ProfileServiceInterface
+	profileService     service.ProfileServiceInterface
+	userOrgRoleService service.UserOrganizationRoleServiceInterface
 }
 
-func NewProfileHandler(profileService service.ProfileServiceInterface) *ProfileHandler {
-	return &ProfileHandler{profileService: profileService}
+func NewProfileHandler(profileService service.ProfileServiceInterface, userOrgRoleService service.UserOrganizationRoleServiceInterface) *ProfileHandler {
+	return &ProfileHandler{
+		profileService:     profileService,
+		userOrgRoleService: userOrgRoleService,
+	}
 }
 
 // GetChildren lấy danh sách con của phụ huynh
-// @Summary Lấy danh sách con của phụ huynh
-// @Description Trả về danh sách học sinh là con của phụ huynh hiện tại. Cần có role PARENT.
-// @Tags Profile
-// @Security BearerAuth
-// @Accept json
-// @Produce json
-// @Param page query int false "Page number" default(1)
-// @Param pageSize query int false "Page size" default(20) maximum(100)
-// @Success 200 {object} dto.PaginatedChildrenResponse "Danh sách con"
-// @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 500 {object} map[string]interface{} "Internal Server Error"
-// @Router /profile/children [get]
 func (h *ProfileHandler) GetChildren(c *fiber.Ctx) error {
 	userID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok || userID == uuid.Nil {
@@ -60,18 +53,6 @@ func (h *ProfileHandler) GetChildren(c *fiber.Ctx) error {
 }
 
 // GetOrganizations lấy danh sách tổ chức của user
-// @Summary Lấy danh sách tổ chức của user
-// @Description Trả về danh sách các tổ chức mà user hiện tại là thành viên
-// @Tags Profile
-// @Security BearerAuth
-// @Accept json
-// @Produce json
-// @Param page query int false "Page number" default(1)
-// @Param pageSize query int false "Page size" default(20) maximum(100)
-// @Success 200 {object} dto.PaginatedOrganizationsResponse "Danh sách tổ chức"
-// @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 500 {object} map[string]interface{} "Internal Server Error"
-// @Router /profile/organizations [get]
 func (h *ProfileHandler) GetOrganizations(c *fiber.Ctx) error {
 	userID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok || userID == uuid.Nil {
@@ -94,5 +75,38 @@ func (h *ProfileHandler) GetOrganizations(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Success",
 		"data":    result,
+	})
+}
+
+func (h *ProfileHandler) GetMyOrgRoles(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	var orgID *uuid.UUID
+	if orgIDStr := c.Query("org_id"); orgIDStr != "" {
+		parsed, err := uuid.Parse(orgIDStr)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "Invalid organization ID format",
+			})
+		}
+		orgID = &parsed
+	}
+
+	roles, err := h.userOrgRoleService.GetMyOrgRoles(c.Context(), userID, orgID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to get organization roles",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Success",
+		"data":    roles,
 	})
 }

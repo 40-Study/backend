@@ -102,22 +102,23 @@ type ChangePasswordRequestDto struct {
 
 
 // RegisterRequestDto - Request body for POST /auth/register/request
-// Gửi thông tin đăng ký và nhận OTP qua email
+// Gửi thông tin đăng ký và nhận OTP qua email. Chỉ gán system role (theo ID), không gán tổ chức/trường. Có thể chọn nhiều role (vd: vừa TEACHER vừa ORG_OWNER).
 type RegisterRequestDto struct {
 	Email           string   `json:"email" validate:"required,email,max=255" example:"student@example.com"`
 	Password        string   `json:"password" validate:"required,min=8,max=72" example:"SecurePass123!"`
 	ConfirmPassword string   `json:"confirm_password" validate:"required,eqfield=Password" example:"SecurePass123!"`
 	UserName        string   `json:"user_name" validate:"required,min=3,max=100" example:"student123"`
 	FullName        string   `json:"full_name,omitempty" validate:"omitempty,min=2,max=255" example:"Nguyen Van A"`
-	RoleIDs         []string `json:"role_ids" validate:"required,min=1,max=2,dive,uuid" example:"[\"550e8400-e29b-41d4-a716-446655440000\"]"`
+	RoleIDs         []string `json:"role_ids,omitempty" validate:"omitempty,max=10,dive,uuid" example:"[\"550e8400-e29b-41d4-a716-446655440000\"]"`
 }
 
 // RegisterResponseDto - Response for successful registration
 type RegisterResponseDto struct {
-	ID       string    `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
-	Email    string    `json:"email" example:"student@example.com"`
-	UserName string    `json:"user_name" example:"student123"`
-	FullName *string   `json:"full_name,omitempty" example:"Nguyen Van A"`
+	ID       string     `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Email    string     `json:"email" example:"student@example.com"`
+	UserName string     `json:"user_name" example:"student123"`
+	FullName *string    `json:"full_name,omitempty" example:"Nguyen Van A"`
+	RoleIDs  []string   `json:"role_ids,omitempty"`
 	Roles    []RoleDto `json:"roles"`
 }
 
