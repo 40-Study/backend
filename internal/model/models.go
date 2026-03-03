@@ -91,5 +91,13 @@ func AllModels() []interface{} {
 		// Gamification - Goals & Preferences
 		&LearningGoal{},
 		&UserPreference{},
+
+		// Teacher & Class
+		&TeacherProfile{},
+		&Class{},
+		&TeacherClass{},
+		&StudentClass{},
+		&ClassSchedule{},
+		&Attendance{},
 	}
 }

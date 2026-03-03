@@ -32,6 +32,7 @@ type User struct {
 	Streak            *UserStreak         `gorm:"foreignKey:UserID" json:"-"`
 	Achievements      []UserAchievement   `gorm:"foreignKey:UserID" json:"-"`
 	Preference        *UserPreference     `gorm:"foreignKey:UserID" json:"-"`
+	TeacherProfile    *TeacherProfile     `gorm:"foreignKey:UserID" json:"-"`
 }
 
 func (User) TableName() string {

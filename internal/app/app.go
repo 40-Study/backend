@@ -42,6 +42,11 @@ func New() (*App, error) {
 		handlers.Permission,
 		handlers.Organization,
 		handlers.Profile,
+		handlers.Teacher,
+		handlers.TeacherProfile,
+		handlers.Class,
+		handlers.ClassSchedule,
+		handlers.Attendance,
 		resources.Redis,
 		resources.MinioClient,
 	)
