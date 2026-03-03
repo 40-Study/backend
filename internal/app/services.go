@@ -8,6 +8,7 @@ type Services struct {
 	SystemRole           *service.SystemRoleService
 	UserSystemRole       *service.UserSystemRoleService
 	UserOrganizationRole *service.UserOrganizationRoleService
+	UserRole             *service.UserRoleService
 	Permission           *service.PermissionService
 	Organization         *service.OrganizationService
 	Profile              *service.ProfileService
@@ -41,6 +42,11 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			repos.User,
 			repos.Role,
 			repos.Organization,
+		),
+		UserRole: service.NewUserRoleService(
+			repos.User,
+			repos.UserSystemRole,
+			repos.UserOrganizationRole,
 		),
 		Permission:   service.NewPermissionService(repos.Permission),
 		Organization: service.NewOrganizationService(repos.Organization),

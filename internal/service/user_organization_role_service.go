@@ -364,6 +364,7 @@ func (s *UserOrganizationRoleService) GetUsersWithOrgRole(ctx context.Context, r
 
 // Helper
 
+// toUserOrgRoleResponseDTO — delegate to package-level mapper in user_role_service.go
 func toUserOrgRoleResponseDTO(uor *model.UserOrganizationRole) *dto.UserOrgRoleResponseDTO {
 	result := &dto.UserOrgRoleResponseDTO{
 		ID:             uor.ID,

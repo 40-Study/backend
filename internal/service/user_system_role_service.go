@@ -254,49 +254,12 @@ func (s *UserSystemRoleService) GetUsersBySystemRole(
 	}, nil
 }
 
-// Helper methods
+// Helper methods — delegate to package-level mappers in user_role_service.go
 
 func (s *UserSystemRoleService) mapToResponseDTOs(userSystemRoles []model.UserSystemRole) []dto.UserSystemRoleResponseDTO {
-	result := make([]dto.UserSystemRoleResponseDTO, len(userSystemRoles))
-	for i, usr := range userSystemRoles {
-		result[i] = s.mapToResponseDTO(usr)
-	}
-	return result
+	return mapUserSystemRoleDTOs(userSystemRoles)
 }
 
 func (s *UserSystemRoleService) mapToResponseDTO(usr model.UserSystemRole) dto.UserSystemRoleResponseDTO {
-	response := dto.UserSystemRoleResponseDTO{
-		ID:           usr.ID,
-		UserID:       usr.UserID,
-		SystemRoleID: usr.SystemRoleID,
-		GrantedAt:    usr.GrantedAt.Format(time.RFC3339),
-		GrantedBy:    usr.GrantedBy,
-		Notes:        usr.Notes,
-		Status:       usr.Status,
-		RevokedBy:    usr.RevokedBy,
-		CreatedAt:    usr.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:    usr.UpdatedAt.Format(time.RFC3339),
-	}
-
-	if usr.RevokedAt != nil {
-		revokedAt := usr.RevokedAt.Format(time.RFC3339)
-		response.RevokedAt = &revokedAt
-	}
-
-	if usr.SystemRole != nil {
-		var desc *string
-		if usr.SystemRole.Description.Valid {
-			desc = &usr.SystemRole.Description.String
-		}
-		response.SystemRole = &dto.SystemRoleResponseDTO{
-			ID:          usr.SystemRole.ID,
-			Name:        usr.SystemRole.Name,
-			Description: desc,
-			Status:      usr.SystemRole.Status,
-			CreatedAt:   usr.SystemRole.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:   usr.SystemRole.UpdatedAt.Format(time.RFC3339),
-		}
-	}
-
-	return response
+	return mapUserSystemRoleDTO(usr)
 }
