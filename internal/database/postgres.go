@@ -5,11 +5,11 @@ import (
 	"log"
 	"time"
 
-	"study.com/v1/internal/model"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"study.com/v1/internal/config"
+	"study.com/v1/internal/model"
 )
 
 func Connect(cfg *config.Config) (*gorm.DB, error) {
@@ -43,12 +43,13 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 
 func Migrate(db *gorm.DB) error {
 	return db.AutoMigrate(
-		// Core tables
-		&model.User{},
-		&model.Role{},
+		&model.Permission{},
+		&model.Organization{},
 		&model.SystemRole{},
-
-		// Junction tables (PHẢI SAU User + Role)
+		&model.Role{},
+		&model.SystemRolePermission{},
+		&model.RolePermission{},
+		&model.User{},
 		&model.UserOrganizationRole{},
 		&model.UserSystemRole{},
 	)

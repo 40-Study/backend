@@ -9,7 +9,7 @@ type ChildDto struct {
 	Relationship string  `json:"relationship" example:"parent"` // parent, guardian, grandparent
 }
 
-// PaginatedChildrenResponse - Response cho GET /profile/children
+// PaginatedChildrenResponse - Response cho GET /me/children
 type PaginatedChildrenResponse struct {
 	Children []ChildDto `json:"children"`
 	Total    int64      `json:"total" example:"2"`
@@ -25,7 +25,7 @@ type MyOrganizationDto struct {
 	Status     string `json:"status" example:"active"`
 }
 
-// PaginatedOrganizationsResponse - Response cho GET /profile/organizations
+// PaginatedOrganizationsResponse - Response cho GET /me/organizations
 type PaginatedOrganizationsResponse struct {
 	Organizations []MyOrganizationDto `json:"organizations"`
 	Total         int64               `json:"total" example:"1"`

@@ -9,13 +9,9 @@ import (
 )
 
 func SetupProfileRoutes(api fiber.Router, cfg *config.Config, profileHandler *handler.ProfileHandler, redis *redis.Client) {
-	profile := api.Group("/profile")
+	me := api.Group("/me", middleware.AuthMiddleware(cfg, redis))
 
-	// Tất cả routes trong /profile đều cần authentication
-	profile.Use(middleware.AuthMiddleware(cfg, redis))
-
-	profile.Get("/children", profileHandler.GetChildren)
-
-	profile.Get("/organizations", profileHandler.GetOrganizations)
-	profile.Get("/org-roles", profileHandler.GetMyOrgRoles)
+	me.Get("/children", profileHandler.GetChildren)
+	me.Get("/organizations", profileHandler.GetOrganizations)
+	me.Get("/org-roles", profileHandler.GetMyOrgRoles)
 }

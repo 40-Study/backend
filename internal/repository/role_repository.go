@@ -15,9 +15,10 @@ type RoleRepositoryInterface interface {
 	GetRoleByID(ctx context.Context, id uuid.UUID) (*model.Role, error)
 	GetRoleByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Role, error)
 	GetRoleByName(ctx context.Context, name string) (*model.Role, error)
-	GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.Role, int64, error)
+	GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string, organizationID *uuid.UUID) ([]model.Role, int64, error)
 	UpdateRole(ctx context.Context, role *model.Role) error
 	DeleteRole(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	RestoreRole(ctx context.Context, id uuid.UUID) error
 
 	// Role-Permission management
 	AddPermissionsToRole(ctx context.Context, roleID uuid.UUID, permissionIDs []uuid.UUID) error
@@ -74,7 +75,7 @@ func (r *RoleRepository) GetRoleByName(ctx context.Context, name string) (*model
 	return &role, nil
 }
 
-func (r *RoleRepository) GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.Role, int64, error) {
+func (r *RoleRepository) GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string, organizationID *uuid.UUID) ([]model.Role, int64, error) {
 	var roles []model.Role
 	var total int64
 
@@ -86,7 +87,10 @@ func (r *RoleRepository) GetAllRoles(ctx context.Context, page, pageSize int, ke
 		query = query.Unscoped().Where("deleted_at IS NOT NULL")
 	case "all":
 		query = query.Unscoped()
-	default: // "active" or empty
+	default:
+	}
+	if organizationID != nil {
+		query = query.Where("organization_id = ?", *organizationID)
 	}
 	if keyword != "" {
 		query = query.Where("name ILIKE ?", "%"+keyword+"%")
@@ -121,6 +125,10 @@ func (r *RoleRepository) DeleteRole(ctx context.Context, id uuid.UUID, hardDelet
 		})
 	}
 	return r.db.WithContext(ctx).Delete(&model.Role{}, "id = ?", id).Error
+}
+
+func (r *RoleRepository) RestoreRole(ctx context.Context, id uuid.UUID) error {
+	return r.db.WithContext(ctx).Unscoped().Model(&model.Role{}).Where("id = ?", id).Update("deleted_at", nil).Error
 }
 
 // ============ Role-Permission Management ============

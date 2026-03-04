@@ -17,6 +17,7 @@ type SystemRoleRepositoryInterface interface {
 	GetAllSystemRoles(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.SystemRole, int64, error)
 	UpdateSystemRole(ctx context.Context, role *model.SystemRole) error
 	DeleteSystemRole(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	RestoreSystemRole(ctx context.Context, id uuid.UUID) error
 
 	// SystemRole-Permission management
 	AddPermissionsToSystemRole(ctx context.Context, roleID uuid.UUID, permissionIDs []uuid.UUID) error
@@ -122,6 +123,10 @@ func (r *SystemRoleRepository) DeleteSystemRole(ctx context.Context, id uuid.UUI
 		})
 	}
 	return r.db.WithContext(ctx).Delete(&model.SystemRole{}, "id = ?", id).Error
+}
+
+func (r *SystemRoleRepository) RestoreSystemRole(ctx context.Context, id uuid.UUID) error {
+	return r.db.WithContext(ctx).Unscoped().Model(&model.SystemRole{}).Where("id = ?", id).Update("deleted_at", nil).Error
 }
 
 // ============ SystemRole-Permission Management ============

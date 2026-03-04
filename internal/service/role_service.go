@@ -13,9 +13,10 @@ import (
 type RoleServiceInterface interface {
 	CreateRole(ctx context.Context, req dto.CreateRoleDTO) (*dto.RoleResponseDTO, error)
 	GetRoleByID(ctx context.Context, id uuid.UUID) (*dto.RoleDetailResponseDTO, error)
-	GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.RoleListResponseDTO, error)
+	GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string, organizationID *uuid.UUID) (*dto.RoleListResponseDTO, error)
 	UpdateRole(ctx context.Context, id uuid.UUID, req dto.UpdateRoleDTO) (*dto.RoleResponseDTO, error)
 	DeleteRole(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	RestoreRole(ctx context.Context, id uuid.UUID) error
 
 	// Role-Permission management
 	AddPermissionsToRole(ctx context.Context, roleID uuid.UUID, req dto.AddPermissionsToRoleDTO) error
@@ -62,7 +63,7 @@ func (s *RoleService) GetRoleByID(ctx context.Context, id uuid.UUID) (*dto.RoleD
 	return toRoleDetailResponseDTO(role), nil
 }
 
-func (s *RoleService) GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.RoleListResponseDTO, error) {
+func (s *RoleService) GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string, organizationID *uuid.UUID) (*dto.RoleListResponseDTO, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -70,7 +71,7 @@ func (s *RoleService) GetAllRoles(ctx context.Context, page, pageSize int, keywo
 		pageSize = 20
 	}
 
-	roles, total, err := s.repo.GetAllRoles(ctx, page, pageSize, keyword, status)
+	roles, total, err := s.repo.GetAllRoles(ctx, page, pageSize, keyword, status, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +124,10 @@ func (s *RoleService) DeleteRole(ctx context.Context, id uuid.UUID, hardDelete b
 	}
 
 	return s.repo.DeleteRole(ctx, id, hardDelete)
+}
+
+func (s *RoleService) RestoreRole(ctx context.Context, id uuid.UUID) error {
+	return s.repo.RestoreRole(ctx, id)
 }
 
 // ============ Role-Permission Management ============

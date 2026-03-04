@@ -13,6 +13,7 @@ type RoleHandlerInterface interface {
 	GetAllRoles(c *fiber.Ctx) error
 	UpdateRole(c *fiber.Ctx) error
 	DeleteRole(c *fiber.Ctx) error
+	RestoreRole(c *fiber.Ctx) error
 
 	// Role-Permission management
 	AddPermissionsToRole(c *fiber.Ctx) error
@@ -81,8 +82,21 @@ func (h *RoleHandler) GetAllRoles(c *fiber.Ctx) error {
 	pageSize := c.QueryInt("page_size", 20)
 	keyword := c.Query("keyword")
 	status := c.Query("status")
+	orgIDStr := c.Query("organization_id")
 
-	roles, err := h.service.GetAllRoles(c.Context(), page, pageSize, keyword, status)
+	var orgID *uuid.UUID
+	if orgIDStr != "" {
+		parsed, err := uuid.Parse(orgIDStr)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "Invalid organization_id",
+				"error":   err.Error(),
+			})
+		}
+		orgID = &parsed
+	}
+
+	roles, err := h.service.GetAllRoles(c.Context(), page, pageSize, keyword, status, orgID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve roles",
@@ -149,6 +163,27 @@ func (h *RoleHandler) DeleteRole(c *fiber.Ctx) error {
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Role deleted successfully",
+	})
+}
+
+func (h *RoleHandler) RestoreRole(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid role ID",
+			"error":   err.Error(),
+		})
+	}
+
+	if err := h.service.RestoreRole(c.Context(), id); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Failed to restore role",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Role restored successfully",
 	})
 }
 
