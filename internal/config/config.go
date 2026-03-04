@@ -34,12 +34,21 @@ type Config struct {
 	MinioBucketImages string `mapstructure:"MINIO_BUCKET_IMAGES"`
 	MinioBucketVideos string `mapstructure:"MINIO_BUCKET_VIDEOS"`
 
+	MinIOEndpoint   string `mapstructure:"MINIO_ENDPOINT"`    // host:port format
+	MinIOBucketName string `mapstructure:"MINIO_BUCKET_NAME"` // Main bucket for videos
+
 	// SMTP Configuration
 	SMTPHost     string `mapstructure:"SMTP_HOST"`
 	SMTPPort     int    `mapstructure:"SMTP_PORT"`
 	SMTPUser     string `mapstructure:"SMTP_USERNAME"`
 	SMTPPassword string `mapstructure:"SMTP_PASSWORD"`
 	SMTPFrom     string `mapstructure:"FROM_EMAIL"`
+
+	RabbitMQHost     string `mapstructure:"RABBITMQ_HOST"`
+	RabbitMQPort     string `mapstructure:"RABBITMQ_PORT"`
+	RabbitMQUser     string `mapstructure:"RABBITMQ_USER"`
+	RabbitMQPassword string `mapstructure:"RABBITMQ_PASSWORD"`
+	RabbitMQVHost    string `mapstructure:"RABBITMQ_VHOST"`
 
 	// JWT Configuration
 	JWTSecret            string `mapstructure:"JWT_SECRET"`
@@ -62,6 +71,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("MINIO_USE_SSL", false)
 	viper.SetDefault("MINIO_BUCKET_IMAGES", "images")
 	viper.SetDefault("MINIO_BUCKET_VIDEOS", "videos")
+	viper.SetDefault("MINIO_BUCKET_NAME", "videos")
 
 	viper.AutomaticEnv()
 

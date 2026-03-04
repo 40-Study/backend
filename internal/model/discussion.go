@@ -4,12 +4,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 type Discussion struct {
-	gorm.Model
-	ID                 uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	BaseModel
 	UserID             uuid.UUID  `gorm:"type:uuid;not null;index" json:"user_id"`
 	LessonID           uuid.UUID  `gorm:"type:uuid;not null;index" json:"lesson_id"`
 	ParentID           *uuid.UUID `gorm:"type:uuid;index" json:"parent_id,omitempty"`

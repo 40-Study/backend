@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/shopspring/decimal"
-	"gorm.io/gorm"
 )
 
 type Order struct {
@@ -56,8 +55,7 @@ func (OrderItem) TableName() string {
 }
 
 type Coupon struct {
-	gorm.Model
-	ID                  uuid.UUID        `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	BaseModel
 	Code                string           `gorm:"type:varchar(50);uniqueIndex;not null" json:"code"`
 	Description         *string          `gorm:"type:text" json:"description,omitempty"`
 	DiscountType        string           `gorm:"type:varchar(20);not null;check:discount_type IN ('percentage', 'fixed_amount')" json:"discount_type"`
@@ -99,8 +97,7 @@ func (CouponUsage) TableName() string {
 }
 
 type InstructorPayout struct {
-	gorm.Model
-	ID                uuid.UUID       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	BaseModel
 	InstructorID      uuid.UUID       `gorm:"type:uuid;not null;index" json:"instructor_id"`
 	Amount            decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"amount"`
 	Currency          string          `gorm:"type:varchar(3);default:'VND'" json:"currency"`

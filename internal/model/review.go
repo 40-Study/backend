@@ -4,18 +4,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 type Review struct {
-	ID        uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
-	UserID    uuid.UUID      `gorm:"type:uuid;not null;index" json:"user_id"`
-	CourseID  uuid.UUID      `gorm:"type:uuid;not null;index;uniqueIndex:idx_user_course_review" json:"course_id"`
-	Rating    int            `gorm:"type:smallint;not null;check:rating >= 1 AND rating <= 5" json:"rating"`
-	Comment   *string        `gorm:"type:text" json:"comment,omitempty"`
+	BaseModel
+	UserID   uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
+	CourseID uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_user_course_review" json:"course_id"`
+	Rating   int       `gorm:"type:smallint;not null;check:rating >= 1 AND rating <= 5" json:"rating"`
+	Comment  *string   `gorm:"type:text" json:"comment,omitempty"`
 
 	// Relationships
 	User      User             `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`

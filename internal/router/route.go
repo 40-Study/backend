@@ -12,6 +12,17 @@ func SetupAllRoutes(
 	app *fiber.App,
 	cfg *config.Config,
 	authHandler *handler.AuthHandler,
+	roleHandler *handler.RoleHandler,
+	systemRoleHandler *handler.SystemRoleHandler,
+	permissionHandler *handler.PermissionHandler,
+	organizationHandler *handler.OrganizationHandler,
+	teacherHandler *handler.TeacherHandler,
+	teacherProfileHandler *handler.TeacherProfileHandler,
+	classHandler *handler.ClassHandler,
+	classScheduleHandler *handler.ClassScheduleHandler,
+	attendanceHandler *handler.AttendanceHandler,
+	videoHandler *handler.VideoUploadHandler,
+	hlsHandler *handler.HLSHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 ) {
@@ -26,4 +37,13 @@ func SetupAllRoutes(
 	})
 
 	SetupAuthRoutes(api, cfg, authHandler, redis)
+	SetupRoleRoutes(api, roleHandler)
+	SetupSystemRoleRoutes(api, systemRoleHandler)
+	SetupPermissionRoutes(api, permissionHandler)
+	SetupOrganizationRoutes(api, organizationHandler)
+	SetupTeacherRoutes(api, teacherHandler)
+	SetupTeacherProfileRoutes(api, teacherProfileHandler)
+	SetupClassRoutes(api, classHandler, classScheduleHandler, attendanceHandler)
+	SetupVideoUploadRoutes(api, videoHandler, cfg, redis)
+	SetupHLSRoutes(api, hlsHandler)
 }

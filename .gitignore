@@ -8,6 +8,8 @@
 *.dll
 *.so
 *.dylib
+go.sum
+go.mod
 
 # Test binary, built with `go test -c`
 *.test
@@ -29,7 +31,7 @@ go.work.sum
 .env
 
 # Editor/IDE
-# .idea/
+.idea/
 # .vscode/
 
 # Claude Kit
@@ -38,3 +40,7 @@ claudekit-engineer/
 .opencode/
 plans/
 CLAUDE.md
+
+# Postman
+.postman/
+postman/

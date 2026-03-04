@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"log"
 
 	"github.com/minio/minio-go/v7"
@@ -9,14 +10,17 @@ import (
 	"study.com/v1/internal/cache"
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/database"
+	"study.com/v1/internal/queue"
 	"study.com/v1/internal/storage"
 )
 
 type Resources struct {
-	DB          *gorm.DB
-	Redis       *redis.Client
-	MinioClient *minio.Client
-	Config      *config.Config
+	DB           *gorm.DB
+	Redis        *redis.Client
+	MinioClient  *minio.Client
+	MinioWrapper *storage.MinioClient
+	RabbitMQ     *queue.RabbitMQService
+	Config       *config.Config
 }
 
 func InitResources() (*Resources, error) {
@@ -47,11 +51,27 @@ func InitResources() (*Resources, error) {
 		log.Printf("Warning: Failed to connect to minio: %v", err)
 	}
 
+	minioWrapper, err := storage.NewMinioClient(cfg)
+	if err != nil {
+		log.Printf("Warning: Failed to create minio wrapper client: %v", err)
+	} else if minioWrapper != nil {
+		if err := minioWrapper.EnsureBuckets(context.Background()); err != nil {
+			log.Printf("Warning: Failed to ensure MinIO buckets: %v", err)
+		}
+	}
+
+	rabbitMQ, err := queue.NewRabbitMQService(cfg)
+	if err != nil {
+		log.Printf("Warning: Failed to connect to RabbitMQ: %v", err)
+	}
+
 	return &Resources{
-		DB:          db,
-		Redis:       rdb,
-		MinioClient: minioClient,
-		Config:      cfg,
+		DB:           db,
+		Redis:        rdb,
+		MinioClient:  minioClient,
+		MinioWrapper: minioWrapper,
+		RabbitMQ:     rabbitMQ,
+		Config:       cfg,
 	}, nil
 }
 
@@ -60,6 +80,11 @@ func (r *Resources) Close() error {
 		if err := r.Redis.Close(); err != nil {
 			log.Printf("Error closing Redis: %v", err)
 			return err
+		}
+	}
+	if r.RabbitMQ != nil {
+		if err := r.RabbitMQ.Close(); err != nil {
+			log.Printf("Error closing RabbitMQ: %v", err)
 		}
 	}
 	return nil

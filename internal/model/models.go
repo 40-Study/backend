@@ -3,8 +3,19 @@ package model
 // AllModels trả về tất cả models để dùng với AutoMigrate
 func AllModels() []interface{} {
 	return []interface{}{
+		// Roles & Permissions
+		&Permission{},
+		&Role{},
+		&RolePermission{},
+		&SystemRole{},
+		&SystemRolePermission{},
+
+		// Organizations
+		&Organization{},
+
 		// Users & Auth
 		&User{},
+		&UserRole{},
 		&VerificationCode{},
 		&UserOAuthProvider{},
 
@@ -28,8 +39,8 @@ func AllModels() []interface{} {
 		// Enrollment & Progress
 		&Enrollment{},
 		&LessonProgress{},
-		&UserNote{},
 		&Certificate{},
+		&UserNote{},
 
 		// Reviews & Discussions
 		&Review{},
@@ -79,5 +90,13 @@ func AllModels() []interface{} {
 		// Gamification - Goals & Preferences
 		&LearningGoal{},
 		&UserPreference{},
+
+		// Teacher & Class
+		&TeacherProfile{},
+		&Class{},
+		&TeacherClass{},
+		&StudentClass{},
+		&ClassSchedule{},
+		&Attendance{},
 	}
 }

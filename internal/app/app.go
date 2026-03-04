@@ -27,7 +27,7 @@ func New() (*App, error) {
 
 	services := InitServices(resources, repos)
 
-	handlers := InitHandlers(services)
+	handlers := InitHandlers(services, resources.MinioWrapper)
 
 	fiberApp := fiber.New()
 
@@ -35,6 +35,17 @@ func New() (*App, error) {
 		fiberApp,
 		resources.Config,
 		handlers.Auth,
+		handlers.Role,
+		handlers.SystemRole,
+		handlers.Permission,
+		handlers.Organization,
+		handlers.Teacher,
+		handlers.TeacherProfile,
+		handlers.Class,
+		handlers.ClassSchedule,
+		handlers.Attendance,
+		handlers.VideoUpload,
+		handlers.HLS,
 		resources.Redis,
 		resources.MinioClient,
 	)
