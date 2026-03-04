@@ -9,7 +9,7 @@ import (
 type Role struct {
 	BaseModel
 	Name           string         `gorm:"type:varchar(100);not null;uniqueIndex:idx_role_name_org" json:"name"`
-	OrganizationID uuid.UUID      `gorm:"type:uuid;not null;uniqueIndex:idx_role_name_org;index:idx_role_org_id" json:"organization_id"`
+	OrganizationID *uuid.UUID     `gorm:"type:uuid;uniqueIndex:idx_role_name_org;index:idx_role_org_id" json:"organization_id,omitempty"`
 	Description    sql.NullString `gorm:"type:varchar(500)" json:"description,omitempty"`
 	Status         string         `gorm:"type:varchar(20);default:'active';not null;index" json:"status"`
 

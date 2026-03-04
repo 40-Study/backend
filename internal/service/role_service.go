@@ -37,7 +37,7 @@ func NewRoleService(repo repository.RoleRepositoryInterface, permissionRepo repo
 func (s *RoleService) CreateRole(ctx context.Context, req dto.CreateRoleDTO) (*dto.RoleResponseDTO, error) {
 	role := &model.Role{
 		Name:           req.Name,
-		OrganizationID: req.OrganizationID,
+		OrganizationID: &req.OrganizationID,
 	}
 	if req.Description != "" {
 		role.Description.String = req.Description

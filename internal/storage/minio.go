@@ -1,3 +1,4 @@
+// Package storage cung cap cac tien ich de lam viec voi MinIO storage
 package storage
 
 import (
@@ -10,14 +11,14 @@ import (
 
 func Connect(cfg *config.Config) (*minio.Client, error) {
 	endpoint := fmt.Sprintf("%s:%s", cfg.MinioHost, cfg.MinioPort)
-
-	minioClient, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.MinioAccessKey, cfg.MinioSecretKey, ""),
-		Secure: cfg.MinioUseSSL,
-	})
+	minioClient, err := minio.New(
+		endpoint,
+		&minio.Options{
+			Creds:  credentials.NewStaticV4(cfg.MinioAccessKey, cfg.MinioSecretKey, ""),
+			Secure: cfg.MinioUseSSL,
+		})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create minio client: %w", err)
 	}
-
 	return minioClient, nil
 }

@@ -1,26 +1,76 @@
 package app
 
-import "study.com/v1/internal/service"
+import (
+	"log"
+
+	"study.com/v1/internal/queue"
+	"study.com/v1/internal/service"
+)
 
 type Services struct {
+	// ===== Auth & Role =====
 	Auth                 *service.AuthService
 	Role                 *service.RoleService
 	SystemRole           *service.SystemRoleService
 	UserSystemRole       *service.UserSystemRoleService
 	UserOrganizationRole *service.UserOrganizationRoleService
-	UserRole             *service.UserRoleService
 	Permission           *service.PermissionService
-	Organization         *service.OrganizationService
-	Profile              *service.ProfileService
-	Teacher              *service.TeacherService
-	TeacherProfile       *service.TeacherProfileService
-	Class                *service.ClassService
-	ClassSchedule        *service.ClassScheduleService
-	Attendance           *service.AttendanceService
+
+	// ===== Organization & Profile =====
+	Organization *service.OrganizationService
+	Profile      *service.ProfileService
+
+	// ===== Teacher =====
+	Teacher        *service.TeacherService
+	TeacherProfile *service.TeacherProfileService
+
+	// ===== Class =====
+	Class         *service.ClassService
+	ClassSchedule *service.ClassScheduleService
+	Attendance    *service.AttendanceService
+
+	// ===== Video =====
+	VideoUpload     *service.VideoUploadService
+	VideoProcessing *service.VideoProcessingService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
+
+	// ================= Video Queue Setup =================
+	var videoQueue *queue.VideoQueueSetup
+	if resources.RabbitMQ != nil {
+		videoQueue = queue.NewVideoQueueSetup(resources.RabbitMQ)
+		if err := videoQueue.SetupVideoQueues(); err != nil {
+			log.Printf("Warning: Failed to setup video queues: %v", err)
+			videoQueue = nil
+		}
+	}
+
+	uploadSvc := service.NewVideoUploadService(
+		repos.VideoUpload,
+		resources.MinioWrapper,
+		resources.RabbitMQ,
+		videoQueue,
+		resources.Redis,
+	)
+
+	var videoProcessingSvc *service.VideoProcessingService
+	if resources.RabbitMQ != nil && resources.MinioWrapper != nil {
+		var err error
+		videoProcessingSvc, err = service.NewVideoProcessingService(
+			repos.VideoUpload,
+			resources.MinioWrapper,
+			uploadSvc,
+			resources.RabbitMQ,
+		)
+		if err != nil {
+			log.Printf("Warning: Failed to create video processing service: %v", err)
+		}
+	}
+
+	// ================= Return Services =================
 	return &Services{
+		// ===== Auth =====
 		Auth: service.NewAuthService(
 			resources.Config,
 			repos.User,
@@ -30,34 +80,45 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			repos.SystemRole,
 			resources.Redis,
 		),
+
+		// ===== Role =====
 		Role:       service.NewRoleService(repos.Role, repos.Permission),
 		SystemRole: service.NewSystemRoleService(repos.SystemRole, repos.Permission),
+
 		UserSystemRole: service.NewUserSystemRoleService(
 			repos.UserSystemRole,
 			repos.User,
 			repos.SystemRole,
 		),
+
 		UserOrganizationRole: service.NewUserOrganizationRoleService(
 			repos.UserOrganizationRole,
 			repos.User,
 			repos.Role,
 			repos.Organization,
 		),
-		UserRole: service.NewUserRoleService(
-			repos.User,
-			repos.UserSystemRole,
-			repos.UserOrganizationRole,
-		),
-		Permission:   service.NewPermissionService(repos.Permission),
+
+		Permission: service.NewPermissionService(repos.Permission),
+
+		// ===== Organization & Profile =====
 		Organization: service.NewOrganizationService(repos.Organization),
+
 		Profile: service.NewProfileService(
 			repos.ParentStudent,
 			repos.UserOrganizationRole,
 		),
+
+		// ===== Teacher =====
 		Teacher:        service.NewTeacherService(repos.Teacher),
 		TeacherProfile: service.NewTeacherProfileService(repos.TeacherProfile),
-		Class:          service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student),
-		ClassSchedule:  service.NewClassScheduleService(repos.ClassSchedule, repos.Class),
-		Attendance:     service.NewAttendanceService(repos.Attendance),
+
+		// ===== Class =====
+		Class:         service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student),
+		ClassSchedule: service.NewClassScheduleService(repos.ClassSchedule, repos.Class),
+		Attendance:    service.NewAttendanceService(repos.Attendance),
+
+		// ===== Video =====
+		VideoUpload:     uploadSvc,
+		VideoProcessing: videoProcessingSvc,
 	}
 }

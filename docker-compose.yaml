@@ -45,6 +45,28 @@ services:
     profiles:
       - test
 
+  # rabbitmq:
+  #   image: rabbitmq:3-management
+  #   container_name: cybercafe_rabbitmq
+  #   restart: unless-stopped
+  #   environment:
+  #     RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+  #     RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+  #   ports:
+  #     - "5672:5672"   # RabbitMQ main port
+  #     - "15672:15672" # Management UI
+  #   networks:
+  #     - cybercafe_network
+  #   healthcheck:
+  #     test: ["CMD", "rabbitmq-diagnostics", "ping"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "3"
 #   postgres:
 #     image: postgres:16-alpine
 #     container_name: study_postgres
@@ -101,7 +123,7 @@ services:
 
 #   minio:
 #     image: minio/minio:latest
-#     container_name: cybercafe_minio
+#     container_name: study_minio
 #     restart: unless-stopped
 #     command: server /data --console-address ":9001"
 #     environment:
@@ -127,7 +149,7 @@ services:
 
 #   minio_createbuckets:
 #     image: minio/mc:latest
-#     container_name: cybercafe_minio_setup
+#     container_name: study_minio_setup
 #     depends_on:
 #       minio:
 #         condition: service_healthy

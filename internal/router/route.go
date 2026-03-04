@@ -24,6 +24,8 @@ func SetupAllRoutes(
 	classHandler *handler.ClassHandler,
 	classScheduleHandler *handler.ClassScheduleHandler,
 	attendanceHandler *handler.AttendanceHandler,
+	videoHandler *handler.VideoUploadHandler,
+	hlsHandler *handler.HLSHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 ) {
@@ -48,4 +50,6 @@ func SetupAllRoutes(
 	SetupTeacherRoutes(api, teacherHandler)
 	SetupTeacherProfileRoutes(api, teacherProfileHandler)
 	SetupClassRoutes(api, classHandler, classScheduleHandler, attendanceHandler)
+	SetupVideoUploadRoutes(api, videoHandler, cfg, redis)
+	SetupHLSRoutes(api, hlsHandler)
 }

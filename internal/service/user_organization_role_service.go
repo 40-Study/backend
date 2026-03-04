@@ -130,7 +130,7 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 		if role.Status != "active" {
 			return nil, errors.New("role is not active: " + role.Name)
 		}
-		if role.OrganizationID != req.OrganizationID {
+		if role.OrganizationID != nil && *role.OrganizationID != req.OrganizationID {
 			return nil, errors.New("role does not belong to this organization: " + role.Name)
 		}
 	}
