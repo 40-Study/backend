@@ -14,8 +14,11 @@ func SetupAllRoutes(
 	authHandler *handler.AuthHandler,
 	roleHandler *handler.RoleHandler,
 	systemRoleHandler *handler.SystemRoleHandler,
+	userSystemRoleHandler *handler.UserSystemRoleHandler,
+	userOrgRoleHandler *handler.UserOrganizationRoleHandler,
 	permissionHandler *handler.PermissionHandler,
 	organizationHandler *handler.OrganizationHandler,
+	profileHandler *handler.ProfileHandler,
 	teacherHandler *handler.TeacherHandler,
 	teacherProfileHandler *handler.TeacherProfileHandler,
 	classHandler *handler.ClassHandler,
@@ -37,10 +40,13 @@ func SetupAllRoutes(
 	})
 
 	SetupAuthRoutes(api, cfg, authHandler, redis)
-	SetupRoleRoutes(api, roleHandler)
-	SetupSystemRoleRoutes(api, systemRoleHandler)
-	SetupPermissionRoutes(api, permissionHandler)
+	SetupOrgRoleRoutes(api, cfg, roleHandler, redis)
+	SetupSystemRoleRoutes(api, cfg, systemRoleHandler, redis)
+	SetupUserSystemRoleRoutes(api, cfg, userSystemRoleHandler, redis)
+	SetupUserOrganizationRoleRoutes(api, cfg, userOrgRoleHandler, redis)
+	SetupPermissionRoutes(api, cfg, permissionHandler, redis)
 	SetupOrganizationRoutes(api, organizationHandler)
+	SetupProfileRoutes(api, cfg, profileHandler, redis)
 	SetupTeacherRoutes(api, teacherHandler)
 	SetupTeacherProfileRoutes(api, teacherProfileHandler)
 	SetupClassRoutes(api, classHandler, classScheduleHandler, attendanceHandler)

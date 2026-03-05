@@ -6,37 +6,63 @@ import (
 )
 
 type Repositories struct {
-	User           *repository.UserRepository
-	Role           *repository.RoleRepository
-	SystemRole     *repository.SystemRoleRepository
-	UserRole       *repository.UserRoleRepository
-	Permission     *repository.PermissionRepository
-	Organization   *repository.OrganizationRepository
+	// ===== User & Role =====
+	User                 *repository.UserRepository
+	Role                 *repository.RoleRepository
+	SystemRole           *repository.SystemRoleRepository
+	UserSystemRole       *repository.UserSystemRoleRepository
+	UserOrganizationRole *repository.UserOrganizationRoleRepository
+	Permission           *repository.PermissionRepository
+
+	// ===== Organization =====
+	Organization  *repository.OrganizationRepository
+	ParentStudent *repository.ParentStudentRepository
+
+	// ===== Teacher =====
 	Teacher        *repository.TeacherRepository
 	TeacherProfile *repository.TeacherProfileRepository
-	Class          *repository.ClassRepository
-	ClassSchedule  *repository.ClassScheduleRepository
-	Attendance     *repository.AttendanceRepository
-	Course         *repository.CourseRepository
-	Student        *repository.StudentRepository
-	VideoUpload    *repository.VideoUploadRepository
+
+	// ===== Class =====
+	Class         *repository.ClassRepository
+	ClassSchedule *repository.ClassScheduleRepository
+	Attendance    *repository.AttendanceRepository
+
+	// ===== Course & Student =====
+	Course  *repository.CourseRepository
+	Student *repository.StudentRepository
+
+	// ===== Video =====
+	VideoUpload *repository.VideoUploadRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
 	return &Repositories{
-		User:           repository.NewUserRepository(db),
-		Role:           repository.NewRoleRepository(db),
-		SystemRole:     repository.NewSystemRoleRepository(db),
-		UserRole:       repository.NewUserRoleRepository(db),
-		Permission:     repository.NewPermissionRepository(db),
-		Organization:   repository.NewOrganizationRepository(db),
+		// ===== User & Role =====
+		User:                 repository.NewUserRepository(db),
+		Role:                 repository.NewRoleRepository(db),
+		SystemRole:           repository.NewSystemRoleRepository(db),
+		UserSystemRole:       repository.NewUserSystemRoleRepository(db),
+		UserOrganizationRole: repository.NewUserOrganizationRoleRepository(db),
+		Permission:           repository.NewPermissionRepository(db),
+
+		// ===== Organization =====
+		Organization:  repository.NewOrganizationRepository(db),
+		ParentStudent: repository.NewParentStudentRepository(db),
+
+		// ===== Teacher =====
 		Teacher:        repository.NewTeacherRepository(db),
 		TeacherProfile: repository.NewTeacherProfileRepository(db),
-		Class:          repository.NewClassRepository(db),
-		ClassSchedule:  repository.NewClassScheduleRepository(db),
-		Attendance:     repository.NewAttendanceRepository(db),
-		Course:         repository.NewCourseRepository(db),
-		Student:        repository.NewStudentRepository(db),
-		VideoUpload:    repository.NewVideoUploadRepository(db),
+
+		// ===== Class =====
+		Class:         repository.NewClassRepository(db),
+		ClassSchedule: repository.NewClassScheduleRepository(db),
+		Attendance:    repository.NewAttendanceRepository(db),
+
+		// ===== Course & Student =====
+		Course:  repository.NewCourseRepository(db),
+		Student: repository.NewStudentRepository(db),
+
+		// ===== Video =====
+		VideoUpload: repository.NewVideoUploadRepository(db),
 	}
 }

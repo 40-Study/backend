@@ -18,8 +18,9 @@ type User struct {
 	IsActive     bool       `gorm:"default:true;index;column:is_active" json:"is_active"`
 	LastLoginAt  *time.Time `gorm:"column:last_login_at" json:"last_login_at,omitempty"`
 
-	// Many-to-many relationship with roles via user_roles junction table
-	UserRoles []UserRole `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
+	// Many-to-many relationship with roles
+	UserOrganizationRoles []UserOrganizationRole `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
+	UserSystemRoles       []UserSystemRole       `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
 
 	// Relationships
 	VerificationCodes []VerificationCode  `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`

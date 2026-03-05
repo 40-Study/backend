@@ -43,13 +43,15 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 
 func Migrate(db *gorm.DB) error {
 	return db.AutoMigrate(
-		// Core tables
-		&model.User{},
+		&model.Permission{},
+		&model.Organization{},
+		&model.SystemRole{},
 		&model.Role{},
-		&model.UserRole{},
-		// video upload
-		&model.VideoUpload{},
-		&model.VideoUploadPart{},
+		&model.SystemRolePermission{},
+		&model.RolePermission{},
+		&model.User{},
+		&model.UserOrganizationRole{},
+		&model.UserSystemRole{},
 	)
 }
 

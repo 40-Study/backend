@@ -2,25 +2,30 @@ package router
 
 import (
 	"github.com/gofiber/fiber/v2"
+	"github.com/redis/go-redis/v9"
+	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
+	"study.com/v1/internal/middleware"
 )
 
-func SetupRoleRoutes(
+func SetupOrgRoleRoutes(
 	api fiber.Router,
+	cfg *config.Config,
 	roleHandler *handler.RoleHandler,
+	redis *redis.Client,
 ) {
-	roles := api.Group("/roles")
+	orgRoles := api.Group("/org-roles", middleware.AuthMiddleware(cfg, redis))
 	{
-		roles.Post("/", roleHandler.CreateRole)
-		roles.Get("/", roleHandler.GetAllRoles)
-		roles.Get("/:id", roleHandler.GetRole)
-		roles.Put("/:id", roleHandler.UpdateRole)
-		roles.Delete("/:id", roleHandler.DeleteRole)
+		orgRoles.Post("/", roleHandler.CreateRole)
+		orgRoles.Get("/", roleHandler.GetAllRoles)
+		orgRoles.Get("/:id", roleHandler.GetRole)
+		orgRoles.Put("/:id", roleHandler.UpdateRole)
+		orgRoles.Delete("/:id", roleHandler.DeleteRole)
+		orgRoles.Patch("/:id/restore", roleHandler.RestoreRole)
 
-		// Role-Permission management
-		roles.Get("/:id/permissions", roleHandler.GetRolePermissions)
-		roles.Post("/:id/permissions", roleHandler.AddPermissionsToRole)
-		roles.Put("/:id/permissions", roleHandler.SetRolePermissions)
-		roles.Delete("/:id/permissions", roleHandler.RemovePermissionsFromRole)
+		orgRoles.Get("/:id/permissions", roleHandler.GetRolePermissions)
+		orgRoles.Post("/:id/permissions", roleHandler.AddPermissionsToRole)
+		orgRoles.Put("/:id/permissions", roleHandler.SetRolePermissions)
+		orgRoles.Delete("/:id/permissions", roleHandler.RemovePermissionsFromRole)
 	}
 }

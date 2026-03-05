@@ -27,6 +27,7 @@ func New() (*App, error) {
 
 	services := InitServices(resources, repos)
 
+	// ⚠ dùng signature mới có MinioWrapper
 	handlers := InitHandlers(services, resources.MinioWrapper)
 
 	fiberApp := fiber.New()
@@ -34,18 +35,32 @@ func New() (*App, error) {
 	router.SetupAllRoutes(
 		fiberApp,
 		resources.Config,
+
+		// ===== Auth & Role =====
 		handlers.Auth,
 		handlers.Role,
 		handlers.SystemRole,
+		handlers.UserSystemRole,
+		handlers.UserOrganizationRole,
 		handlers.Permission,
+
+		// ===== Organization & Profile =====
 		handlers.Organization,
+		handlers.Profile,
+
+		// ===== Teacher =====
 		handlers.Teacher,
 		handlers.TeacherProfile,
+
+		// ===== Class =====
 		handlers.Class,
 		handlers.ClassSchedule,
 		handlers.Attendance,
+
+		// ===== Video =====
 		handlers.VideoUpload,
 		handlers.HLS,
+
 		resources.Redis,
 		resources.MinioClient,
 	)
@@ -66,7 +81,6 @@ func (a *App) Run() error {
 		}
 	}()
 
-	// Start server
 	addr := fmt.Sprintf("%s:%s", a.Resources.Config.Host, a.Resources.Config.Port)
 	log.Printf("Server starting on %s", addr)
 

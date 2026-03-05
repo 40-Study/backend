@@ -43,11 +43,95 @@ type DeviceSessionDto struct {
 	IsCurrent  bool   `json:"is_current,omitempty"`
 }
 
+// SystemRoleDto - System role (STUDENT, TEACHER, PARENT, ORG_OWNER)
+type SystemRoleDto struct {
+	ID   string `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Name string `json:"name" example:"STUDENT"`
+}
+
+// OrgRoleDto - Organization role với context
+type OrgRoleDto struct {
+	ID               string `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	RoleName         string `json:"role_name" example:"Admin"`
+	OrganizationID   string `json:"organization_id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	OrganizationName string `json:"organization_name" example:"Trường THPT ABC"`
+}
+
+// OrgContextDto - Organization context trong login flow
+type OrgContextDto struct {
+	ID   string `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Name string `json:"name" example:"Trường THPT ABC"`
+}
+
+// EntryContext - Gợi ý FE navigate đến đâu sau login
+type EntryContext struct {
+	PrimaryRole   string `json:"primary_role" example:"STUDENT"`
+	RequiresSetup bool   `json:"requires_setup" example:"false"`
+	SetupEndpoint string `json:"setup_endpoint,omitempty" example:"/me/children"`
+}
+
+// LoginResponseDto - Multi-step login:
+// Step 1: nhiều role → trả session_token để chọn profile
+// Step 2: sau khi chọn role, nếu nhiều org → trả session_token để chọn org
+// Auto-complete khi chỉ có 1 lựa chọn ở mỗi bước
 type LoginResponseDto struct {
-	AccessToken   string           `json:"access_token"`
-	RefreshToken  string           `json:"refresh_token"`
-	User          UserResponseDto  `json:"user"`
-	CurrentDevice DeviceSessionDto `json:"current_device"`
+	Completed    bool              `json:"completed"`
+	SessionToken string            `json:"session_token,omitempty"`
+	SystemRoles  []SystemRoleDto   `json:"system_roles,omitempty"`
+
+	// Khi cần chọn org (completed=false, đã chọn role xong)
+	RequiresOrgSelection bool            `json:"requires_org_selection,omitempty"`
+	Organizations        []OrgContextDto `json:"organizations,omitempty"`
+
+	// Chỉ có khi Completed = true
+	AccessToken   string            `json:"access_token,omitempty"`
+	RefreshToken  string            `json:"refresh_token,omitempty"`
+	User          *UserResponseDto  `json:"user,omitempty"`
+	ActiveRole    *SystemRoleDto    `json:"active_role,omitempty"`
+	ActiveOrg     *OrgContextDto    `json:"active_org,omitempty"`
+	EntryContext  *EntryContext     `json:"entry_context,omitempty"`
+	CurrentDevice *DeviceSessionDto `json:"current_device,omitempty"`
+}
+
+// SelectProfileRequestDto - Chọn role sau khi login
+type SelectProfileRequestDto struct {
+	SessionToken string `json:"session_token" validate:"required"`
+	SystemRoleID string `json:"system_role_id" validate:"required,uuid"`
+}
+
+// SelectProfileResponseDto - Response sau khi hoàn tất login (chọn role + org xong)
+type SelectProfileResponseDto struct {
+	Completed            bool            `json:"completed"`
+	SessionToken         string          `json:"session_token,omitempty"`
+	RequiresOrgSelection bool            `json:"requires_org_selection,omitempty"`
+	Organizations        []OrgContextDto `json:"organizations,omitempty"`
+
+	AccessToken   string           `json:"access_token,omitempty"`
+	RefreshToken  string           `json:"refresh_token,omitempty"`
+	User          UserResponseDto  `json:"user,omitempty"`
+	ActiveRole    SystemRoleDto    `json:"active_role,omitempty"`
+	ActiveOrg     *OrgContextDto   `json:"active_org,omitempty"`
+	SystemRoles   []SystemRoleDto  `json:"system_roles,omitempty"`
+	EntryContext  *EntryContext    `json:"entry_context,omitempty"`
+	CurrentDevice DeviceSessionDto `json:"current_device,omitempty"`
+}
+
+// SelectOrgRequestDto - Chọn org sau khi đã chọn role.
+// organization_id rỗng hoặc không gửi = chọn chế độ "Độc lập" (không thuộc org nào).
+type SelectOrgRequestDto struct {
+	SessionToken   string `json:"session_token" validate:"required"`
+	OrganizationID string `json:"organization_id,omitempty" validate:"omitempty,uuid"`
+}
+
+// SwitchProfileRequestDto - Đổi role khi đã đăng nhập (reset org context)
+type SwitchProfileRequestDto struct {
+	SystemRoleID string `json:"system_role_id" validate:"required,uuid"`
+}
+
+// SwitchOrgRequestDto - Đổi org khi đã đăng nhập.
+// organization_id rỗng hoặc không gửi = chuyển về chế độ "Độc lập".
+type SwitchOrgRequestDto struct {
+	OrganizationID string `json:"organization_id,omitempty" validate:"omitempty,uuid"`
 }
 
 type RefreshTokenResponseDto struct {
@@ -78,23 +162,23 @@ type ChangePasswordRequestDto struct {
 
 
 // RegisterRequestDto - Request body for POST /auth/register/request
-// Gửi thông tin đăng ký và nhận OTP qua email
+// Gửi thông tin đăng ký và nhận OTP qua email. Chỉ gán system role (theo ID), không gán tổ chức/trường. Có thể chọn nhiều role (vd: vừa TEACHER vừa ORG_OWNER).
 type RegisterRequestDto struct {
 	Email           string   `json:"email" validate:"required,email,max=255" example:"student@example.com"`
 	Password        string   `json:"password" validate:"required,min=8,max=72" example:"SecurePass123!"`
 	ConfirmPassword string   `json:"confirm_password" validate:"required,eqfield=Password" example:"SecurePass123!"`
 	UserName        string   `json:"user_name" validate:"required,min=3,max=100" example:"student123"`
 	FullName        string   `json:"full_name,omitempty" validate:"omitempty,min=2,max=255" example:"Nguyen Van A"`
-	RoleIDs         []string `json:"role_ids" validate:"required,min=1,max=2,dive,uuid" example:"[\"550e8400-e29b-41d4-a716-446655440000\"]"`
+	RoleIDs         []string `json:"role_ids,omitempty" validate:"omitempty,max=10,dive,uuid" example:"[\"550e8400-e29b-41d4-a716-446655440000\"]"`
 }
 
 // RegisterResponseDto - Response for successful registration
 type RegisterResponseDto struct {
-	ID       string    `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
-	Email    string    `json:"email" example:"student@example.com"`
-	UserName string    `json:"user_name" example:"student123"`
-	FullName *string   `json:"full_name,omitempty" example:"Nguyen Van A"`
-	Roles    []RoleDto `json:"roles"`
+	ID       string   `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Email    string   `json:"email" example:"student@example.com"`
+	UserName string   `json:"user_name" example:"student123"`
+	FullName *string  `json:"full_name,omitempty" example:"Nguyen Van A"`
+	RoleIDs  []string `json:"role_ids,omitempty"`
 }
 
 // VerifyOtpRequestDto - Request body for POST /auth/register

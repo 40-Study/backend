@@ -28,9 +28,10 @@ func NewTeacherRepository(db *gorm.DB) *TeacherRepository {
 func (r *TeacherRepository) teacherQuery(ctx context.Context) *gorm.DB {
 	return r.db.WithContext(ctx).
 		Model(&model.User{}).
-		Joins("JOIN user_roles ON user_roles.user_id = users.id").
-		Joins("JOIN system_roles ON system_roles.id = user_roles.role_id").
-		Where("system_roles.name = ?", "TEACHER")
+		Joins("JOIN user_system_roles ON user_system_roles.user_id = users.id").
+		Joins("JOIN system_roles ON system_roles.id = user_system_roles.system_role_id").
+		Where("system_roles.name = ?", "TEACHER").
+		Where("user_system_roles.status = ?", model.UserSystemRoleStatusActive)
 }
 
 func (r *TeacherRepository) GetAllTeachers(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.User, int64, error) {
@@ -73,7 +74,7 @@ func (r *TeacherRepository) GetTeacherByID(ctx context.Context, id uuid.UUID) (*
 func (r *TeacherRepository) DeleteTeacher(ctx context.Context, id uuid.UUID, hardDelete bool) error {
 	if hardDelete {
 		return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := tx.Where("user_id = ?", id).Delete(&model.UserRole{}).Error; err != nil {
+			if err := tx.Where("user_id = ?", id).Delete(&model.UserSystemRole{}).Error; err != nil {
 				return err
 			}
 			return tx.Unscoped().Delete(&model.User{}, "id = ?", id).Error

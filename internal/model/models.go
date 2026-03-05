@@ -15,7 +15,8 @@ func AllModels() []interface{} {
 
 		// Users & Auth
 		&User{},
-		&UserRole{},
+		&UserOrganizationRole{},
+		&UserSystemRole{},
 		&VerificationCode{},
 		&UserOAuthProvider{},
 

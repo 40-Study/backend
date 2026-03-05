@@ -68,6 +68,10 @@ func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 		// ===== 4. Set user info in context =====
 		c.Locals("user_id", claims.UserID)
 		c.Locals("device_id", claims.DeviceID)
+		c.Locals("active_role", claims.ActiveRole)
+		if claims.ActiveOrgID != nil {
+			c.Locals("active_org_id", *claims.ActiveOrgID)
+		}
 
 		return c.Next()
 	}

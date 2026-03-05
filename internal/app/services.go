@@ -8,22 +8,35 @@ import (
 )
 
 type Services struct {
-	Auth            *service.AuthService
-	Role            *service.RoleService
-	SystemRole      *service.SystemRoleService
-	Permission      *service.PermissionService
-	Organization    *service.OrganizationService
-	Teacher         *service.TeacherService
-	TeacherProfile  *service.TeacherProfileService
-	Class           *service.ClassService
-	ClassSchedule   *service.ClassScheduleService
-	Attendance      *service.AttendanceService
+	// ===== Auth & Role =====
+	Auth                 *service.AuthService
+	Role                 *service.RoleService
+	SystemRole           *service.SystemRoleService
+	UserSystemRole       *service.UserSystemRoleService
+	UserOrganizationRole *service.UserOrganizationRoleService
+	Permission           *service.PermissionService
+
+	// ===== Organization & Profile =====
+	Organization *service.OrganizationService
+	Profile      *service.ProfileService
+
+	// ===== Teacher =====
+	Teacher        *service.TeacherService
+	TeacherProfile *service.TeacherProfileService
+
+	// ===== Class =====
+	Class         *service.ClassService
+	ClassSchedule *service.ClassScheduleService
+	Attendance    *service.AttendanceService
+
+	// ===== Video =====
 	VideoUpload     *service.VideoUploadService
 	VideoProcessing *service.VideoProcessingService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
-	// Setup video queue if RabbitMQ is available
+
+	// ================= Video Queue Setup =================
 	var videoQueue *queue.VideoQueueSetup
 	if resources.RabbitMQ != nil {
 		videoQueue = queue.NewVideoQueueSetup(resources.RabbitMQ)
@@ -55,23 +68,56 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		}
 	}
 
+	// ================= Return Services =================
 	return &Services{
+		// ===== Auth =====
 		Auth: service.NewAuthService(
 			resources.Config,
 			repos.User,
 			repos.Role,
-			repos.UserRole,
+			repos.UserOrganizationRole,
+			repos.UserSystemRole,
+			repos.SystemRole,
 			resources.Redis,
 		),
-		Role:            service.NewRoleService(repos.Role, repos.Permission),
-		SystemRole:      service.NewSystemRoleService(repos.SystemRole, repos.Permission),
-		Permission:      service.NewPermissionService(repos.Permission),
-		Organization:    service.NewOrganizationService(repos.Organization),
-		Teacher:         service.NewTeacherService(repos.Teacher),
-		TeacherProfile:  service.NewTeacherProfileService(repos.TeacherProfile),
-		Class:           service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student),
-		ClassSchedule:   service.NewClassScheduleService(repos.ClassSchedule, repos.Class),
-		Attendance:      service.NewAttendanceService(repos.Attendance),
+
+		// ===== Role =====
+		Role:       service.NewRoleService(repos.Role, repos.Permission),
+		SystemRole: service.NewSystemRoleService(repos.SystemRole, repos.Permission),
+
+		UserSystemRole: service.NewUserSystemRoleService(
+			repos.UserSystemRole,
+			repos.User,
+			repos.SystemRole,
+		),
+
+		UserOrganizationRole: service.NewUserOrganizationRoleService(
+			repos.UserOrganizationRole,
+			repos.User,
+			repos.Role,
+			repos.Organization,
+		),
+
+		Permission: service.NewPermissionService(repos.Permission),
+
+		// ===== Organization & Profile =====
+		Organization: service.NewOrganizationService(repos.Organization),
+
+		Profile: service.NewProfileService(
+			repos.ParentStudent,
+			repos.UserOrganizationRole,
+		),
+
+		// ===== Teacher =====
+		Teacher:        service.NewTeacherService(repos.Teacher),
+		TeacherProfile: service.NewTeacherProfileService(repos.TeacherProfile),
+
+		// ===== Class =====
+		Class:         service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student),
+		ClassSchedule: service.NewClassScheduleService(repos.ClassSchedule, repos.Class),
+		Attendance:    service.NewAttendanceService(repos.Attendance),
+
+		// ===== Video =====
 		VideoUpload:     uploadSvc,
 		VideoProcessing: videoProcessingSvc,
 	}

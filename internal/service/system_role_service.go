@@ -16,6 +16,7 @@ type SystemRoleServiceInterface interface {
 	GetAllSystemRoles(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.SystemRoleListResponseDTO, error)
 	UpdateSystemRole(ctx context.Context, id uuid.UUID, req dto.UpdateSystemRoleDTO) (*dto.SystemRoleResponseDTO, error)
 	DeleteSystemRole(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	RestoreSystemRole(ctx context.Context, id uuid.UUID) error
 
 	AddPermissionsToSystemRole(ctx context.Context, roleID uuid.UUID, req dto.AddPermissionsToSystemRoleDTO) error
 	RemovePermissionsFromSystemRole(ctx context.Context, roleID uuid.UUID, req dto.RemovePermissionsFromSystemRoleDTO) error
@@ -122,7 +123,11 @@ func (s *SystemRoleService) DeleteSystemRole(ctx context.Context, id uuid.UUID, 
 	return s.repo.DeleteSystemRole(ctx, id, hardDelete)
 }
 
-// ============ SystemRole-Permission Management ============
+func (s *SystemRoleService) RestoreSystemRole(ctx context.Context, id uuid.UUID) error {
+	return s.repo.RestoreSystemRole(ctx, id)
+}
+
+// ============ Quản Lý Quyền-Vai Trò Hệ Thống ============
 
 func (s *SystemRoleService) AddPermissionsToSystemRole(ctx context.Context, roleID uuid.UUID, req dto.AddPermissionsToSystemRoleDTO) error {
 	role, err := s.repo.GetSystemRoleByID(ctx, roleID)

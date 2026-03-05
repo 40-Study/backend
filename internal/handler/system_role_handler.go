@@ -13,6 +13,7 @@ type SystemRoleHandlerInterface interface {
 	GetAllSystemRoles(c *fiber.Ctx) error
 	UpdateSystemRole(c *fiber.Ctx) error
 	DeleteSystemRole(c *fiber.Ctx) error
+	RestoreSystemRole(c *fiber.Ctx) error
 
 	AddPermissionsToSystemRole(c *fiber.Ctx) error
 	RemovePermissionsFromSystemRole(c *fiber.Ctx) error
@@ -148,6 +149,27 @@ func (h *SystemRoleHandler) DeleteSystemRole(c *fiber.Ctx) error {
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "System role deleted successfully",
+	})
+}
+
+func (h *SystemRoleHandler) RestoreSystemRole(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid system role ID",
+			"error":   err.Error(),
+		})
+	}
+
+	if err := h.service.RestoreSystemRole(c.Context(), id); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Failed to restore system role",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "System role restored successfully",
 	})
 }
 

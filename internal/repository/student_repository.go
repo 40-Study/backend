@@ -23,9 +23,10 @@ func NewStudentRepository(db *gorm.DB) *StudentRepository {
 func (r *StudentRepository) studentQuery(ctx context.Context) *gorm.DB {
 	return r.db.WithContext(ctx).
 		Model(&model.User{}).
-		Joins("JOIN user_roles ON user_roles.user_id = users.id").
-		Joins("JOIN system_roles ON system_roles.id = user_roles.role_id").
-		Where("system_roles.name = ?", "STUDENT")
+		Joins("JOIN user_system_roles ON user_system_roles.user_id = users.id").
+		Joins("JOIN system_roles ON system_roles.id = user_system_roles.system_role_id").
+		Where("system_roles.name = ?", "STUDENT").
+		Where("user_system_roles.status = ?", model.UserSystemRoleStatusActive)
 }
 
 func (r *StudentRepository) Exists(ctx context.Context, id uuid.UUID) (bool, error) {

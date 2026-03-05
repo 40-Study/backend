@@ -22,9 +22,9 @@ type RemovePermissionsFromRoleDTO struct {
 }
 
 type RoleResponseDTO struct {
-	ID             uuid.UUID `json:"id"`
-	Name           string    `json:"name"`
-	OrganizationID uuid.UUID `json:"organization_id"`
+	ID             uuid.UUID  `json:"id"`
+	Name           string     `json:"name"`
+	OrganizationID *uuid.UUID `json:"organization_id,omitempty"`
 	Description    *string   `json:"description,omitempty"`
 	Status         string    `json:"status"`
 	CreatedAt      string    `json:"created_at"`
@@ -34,7 +34,7 @@ type RoleResponseDTO struct {
 type RoleDetailResponseDTO struct {
 	ID             uuid.UUID               `json:"id"`
 	Name           string                  `json:"name"`
-	OrganizationID uuid.UUID               `json:"organization_id"`
+	OrganizationID *uuid.UUID              `json:"organization_id,omitempty"`
 	Description    *string                 `json:"description,omitempty"`
 	Status         string                  `json:"status"`
 	Permissions    []PermissionResponseDTO `json:"permissions"`
