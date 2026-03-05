@@ -42,17 +42,7 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 }
 
 func Migrate(db *gorm.DB) error {
-	return db.AutoMigrate(
-		&model.Permission{},
-		&model.Organization{},
-		&model.SystemRole{},
-		&model.Role{},
-		&model.SystemRolePermission{},
-		&model.RolePermission{},
-		&model.User{},
-		&model.UserOrganizationRole{},
-		&model.UserSystemRole{},
-	)
+	return db.AutoMigrate(model.AllModels()...)
 }
 
 func Close(db *gorm.DB) error {

@@ -8,8 +8,10 @@ import (
 )
 
 type LessonVideo struct {
-	gorm.Model
-	ID                  uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	ID                  uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	CreatedAt           time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt           time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	DeletedAt           gorm.DeletedAt `gorm:"index" json:"-"`
 	LessonID            uuid.UUID `gorm:"type:uuid;uniqueIndex;not null" json:"lesson_id"`
 	VideoURL            string    `gorm:"type:varchar(500);not null;column:video_url" json:"video_url"`
 	VideoHlsURL         *string   `gorm:"type:varchar(500);column:video_hls_url" json:"video_hls_url,omitempty"`
@@ -29,8 +31,10 @@ func (LessonVideo) TableName() string {
 }
 
 type LessonArticle struct {
-	gorm.Model
-	ID              uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	ID              uuid.UUID      `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	CreatedAt       time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt       time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
 	LessonID        uuid.UUID `gorm:"type:uuid;uniqueIndex;not null" json:"lesson_id"`
 	Content         string    `gorm:"type:text;not null" json:"content"`
 	ReadingTimeMins int       `gorm:"default:5;column:reading_time_minutes" json:"reading_time_minutes"`
