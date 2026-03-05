@@ -28,6 +28,15 @@ type Handlers struct {
 	ClassSchedule *handler.ClassScheduleHandler
 	Attendance    *handler.AttendanceHandler
 
+	// ===== Course Management =====
+	Category      *handler.CategoryHandler
+	Tag           *handler.TagHandler
+	CourseHandler *handler.CourseHandler
+	Section       *handler.SectionHandler
+	Lesson        *handler.LessonHandler
+	LessonContent *handler.LessonContentHandler
+	Enrollment    *handler.EnrollmentHandler
+
 	// ===== Video =====
 	VideoUpload *handler.VideoUploadHandler
 	HLS         *handler.HLSHandler
@@ -56,6 +65,15 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handler
 		Class:         handler.NewClassHandler(services.Class),
 		ClassSchedule: handler.NewClassScheduleHandler(services.ClassSchedule),
 		Attendance:    handler.NewAttendanceHandler(services.Attendance),
+
+		// ===== Course Management =====
+		Category:      handler.NewCategoryHandler(services.Category),
+		Tag:           handler.NewTagHandler(services.Tag),
+		CourseHandler: handler.NewCourseHandler(services.CourseService),
+		Section:       handler.NewSectionHandler(services.Section),
+		Lesson:        handler.NewLessonHandler(services.Lesson),
+		LessonContent: handler.NewLessonContentHandler(services.LessonContent),
+		Enrollment:    handler.NewEnrollmentHandler(services.Enrollment),
 
 		// ===== Video =====
 		VideoUpload: handler.NewVideoUploadHandler(services.VideoUpload),

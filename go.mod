@@ -61,6 +61,7 @@ require (
 
 require (
 	github.com/go-playground/validator/v10 v10.30.1
+	github.com/rabbitmq/amqp091-go v1.10.0
 	gorm.io/gorm v1.25.10
 )
 
@@ -68,7 +69,5 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
-	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
-	github.com/rabbitmq/amqp091-go v1.10.0 // indirect
 )

@@ -29,6 +29,15 @@ type Services struct {
 	ClassSchedule *service.ClassScheduleService
 	Attendance    *service.AttendanceService
 
+	// ===== Course Management =====
+	Category      *service.CategoryService
+	Tag           *service.TagService
+	CourseService *service.CourseService
+	Section       *service.SectionService
+	Lesson        *service.LessonService
+	LessonContent *service.LessonContentService
+	Enrollment    *service.EnrollmentService
+
 	// ===== Video =====
 	VideoUpload     *service.VideoUploadService
 	VideoProcessing *service.VideoProcessingService
@@ -116,6 +125,15 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		Class:         service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student),
 		ClassSchedule: service.NewClassScheduleService(repos.ClassSchedule, repos.Class),
 		Attendance:    service.NewAttendanceService(repos.Attendance),
+
+		// ===== Course Management =====
+		Category:      service.NewCategoryService(repos.Category),
+		Tag:           service.NewTagService(repos.Tag),
+		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag),
+		Section:       service.NewSectionService(repos.Section, repos.Course),
+		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, repos.Course),
+		LessonContent: service.NewLessonContentService(repos.LessonContent, repos.Lesson),
+		Enrollment:    service.NewEnrollmentService(repos.Enrollment, repos.Course, repos.Lesson),
 
 		// ===== Video =====
 		VideoUpload:     uploadSvc,

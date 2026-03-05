@@ -64,6 +64,15 @@ func New() (*App, error) {
 		handlers.ClassSchedule,
 		handlers.Attendance,
 
+		// ===== Course Management =====
+		handlers.Category,
+		handlers.Tag,
+		handlers.CourseHandler,
+		handlers.Section,
+		handlers.Lesson,
+		handlers.LessonContent,
+		handlers.Enrollment,
+
 		// ===== Video =====
 		handlers.VideoUpload,
 		handlers.HLS,

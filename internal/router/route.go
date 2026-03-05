@@ -24,6 +24,13 @@ func SetupAllRoutes(
 	classHandler *handler.ClassHandler,
 	classScheduleHandler *handler.ClassScheduleHandler,
 	attendanceHandler *handler.AttendanceHandler,
+	categoryHandler *handler.CategoryHandler,
+	tagHandler *handler.TagHandler,
+	courseHandler *handler.CourseHandler,
+	sectionHandler *handler.SectionHandler,
+	lessonHandler *handler.LessonHandler,
+	lessonContentHandler *handler.LessonContentHandler,
+	enrollmentHandler *handler.EnrollmentHandler,
 	videoHandler *handler.VideoUploadHandler,
 	hlsHandler *handler.HLSHandler,
 	redis *redis.Client,
@@ -50,6 +57,10 @@ func SetupAllRoutes(
 	SetupTeacherRoutes(api, teacherHandler)
 	SetupTeacherProfileRoutes(api, teacherProfileHandler)
 	SetupClassRoutes(api, classHandler, classScheduleHandler, attendanceHandler)
+	SetupCategoryRoutes(api, categoryHandler, tagHandler)
+	SetupCourseRoutes(api, courseHandler, sectionHandler, lessonHandler)
+	SetupLessonContentRoutes(api, lessonContentHandler)
+	SetupEnrollmentRoutes(api, cfg, enrollmentHandler, redis)
 	SetupVideoUploadRoutes(api, videoHandler, cfg, redis)
 	SetupHLSRoutes(api, hlsHandler)
 }
