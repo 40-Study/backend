@@ -1,6 +1,4 @@
-
-x-logging:
-  &default-logging
+x-logging: &default-logging
   logging:
     driver: json-file
     options:
@@ -23,7 +21,7 @@ services:
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-your-webhook-secret}
       - POLL_INTERVAL=${POLL_INTERVAL:-30}
     extra_hosts:
-      - "host.docker.internal:host-gateway"  # Để container gọi được localhost của host
+      - "host.docker.internal:host-gateway" # Để container gọi được localhost của host
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
@@ -31,7 +29,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    
+
   # Test service
   test:
     image: curlimages/curl:latest
@@ -55,30 +53,62 @@ services:
     image: judge0/judge0:latest
     volumes:
       - ./judge/judge0.conf:/judge0.conf:ro
+      - ./judge/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command: ["./scripts/server"]
     ports:
       - "2358:2358"
     privileged: true
-    <<: *default-logging
+    environment:
+      - CGO_ENABLED=0
+
+    mem_limit: 1g              # server không cần nhiều RAM
+    pids_limit: 2048
+
+    ulimits:
+      stack: 1048576           # 1MB stack thay vì 8MB mặc định
+      nproc: 65535
+      nofile:
+        soft: 65535
+        hard: 65535
+
     restart: always
     depends_on:
       - postgres
       - redis
     networks:
       - study_network
+
+
   judge_worker:
     image: judge0/judge0:latest
-    command: ["./scripts/workers"]
     volumes:
       - ./judge/judge0.conf:/judge0.conf:ro
+      - ./judge/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command: ["./scripts/workers"]
     privileged: true
-    <<: *default-logging
+
+    mem_limit: 3g              # phần RAM chính cho compile
+    pids_limit: 2048
+
+    environment:
+      - CGO_ENABLED=0
+      - GOMAXPROCS=2           # hạn chế Go spawn quá nhiều OS thread
+
+    ulimits:
+      stack: 1048576           # cực kỳ quan trọng để tránh pthread fail
+      nproc: 65535
+      nofile:
+        soft: 65535
+        hard: 65535
+
     restart: always
     depends_on:
       - judge_server
     networks:
       - study_network
-
-
+      
   rabbitmq:
     image: rabbitmq:3-management
     container_name: study_rabbitmq
@@ -87,7 +117,7 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     ports:
-      - "5672:5672"   # RabbitMQ main port
+      - "5672:5672" # RabbitMQ main port
       - "15672:15672" # Management UI
     networks:
       - study_network
@@ -101,7 +131,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    
+
   postgres:
     image: postgres:16-alpine
     container_name: study_postgres
@@ -165,7 +195,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     ports:
-      - "9000:9000"  # API Port
+      - "9000:9000" # API Port
       - "9090:9001"
     volumes:
       - minio_data:/data
@@ -204,8 +234,6 @@ services:
       "
     networks:
       - study_network
-    
-  
 
 networks:
   study_network:
