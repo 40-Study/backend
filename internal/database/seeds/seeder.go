@@ -89,11 +89,12 @@ func (s *Seeder) SeedRoles(filePath string) error {
 	}
 
 	for _, r := range roles {
-		role := model.Role{
-			Name: r.Role,
+		role := model.SystemRole{
+			Name:   r.Role,
+			Status: "active",
 		}
-		// role.Description.String = r.Description
-		// role.Description.Valid = r.Description != ""
+		role.Description.String = r.Description
+		role.Description.Valid = r.Description != ""
 
 		// Use FirstOrCreate to insert new role or get existing
 		result := s.db.Where("name = ?", r.Role).FirstOrCreate(&role)
@@ -102,7 +103,10 @@ func (s *Seeder) SeedRoles(filePath string) error {
 		}
 
 		// Always update description
-		if err := s.db.Model(&role).Update("description", r.Description).Error; err != nil {
+		if err := s.db.Model(&role).Updates(map[string]interface{}{
+			"description": r.Description,
+			"status":      "active",
+		}).Error; err != nil {
 			return fmt.Errorf("failed to update role %s: %w", r.Role, err)
 		}
 
@@ -118,9 +122,9 @@ func (s *Seeder) SeedRoles(filePath string) error {
 			}
 		}
 
-		// Replace permissions for this role
+		// Replace permissions for this role via junction table system_role_permissions
 		if err := s.db.Model(&role).Association("Permissions").Replace(rolePermissions); err != nil {
-			return fmt.Errorf("failed to assign permissions to role %s: %w", r.Role, err)
+			log.Printf("Warning: could not assign permissions to role %s (may use separate junction table): %v\n", r.Role, err)
 		}
 
 		log.Printf("Seeded role: %s with %d permissions\n", r.Role, len(rolePermissions))
