@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/gofiber/fiber/v2"
+	"study.com/v1/internal/database/seeds"
 	"study.com/v1/internal/router"
 )
 
@@ -24,6 +25,12 @@ func New() (*App, error) {
 	}
 
 	repos := InitRepositories(resources.DB)
+
+	// Seed system roles and permissions on startup (idempotent)
+	seeder := seeds.NewSeeder(resources.DB)
+	if err := seeder.SeedAll("./data"); err != nil {
+		log.Printf("Warning: seeder failed: %v", err)
+	}
 
 	services := InitServices(resources, repos)
 
