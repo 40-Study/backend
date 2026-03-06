@@ -237,6 +237,23 @@ services:
     networks:
       - study_network
 
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yml
+    volumes:
+      - ./livekit/livekit.yml:/etc/livekit.yml:ro
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - study_network
+
 networks:
   study_network:
     driver: bridge

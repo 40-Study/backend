@@ -1,0 +1,15 @@
+port: 7880
+
+rtc:
+  udp_port: 7882
+  tcp_port: 7881
+
+redis:
+  address: redis:6379
+  password: "$REDIS_PASSWORD"
+
+keys:
+  api_tttt_key: api_tttt_secret
+
+logging:
+  level: info
