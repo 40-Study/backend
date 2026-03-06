@@ -51,6 +51,7 @@ services:
 
   judge_server:
     image: judge0/judge0:latest
+    platform: linux/amd64
     volumes:
       - ./judge/judge0.conf:/judge0.conf:ro
       - ./judge/entrypoint.sh:/entrypoint.sh:ro
@@ -82,6 +83,7 @@ services:
 
   judge_worker:
     image: judge0/judge0:latest
+    platform: linux/amd64
     volumes:
       - ./judge/judge0.conf:/judge0.conf:ro
       - ./judge/entrypoint.sh:/entrypoint.sh:ro
