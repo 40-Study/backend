@@ -9,7 +9,7 @@ redis:
   password: "$REDIS_PASSWORD"
 
 keys:
-  api_tttt_key: api_tttt_secret
+  "$LIVE_KIT_API_KEY": "$LIVE_KIT_SECRET_KEY"
 
 logging:
   level: info
