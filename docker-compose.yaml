@@ -51,6 +51,7 @@ services:
 
   judge_server:
     image: judge0/judge0:latest
+    platform: linux/amd64
     volumes:
       - ./judge/judge0.conf:/judge0.conf:ro
       - ./judge/entrypoint.sh:/entrypoint.sh:ro
@@ -82,6 +83,7 @@ services:
 
   judge_worker:
     image: judge0/judge0:latest
+    platform: linux/amd64
     volumes:
       - ./judge/judge0.conf:/judge0.conf:ro
       - ./judge/entrypoint.sh:/entrypoint.sh:ro
@@ -242,12 +244,31 @@ services:
       - ./livekit/livekit.yml:/etc/livekit.yml:ro
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - LIVEKIT_NODE_IP=${LIVEKIT_NODE_IP}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
     ports:
       - "7880:7880"
       - "7881:7881"
       - "7882:7882/udp"
     depends_on:
       - redis
+    restart: unless-stopped
+    networks:
+      - study_network
+
+  livekit_egress:
+    image: livekit/egress:latest
+    privileged: true
+    volumes:
+      - ./livekit/egress.yaml:/etc/egress.yaml:ro
+    environment:
+      - EGRESS_CONFIG_FILE=/etc/egress.yaml
+
+    depends_on:
+      - livekit
+      - redis
+      - minio
     restart: unless-stopped
     networks:
       - study_network

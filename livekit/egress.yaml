@@ -1,0 +1,15 @@
+api_key: deef84774c703f4450ee95b92ab7d2fc
+api_secret: 30db7f6b4f63cad4586e2f410b28b8ef
+
+ws_url: ws://livekit:7880
+
+redis:
+  address: redis:6379
+  password: tttt2004
+s3:
+  access_key: txm
+  secret: 15092004
+  region: ap-southeast-1
+  bucket: recordings
+  endpoint: http://minio:9000
+  force_path_style: true

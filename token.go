@@ -8,11 +8,11 @@ import (
 
 func main() {
 
-	apiKey := "api_tttt_key"
-	apiSecret := "api_tttt_secret"
+	apiKey := os.Getenv("LIVEKIT_API_KEY")
+	apiSecret := os.Getenv("LIVEKIT_API_SECRET")
 
 	at := auth.NewAccessToken(apiKey, apiSecret)
-	at.SetIdentity("user1")
+	at.SetIdentity("user3")
 
 	at.AddGrant(&auth.VideoGrant{
 		RoomJoin: true,
