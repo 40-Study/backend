@@ -50,6 +50,11 @@ type Config struct {
 	RabbitMQPassword string `mapstructure:"RABBITMQ_PASSWORD"`
 	RabbitMQVHost    string `mapstructure:"RABBITMQ_VHOST"`
 
+	// LiveKit Configuration
+	LivekitHost      string `mapstructure:"LIVEKIT_HOST"`
+	LivekitAPIKey    string `mapstructure:"LIVEKIT_API_KEY"`
+	LivekitAPISecret string `mapstructure:"LIVEKIT_API_SECRET"`
+
 	// JWT Configuration
 	JWTSecret            string `mapstructure:"JWT_SECRET"`
 	JWTAccessExpiration  time.Duration

@@ -31,6 +31,9 @@ type Handlers struct {
 	// ===== Video =====
 	VideoUpload *handler.VideoUploadHandler
 	HLS         *handler.HLSHandler
+
+	// ===== LiveKit =====
+	Livekit *handler.LivekitHandler
 }
 
 // InitHandlers initializes all handlers
@@ -60,5 +63,8 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handler
 		// ===== Video =====
 		VideoUpload: handler.NewVideoUploadHandler(services.VideoUpload),
 		HLS:         handler.NewHLSHandler(minioClient),
+
+		// ===== LiveKit =====
+		Livekit: handler.NewLivekitHandler(services.Livekit),
 	}
 }
