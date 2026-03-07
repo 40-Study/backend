@@ -32,6 +32,9 @@ type Services struct {
 	// ===== Video =====
 	VideoUpload     *service.VideoUploadService
 	VideoProcessing *service.VideoProcessingService
+
+	// ===== LiveKit =====
+	Livekit *service.LivekitService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
@@ -120,5 +123,8 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		// ===== Video =====
 		VideoUpload:     uploadSvc,
 		VideoProcessing: videoProcessingSvc,
+
+		// ===== LiveKit =====
+		Livekit: service.NewLivekitService(resources.Config),
 	}
 }

@@ -26,6 +26,7 @@ func SetupAllRoutes(
 	attendanceHandler *handler.AttendanceHandler,
 	videoHandler *handler.VideoUploadHandler,
 	hlsHandler *handler.HLSHandler,
+	livekitHandler *handler.LivekitHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 ) {
@@ -52,4 +53,5 @@ func SetupAllRoutes(
 	SetupClassRoutes(api, classHandler, classScheduleHandler, attendanceHandler)
 	SetupVideoUploadRoutes(api, videoHandler, cfg, redis)
 	SetupHLSRoutes(api, hlsHandler)
+	SetupLiveRouter(api, cfg, livekitHandler, redis)
 }
