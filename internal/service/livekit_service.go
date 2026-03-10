@@ -36,7 +36,7 @@ func NewLivekitService(cfg *config.Config) *LivekitService {
 	return &LivekitService{
 		apiKey:    cfg.LivekitAPIKey,
 		apiSecret: cfg.LivekitAPISecret,
-		host:      cfg.LivekitHost,
+		host:      fmt.Sprintf("http://%s:%s", cfg.LivekitNodeIP, cfg.LivekitNodePort),
 	}
 }
 
@@ -123,8 +123,11 @@ func (s *LivekitService) CreateJoinToken(ctx context.Context, roomName string, r
 	if req.Name != "" {
 		at.SetName(req.Name)
 	}
+	if req.Name == "" {
+		at.SetName(req.Identity)
+	}
 	at.SetValidFor(24 * time.Hour)
-	at.AddGrant(grant)
+	at.SetVideoGrant(grant)
 	return at.ToJWT()
 }
 

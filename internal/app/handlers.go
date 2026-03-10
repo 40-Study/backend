@@ -5,7 +5,6 @@ import (
 	"study.com/v1/internal/storage"
 )
 
-// Handlers holds all handler instances
 type Handlers struct {
 	// ===== Auth & Role =====
 	Auth                 *handler.AuthHandler
@@ -34,9 +33,16 @@ type Handlers struct {
 
 	// ===== LiveKit =====
 	Livekit *handler.LivekitHandler
+
+	// ===== Livestream Learning Platform =====
+	Livestream *handler.LivestreamHandler
+	Assignment *handler.AssignmentHandler
+	Submission *handler.SubmissionHandler
+	Chat       *handler.ChatHandler
+	Whiteboard *handler.WhiteboardHandler
+	Analytics  *handler.AnalyticsHandler
 }
 
-// InitHandlers initializes all handlers
 func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handlers {
 	return &Handlers{
 		// ===== Auth & Role =====
@@ -66,5 +72,13 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handler
 
 		// ===== LiveKit =====
 		Livekit: handler.NewLivekitHandler(services.Livekit),
+
+		// ===== Livestream Learning Platform =====
+		Livestream: handler.NewLivestreamHandler(services.Livestream),
+		Assignment: handler.NewAssignmentHandler(services.Assignment, services.Livekit),
+		Submission: handler.NewSubmissionHandler(services.Submission),
+		Chat:       handler.NewChatHandler(services.Chat),
+		Whiteboard: handler.NewWhiteboardHandler(services.Whiteboard, services.Livekit),
+		Analytics:  handler.NewAnalyticsHandler(services.Analytics),
 	}
 }

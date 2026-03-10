@@ -299,6 +299,11 @@ func (s *AuthService) Login(
 		}, nil
 	}
 
+	// User không có system role nào
+	if len(systemRoleDtos) == 0 {
+		return nil, errors.New("user has no active system role assigned")
+	}
+
 	// User chỉ có 1 role → tự động chọn, kiểm tra org
 	selectedRole := systemRoleDtos[0]
 	return s.finishLoginWithOrgCheck(ctx, user, req.DeviceInfo, selectedRole, systemRoleDtos)

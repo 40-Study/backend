@@ -52,6 +52,11 @@ func Migrate(db *gorm.DB) error {
 		&model.User{},
 		&model.UserOrganizationRole{},
 		&model.UserSystemRole{},
+		// Livestream
+		&model.LivestreamSession{},
+		&model.Participant{},
+		&model.ChatMessage{},
+		&model.LivestreamAnalytics{},
 	)
 }
 
