@@ -77,6 +77,9 @@ func New() (*App, error) {
 		handlers.VideoUpload,
 		handlers.HLS,
 
+		// ===== LiveKit =====
+		handlers.Livekit,
+
 		resources.Redis,
 		resources.MinioClient,
 	)
