@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/service"
+	"study.com/v1/internal/utils"
 )
 
 type EnrollmentHandler struct {
@@ -139,6 +140,13 @@ func (h *EnrollmentHandler) UpdateLessonProgress(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid request body", "error": err.Error(),
+		})
+	}
+
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
 		})
 	}
 

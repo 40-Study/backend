@@ -1,0 +1,94 @@
+### Variables
+@baseUrl = http://localhost:3000/api
+@contentType = application/json
+
+### =====================
+### Health Check
+### =====================
+
+GET {{baseUrl}}/health
+
+### =====================
+### Categories (Public)
+### =====================
+
+### Get all categories
+GET {{baseUrl}}/categories
+
+### Get category by ID (replace with actual ID)
+GET {{baseUrl}}/categories/00000000-0000-0000-0000-000000000001
+
+### =====================
+### Categories (Auth Required) - Will fail without token
+### =====================
+
+### Create category (should return 401 without auth)
+POST {{baseUrl}}/categories
+Content-Type: {{contentType}}
+
+{
+    "name": "Test Category",
+    "description": "Test description"
+}
+
+### =====================
+### Tags (Public)
+### =====================
+
+### Get all tags
+GET {{baseUrl}}/tags
+
+### =====================
+### Courses (Public)
+### =====================
+
+### Get all courses
+GET {{baseUrl}}/courses
+
+### Get all courses with filters
+GET {{baseUrl}}/courses?page=1&page_size=10&level=beginner
+
+### Get course by ID (replace with actual ID)
+GET {{baseUrl}}/courses/00000000-0000-0000-0000-000000000001
+
+### =====================
+### Courses (Auth Required)
+### =====================
+
+### Create course (should return 401 without auth)
+POST {{baseUrl}}/courses
+Content-Type: {{contentType}}
+
+{
+    "title": "Test Course",
+    "description": "Test course description",
+    "level": "beginner"
+}
+
+### =====================
+### Validation Test - Should return validation errors
+### =====================
+
+### Create category with empty name (validation test)
+# Need auth token for this to test validation
+# POST {{baseUrl}}/categories
+# Content-Type: {{contentType}}
+# Authorization: Bearer YOUR_TOKEN
+#
+# {
+#     "name": ""
+# }
+
+### =====================
+### URL Validation Test (Lesson Content)
+### =====================
+
+### Create video with invalid URL (should fail validation)
+# POST {{baseUrl}}/lessons/00000000-0000-0000-0000-000000000001/video
+# Content-Type: {{contentType}}
+# Authorization: Bearer YOUR_TOKEN
+#
+# {
+#     "video_url": "javascript:alert('xss')",
+#     "duration_seconds": 100
+# }

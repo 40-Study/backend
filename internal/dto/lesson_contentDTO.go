@@ -5,19 +5,19 @@ import "github.com/google/uuid"
 // LessonVideo DTOs
 
 type CreateLessonVideoDTO struct {
-	VideoURL        string  `json:"video_url" validate:"required"`
-	VideoHlsURL     *string `json:"video_hls_url"`
-	ThumbnailURL    *string `json:"thumbnail_url"`
+	VideoURL        string  `json:"video_url" validate:"required,safe_url"`
+	VideoHlsURL     *string `json:"video_hls_url" validate:"omitempty,safe_url"`
+	ThumbnailURL    *string `json:"thumbnail_url" validate:"omitempty,safe_url"`
 	DurationSeconds int     `json:"duration_seconds" validate:"required,min=1"`
 	Resolution      *string `json:"resolution"`
 	FileSizeBytes   *int64  `json:"file_size_bytes"`
 }
 
 type UpdateLessonVideoDTO struct {
-	VideoURL        *string `json:"video_url"`
-	VideoHlsURL     *string `json:"video_hls_url"`
-	ThumbnailURL    *string `json:"thumbnail_url"`
-	DurationSeconds *int    `json:"duration_seconds"`
+	VideoURL        *string `json:"video_url" validate:"omitempty,safe_url"`
+	VideoHlsURL     *string `json:"video_hls_url" validate:"omitempty,safe_url"`
+	ThumbnailURL    *string `json:"thumbnail_url" validate:"omitempty,safe_url"`
+	DurationSeconds *int    `json:"duration_seconds" validate:"omitempty,min=1"`
 	Resolution      *string `json:"resolution"`
 	FileSizeBytes   *int64  `json:"file_size_bytes"`
 }
@@ -60,8 +60,8 @@ type LessonArticleResponseDTO struct {
 // LessonAttachment DTOs
 
 type CreateLessonAttachmentDTO struct {
-	FileName      string  `json:"file_name" validate:"required"`
-	FileURL       string  `json:"file_url" validate:"required"`
+	FileName      string  `json:"file_name" validate:"required,min=1,max=255"`
+	FileURL       string  `json:"file_url" validate:"required,safe_url"`
 	FileType      *string `json:"file_type"`
 	FileSizeBytes *int64  `json:"file_size_bytes"`
 }
