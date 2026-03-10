@@ -51,7 +51,8 @@ type Config struct {
 	RabbitMQVHost    string `mapstructure:"RABBITMQ_VHOST"`
 
 	// LiveKit Configuration
-	LivekitHost      string `mapstructure:"LIVEKIT_HOST"`
+	LivekitNodeIP    string `mapstructure:"LIVEKIT_NODE_IP"`
+	LivekitNodePort  string `mapstructure:"LIVEKIT_NODE_PORT"`
 	LivekitAPIKey    string `mapstructure:"LIVEKIT_API_KEY"`
 	LivekitAPISecret string `mapstructure:"LIVEKIT_API_SECRET"`
 

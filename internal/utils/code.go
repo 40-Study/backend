@@ -8,13 +8,6 @@ import (
 )
 
 func GenerateUniqueCode(length int) string {
-	if length < 10 {
-		length = 15
-	}
-	if length > 30 {
-		length = 20
-	}
-
 	alphabet := "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	id, err := gonanoid.Generate(alphabet, length)
 	if err != nil {

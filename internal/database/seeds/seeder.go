@@ -114,17 +114,38 @@ func (s *Seeder) SeedRoles(filePath string) error {
 		s.db.Where("name = ?", r.Role).First(&role)
 
 		var rolePermissions []model.Permission
-		for _, permKey := range r.Permissions {
-			if perm, exists := permissionMap[permKey]; exists {
+		// "*" means all permissions
+		if len(r.Permissions) == 1 && r.Permissions[0] == "*" {
+			for _, perm := range permissionMap {
 				rolePermissions = append(rolePermissions, perm)
-			} else {
-				log.Printf("Warning: Permission %s not found for role %s\n", permKey, r.Role)
+			}
+		} else {
+			for _, permKey := range r.Permissions {
+				if perm, exists := permissionMap[permKey]; exists {
+					rolePermissions = append(rolePermissions, perm)
+				} else {
+					log.Printf("Warning: Permission %s not found for role %s\n", permKey, r.Role)
+				}
 			}
 		}
 
 		// Replace permissions for this role via junction table system_role_permissions
-		if err := s.db.Model(&role).Association("Permissions").Replace(rolePermissions); err != nil {
-			log.Printf("Warning: could not assign permissions to role %s (may use separate junction table): %v\n", r.Role, err)
+		if len(rolePermissions) > 0 {
+			// Delete existing permissions for this role
+			if err := s.db.Where("system_role_id = ?", role.ID).Delete(&model.SystemRolePermission{}).Error; err != nil {
+				log.Printf("Warning: could not clear permissions for role %s: %v\n", r.Role, err)
+			}
+			// Insert new permissions
+			for _, perm := range rolePermissions {
+				rp := model.SystemRolePermission{
+					SystemRoleID: role.ID,
+					PermissionID: perm.ID,
+				}
+				if err := s.db.Where("system_role_id = ? AND permission_id = ?", role.ID, perm.ID).
+					FirstOrCreate(&rp).Error; err != nil {
+					log.Printf("Warning: could not assign permission %s to role %s: %v\n", perm.Name, r.Role, err)
+				}
+			}
 		}
 
 		log.Printf("Seeded role: %s with %d permissions\n", r.Role, len(rolePermissions))

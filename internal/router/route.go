@@ -34,6 +34,12 @@ func SetupAllRoutes(
 	videoHandler *handler.VideoUploadHandler,
 	hlsHandler *handler.HLSHandler,
 	livekitHandler *handler.LivekitHandler,
+	livestreamHandler *handler.LivestreamHandler,
+	assignmentHandler *handler.AssignmentHandler,
+	submissionHandler *handler.SubmissionHandler,
+	chatHandler *handler.ChatHandler,
+	whiteboardHandler *handler.WhiteboardHandler,
+	analyticsHandler *handler.AnalyticsHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 ) {
@@ -65,4 +71,12 @@ func SetupAllRoutes(
 	SetupVideoUploadRoutes(api, videoHandler, cfg, redis)
 	SetupHLSRoutes(api, hlsHandler)
 	SetupLiveRouter(api, cfg, livekitHandler, redis)
+
+	// New livestream learning platform routes
+	SetupLivestreamRoutes(api, livestreamHandler)
+	SetupAssignmentRoutes(api, assignmentHandler)
+	SetupSubmissionRoutes(api, submissionHandler)
+	SetupChatRoutes(api, chatHandler)
+	SetupWhiteboardRoutes(api, whiteboardHandler)
+	SetupAnalyticsRoutes(api, analyticsHandler)
 }

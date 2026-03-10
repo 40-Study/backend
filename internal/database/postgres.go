@@ -42,7 +42,22 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 }
 
 func Migrate(db *gorm.DB) error {
-	return db.AutoMigrate(model.AllModels()...)
+	return db.AutoMigrate(
+		&model.Permission{},
+		&model.Organization{},
+		&model.SystemRole{},
+		&model.Role{},
+		&model.SystemRolePermission{},
+		&model.RolePermission{},
+		&model.User{},
+		&model.UserOrganizationRole{},
+		&model.UserSystemRole{},
+		// Livestream
+		&model.LivestreamSession{},
+		&model.Participant{},
+		&model.ChatMessage{},
+		&model.LivestreamAnalytics{},
+	)
 }
 
 func Close(db *gorm.DB) error {

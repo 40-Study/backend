@@ -44,6 +44,14 @@ type Services struct {
 
 	// ===== LiveKit =====
 	Livekit *service.LivekitService
+
+	// ===== Livestream Learning Platform =====
+	Livestream *service.LivestreamService
+	Assignment *service.AssignmentService
+	Submission *service.SubmissionService
+	Chat       *service.ChatService
+	Whiteboard *service.WhiteboardService
+	Analytics  *service.AnalyticsService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
@@ -79,6 +87,50 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			log.Printf("Warning: Failed to create video processing service: %v", err)
 		}
 	}
+
+	// ================= Initialize LiveKit Service =================
+	livekitSvc := service.NewLivekitService(resources.Config)
+
+	// ================= Initialize Livestream Learning Platform Services =================
+	livestreamSvc := service.NewLivestreamService(
+		repos.Livestream,
+		repos.Participant,
+		repos.Analytics,
+		resources.Redis,
+		livekitSvc,
+		resources.Config,
+	)
+
+	assignmentSvc := service.NewAssignmentService(
+		repos.Assignment,
+		repos.TestCase,
+	)
+
+	submissionSvc := service.NewSubmissionService(
+		repos.Submission,
+		assignmentSvc,
+		repos.TestCase,
+		resources.Redis,
+		resources.Config,
+	)
+
+	chatSvc := service.NewChatService(
+		repos.ChatMessage,
+		repos.Analytics,
+	)
+
+	whiteboardSvc := service.NewWhiteboardService(
+		repos.Whiteboard,
+		repos.Livestream,
+		resources.Redis,
+	)
+
+	analyticsSvc := service.NewAnalyticsService(
+		repos.Analytics,
+		repos.Participant,
+		repos.Submission,
+		repos.Assignment,
+	)
 
 	// ================= Return Services =================
 	return &Services{
@@ -143,6 +195,14 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		VideoProcessing: videoProcessingSvc,
 
 		// ===== LiveKit =====
-		Livekit: service.NewLivekitService(resources.Config),
+		Livekit: livekitSvc,
+
+		// ===== Livestream Learning Platform =====
+		Livestream: livestreamSvc,
+		Assignment: assignmentSvc,
+		Submission: submissionSvc,
+		Chat:       chatSvc,
+		Whiteboard: whiteboardSvc,
+		Analytics:  analyticsSvc,
 	}
 }

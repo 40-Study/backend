@@ -5,11 +5,11 @@ import (
 	"log"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"study.com/v1/internal/database/seeds"
 	"study.com/v1/internal/router"
 )
 
-// App is the main application structure
 type App struct {
 	Resources *Resources
 	Repos     *Repositories
@@ -26,18 +26,22 @@ func New() (*App, error) {
 
 	repos := InitRepositories(resources.DB)
 
-	// Seed system roles and permissions on startup (idempotent)
 	seeder := seeds.NewSeeder(resources.DB)
 	if err := seeder.SeedAll("./data"); err != nil {
 		log.Printf("Warning: seeder failed: %v", err)
 	}
 
 	services := InitServices(resources, repos)
-
-	// ⚠ dùng signature mới có MinioWrapper
 	handlers := InitHandlers(services, resources.MinioWrapper)
 
 	fiberApp := fiber.New()
+
+	fiberApp.Use(cors.New(cors.Config{
+		AllowOrigins:     "http://localhost:3000, http://localhost:3001",
+		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+		AllowCredentials: true,
+	}))
 
 	router.SetupAllRoutes(
 		fiberApp,
@@ -79,6 +83,14 @@ func New() (*App, error) {
 
 		// ===== LiveKit =====
 		handlers.Livekit,
+
+		// ===== Livestream Learning Platform =====
+		handlers.Livestream,
+		handlers.Assignment,
+		handlers.Submission,
+		handlers.Chat,
+		handlers.Whiteboard,
+		handlers.Analytics,
 
 		resources.Redis,
 		resources.MinioClient,
