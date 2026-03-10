@@ -33,6 +33,16 @@ type Repositories struct {
 
 	// ===== Video =====
 	VideoUpload *repository.VideoUploadRepository
+
+	// ===== Livestream Learning Platform =====
+	Livestream  *repository.LivestreamRepository
+	Participant *repository.ParticipantRepository
+	Assignment  *repository.AssignmentRepository
+	TestCase    *repository.TestCaseRepository
+	Submission  *repository.SubmissionRepository
+	ChatMessage *repository.ChatMessageRepository
+	Whiteboard  *repository.WhiteboardRepository
+	Analytics   *repository.AnalyticsRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -62,7 +72,15 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		Course:  repository.NewCourseRepository(db),
 		Student: repository.NewStudentRepository(db),
 
-		// ===== Video =====
-		VideoUpload: repository.NewVideoUploadRepository(db),
+		// ===== Livestream Learning Platform =====
+		Livestream: repository.NewLivestreamRepository(db),
+		Participant: repository.NewParticipantRepository(db),
+		Assignment: repository.NewAssignmentRepository(db),
+		TestCase: repository.NewTestCaseRepository(db),
+		Submission: repository.NewSubmissionRepository(db),
+		ChatMessage: repository.NewChatMessageRepository(db),
+		Whiteboard: repository.NewWhiteboardRepository(db),
+		Analytics: repository.NewAnalyticsRepository(db),
 	}
+
 }

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"os"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -224,12 +225,13 @@ func (h *AuthHandler) SelectOrg(c *fiber.Ctx) error {
 }
 
 func (h *AuthHandler) setAuthCookies(c *fiber.Ctx, accessToken, refreshToken string) {
+	secure := os.Getenv("ENVIRONMENT") == "production"
 	c.Cookie(&fiber.Cookie{
 		Name:     "accessToken",
 		Value:    accessToken,
 		Expires:  time.Now().Add(15 * time.Minute),
 		HTTPOnly: true,
-		Secure:   true,
+		Secure:   secure,
 		SameSite: "Lax",
 	})
 	c.Cookie(&fiber.Cookie{
@@ -237,7 +239,7 @@ func (h *AuthHandler) setAuthCookies(c *fiber.Ctx, accessToken, refreshToken str
 		Value:    refreshToken,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HTTPOnly: true,
-		Secure:   true,
+		Secure:   secure,
 		SameSite: "Lax",
 	})
 }
@@ -374,7 +376,7 @@ func (h *AuthHandler) LogoutOneDevice(c *fiber.Ctx) error {
 			"error":   err.Error(),
 		})
 	}
-	
+
 	// Clear cookies
 	c.Cookie(&fiber.Cookie{
 		Name:     "accessToken",
@@ -382,7 +384,7 @@ func (h *AuthHandler) LogoutOneDevice(c *fiber.Ctx) error {
 		Expires:  time.Now().Add(-1 * time.Hour),
 		HTTPOnly: true,
 		// Secure:   true, // lên https
-		SameSite: "Lax", // same site là khi user đăng nhập từ một trình duyệt, thì khi user 
+		SameSite: "Lax", // same site là khi user đăng nhập từ một trình duyệt, thì khi user
 		// đăng nhập từ trình duyệt khác, thì cookie sẽ không được gửi đi
 	})
 	c.Cookie(&fiber.Cookie{
@@ -405,14 +407,14 @@ func (h *AuthHandler) LogoutAll(c *fiber.Ctx) error {
 			"message": "Empty userId",
 		})
 	}
-	
+
 	uid, ok := user_id.(uuid.UUID)
 	if !ok || uid == uuid.Nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid userId",
 		})
 	}
-	
+
 	if err := h.authService.LogoutAllDevice(c.Context(), uid); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Logout all devices failed",
