@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"net/url"
 	"strings"
 
 	"github.com/go-playground/validator/v10"
@@ -10,6 +11,35 @@ var validate *validator.Validate
 
 func init() {
 	validate = validator.New()
+
+	// Register custom URL validation
+	validate.RegisterValidation("safe_url", validateSafeURL)
+}
+
+// validateSafeURL validates that a URL is safe (http/https only, no javascript/data URIs)
+func validateSafeURL(fl validator.FieldLevel) bool {
+	urlStr := fl.Field().String()
+	if urlStr == "" {
+		return true // Empty is valid, use "required" tag for mandatory
+	}
+
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return false
+	}
+
+	// Only allow http and https schemes
+	scheme := strings.ToLower(parsedURL.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return false
+	}
+
+	// Must have a host
+	if parsedURL.Host == "" {
+		return false
+	}
+
+	return true
 }
 
 // ValidationError represents a single validation error
@@ -70,6 +100,10 @@ func getErrorMessage(err validator.FieldError) string {
 		return field + " must be different from " + toSnakeCase(err.Param())
 	case "containsany":
 		return field + " must contain at least one special character"
+	case "safe_url":
+		return field + " must be a valid URL (http or https)"
+	case "url":
+		return field + " must be a valid URL"
 	default:
 		return field + " is invalid"
 	}

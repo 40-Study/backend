@@ -31,6 +31,14 @@ type Repositories struct {
 	Course  *repository.CourseRepository
 	Student *repository.StudentRepository
 
+	// ===== Course Management =====
+	Category      *repository.CategoryRepository
+	Tag           *repository.TagRepository
+	Section       *repository.SectionRepository
+	Lesson        *repository.LessonRepository
+	LessonContent *repository.LessonContentRepository
+	Enrollment    *repository.EnrollmentRepository
+
 	// ===== Video =====
 	VideoUpload *repository.VideoUploadRepository
 
@@ -72,6 +80,16 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		Course:  repository.NewCourseRepository(db),
 		Student: repository.NewStudentRepository(db),
 
+		// ===== Course Management =====
+		Category:      repository.NewCategoryRepository(db),
+		Tag:           repository.NewTagRepository(db),
+		Section:       repository.NewSectionRepository(db),
+		Lesson:        repository.NewLessonRepository(db),
+		LessonContent: repository.NewLessonContentRepository(db),
+		Enrollment:    repository.NewEnrollmentRepository(db),
+
+		// ===== Video =====
+		VideoUpload: repository.NewVideoUploadRepository(db),
 		// ===== Livestream Learning Platform =====
 		Livestream: repository.NewLivestreamRepository(db),
 		Participant: repository.NewParticipantRepository(db),
