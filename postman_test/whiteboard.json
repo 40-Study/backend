@@ -1,0 +1,48 @@
+{
+  "info": {
+    "name": "Whiteboard",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "session_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Get Snapshot",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/whiteboard/{{session_id}}/snapshot"
+      }
+    },
+    {
+      "name": "Save Snapshot",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/whiteboard/{{session_id}}/snapshot",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"snapshot_data\": \"{\\\"objects\\\":[]}\",\n  \"version\": 1\n}"
+        }
+      }
+    },
+    {
+      "name": "Broadcast Event",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/whiteboard/{{session_id}}/event",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"draw\",\n  \"action\": \"add\",\n  \"payload\": \"{\\\"tool\\\":\\\"pen\\\",\\\"points\\\":[]}\"\n}"
+        }
+      }
+    }
+  ]
+}

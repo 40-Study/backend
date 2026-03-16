@@ -33,5 +33,4 @@ type DeleteChatMessageDTO struct {
 
 type PinChatMessageDTO struct {
 	MessageID string `json:"message_id" validate:"required,uuid"`
-	IsPinned  bool   `json:"is_pinned"`
 }

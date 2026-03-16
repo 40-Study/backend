@@ -1,0 +1,67 @@
+{
+  "info": {
+    "name": "User Organization Roles",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "user_id", "value": "" },
+    { "key": "org_role_id", "value": "" },
+    { "key": "organization_id", "value": "" },
+    { "key": "role_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Get User Org Roles",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/users/{{user_id}}/org-roles"
+      }
+    },
+    {
+      "name": "Assign Org Roles To User",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/users/{{user_id}}/org-roles",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"role_ids\": [\"<role_uuid_1>\"],\n  \"organization_id\": \"<org_uuid>\",\n  \"notes\": \"Assigned via Postman\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Revoke Org Role From User",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/users/{{user_id}}/org-roles/{{org_role_id}}"
+      }
+    },
+    {
+      "name": "Get Users With Org Role (Simple)",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/org-roles/{{role_id}}/users"
+      }
+    },
+    {
+      "name": "Get Organization Members",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/organizations/{{organization_id}}/members"
+      }
+    },
+    {
+      "name": "Get Users With Org Role In Organization",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/organizations/{{organization_id}}/roles/{{role_id}}/users"
+      }
+    }
+  ]
+}

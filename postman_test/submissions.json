@@ -1,0 +1,83 @@
+{
+  "info": {
+    "name": "Submissions",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "assignment_id", "value": "" },
+    { "key": "submission_id", "value": "" },
+    { "key": "user_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Submit Code",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/submissions",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"assignment_id\": \"{{assignment_id}}\",\n  \"user_id\": \"<user_uuid>\",\n  \"language\": \"python\",\n  \"code\": \"def two_sum(nums, target):\\n    lookup = {}\\n    for i, n in enumerate(nums):\\n        if target - n in lookup:\\n            return [lookup[target - n], i]\\n        lookup[n] = i\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Run Code (against test cases)",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/submissions/run",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"assignment_id\": \"{{assignment_id}}\",\n  \"language\": \"python\",\n  \"code\": \"def two_sum(nums, target):\\n    lookup = {}\\n    for i, n in enumerate(nums):\\n        if target - n in lookup:\\n            return [lookup[target - n], i]\\n        lookup[n] = i\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Run Custom Code (custom input)",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/submissions/run-custom",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"assignment_id\": \"{{assignment_id}}\",\n  \"language\": \"python\",\n  \"code\": \"n = int(input())\\nprint(n * 2)\",\n  \"custom_input\": \"5\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Submission By ID",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/submissions/{{submission_id}}"
+      }
+    },
+    {
+      "name": "Get Submissions By Assignment",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/submissions/assignment/{{assignment_id}}"
+      }
+    },
+    {
+      "name": "Get My Submissions",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/submissions/my/{{assignment_id}}"
+      }
+    },
+    {
+      "name": "Get Submissions By User",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/submissions/user/{{user_id}}"
+      }
+    }
+  ]
+}

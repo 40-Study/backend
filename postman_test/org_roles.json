@@ -1,0 +1,112 @@
+{
+  "info": {
+    "name": "Org Roles",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "role_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Create Role",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/org-roles",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Manager\",\n  \"organization_id\": \"<org_uuid>\",\n  \"description\": \"Manager role\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get All Roles",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/org-roles"
+      }
+    },
+    {
+      "name": "Get Role",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/org-roles/{{role_id}}"
+      }
+    },
+    {
+      "name": "Update Role",
+      "request": {
+        "method": "PUT",
+        "url": "{{base_url}}/org-roles/{{role_id}}",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Updated Role Name\",\n  \"description\": \"Updated description\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete Role",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/org-roles/{{role_id}}"
+      }
+    },
+    {
+      "name": "Restore Role",
+      "request": {
+        "method": "PATCH",
+        "url": "{{base_url}}/org-roles/{{role_id}}/restore"
+      }
+    },
+    {
+      "name": "Get Role Permissions",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/org-roles/{{role_id}}/permissions"
+      }
+    },
+    {
+      "name": "Add Permissions To Role",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/org-roles/{{role_id}}/permissions",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"permission_ids\": [\"<permission_uuid_1>\", \"<permission_uuid_2>\"]\n}"
+        }
+      }
+    },
+    {
+      "name": "Set Role Permissions (replace all)",
+      "request": {
+        "method": "PUT",
+        "url": "{{base_url}}/org-roles/{{role_id}}/permissions",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"permission_ids\": [\"<permission_uuid_1>\"]\n}"
+        }
+      }
+    },
+    {
+      "name": "Remove Permissions From Role",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/org-roles/{{role_id}}/permissions",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"permission_ids\": [\"<permission_uuid_1>\"]\n}"
+        }
+      }
+    }
+  ]
+}

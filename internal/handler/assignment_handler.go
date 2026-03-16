@@ -16,7 +16,10 @@ type AssignmentHandlerInterface interface {
 	Publish(c *fiber.Ctx) error
 	Unpublish(c *fiber.Ctx) error
 	AddTestCase(c *fiber.Ctx) error
+	DeleteTestCase(c *fiber.Ctx) error
+	ImportTestCases(c *fiber.Ctx) error
 	GetTestCases(c *fiber.Ctx) error
+	GetSandbox(c *fiber.Ctx) error
 }
 
 type AssignmentHandler struct {
@@ -163,6 +166,42 @@ func (h *AssignmentHandler) AddTestCase(c *fiber.Ctx) error {
 	})
 }
 
+func (h *AssignmentHandler) DeleteTestCase(c *fiber.Ctx) error {
+	tcID, err := uuid.Parse(c.Params("tcId"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid test case id"})
+	}
+
+	if err := h.svc.DeleteTestCase(c.Context(), tcID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"message": "Test case deleted"})
+}
+
+func (h *AssignmentHandler) ImportTestCases(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+	}
+
+	var req dto.ImportTestCasesDTO
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	testCases, err := h.svc.ImportTestCases(c.Context(), id, req)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"message": "Test cases imported",
+		"count":   len(testCases),
+		"data":    testCases,
+	})
+}
+
 func (h *AssignmentHandler) GetTestCases(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
@@ -177,4 +216,23 @@ func (h *AssignmentHandler) GetTestCases(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"data": testCases})
+}
+
+func (h *AssignmentHandler) GetSandbox(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+	}
+
+	userID, err := uuid.Parse(c.Query("user_id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "user_id is required"})
+	}
+
+	result, err := h.svc.GetSandbox(c.Context(), id, userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(result)
 }

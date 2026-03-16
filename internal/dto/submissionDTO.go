@@ -5,6 +5,7 @@ import "github.com/google/uuid"
 type CreateSubmissionDTO struct {
 	AssignmentID string `json:"assignment_id" validate:"required,uuid"`
 	UserID       string `json:"user_id" validate:"required,uuid"`
+	Language     string `json:"language" validate:"required"`
 	Code         string `json:"code" validate:"required"`
 }
 
@@ -55,6 +56,7 @@ type Judge0StatusDTO struct {
 
 type RunCodeDTO struct {
 	AssignmentID string `json:"assignment_id" validate:"required,uuid"`
+	Language     string `json:"language" validate:"required"`
 	Code         string `json:"code" validate:"required"`
 }
 
@@ -64,4 +66,11 @@ type RunCodeResponseDTO struct {
 	Verdict  string `json:"verdict"`
 	ExecTime int    `json:"exec_time"`
 	MemUsed  int    `json:"mem_used"`
+}
+
+type RunCustomCodeDTO struct {
+	AssignmentID string `json:"assignment_id" validate:"required,uuid"`
+	Language     string `json:"language" validate:"required"`
+	Code         string `json:"code" validate:"required"`
+	CustomInput  string `json:"custom_input" validate:"required"`
 }

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 type AssignmentDifficulty string
@@ -20,7 +21,7 @@ type Assignment struct {
 	Title       string               `gorm:"type:varchar(255);not null" json:"title"`
 	Description string               `gorm:"type:text;not null" json:"description"`
 	Difficulty  AssignmentDifficulty `gorm:"type:varchar(20);default:'medium'" json:"difficulty"`
-	Language    string               `gorm:"type:varchar(50);not null" json:"language"`
+	Language    pq.StringArray       `gorm:"type:text[];not null" json:"language"`
 	StarterCode string               `gorm:"type:text" json:"starter_code"`
 	TimeLimit   int                  `gorm:"default:2" json:"time_limit"`
 	MemoryLimit int                  `gorm:"default:256" json:"memory_limit"`
@@ -71,6 +72,7 @@ type Submission struct {
 	BaseModel
 	AssignmentID    uuid.UUID         `gorm:"type:uuid;not null;index" json:"assignment_id"`
 	UserID          uuid.UUID         `gorm:"type:uuid;not null;index" json:"user_id"`
+	Language        string            `gorm:"type:varchar(50);not null" json:"language"`
 	Code            string            `gorm:"type:text;not null" json:"code"`
 	Verdict         SubmissionVerdict `gorm:"type:varchar(30);default:'pending'" json:"verdict"`
 	ExecutionTime   int               `gorm:"default:0" json:"execution_time"`

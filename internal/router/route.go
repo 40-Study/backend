@@ -33,7 +33,6 @@ func SetupAllRoutes(
 	enrollmentHandler *handler.EnrollmentHandler,
 	videoHandler *handler.VideoUploadHandler,
 	hlsHandler *handler.HLSHandler,
-	livekitHandler *handler.LivekitHandler,
 	livestreamHandler *handler.LivestreamHandler,
 	assignmentHandler *handler.AssignmentHandler,
 	submissionHandler *handler.SubmissionHandler,
@@ -70,8 +69,6 @@ func SetupAllRoutes(
 	SetupEnrollmentRoutes(api, cfg, enrollmentHandler, redis)
 	SetupVideoUploadRoutes(api, videoHandler, cfg, redis)
 	SetupHLSRoutes(api, hlsHandler)
-	SetupLiveRouter(api, cfg, livekitHandler, redis)
-
 	// New livestream learning platform routes
 	SetupLivestreamRoutes(api, livestreamHandler)
 	SetupAssignmentRoutes(api, assignmentHandler)

@@ -1,0 +1,41 @@
+{
+  "info": {
+    "name": "HLS Streaming",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "upload_id", "value": "" },
+    { "key": "quality", "value": "v0" }
+  ],
+  "item": [
+    {
+      "name": "Get Video Info (public)",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/hls/{{upload_id}}/info"
+      }
+    },
+    {
+      "name": "Get Master Playlist (public)",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/hls/{{upload_id}}/master.m3u8"
+      }
+    },
+    {
+      "name": "Get Quality Playlist (public)",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/hls/{{upload_id}}/{{quality}}/index.m3u8"
+      }
+    },
+    {
+      "name": "Get Segment (public)",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/hls/{{upload_id}}/{{quality}}/seg_00001.ts"
+      }
+    }
+  ]
+}

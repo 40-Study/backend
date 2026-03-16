@@ -1,0 +1,112 @@
+{
+  "info": {
+    "name": "System Roles",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "system_role_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Create System Role",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/system-roles",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Admin\",\n  \"description\": \"System administrator\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get All System Roles",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/system-roles"
+      }
+    },
+    {
+      "name": "Get System Role",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/system-roles/{{system_role_id}}"
+      }
+    },
+    {
+      "name": "Update System Role",
+      "request": {
+        "method": "PUT",
+        "url": "{{base_url}}/system-roles/{{system_role_id}}",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Super Admin\",\n  \"description\": \"Updated description\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete System Role",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/system-roles/{{system_role_id}}"
+      }
+    },
+    {
+      "name": "Restore System Role",
+      "request": {
+        "method": "PATCH",
+        "url": "{{base_url}}/system-roles/{{system_role_id}}/restore"
+      }
+    },
+    {
+      "name": "Get System Role Permissions",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/system-roles/{{system_role_id}}/permissions"
+      }
+    },
+    {
+      "name": "Add Permissions To System Role",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/system-roles/{{system_role_id}}/permissions",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"permission_ids\": [\"<permission_uuid_1>\", \"<permission_uuid_2>\"]\n}"
+        }
+      }
+    },
+    {
+      "name": "Set System Role Permissions",
+      "request": {
+        "method": "PUT",
+        "url": "{{base_url}}/system-roles/{{system_role_id}}/permissions",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"permission_ids\": [\"<permission_uuid_1>\"]\n}"
+        }
+      }
+    },
+    {
+      "name": "Remove Permissions From System Role",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/system-roles/{{system_role_id}}/permissions",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"permission_ids\": [\"<permission_uuid_1>\"]\n}"
+        }
+      }
+    }
+  ]
+}

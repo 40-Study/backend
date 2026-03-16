@@ -28,7 +28,6 @@ func NewLivekitHandler(liveService service.LivekitServiceInterface) *LivekitHand
 	return &LivekitHandler{liveService: liveService}
 }
 
-// CreateRoom godoc
 // POST /api/live/rooms
 func (h *LivekitHandler) CreateRoom(c *fiber.Ctx) error {
 	var req dto.CreateRoomDTO
@@ -45,7 +44,6 @@ func (h *LivekitHandler) CreateRoom(c *fiber.Ctx) error {
 	})
 }
 
-// ListRooms godoc
 // GET /api/live/rooms
 func (h *LivekitHandler) ListRooms(c *fiber.Ctx) error {
 	rooms, err := h.liveService.ListRooms(c.Context())
@@ -57,7 +55,6 @@ func (h *LivekitHandler) ListRooms(c *fiber.Ctx) error {
 	})
 }
 
-// GetRoom godoc
 // GET /api/live/rooms/:roomName
 func (h *LivekitHandler) GetRoom(c *fiber.Ctx) error {
 	roomName := c.Params("roomName")

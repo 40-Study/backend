@@ -1,0 +1,38 @@
+{
+  "info": {
+    "name": "Teachers",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "teacher_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Get All Teachers",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/teachers"
+      }
+    },
+    {
+      "name": "Get Teacher",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/teachers/{{teacher_id}}"
+      }
+    },
+    {
+      "name": "Delete Teacher",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/teachers/{{teacher_id}}"
+      }
+    }
+  ]
+}

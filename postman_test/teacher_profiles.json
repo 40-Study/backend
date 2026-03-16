@@ -1,0 +1,62 @@
+{
+  "info": {
+    "name": "Teacher Profiles",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "profile_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Create Teacher Profile",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/teacher-profiles",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"<user_uuid>\",\n  \"specialization\": \"Computer Science\",\n  \"education\": \"PhD\",\n  \"experience_years\": 5,\n  \"certificate_info\": \"AWS Certified\",\n  \"department\": \"IT\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get All Teacher Profiles",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/teacher-profiles"
+      }
+    },
+    {
+      "name": "Get Teacher Profile By ID",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/teacher-profiles/{{profile_id}}"
+      }
+    },
+    {
+      "name": "Update Teacher Profile",
+      "request": {
+        "method": "PUT",
+        "url": "{{base_url}}/teacher-profiles/{{profile_id}}",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"specialization\": \"AI & Machine Learning\",\n  \"education\": \"PhD in CS\",\n  \"experience_years\": 8,\n  \"certificate_info\": \"Google Cloud Certified\",\n  \"department\": \"AI Research\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete Teacher Profile",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/teacher-profiles/{{profile_id}}"
+      }
+    }
+  ]
+}

@@ -1,0 +1,196 @@
+{
+  "info": {
+    "name": "Courses, Sections & Lessons",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "course_id", "value": "" },
+    { "key": "section_id", "value": "" },
+    { "key": "lesson_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Courses",
+      "item": [
+        {
+          "name": "Get All Courses (public)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/courses?page=1&page_size=10",
+              "host": ["{{base_url}}"],
+              "path": ["courses"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "10" },
+                { "key": "category_id", "value": "", "disabled": true },
+                { "key": "level", "value": "", "disabled": true },
+                { "key": "status", "value": "", "disabled": true },
+                { "key": "keyword", "value": "", "disabled": true },
+                { "key": "is_free", "value": "", "disabled": true },
+                { "key": "min_price", "value": "", "disabled": true },
+                { "key": "max_price", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Course By ID (public)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{base_url}}/courses/{{course_id}}"
+          }
+        },
+        {
+          "name": "Create Course",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/courses",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"instructor_id\": \"<user_uuid>\",\n  \"category_id\": null,\n  \"title\": \"Go Programming\",\n  \"short_description\": \"Learn Go from scratch\",\n  \"description\": \"Full Go course\",\n  \"thumbnail_url\": null,\n  \"preview_video_url\": null,\n  \"level\": \"beginner\",\n  \"language\": \"vi\",\n  \"price\": 0,\n  \"requirements\": [\"Basic programming\"],\n  \"objectives\": [\"Learn Go basics\"],\n  \"target_audience\": [\"Beginners\"],\n  \"is_free\": true,\n  \"tag_ids\": []\n}"
+            }
+          }
+        },
+        {
+          "name": "Update Course",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/courses/{{course_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Go Programming - Updated\",\n  \"level\": \"intermediate\",\n  \"status\": \"published\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Course",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/courses/{{course_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sections",
+      "item": [
+        {
+          "name": "Create Section",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/courses/{{course_id}}/sections",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Introduction\",\n  \"description\": \"Getting started\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get All Sections",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/courses/{{course_id}}/sections"
+          }
+        },
+        {
+          "name": "Update Section",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Section Title\",\n  \"description\": \"Updated description\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Reorder Sections",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/courses/{{course_id}}/sections/reorder",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"id\": \"<section_uuid_1>\", \"display_order\": 1 },\n    { \"id\": \"<section_uuid_2>\", \"display_order\": 2 }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Section",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Lessons",
+      "item": [
+        {
+          "name": "Create Lesson",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"What is Go?\",\n  \"description\": \"Introduction to Go language\",\n  \"content_type\": \"video\",\n  \"duration_minutes\": 15,\n  \"is_preview\": true,\n  \"is_mandatory\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Get All Lessons",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons"
+          }
+        },
+        {
+          "name": "Update Lesson",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Lesson Title\",\n  \"duration_minutes\": 20\n}"
+            }
+          }
+        },
+        {
+          "name": "Reorder Lessons",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/reorder",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"id\": \"<lesson_uuid_1>\", \"display_order\": 1 },\n    { \"id\": \"<lesson_uuid_2>\", \"display_order\": 2 }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Lesson",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}"
+          }
+        }
+      ]
+    }
+  ]
+}

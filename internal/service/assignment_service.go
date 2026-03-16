@@ -21,21 +21,27 @@ type AssignmentServiceInterface interface {
 	Publish(ctx context.Context, id uuid.UUID, livekitSvc LivekitServiceInterface) (*model.Assignment, error)
 	Unpublish(ctx context.Context, id uuid.UUID) (*model.Assignment, error)
 	AddTestCase(ctx context.Context, assignmentID uuid.UUID, req dto.CreateTestCaseDTO) (*model.TestCase, error)
+	DeleteTestCase(ctx context.Context, testCaseID uuid.UUID) error
+	ImportTestCases(ctx context.Context, assignmentID uuid.UUID, req dto.ImportTestCasesDTO) ([]model.TestCase, error)
 	GetTestCases(ctx context.Context, assignmentID uuid.UUID, includeHidden bool) ([]model.TestCase, error)
+	GetSandbox(ctx context.Context, assignmentID uuid.UUID, userID uuid.UUID) (*dto.SandboxResponseDTO, error)
 }
 
 type AssignmentService struct {
-	repo         repository.AssignmentRepositoryInterface
-	testCaseRepo repository.TestCaseRepositoryInterface
+	repo           repository.AssignmentRepositoryInterface
+	testCaseRepo   repository.TestCaseRepositoryInterface
+	submissionRepo repository.SubmissionRepositoryInterface
 }
 
 func NewAssignmentService(
 	repo repository.AssignmentRepositoryInterface,
 	testCaseRepo repository.TestCaseRepositoryInterface,
+	submissionRepo repository.SubmissionRepositoryInterface,
 ) *AssignmentService {
 	return &AssignmentService{
-		repo:         repo,
-		testCaseRepo: testCaseRepo,
+		repo:           repo,
+		testCaseRepo:   testCaseRepo,
+		submissionRepo: submissionRepo,
 	}
 }
 
@@ -226,6 +232,31 @@ func (s *AssignmentService) AddTestCase(ctx context.Context, assignmentID uuid.U
 	return testCase, nil
 }
 
+func (s *AssignmentService) DeleteTestCase(ctx context.Context, testCaseID uuid.UUID) error {
+	return s.testCaseRepo.Delete(ctx, testCaseID)
+}
+
+func (s *AssignmentService) ImportTestCases(ctx context.Context, assignmentID uuid.UUID, req dto.ImportTestCasesDTO) ([]model.TestCase, error) {
+	testCases := make([]model.TestCase, 0, len(req.TestCases))
+	for i, tc := range req.TestCases {
+		order := tc.DisplayOrder
+		if order == 0 {
+			order = i + 1
+		}
+		testCases = append(testCases, model.TestCase{
+			AssignmentID:   assignmentID,
+			Input:          tc.Input,
+			ExpectedOutput: tc.ExpectedOutput,
+			IsHidden:       tc.IsHidden,
+			DisplayOrder:   order,
+		})
+	}
+	if err := s.testCaseRepo.CreateBatch(ctx, testCases); err != nil {
+		return nil, err
+	}
+	return testCases, nil
+}
+
 func (s *AssignmentService) GetTestCases(ctx context.Context, assignmentID uuid.UUID, includeHidden bool) ([]model.TestCase, error) {
 	if includeHidden {
 		return s.testCaseRepo.GetByAssignment(ctx, assignmentID)
@@ -246,7 +277,7 @@ func (s *AssignmentService) toResponseDTO(a model.Assignment) dto.AssignmentResp
 		Title:       a.Title,
 		Description: a.Description,
 		Difficulty:  string(a.Difficulty),
-		Language:    a.Language,
+		Language:    []string(a.Language),
 		StarterCode: a.StarterCode,
 		TimeLimit:   a.TimeLimit,
 		MemoryLimit: a.MemoryLimit,
@@ -254,4 +285,54 @@ func (s *AssignmentService) toResponseDTO(a model.Assignment) dto.AssignmentResp
 		PublishedAt: publishedAt,
 		CreatedAt:   a.CreatedAt.Format(time.RFC3339),
 	}
+}
+
+func (s *AssignmentService) GetSandbox(ctx context.Context, assignmentID uuid.UUID, userID uuid.UUID) (*dto.SandboxResponseDTO, error) {
+	assignment, err := s.repo.GetByID(ctx, assignmentID)
+	if err != nil {
+		return nil, err
+	}
+	if assignment == nil {
+		return nil, errors.New("assignment not found")
+	}
+
+	sampleTests, err := s.testCaseRepo.GetNonHiddenByAssignment(ctx, assignmentID)
+	if err != nil {
+		return nil, err
+	}
+
+	var sampleTestDTOs []dto.TestCaseResponseDTO
+	for _, tc := range sampleTests {
+		sampleTestDTOs = append(sampleTestDTOs, dto.TestCaseResponseDTO{
+			ID:             tc.ID,
+			AssignmentID:   tc.AssignmentID,
+			Input:          tc.Input,
+			ExpectedOutput: tc.ExpectedOutput,
+			IsHidden:       tc.IsHidden,
+			DisplayOrder:   tc.DisplayOrder,
+		})
+	}
+
+	result := &dto.SandboxResponseDTO{
+		Assignment:  s.toResponseDTO(*assignment),
+		SampleTests: sampleTestDTOs,
+	}
+
+	lastSub, err := s.submissionRepo.GetLatestByAssignmentAndUser(ctx, assignmentID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if lastSub != nil {
+		result.LastSubmission = &dto.SubmissionSnapshotDTO{
+			ID:              lastSub.ID,
+			Language:        lastSub.Language,
+			Code:            lastSub.Code,
+			Verdict:         string(lastSub.Verdict),
+			TestCasesPassed: lastSub.TestCasesPassed,
+			TotalTestCases:  lastSub.TotalTestCases,
+			SubmittedAt:     lastSub.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	return result, nil
 }

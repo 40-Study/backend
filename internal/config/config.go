@@ -60,6 +60,9 @@ type Config struct {
 	JWTSecret            string `mapstructure:"JWT_SECRET"`
 	JWTAccessExpiration  time.Duration
 	JWTRefreshExpiration time.Duration
+
+	// CORS
+	AllowedOrigins string `mapstructure:"ALLOWED_ORIGINS"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -128,6 +131,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("SMTP_HOST", "smtp.gmail.com")
 	viper.SetDefault("SMTP_PORT", 587)
 	viper.SetDefault("JWT_SECRET", "supersecretkey-change-in-production")
+	viper.SetDefault("ALLOWED_ORIGINS", "http://localhost:3000")
 	viper.SetDefault("JWT_ACCESS_EXPIRATION_MINUTES", 15)
 	viper.SetDefault("JWT_REFRESH_EXPIRATION_DAYS", 7)
 

@@ -104,6 +104,7 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 	assignmentSvc := service.NewAssignmentService(
 		repos.Assignment,
 		repos.TestCase,
+		repos.Submission,
 	)
 
 	submissionSvc := service.NewSubmissionService(
@@ -117,6 +118,8 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 	chatSvc := service.NewChatService(
 		repos.ChatMessage,
 		repos.Analytics,
+		repos.Livestream,
+		livekitSvc,
 	)
 
 	whiteboardSvc := service.NewWhiteboardService(
