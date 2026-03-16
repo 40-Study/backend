@@ -1,0 +1,62 @@
+{
+  "info": {
+    "name": "Organizations",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "org_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Create Organization",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/organizations",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"My Organization\",\n  \"description\": \"Organization description\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get All Organizations",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/organizations"
+      }
+    },
+    {
+      "name": "Get Organization",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/organizations/{{org_id}}"
+      }
+    },
+    {
+      "name": "Update Organization",
+      "request": {
+        "method": "PUT",
+        "url": "{{base_url}}/organizations/{{org_id}}",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Updated Org Name\",\n  \"description\": \"Updated description\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete Organization",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/organizations/{{org_id}}"
+      }
+    }
+  ]
+}

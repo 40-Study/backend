@@ -1,0 +1,59 @@
+{
+  "info": {
+    "name": "Enrollments",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "course_id", "value": "" },
+    { "key": "enrollment_id", "value": "" },
+    { "key": "lesson_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Enroll",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/courses/{{course_id}}/enroll"
+      }
+    },
+    {
+      "name": "Unenroll",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/courses/{{course_id}}/enroll"
+      }
+    },
+    {
+      "name": "Get My Enrollments",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/enrollments"
+      }
+    },
+    {
+      "name": "Get Enrollment Detail",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/enrollments/{{enrollment_id}}"
+      }
+    },
+    {
+      "name": "Update Lesson Progress",
+      "request": {
+        "method": "PUT",
+        "url": "{{base_url}}/lessons/{{lesson_id}}/progress",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"completed\",\n  \"progress_percentage\": 100,\n  \"video_watched_seconds\": 900\n}"
+        }
+      }
+    }
+  ]
+}

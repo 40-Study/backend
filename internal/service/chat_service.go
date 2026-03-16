@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,21 +17,28 @@ type ChatServiceInterface interface {
 	SendMessage(ctx context.Context, req dto.SendChatMessageDTO) (*model.ChatMessage, error)
 	GetMessages(ctx context.Context, sessionID uuid.UUID, page, pageSize int) (*dto.ChatMessageListDTO, error)
 	DeleteMessage(ctx context.Context, messageID, deletedBy uuid.UUID) error
-	PinMessage(ctx context.Context, messageID uuid.UUID, isPinned bool) error
+	PinMessage(ctx context.Context, messageID uuid.UUID) error
+	UnPinMessage(ctx context.Context, messageID uuid.UUID) error
 }
 
 type ChatService struct {
-	repo          repository.ChatMessageRepositoryInterface
-	analyticsRepo repository.AnalyticsRepositoryInterface
+	repo           repository.ChatMessageRepositoryInterface
+	analyticsRepo  repository.AnalyticsRepositoryInterface
+	livestreamRepo repository.LivestreamRepositoryInterface
+	livekitSvc     LivekitServiceInterface
 }
 
 func NewChatService(
 	repo repository.ChatMessageRepositoryInterface,
 	analyticsRepo repository.AnalyticsRepositoryInterface,
+	livestreamRepo repository.LivestreamRepositoryInterface,
+	livekitSvc LivekitServiceInterface,
 ) *ChatService {
 	return &ChatService{
-		repo:          repo,
-		analyticsRepo: analyticsRepo,
+		repo:           repo,
+		analyticsRepo:  analyticsRepo,
+		livestreamRepo: livestreamRepo,
+		livekitSvc:     livekitSvc,
 	}
 }
 
@@ -54,9 +63,38 @@ func (s *ChatService) SendMessage(ctx context.Context, req dto.SendChatMessageDT
 		return nil, err
 	}
 
-	_ = s.analyticsRepo.IncrementTotalMessages(ctx, sessionID)
+	go s.analyticsRepo.IncrementTotalMessages(ctx, sessionID)
 
-	return s.repo.GetByID(ctx, message.ID)
+	saved := message
+	if err != nil {
+		return nil, err
+	}
+
+	go func() {
+		bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		session, err := s.livestreamRepo.GetByID(bg, sessionID)
+		if err != nil || session == nil {
+			return
+		}
+		lkPayload := map[string]interface{}{
+			"id":        saved.ID,
+			"timestamp": saved.CreatedAt.UnixMilli(),
+			"message":   saved.Message,
+		}
+		payload, err := json.Marshal(lkPayload)
+		if err != nil {
+			return
+		}
+		if err := s.livekitSvc.SendData(bg, session.RoomName, dto.SendDataDTO{
+			Data:  string(payload),
+			Topic: "lk-chat-message",
+		}); err != nil {
+			log.Printf("chat: livekit broadcast failed for room %s: %v", session.RoomName, err)
+		}
+	}()
+
+	return saved, nil
 }
 
 func (s *ChatService) GetMessages(ctx context.Context, sessionID uuid.UUID, page, pageSize int) (*dto.ChatMessageListDTO, error) {
@@ -90,8 +128,13 @@ func (s *ChatService) DeleteMessage(ctx context.Context, messageID, deletedBy uu
 	return s.repo.SoftDelete(ctx, messageID, deletedBy)
 }
 
-func (s *ChatService) PinMessage(ctx context.Context, messageID uuid.UUID, isPinned bool) error {
-	return s.repo.Pin(ctx, messageID, isPinned)
+func (s *ChatService) PinMessage(ctx context.Context, messageID uuid.UUID) error {
+	return s.repo.Pin(ctx, messageID)
+}
+
+func (s *ChatService) UnPinMessage(ctx context.Context, messageID uuid.UUID) error {
+
+	return s.repo.UnPin(ctx, messageID)
 }
 
 func (s *ChatService) toResponseDTO(msg model.ChatMessage) dto.ChatMessageResponseDTO {

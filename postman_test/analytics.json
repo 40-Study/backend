@@ -1,0 +1,39 @@
+{
+  "info": {
+    "name": "Analytics",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "session_id", "value": "" },
+    { "key": "assignment_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Get Livestream Analytics",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/analytics/livestream/{{session_id}}"
+      }
+    },
+    {
+      "name": "Get Assignment Analytics",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/analytics/assignment/{{assignment_id}}"
+      }
+    },
+    {
+      "name": "Get Participant Analytics",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/analytics/participants/{{session_id}}"
+      }
+    }
+  ]
+}

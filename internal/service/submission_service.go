@@ -25,6 +25,7 @@ type SubmissionServiceInterface interface {
 	GetByUser(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.SubmissionListDTO, error)
 	GetUserSubmissionsForAssignment(ctx context.Context, assignmentID, userID uuid.UUID) ([]model.Submission, error)
 	RunCode(ctx context.Context, req dto.RunCodeDTO) (*dto.RunCodeResponseDTO, error)
+	RunCustomCode(ctx context.Context, req dto.RunCustomCodeDTO) (*dto.RunCodeResponseDTO, error)
 	ProcessSubmission(ctx context.Context, submissionID uuid.UUID) error
 }
 
@@ -164,6 +165,7 @@ func (s *SubmissionService) Submit(ctx context.Context, req dto.CreateSubmission
 	submission := &model.Submission{
 		AssignmentID: assignmentID,
 		UserID:       userID,
+		Language:     req.Language,
 		Code:         req.Code,
 		Verdict:      model.VerdictPending,
 	}
@@ -205,8 +207,7 @@ func (s *SubmissionService) ProcessSubmission(ctx context.Context, submissionID 
 		return s.repo.UpdateVerdict(ctx, submissionID, model.VerdictAccepted, 0, 0, 0, 0)
 	}
 
-	languageID := s.getLanguageID(assignment.Language)
-
+	languageID := s.getLanguageID(submission.Language)
 	totalPassed := 0
 	totalTime := 0
 	totalMemory := 0
@@ -338,7 +339,7 @@ func (s *SubmissionService) RunCode(ctx context.Context, req dto.RunCodeDTO) (*d
 	}
 
 	tc := testCases[0]
-	languageID := s.getLanguageID(assignment.Language)
+	languageID := s.getLanguageID(req.Language)
 
 	judgeReq := dto.Judge0SubmissionDTO{
 		SourceCode:     req.Code,
@@ -443,4 +444,60 @@ func (s *SubmissionService) toResponseDTO(sub model.Submission) dto.SubmissionRe
 		TotalTestCases:  sub.TotalTestCases,
 		CreatedAt:       sub.CreatedAt.Format(time.RFC3339),
 	}
+}
+
+func (s *SubmissionService) RunCustomCode(ctx context.Context, req dto.RunCustomCodeDTO) (*dto.RunCodeResponseDTO, error) {
+	assignmentID, err := uuid.Parse(req.AssignmentID)
+	if err != nil {
+		return nil, errors.New("invalid assignment_id")
+	}
+
+	assignment, err := s.assignmentSvc.GetByID(ctx, assignmentID, false)
+	if err != nil {
+		return nil, err
+	}
+	if assignment == nil {
+		return nil, errors.New("assignment not found")
+	}
+
+	languageID := s.getLanguageID(req.Language)
+
+	judgeReq := dto.Judge0SubmissionDTO{
+		SourceCode:   req.Code,
+		LanguageID:   languageID,
+		Stdin:        req.CustomInput,
+		CPUTimeLimit: assignment.TimeLimit,
+		MemoryLimit:  assignment.MemoryLimit * 1024,
+	}
+
+	result, err := s.judge0Client.Submit(ctx, judgeReq)
+	if err != nil {
+		return &dto.RunCodeResponseDTO{
+			Error:   err.Error(),
+			Verdict: "error",
+		}, nil
+	}
+
+	response := &dto.RunCodeResponseDTO{
+		Output:  result.Stdout,
+		Verdict: s.mapJudge0Status(result.Status.ID).String(),
+	}
+
+	if result.CompileOutput != "" {
+		response.Error = result.CompileOutput
+	}
+	if result.Stderr != "" {
+		response.Error = result.Stderr
+	}
+
+	if result.Time != "" {
+		var execTime float64
+		fmt.Sscanf(result.Time, "%f", &execTime)
+		response.ExecTime = int(execTime * 1000)
+	}
+	if result.Memory != "" {
+		fmt.Sscanf(result.Memory, "%d", &response.MemUsed)
+	}
+
+	return response, nil
 }

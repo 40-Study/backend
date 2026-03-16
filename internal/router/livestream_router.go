@@ -13,7 +13,6 @@ func SetupLivestreamRoutes(api fiber.Router, h *handler.LivestreamHandler) {
 	live.Get("/:id", h.GetByID)
 	live.Put("/:id", h.Update)
 	live.Delete("/:id", h.Delete)
-
 	live.Post("/:id/start", h.Start)
 	live.Post("/:id/end", h.End)
 	live.Post("/:id/join", h.Join)
@@ -34,6 +33,7 @@ func SetupChatRoutes(api fiber.Router, h *handler.ChatHandler) {
 	chat.Get("/:sessionId/messages", h.GetMessages)
 	chat.Delete("/:id", h.DeleteMessage)
 	chat.Post("/:id/pin", h.PinMessage)
+	chat.Post("/:id/unpin", h.UnPinMessage)
 }
 
 func SetupWhiteboardRoutes(api fiber.Router, h *handler.WhiteboardHandler) {
@@ -57,12 +57,15 @@ func SetupAssignmentRoutes(api fiber.Router, h *handler.AssignmentHandler) {
 
 	assignments.Post("/", h.Create)
 	assignments.Get("/:id", h.GetByID)
+	assignments.Get("/:id/sandbox", h.GetSandbox)
 	assignments.Put("/:id", h.Update)
 	assignments.Delete("/:id", h.Delete)
 	assignments.Post("/:id/publish", h.Publish)
 	assignments.Post("/:id/unpublish", h.Unpublish)
 	assignments.Get("/:id/testcases", h.GetTestCases)
 	assignments.Post("/:id/testcases", h.AddTestCase)
+	assignments.Post("/:id/testcases/import", h.ImportTestCases)
+	assignments.Delete("/:id/testcases/:tcId", h.DeleteTestCase)
 }
 
 func SetupSubmissionRoutes(api fiber.Router, h *handler.SubmissionHandler) {
@@ -70,7 +73,9 @@ func SetupSubmissionRoutes(api fiber.Router, h *handler.SubmissionHandler) {
 
 	submissions.Post("/", h.Submit)
 	submissions.Post("/run", h.RunCode)
+	submissions.Post("/run-custom", h.RunCustomCode)
 	submissions.Get("/:id", h.GetByID)
 	submissions.Get("/assignment/:assignmentId", h.GetByAssignment)
+	submissions.Get("/my/:assignmentId", h.GetMySubmissions)
 	submissions.Get("/user/:userId", h.GetByUser)
 }

@@ -12,6 +12,7 @@ type ChatHandlerInterface interface {
 	GetMessages(c *fiber.Ctx) error
 	DeleteMessage(c *fiber.Ctx) error
 	PinMessage(c *fiber.Ctx) error
+	UnPinMessage(c *fiber.Ctx) error
 }
 
 type ChatHandler struct {
@@ -80,19 +81,23 @@ func (h *ChatHandler) DeleteMessage(c *fiber.Ctx) error {
 }
 
 func (h *ChatHandler) PinMessage(c *fiber.Ctx) error {
-	var req dto.PinChatMessageDTO
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
-	}
-
-	messageID, err := uuid.Parse(req.MessageID)
+	messageID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid message_id"})
 	}
-
-	if err := h.svc.PinMessage(c.Context(), messageID, req.IsPinned); err != nil {
+	if err := h.svc.PinMessage(c.Context(), messageID); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
+	return c.JSON(fiber.Map{"message": "Message pin status updated"})
+}
 
+func (h *ChatHandler) UnPinMessage(c *fiber.Ctx) error {
+	messageID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid message_id"})
+	}
+	if err := h.svc.UnPinMessage(c.Context(), messageID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
 	return c.JSON(fiber.Map{"message": "Message pin status updated"})
 }

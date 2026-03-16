@@ -1,0 +1,113 @@
+{
+  "info": {
+    "name": "Video Upload",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "upload_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Health Check (public)",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "url": "{{base_url}}/videos/health"
+      }
+    },
+    {
+      "name": "Init Video Upload",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/videos/upload/init",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"resource_id\": \"<resource_uuid>\",\n  \"resource_type\": \"lesson_video\",\n  \"original_file_name\": \"video.mp4\",\n  \"content_type\": \"video/mp4\",\n  \"file_size\": 104857600,\n  \"chunk_size\": 5242880\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Presigned URLs",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/videos/upload/presigned-urls",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"upload_id\": \"{{upload_id}}\",\n  \"chunk_numbers\": [1, 2, 3]\n}"
+        }
+      }
+    },
+    {
+      "name": "Complete Chunk Upload",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/videos/upload/chunk-complete",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"upload_id\": \"{{upload_id}}\",\n  \"chunk_number\": 1,\n  \"etag\": \"<etag_string>\",\n  \"size\": 5242880\n}"
+        }
+      }
+    },
+    {
+      "name": "Complete Video Upload",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/videos/upload/complete",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"upload_id\": \"{{upload_id}}\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Upload Status",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/videos/upload/{{upload_id}}/status"
+      }
+    },
+    {
+      "name": "Get Resume Info",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/videos/upload/{{upload_id}}/resume"
+      }
+    },
+    {
+      "name": "Get Incomplete Uploads",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/videos/upload/incomplete"
+      }
+    },
+    {
+      "name": "Abort Upload",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/videos/upload/{{upload_id}}",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"User cancelled\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Processing Queue",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/videos/processing/queue"
+      }
+    }
+  ]
+}

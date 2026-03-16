@@ -36,8 +36,12 @@ func New() (*App, error) {
 
 	fiberApp := fiber.New()
 
+	allowedOrigins := resources.Config.AllowedOrigins
+	if allowedOrigins == "" {
+		allowedOrigins = "http://localhost:3000"
+	}
 	fiberApp.Use(cors.New(cors.Config{
-		AllowOrigins:     "http://localhost:3000, http://localhost:3001",
+		AllowOrigins:     allowedOrigins,
 		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS, PATCH",
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
 		AllowCredentials: true,
@@ -80,9 +84,6 @@ func New() (*App, error) {
 		// ===== Video =====
 		handlers.VideoUpload,
 		handlers.HLS,
-
-		// ===== LiveKit =====
-		handlers.Livekit,
 
 		// ===== Livestream Learning Platform =====
 		handlers.Livestream,

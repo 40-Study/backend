@@ -1,0 +1,121 @@
+{
+  "info": {
+    "name": "Assignments",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "assignment_id", "value": "" },
+    { "key": "session_id", "value": "" },
+    { "key": "testcase_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Create Assignment",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/assignments",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"title\": \"Two Sum\",\n  \"description\": \"Given an array of integers, return indices of the two numbers such that they add up to a specific target.\",\n  \"difficulty\": \"easy\",\n  \"language\": [\"python\", \"go\", \"javascript\"],\n  \"starter_code\": \"def two_sum(nums, target):\\n    pass\",\n  \"time_limit\": 2,\n  \"memory_limit\": 256\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Assignment By ID",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/assignments/{{assignment_id}}"
+      }
+    },
+    {
+      "name": "Get Sandbox",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/assignments/{{assignment_id}}/sandbox"
+      }
+    },
+    {
+      "name": "Update Assignment",
+      "request": {
+        "method": "PUT",
+        "url": "{{base_url}}/assignments/{{assignment_id}}",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Two Sum - Updated\",\n  \"difficulty\": \"medium\",\n  \"language\": [\"python\", \"go\", \"javascript\", \"cpp\"]\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete Assignment",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/assignments/{{assignment_id}}"
+      }
+    },
+    {
+      "name": "Publish Assignment",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/assignments/{{assignment_id}}/publish",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"session_id\": \"{{session_id}}\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Unpublish Assignment",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/assignments/{{assignment_id}}/unpublish"
+      }
+    },
+    {
+      "name": "Get Test Cases",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/assignments/{{assignment_id}}/testcases"
+      }
+    },
+    {
+      "name": "Add Test Case",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/assignments/{{assignment_id}}/testcases",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"input\": \"[2,7,11,15]\\n9\",\n  \"expected_output\": \"[0,1]\",\n  \"is_hidden\": false,\n  \"display_order\": 1\n}"
+        }
+      }
+    },
+    {
+      "name": "Import Test Cases (JSON batch)",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/assignments/{{assignment_id}}/testcases/import",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"test_cases\": [\n    {\n      \"input\": \"[2,7,11,15]\\n9\",\n      \"expected_output\": \"[0,1]\",\n      \"is_hidden\": false,\n      \"display_order\": 1\n    },\n    {\n      \"input\": \"[3,2,4]\\n6\",\n      \"expected_output\": \"[1,2]\",\n      \"is_hidden\": false,\n      \"display_order\": 2\n    },\n    {\n      \"input\": \"[3,3]\\n6\",\n      \"expected_output\": \"[0,1]\",\n      \"is_hidden\": true,\n      \"display_order\": 3\n    }\n  ]\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete Test Case",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/assignments/{{assignment_id}}/testcases/{{testcase_id}}"
+      }
+    }
+  ]
+}

@@ -1,0 +1,184 @@
+{
+  "info": {
+    "name": "Livestream",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "session_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Create Livestream",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/livestream",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Live Coding Session\",\n  \"description\": \"Learn Go in real-time\",\n  \"host_id\": \"<host_user_uuid>\",\n  \"max_viewers\": 100,\n  \"is_recorded\": true\n}"
+        }
+      }
+    },
+    {
+      "name": "Get All Livestreams",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/livestream"
+      }
+    },
+    {
+      "name": "Get Livestream By ID",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/livestream/{{session_id}}"
+      }
+    },
+    {
+      "name": "Update Livestream",
+      "request": {
+        "method": "PUT",
+        "url": "{{base_url}}/livestream/{{session_id}}",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Updated Session Title\",\n  \"description\": \"Updated description\",\n  \"max_viewers\": 200\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete Livestream",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/livestream/{{session_id}}"
+      }
+    },
+    {
+      "name": "Start Livestream",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/livestream/{{session_id}}/start",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"room_name\": \"room-{{session_id}}\"\n}"
+        }
+      }
+    },
+    {
+      "name": "End Livestream",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/livestream/{{session_id}}/end"
+      }
+    },
+    {
+      "name": "Join Livestream",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/livestream/{{session_id}}/join",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"<user_uuid>\",\n  \"role\": \"viewer\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Leave Livestream",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/livestream/{{session_id}}/leave",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"<user_uuid>\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Participants",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/livestream/{{session_id}}/participants"
+      }
+    },
+    {
+      "name": "Mute Participant",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/livestream/{{session_id}}/mute",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"<user_uuid>\",\n  \"action\": \"mute\",\n  \"reason\": \"Being disruptive\",\n  \"duration\": 300\n}"
+        }
+      }
+    },
+    {
+      "name": "Kick Participant",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/livestream/{{session_id}}/kick",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"<user_uuid>\",\n  \"action\": \"kick\",\n  \"reason\": \"Violation of rules\",\n  \"duration\": 0\n}"
+        }
+      }
+    },
+    {
+      "name": "Lock Whiteboard",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/livestream/{{session_id}}/lock-whiteboard",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"locked\": true\n}"
+        }
+      }
+    },
+    {
+      "name": "Unlock Whiteboard",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/livestream/{{session_id}}/unlock-whiteboard",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"locked\": false\n}"
+        }
+      }
+    },
+    {
+      "name": "Start Screen Share",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/livestream/{{session_id}}/screenshare/start",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"<user_uuid>\",\n  \"action\": \"start\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Stop Screen Share",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/livestream/{{session_id}}/screenshare/stop",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"<user_uuid>\",\n  \"action\": \"stop\"\n}"
+        }
+      }
+    }
+  ]
+}

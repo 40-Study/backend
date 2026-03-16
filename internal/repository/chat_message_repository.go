@@ -18,7 +18,8 @@ type ChatMessageRepositoryInterface interface {
 	Update(ctx context.Context, message *model.ChatMessage) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	SoftDelete(ctx context.Context, id uuid.UUID, deletedBy uuid.UUID) error
-	Pin(ctx context.Context, id uuid.UUID, isPinned bool) error
+	Pin(ctx context.Context, id uuid.UUID) error
+	UnPin(ctx context.Context, id uuid.UUID) error
 	CountBySession(ctx context.Context, sessionID uuid.UUID) (int64, error)
 }
 
@@ -106,11 +107,18 @@ func (r *ChatMessageRepository) SoftDelete(ctx context.Context, id uuid.UUID, de
 		}).Error
 }
 
-func (r *ChatMessageRepository) Pin(ctx context.Context, id uuid.UUID, isPinned bool) error {
+func (r *ChatMessageRepository) Pin(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).
 		Model(&model.ChatMessage{}).
 		Where("id = ?", id).
-		Update("is_pinned", isPinned).Error
+		Update("is_pinned", true).Error
+}
+
+func (r *ChatMessageRepository) UnPin(ctx context.Context, id uuid.UUID) error {
+	return r.db.WithContext(ctx).
+		Model(&model.ChatMessage{}).
+		Where("id = ?", id).
+		Update("is_pinned", false).Error
 }
 
 func (r *ChatMessageRepository) CountBySession(ctx context.Context, sessionID uuid.UUID) (int64, error) {

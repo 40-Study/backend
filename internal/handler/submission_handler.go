@@ -13,6 +13,8 @@ type SubmissionHandlerInterface interface {
 	GetByAssignment(c *fiber.Ctx) error
 	GetByUser(c *fiber.Ctx) error
 	RunCode(c *fiber.Ctx) error
+	RunCustomCode(c *fiber.Ctx) error
+	GetMySubmissions(c *fiber.Ctx) error
 }
 
 type SubmissionHandler struct {
@@ -103,4 +105,37 @@ func (h *SubmissionHandler) RunCode(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(result)
+}
+
+func (h *SubmissionHandler) RunCustomCode(c *fiber.Ctx) error {
+	var req dto.RunCustomCodeDTO
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	result, err := h.svc.RunCustomCode(c.Context(), req)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(result)
+}
+
+func (h *SubmissionHandler) GetMySubmissions(c *fiber.Ctx) error {
+	assignmentID, err := uuid.Parse(c.Params("assignmentId"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid assignment_id"})
+	}
+
+	userID, err := uuid.Parse(c.Query("user_id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "user_id is required"})
+	}
+
+	submissions, err := h.svc.GetUserSubmissionsForAssignment(c.Context(), assignmentID, userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"data": submissions})
 }

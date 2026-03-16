@@ -1,0 +1,43 @@
+{
+  "info": {
+    "name": "Permissions",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "permission_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Get All Permissions",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/permissions"
+      }
+    },
+    {
+      "name": "Get Permission By ID",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/permissions/{{permission_id}}"
+      }
+    },
+    {
+      "name": "Update Permission",
+      "request": {
+        "method": "PUT",
+        "url": "{{base_url}}/permissions/{{permission_id}}",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"description\": \"Updated permission description\"\n}"
+        }
+      }
+    }
+  ]
+}

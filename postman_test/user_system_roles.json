@@ -1,0 +1,58 @@
+{
+  "info": {
+    "name": "User System Roles",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "user_id", "value": "" },
+    { "key": "system_role_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Get My System Roles",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/me/system-roles"
+      }
+    },
+    {
+      "name": "Get User System Roles",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/users/{{user_id}}/system-roles"
+      }
+    },
+    {
+      "name": "Assign System Roles To User",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/users/{{user_id}}/system-roles",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"system_role_ids\": [\"<system_role_uuid_1>\"],\n  \"notes\": \"Assigned via Postman\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Revoke System Role From User",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/users/{{user_id}}/system-roles/{{system_role_id}}"
+      }
+    },
+    {
+      "name": "Get Users By System Role",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/system-roles/{{system_role_id}}/users"
+      }
+    }
+  ]
+}

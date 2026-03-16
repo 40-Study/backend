@@ -16,6 +16,7 @@ type SubmissionRepositoryInterface interface {
 	GetByAssignment(ctx context.Context, assignmentID uuid.UUID, page, pageSize int) ([]model.Submission, int64, error)
 	GetByUser(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]model.Submission, int64, error)
 	GetByAssignmentAndUser(ctx context.Context, assignmentID, userID uuid.UUID) ([]model.Submission, error)
+	GetLatestByAssignmentAndUser(ctx context.Context, assignmentID, userID uuid.UUID) (*model.Submission, error)
 	Update(ctx context.Context, submission *model.Submission) error
 	UpdateVerdict(ctx context.Context, id uuid.UUID, verdict model.SubmissionVerdict, execTime, memoryUsed, passed, total int) error
 }
@@ -89,6 +90,21 @@ func (r *SubmissionRepository) GetByAssignmentAndUser(ctx context.Context, assig
 		Order("created_at DESC").
 		Find(&submissions).Error
 	return submissions, err
+}
+
+func (r *SubmissionRepository) GetLatestByAssignmentAndUser(ctx context.Context, assignmentID, userID uuid.UUID) (*model.Submission, error) {
+	var submission model.Submission
+	err := r.db.WithContext(ctx).
+		Where("assignment_id = ? AND user_id = ?", assignmentID, userID).
+		Order("created_at DESC").
+		First(&submission).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &submission, nil
 }
 
 func (r *SubmissionRepository) Update(ctx context.Context, submission *model.Submission) error {

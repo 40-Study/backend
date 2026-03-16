@@ -1,0 +1,58 @@
+{
+  "info": {
+    "name": "Chat",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "session_id", "value": "" },
+    { "key": "message_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Send Message",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/chat/send",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"user_id\": \"<user_uuid>\",\n  \"message\": \"Hello everyone!\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Messages",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/chat/{{session_id}}/messages"
+      }
+    },
+    {
+      "name": "Delete Message",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/chat/{{message_id}}"
+      }
+    },
+    {
+      "name": "Pin Message",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/chat/{{message_id}}/pin"
+      }
+    },
+    {
+      "name": "Unpin Message",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/chat/{{message_id}}/unpin"
+      }
+    }
+  ]
+}
