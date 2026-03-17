@@ -75,6 +75,7 @@ func New() (*App, error) {
 		// ===== Course Management =====
 		handlers.Category,
 		handlers.Tag,
+		handlers.Cart,
 		handlers.CourseHandler,
 		handlers.Section,
 		handlers.Lesson,
@@ -92,6 +93,9 @@ func New() (*App, error) {
 		handlers.Chat,
 		handlers.Whiteboard,
 		handlers.Analytics,
+
+		// ===== Order & Payment =====
+		handlers.Order,
 
 		resources.Redis,
 		resources.MinioClient,

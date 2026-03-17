@@ -63,6 +63,10 @@ type Config struct {
 
 	// CORS
 	AllowedOrigins string `mapstructure:"ALLOWED_ORIGINS"`
+
+	// Transaction Service (MBBank gRPC)
+	TransactionServiceHost string `mapstructure:"TRANSACTION_SERVICE_HOST"`
+	TransactionServicePort string `mapstructure:"TRANSACTION_SERVICE_PORT"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -81,6 +85,10 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("MINIO_BUCKET_IMAGES", "images")
 	viper.SetDefault("MINIO_BUCKET_VIDEOS", "videos")
 	viper.SetDefault("MINIO_BUCKET_NAME", "videos")
+
+	// Transaction Service
+	viper.SetDefault("TRANSACTION_SERVICE_HOST", "localhost")
+	viper.SetDefault("TRANSACTION_SERVICE_PORT", "50051")
 
 	viper.AutomaticEnv()
 

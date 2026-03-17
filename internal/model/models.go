@@ -55,6 +55,10 @@ func AllModels() []interface{} {
 		&Coupon{},
 		&CouponUsage{},
 		&InstructorPayout{},
+		&OrderStatusHistory{},
+		&PaymentEvent{},
+		&IdempotencyKey{},
+		&OrderLock{},
 
 		// Notifications
 		&Notification{},

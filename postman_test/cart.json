@@ -1,0 +1,75 @@
+{
+  "info": {
+    "name": "Cart",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "course_id", "value": "" },
+    { "key": "course_id_2", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Get Cart",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/cart/"
+      }
+    },
+    {
+      "name": "Add To Cart",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/cart/",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"course_id\": \"{{course_id}}\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Add Second Course To Cart",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/cart/",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"course_id\": \"{{course_id_2}}\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Check Course In Cart",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/cart/check/{{course_id}}"
+      }
+    },
+    {
+      "name": "Remove From Cart",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/cart/",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"course_ids\": [\"{{course_id}}\"]\n}"
+        }
+      }
+    },
+    {
+      "name": "Clear Cart",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/cart/clear"
+      }
+    }
+  ]
+}

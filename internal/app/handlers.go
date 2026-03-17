@@ -30,6 +30,7 @@ type Handlers struct {
 	// ===== Course Management =====
 	Category      *handler.CategoryHandler
 	Tag           *handler.TagHandler
+	Cart          *handler.CartHandler
 	CourseHandler *handler.CourseHandler
 	Section       *handler.SectionHandler
 	Lesson        *handler.LessonHandler
@@ -47,6 +48,9 @@ type Handlers struct {
 	Chat       *handler.ChatHandler
 	Whiteboard *handler.WhiteboardHandler
 	Analytics  *handler.AnalyticsHandler
+
+	// ===== Order & Payment =====
+	Order *handler.OrderHandler
 }
 
 func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handlers {
@@ -75,6 +79,7 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handler
 		// ===== Course Management =====
 		Category:      handler.NewCategoryHandler(services.Category),
 		Tag:           handler.NewTagHandler(services.Tag),
+		Cart:          handler.NewCartHandler(services.Cart),
 		CourseHandler: handler.NewCourseHandler(services.CourseService),
 		Section:       handler.NewSectionHandler(services.Section),
 		Lesson:        handler.NewLessonHandler(services.Lesson),
@@ -92,5 +97,8 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handler
 		Chat:       handler.NewChatHandler(services.Chat),
 		Whiteboard: handler.NewWhiteboardHandler(services.Whiteboard, services.Livekit),
 		Analytics:  handler.NewAnalyticsHandler(services.Analytics),
+
+		// ===== Order & Payment =====
+		Order: handler.NewOrderHandler(services.Order, services.Payment),
 	}
 }

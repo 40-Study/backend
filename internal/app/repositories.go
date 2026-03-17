@@ -34,6 +34,7 @@ type Repositories struct {
 	// ===== Course Management =====
 	Category      *repository.CategoryRepository
 	Tag           *repository.TagRepository
+	CartItem      *repository.CartItemRepository
 	Section       *repository.SectionRepository
 	Lesson        *repository.LessonRepository
 	LessonContent *repository.LessonContentRepository
@@ -51,6 +52,15 @@ type Repositories struct {
 	ChatMessage *repository.ChatMessageRepository
 	Whiteboard  *repository.WhiteboardRepository
 	Analytics   *repository.AnalyticsRepository
+
+	// ===== Order & Payment =====
+	Order              *repository.OrderRepository
+	OrderItem          *repository.OrderItemRepository
+	Coupon             *repository.CouponRepository
+	OrderStatusHistory *repository.OrderStatusHistoryRepository
+	PaymentEvent       *repository.PaymentEventRepository
+	IdempotencyKey     *repository.IdempotencyKeyRepository
+	OrderLock          *repository.OrderLockRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -83,6 +93,7 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		// ===== Course Management =====
 		Category:      repository.NewCategoryRepository(db),
 		Tag:           repository.NewTagRepository(db),
+		CartItem:      repository.NewCartItemRepository(db),
 		Section:       repository.NewSectionRepository(db),
 		Lesson:        repository.NewLessonRepository(db),
 		LessonContent: repository.NewLessonContentRepository(db),
@@ -91,14 +102,23 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		// ===== Video =====
 		VideoUpload: repository.NewVideoUploadRepository(db),
 		// ===== Livestream Learning Platform =====
-		Livestream: repository.NewLivestreamRepository(db),
+		Livestream:  repository.NewLivestreamRepository(db),
 		Participant: repository.NewParticipantRepository(db),
-		Assignment: repository.NewAssignmentRepository(db),
-		TestCase: repository.NewTestCaseRepository(db),
-		Submission: repository.NewSubmissionRepository(db),
+		Assignment:  repository.NewAssignmentRepository(db),
+		TestCase:    repository.NewTestCaseRepository(db),
+		Submission:  repository.NewSubmissionRepository(db),
 		ChatMessage: repository.NewChatMessageRepository(db),
-		Whiteboard: repository.NewWhiteboardRepository(db),
-		Analytics: repository.NewAnalyticsRepository(db),
+		Whiteboard:  repository.NewWhiteboardRepository(db),
+		Analytics:   repository.NewAnalyticsRepository(db),
+
+		// ===== Order & Payment =====
+		Order:              repository.NewOrderRepository(db),
+		OrderItem:          repository.NewOrderItemRepository(db),
+		Coupon:             repository.NewCouponRepository(db),
+		OrderStatusHistory: repository.NewOrderStatusHistoryRepository(db),
+		PaymentEvent:       repository.NewPaymentEventRepository(db),
+		IdempotencyKey:     repository.NewIdempotencyKeyRepository(db),
+		OrderLock:          repository.NewOrderLockRepository(db),
 	}
 
 }

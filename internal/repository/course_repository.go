@@ -98,6 +98,7 @@ func (r *CourseRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Co
 	err := r.db.WithContext(ctx).
 		Preload("Category").
 		Preload("Tags").
+		Preload("Instructor").
 		Where("id = ?", id).
 		First(&course).Error
 	if err != nil {

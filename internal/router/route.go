@@ -26,6 +26,7 @@ func SetupAllRoutes(
 	attendanceHandler *handler.AttendanceHandler,
 	categoryHandler *handler.CategoryHandler,
 	tagHandler *handler.TagHandler,
+	cartHandler *handler.CartHandler,
 	courseHandler *handler.CourseHandler,
 	sectionHandler *handler.SectionHandler,
 	lessonHandler *handler.LessonHandler,
@@ -39,6 +40,7 @@ func SetupAllRoutes(
 	chatHandler *handler.ChatHandler,
 	whiteboardHandler *handler.WhiteboardHandler,
 	analyticsHandler *handler.AnalyticsHandler,
+	orderHandler *handler.OrderHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 ) {
@@ -64,6 +66,7 @@ func SetupAllRoutes(
 	SetupTeacherProfileRoutes(api, teacherProfileHandler)
 	SetupClassRoutes(api, classHandler, classScheduleHandler, attendanceHandler)
 	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis)
+	SetupCartRoutes(api, cfg, cartHandler, redis)
 	SetupCourseRoutes(api, cfg, courseHandler, sectionHandler, lessonHandler, redis)
 	SetupLessonContentRoutes(api, cfg, lessonContentHandler, redis)
 	SetupEnrollmentRoutes(api, cfg, enrollmentHandler, redis)
@@ -76,4 +79,7 @@ func SetupAllRoutes(
 	SetupChatRoutes(api, chatHandler)
 	SetupWhiteboardRoutes(api, whiteboardHandler)
 	SetupAnalyticsRoutes(api, analyticsHandler)
+
+	// Order & Payment routes
+	SetupOrderRoutes(api, orderHandler)
 }

@@ -12,7 +12,8 @@ services:
       dockerfile: transaction/dockerfile
     container_name: mbbank-transaction-api
     ports:
-      - "8000:8000"
+      - "8000:8000"   # REST API
+      - "50051:50051" # gRPC
     environment:
       - MB_USERNAME=${MB_USERNAME}
       - MB_PASSWORD=${MB_PASSWORD}
