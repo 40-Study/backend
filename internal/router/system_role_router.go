@@ -14,10 +14,14 @@ func SetupSystemRoleRoutes(
 	systemRoleHandler *handler.SystemRoleHandler,
 	redis *redis.Client,
 ) {
+	// Public route: allow clients to list system roles without auth
+	systemRolesPublic := api.Group("/system-roles")
+	systemRolesPublic.Get("/", systemRoleHandler.GetAllSystemRoles)
+
+	// Protected routes: require auth for all other operations
 	systemRoles := api.Group("/system-roles", middleware.AuthMiddleware(cfg, redis))
 	{
 		systemRoles.Post("/", systemRoleHandler.CreateSystemRole)
-		systemRoles.Get("/", systemRoleHandler.GetAllSystemRoles)
 		systemRoles.Get("/:id", systemRoleHandler.GetSystemRole)
 		systemRoles.Put("/:id", systemRoleHandler.UpdateSystemRole)
 		systemRoles.Delete("/:id", systemRoleHandler.DeleteSystemRole)
