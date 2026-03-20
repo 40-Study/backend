@@ -13,10 +13,9 @@ import (
 
 type AuthHandlerInterface interface {
 	Login(c *fiber.Ctx) error
-	SelectProfile(c *fiber.Ctx) error
-	SelectOrg(c *fiber.Ctx) error
 	SwitchProfile(c *fiber.Ctx) error
-	SwitchOrg(c *fiber.Ctx) error
+	GetProfiles(c *fiber.Ctx) error
+	AddSystemProfile(c *fiber.Ctx) error
 	RequestRegister(c *fiber.Ctx) error
 	Register(c *fiber.Ctx) error
 	RefreshToken(c *fiber.Ctx) error
@@ -143,9 +142,7 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		})
 	}
 
-	if response.Completed {
-		h.setAuthCookies(c, response.AccessToken, response.RefreshToken)
-	}
+	h.setAuthCookies(c, response.AccessToken, response.RefreshToken)
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Login successful",
@@ -153,47 +150,47 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	})
 }
 
-func (h *AuthHandler) SelectProfile(c *fiber.Ctx) error {
-	var req dto.SelectProfileRequestDto
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
+func (h *AuthHandler) GetProfiles(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
 		})
 	}
 
-	if errors := utils.ValidateStruct(req); len(errors) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
-	}
-
-	response, err := h.authService.SelectProfile(c.Context(), req)
+	profiles, err := h.authService.GetProfiles(c.Context(), userID)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Select profile failed",
+			"message": "Get profiles failed",
 			"error":   err.Error(),
 		})
-	}
-
-	if response.Completed {
-		h.setAuthCookies(c, response.AccessToken, response.RefreshToken)
-	}
-
-	msg := "Profile selected successfully"
-	if response.RequiresOrgSelection {
-		msg = "Role selected, please select an organization"
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": msg,
-		"data":    response,
+		"message": "Get profiles successful",
+		"data":    profiles,
 	})
 }
 
-func (h *AuthHandler) SelectOrg(c *fiber.Ctx) error {
-	var req dto.SelectOrgRequestDto
+// AddSystemProfile handles POST /auth/profiles/system
+// Thêm system profile mới cho user đã đăng nhập
+// @Summary Add system profile
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param request body dto.AddSystemProfileRequestDto true "System role to add"
+// @Success 201 {object} dto.AddSystemProfileResponseDto
+// @Failure 400 {object} map[string]interface{}
+// @Router /auth/profiles/system [post]
+func (h *AuthHandler) AddSystemProfile(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	var req dto.AddSystemProfileRequestDto
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid request body",
@@ -208,18 +205,16 @@ func (h *AuthHandler) SelectOrg(c *fiber.Ctx) error {
 		})
 	}
 
-	response, err := h.authService.SelectOrg(c.Context(), req)
+	response, err := h.authService.AddSystemProfile(c.Context(), userID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Select organization failed",
+			"message": "Add profile failed",
 			"error":   err.Error(),
 		})
 	}
 
-	h.setAuthCookies(c, response.AccessToken, response.RefreshToken)
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Organization selected successfully",
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"message": "Profile added successfully",
 		"data":    response,
 	})
 }
@@ -281,63 +276,10 @@ func (h *AuthHandler) SwitchProfile(c *fiber.Ctx) error {
 		})
 	}
 
-	if response.Completed {
-		h.setAuthCookies(c, response.AccessToken, response.RefreshToken)
-	}
-
-	msg := "Profile switched successfully"
-	if response.RequiresOrgSelection {
-		msg = "Role switched, please select an organization"
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": msg,
-		"data":    response,
-	})
-}
-
-func (h *AuthHandler) SwitchOrg(c *fiber.Ctx) error {
-	userID, ok := c.Locals("user_id").(uuid.UUID)
-	if !ok || userID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"message": "Unauthorized",
-		})
-	}
-	deviceID, ok := c.Locals("device_id").(uuid.UUID)
-	if !ok || deviceID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"message": "Unauthorized",
-		})
-	}
-	activeRole, _ := c.Locals("active_role").(string)
-
-	var req dto.SwitchOrgRequestDto
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
-	}
-
-	if errors := utils.ValidateStruct(req); len(errors) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
-	}
-
-	response, err := h.authService.SwitchOrg(c.Context(), userID, deviceID, activeRole, req)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Switch organization failed",
-			"error":   err.Error(),
-		})
-	}
-
 	h.setAuthCookies(c, response.AccessToken, response.RefreshToken)
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Organization switched successfully",
+		"message": "Profile switched successfully",
 		"data":    response,
 	})
 }
