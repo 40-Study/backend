@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package transaction;
+
+option go_package = "github.com/40-Study/backend/gen/transaction";
+
+service TransactionService {
+  // Check transaction by payment code (content)
+  rpc CheckTransaction(CheckTransactionRequest) returns (CheckTransactionResponse);
+
+  // Get transactions in date range
+  rpc GetTransactions(GetTransactionsRequest) returns (GetTransactionsResponse);
+
+  // Health check
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message CheckTransactionRequest {
+  string payment_code = 1;  // Nội dung chuyển khoản (vd: "40STUDY ORD20260316103045abc12345")
+  int64 from_timestamp = 2; // Unix timestamp
+  int64 to_timestamp = 3;
+}
+
+message CheckTransactionResponse {
+  bool found = 1;
+  string transaction_id = 2;
+  string amount = 3;
+  string currency = 4;
+  string description = 5;
+  string transaction_date = 6;
+  string status = 7; // "success", "not_found", "pending"
+  string error_message = 8;
+}
+
+message GetTransactionsRequest {
+  int64 from_timestamp = 1;
+  int64 to_timestamp = 2;
+  int32 limit = 3;
+}
+
+message TransactionData {
+  string posting_date = 1;
+  string transaction_date = 2;
+  string account_no = 3;
+  string credit_amount = 4;
+  string debit_amount = 5;
+  string currency = 6;
+  string description = 7;
+  string add_description = 8;
+  string available_balance = 9;
+  string ref_no = 10;
+  string ben_account_name = 11;
+  string bank_name = 12;
+  string transaction_type = 13;
+}
+
+message GetTransactionsResponse {
+  bool success = 1;
+  int32 count = 2;
+  repeated TransactionData transactions = 3;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  string message = 2;
+}

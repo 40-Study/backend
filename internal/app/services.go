@@ -3,6 +3,7 @@ package app
 import (
 	"log"
 
+	"study.com/v1/internal/config"
 	"study.com/v1/internal/queue"
 	"study.com/v1/internal/service"
 )
@@ -32,13 +33,15 @@ type Services struct {
 	// ===== Course Management =====
 	Category      *service.CategoryService
 	Tag           *service.TagService
+	Cart          *service.CartService
 	CourseService *service.CourseService
 	Section       *service.SectionService
 	Lesson        *service.LessonService
 	LessonContent *service.LessonContentService
 	Enrollment    *service.EnrollmentService
 
-	// ===== Video =====
+	// ===== Upload & Video =====
+	Upload          *service.UploadService
 	VideoUpload     *service.VideoUploadService
 	VideoProcessing *service.VideoProcessingService
 
@@ -52,9 +55,17 @@ type Services struct {
 	Chat       *service.ChatService
 	Whiteboard *service.WhiteboardService
 	Analytics  *service.AnalyticsService
+
+	// ===== Order & Payment =====
+	Order              *service.OrderService
+	Payment            *service.PaymentService
+	TransactionService *service.TransactionService
+	Voucher           *service.VoucherService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
+	// Initialize transaction service (gRPC)
+	transactionSvc := initTransactionService(resources.Config)
 
 	// ================= Video Queue Setup =================
 	var videoQueue *queue.VideoQueueSetup
@@ -187,13 +198,15 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		// ===== Course Management =====
 		Category:      service.NewCategoryService(repos.Category),
 		Tag:           service.NewTagService(repos.Tag),
+		Cart:          service.NewCartService(repos.CartItem, repos.Course, repos.Enrollment),
 		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag),
 		Section:       service.NewSectionService(repos.Section, repos.Course),
 		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, repos.Course),
 		LessonContent: service.NewLessonContentService(repos.LessonContent, repos.Lesson),
 		Enrollment:    service.NewEnrollmentService(repos.Enrollment, repos.Course, repos.Lesson),
 
-		// ===== Video =====
+		// ===== Upload & Video =====
+		Upload:          service.NewUploadService(resources.MinioClient, resources.Config),
 		VideoUpload:     uploadSvc,
 		VideoProcessing: videoProcessingSvc,
 
@@ -207,5 +220,44 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		Chat:       chatSvc,
 		Whiteboard: whiteboardSvc,
 		Analytics:  analyticsSvc,
+
+		// ===== Order & Payment =====
+		Order: service.NewOrderService(
+			repos.Order,
+			repos.OrderItem,
+			repos.Coupon,
+			repos.Course,
+			repos.Enrollment,
+
+			repos.CartItem,
+			repos.OrderStatusHistory,
+			repos.IdempotencyKey,
+		),
+		Payment: service.NewPaymentService(
+			repos.Order,
+			repos.OrderItem,
+			repos.PaymentEvent,
+			repos.OrderStatusHistory,
+			repos.Enrollment,
+			repos.Coupon,
+			transactionSvc,
+		),
+		TransactionService: transactionSvc,
+		Voucher:           service.NewVoucherService(repos.Voucher, repos.User),
 	}
+}
+
+// initTransactionService creates the transaction gRPC service
+func initTransactionService(cfg *config.Config) *service.TransactionService {
+	transactionSvc, err := service.NewTransactionService(
+		cfg.TransactionServiceHost,
+		cfg.TransactionServicePort,
+	)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize transaction service: %v", err)
+		return nil
+	}
+
+	log.Println("Transaction service (gRPC) initialized successfully")
+	return transactionSvc
 }

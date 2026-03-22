@@ -55,6 +55,7 @@ type Config struct {
 	LivekitNodePort  string `mapstructure:"LIVEKIT_NODE_PORT"`
 	LivekitAPIKey    string `mapstructure:"LIVEKIT_API_KEY"`
 	LivekitAPISecret string `mapstructure:"LIVEKIT_API_SECRET"`
+	LivekitURL       string `mapstructure:"LIVEKIT_URL"`
 
 	// JWT Configuration
 	JWTSecret            string `mapstructure:"JWT_SECRET"`
@@ -63,6 +64,10 @@ type Config struct {
 
 	// CORS
 	AllowedOrigins string `mapstructure:"ALLOWED_ORIGINS"`
+
+	// Transaction Service (MBBank gRPC)
+	TransactionServiceHost string `mapstructure:"TRANSACTION_SERVICE_HOST"`
+	TransactionServicePort string `mapstructure:"TRANSACTION_SERVICE_PORT"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -81,6 +86,10 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("MINIO_BUCKET_IMAGES", "images")
 	viper.SetDefault("MINIO_BUCKET_VIDEOS", "videos")
 	viper.SetDefault("MINIO_BUCKET_NAME", "videos")
+
+	// Transaction Service
+	viper.SetDefault("TRANSACTION_SERVICE_HOST", "localhost")
+	viper.SetDefault("TRANSACTION_SERVICE_PORT", "50051")
 
 	viper.AutomaticEnv()
 

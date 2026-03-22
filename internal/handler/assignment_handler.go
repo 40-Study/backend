@@ -68,7 +68,11 @@ func (h *AssignmentHandler) GetByID(c *fiber.Ctx) error {
 }
 
 func (h *AssignmentHandler) GetBySession(c *fiber.Ctx) error {
-	sessionID, err := uuid.Parse(c.Params("sessionId"))
+	sessionIDStr := c.Query("session_id")
+	if sessionIDStr == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session_id is required"})
+	}
+	sessionID, err := uuid.Parse(sessionIDStr)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid session_id"})
 	}
@@ -224,10 +228,11 @@ func (h *AssignmentHandler) GetSandbox(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	userID, err := uuid.Parse(c.Query("user_id"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "user_id is required"})
+	userIDVal := c.Locals("user_id")
+	if userIDVal == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
 	}
+	userID := userIDVal.(uuid.UUID)
 
 	result, err := h.svc.GetSandbox(c.Context(), id, userID)
 	if err != nil {

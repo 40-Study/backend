@@ -75,13 +75,15 @@ func New() (*App, error) {
 		// ===== Course Management =====
 		handlers.Category,
 		handlers.Tag,
+		handlers.Cart,
 		handlers.CourseHandler,
 		handlers.Section,
 		handlers.Lesson,
 		handlers.LessonContent,
 		handlers.Enrollment,
 
-		// ===== Video =====
+		// ===== Upload & Video =====
+		handlers.Upload,
 		handlers.VideoUpload,
 		handlers.HLS,
 
@@ -92,6 +94,10 @@ func New() (*App, error) {
 		handlers.Chat,
 		handlers.Whiteboard,
 		handlers.Analytics,
+
+		// ===== Order & Payment =====
+		handlers.Order,
+		handlers.Voucher,
 
 		resources.Redis,
 		resources.MinioClient,

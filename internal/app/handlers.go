@@ -30,13 +30,15 @@ type Handlers struct {
 	// ===== Course Management =====
 	Category      *handler.CategoryHandler
 	Tag           *handler.TagHandler
+	Cart          *handler.CartHandler
 	CourseHandler *handler.CourseHandler
 	Section       *handler.SectionHandler
 	Lesson        *handler.LessonHandler
 	LessonContent *handler.LessonContentHandler
 	Enrollment    *handler.EnrollmentHandler
 
-	// ===== Video =====
+	// ===== Upload & Video =====
+	Upload      *handler.UploadHandler
 	VideoUpload *handler.VideoUploadHandler
 	HLS         *handler.HLSHandler
 
@@ -47,6 +49,10 @@ type Handlers struct {
 	Chat       *handler.ChatHandler
 	Whiteboard *handler.WhiteboardHandler
 	Analytics  *handler.AnalyticsHandler
+
+	// ===== Order & Payment =====
+	Order   *handler.OrderHandler
+	Voucher *handler.VoucherHandler
 }
 
 func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handlers {
@@ -75,13 +81,15 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handler
 		// ===== Course Management =====
 		Category:      handler.NewCategoryHandler(services.Category),
 		Tag:           handler.NewTagHandler(services.Tag),
+		Cart:          handler.NewCartHandler(services.Cart),
 		CourseHandler: handler.NewCourseHandler(services.CourseService),
 		Section:       handler.NewSectionHandler(services.Section),
 		Lesson:        handler.NewLessonHandler(services.Lesson),
 		LessonContent: handler.NewLessonContentHandler(services.LessonContent),
 		Enrollment:    handler.NewEnrollmentHandler(services.Enrollment),
 
-		// ===== Video =====
+		// ===== Upload & Video =====
+		Upload:      handler.NewUploadHandler(services.Upload),
 		VideoUpload: handler.NewVideoUploadHandler(services.VideoUpload),
 		HLS:         handler.NewHLSHandler(minioClient),
 
@@ -92,5 +100,9 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handler
 		Chat:       handler.NewChatHandler(services.Chat),
 		Whiteboard: handler.NewWhiteboardHandler(services.Whiteboard, services.Livekit),
 		Analytics:  handler.NewAnalyticsHandler(services.Analytics),
+
+		// ===== Order & Payment =====
+		Order:   handler.NewOrderHandler(services.Order, services.Payment),
+		Voucher: handler.NewVoucherHandler(services.Voucher),
 	}
 }

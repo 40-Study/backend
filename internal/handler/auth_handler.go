@@ -22,6 +22,8 @@ type AuthHandlerInterface interface {
 	RequestPasswordReset(c *fiber.Ctx) error
 	ResetPassword(c *fiber.Ctx) error
 	GetMe(c *fiber.Ctx) error
+	GetMyProfile(c *fiber.Ctx) error
+	GetMySystemRoles(c *fiber.Ctx) error
 	UpdateMe(c *fiber.Ctx) error
 	GetAllDevices(c *fiber.Ctx) error
 	LogoutOneDevice(c *fiber.Ctx) error
@@ -459,6 +461,64 @@ func (h *AuthHandler) GetMe(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Get user info successfully",
 		"data":    user,
+	})
+}
+
+// GetMyProfile handles GET /auth/me/profile
+// Returns full profile with user info, system roles, organizations, active context
+func (h *AuthHandler) GetMyProfile(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	activeRole, _ := c.Locals("role").(string)
+
+	var activeOrgID *uuid.UUID
+	if orgIDVal := c.Locals("org_id"); orgIDVal != nil {
+		if orgID, ok := orgIDVal.(uuid.UUID); ok && orgID != uuid.Nil {
+			activeOrgID = &orgID
+		}
+	}
+
+	profile, err := h.authService.GetMyProfile(c.Context(), userID, activeRole, activeOrgID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to get profile",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Success",
+		"data":    profile,
+	})
+}
+
+// GetMySystemRoles handles GET /auth/me/system-roles
+func (h *AuthHandler) GetMySystemRoles(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	roles, err := h.authService.GetMySystemRoles(c.Context(), userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to get system roles",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Success",
+		"data": fiber.Map{
+			"system_roles": roles,
+		},
 	})
 }
 

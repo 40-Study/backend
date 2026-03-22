@@ -28,9 +28,11 @@ type UserResponseDto struct {
 	ID          uuid.UUID `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
 	Username    string    `json:"username" example:"student123"`
 	Email       string    `json:"email" example:"student@example.com"`
+	FullName    *string   `json:"full_name,omitempty" example:"Nguyen Van A"`
 	Phone       *string   `json:"phone,omitempty" example:"+84901234567"`
 	AvatarUrl   *string   `json:"avatar_url,omitempty" example:"https://example.com/avatar.jpg"`
 	DateOfBirth *string   `json:"date_of_birth,omitempty" example:"2005-01-01"`
+	Bio         *string   `json:"bio,omitempty" example:"Sinh viên PTIT"`
 	IsActive    bool      `json:"is_active" example:"true"`
 	CreatedAt   string    `json:"created_at" example:"2023-01-01T00:00:00Z"`
 }
@@ -194,6 +196,18 @@ type VerifyOtpResponseDto struct {
 // All fields are optional (partial update)
 type UpdateMeRequestDto struct {
 	Username    *string `json:"username,omitempty" validate:"omitempty,alphanum,min=3,max=30" example:"student123"`
+	FullName    *string `json:"full_name,omitempty" validate:"omitempty,min=2,max=255" example:"Nguyen Van A"`
 	Phone       *string `json:"phone,omitempty" validate:"omitempty,e164" example:"+84901234567"`
 	DateOfBirth *string `json:"date_of_birth,omitempty" validate:"omitempty,datetime=2006-01-02" example:"2005-01-01"`
+	Bio         *string `json:"bio,omitempty" validate:"omitempty,max=1000" example:"Sinh viên PTIT"`
+	AvatarURL   *string `json:"avatar_url,omitempty" validate:"omitempty,url,max=500" example:"https://example.com/avatar.jpg"`
+}
+
+// MyProfileResponseDto - Full profile response including user info, roles, orgs
+type MyProfileResponseDto struct {
+	User          UserResponseDto     `json:"user"`
+	SystemRoles   []SystemRoleDto     `json:"system_roles"`
+	Organizations []MyOrganizationDto `json:"organizations"`
+	ActiveRole    *SystemRoleDto      `json:"active_role,omitempty"`
+	ActiveOrg     *OrgContextDto      `json:"active_org,omitempty"`
 }

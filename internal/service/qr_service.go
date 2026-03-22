@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -8,7 +9,18 @@ import (
 	"study.com/v1/internal/utils"
 )
 
-func GenerateQRPayment(req dto.QRPaymentRequest) dto.QRPaymentResponse {
+type QrServiceInterface interface {
+	GenerateQrUrl(ctx context.Context, req dto.QRPaymentRequest, qrType string) (dto.QRPaymentResponse, error)
+}
+
+type QrService struct {
+}
+
+func NewQrService() *QrService {
+	return &QrService{}
+}
+
+func (s *QrService) GenerateQrUrl(ctx context.Context, req dto.QRPaymentRequest, qrType string) (dto.QRPaymentResponse, error) {
 	paymentCode := utils.GeneratePaymentCode()
 
 	description := fmt.Sprintf("%s %s", req.Description, paymentCode)
@@ -30,5 +42,5 @@ func GenerateQRPayment(req dto.QRPaymentRequest) dto.QRPaymentResponse {
 		QRContent:   qrContent,
 		CreatedAt:   now,
 		ExpiresAt:   expiresAt,
-	}
+	}, nil
 }

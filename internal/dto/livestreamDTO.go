@@ -22,7 +22,8 @@ type StartLivestreamDTO struct {
 
 type JoinLivestreamDTO struct {
 	UserID string `json:"user_id" validate:"required,uuid"`
-	Role   string `json:"role" validate:"omitempty,oneof=teacher assistant student viewer"`
+	Name  string `json:"name" validate:"required"`
+	Role  string `json:"role" validate:"omitempty,oneof=teacher assistant student viewer"`
 }
 
 type LeaveLivestreamDTO struct {
@@ -78,6 +79,8 @@ type ParticipantResponseDTO struct {
 	LeftAt    *string   `json:"left_at,omitempty"`
 	IsActive  bool      `json:"is_active"`
 	Token     string    `json:"token,omitempty"`
+	ServerURL string    `json:"server_url,omitempty"`
+	RoomName  string    `json:"room_name,omitempty"`
 }
 
 type ScreenShareDTO struct {

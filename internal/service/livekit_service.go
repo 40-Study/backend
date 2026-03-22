@@ -122,8 +122,7 @@ func (s *LivekitService) CreateJoinToken(ctx context.Context, roomName string, r
 	at.SetIdentity(req.Identity)
 	if req.Name != "" {
 		at.SetName(req.Name)
-	}
-	if req.Name == "" {
+	} else {
 		at.SetName(req.Identity)
 	}
 	at.SetValidFor(24 * time.Hour)
@@ -166,7 +165,7 @@ func (s *LivekitService) UpdateParticipant(ctx context.Context, roomName, identi
 	}
 	if req.CanPublish != nil || req.CanSubscribe != nil {
 		perm := &livekit.ParticipantPermission{
-			CanPublishData: true, // keep data publishing on by default
+			CanPublishData: true,
 		}
 		if req.CanPublish != nil {
 			perm.CanPublish = *req.CanPublish

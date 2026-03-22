@@ -17,7 +17,8 @@ COPY transaction/api.py .
 ENV PATH=/root/.local/bin:$PATH \
     MB_USERNAME="" \
     MB_PASSWORD="" \
-    MB_ACCOUNT_NO=""
+    MB_ACCOUNT_NO="" \
+    MB_BANK_CODE=""
 
 EXPOSE 8000
 

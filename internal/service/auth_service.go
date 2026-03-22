@@ -29,6 +29,8 @@ type AuthServiceInterface interface {
 	LogoutAllDevice(ctx context.Context, userId uuid.UUID) error
 	RefreshToken(ctx context.Context, oldRefreshToken string) (*dto.RefreshTokenResponseDto, error)
 	GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserResponseDto, error)
+	GetMyProfile(ctx context.Context, userID uuid.UUID, activeRole string, activeOrgID *uuid.UUID) (*dto.MyProfileResponseDto, error)
+	GetMySystemRoles(ctx context.Context, userID uuid.UUID) ([]dto.SystemRoleDto, error)
 	UpdateMe(ctx context.Context, userID uuid.UUID, req dto.UpdateMeRequestDto) (*dto.UserResponseDto, error)
 	GetAllDevices(ctx context.Context, userID, currentDeviceID uuid.UUID) ([]dto.DeviceSessionDto, error)
 	ChangePassword(ctx context.Context, userID uuid.UUID, req dto.ChangePasswordRequestDto) error
@@ -624,9 +626,11 @@ func (s *AuthService) GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserRes
 		ID:          user.ID,
 		Username:    user.UserName,
 		Email:       user.Email,
+		FullName:    user.FullName,
 		Phone:       user.Phone,
 		AvatarUrl:   user.AvatarURL,
 		DateOfBirth: dob,
+		Bio:         user.Bio,
 		IsActive:    user.IsActive,
 		CreatedAt:   user.CreatedAt.Format(time.RFC3339),
 	}
@@ -643,6 +647,83 @@ func (s *AuthService) GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserRes
 	return userResponse, nil
 }
 
+// GetMyProfile trả về full profile: user info + system roles + organizations + active context
+func (s *AuthService) GetMyProfile(ctx context.Context, userID uuid.UUID, activeRole string, activeOrgID *uuid.UUID) (*dto.MyProfileResponseDto, error) {
+	// 1. Get user info
+	userDto, err := s.GetMe(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Get system roles
+	systemRoles, err := s.GetMySystemRoles(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system roles: %w", err)
+	}
+
+	// 3. Get organizations
+	orgs, err := s.getUserOrgs(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get organizations: %w", err)
+	}
+
+	// Convert OrgContextDto to MyOrganizationDto
+	orgDtos := make([]dto.MyOrganizationDto, len(orgs))
+	for i, org := range orgs {
+		orgDtos[i] = dto.MyOrganizationDto{
+			ID:   org.ID,
+			Name: org.Name,
+		}
+	}
+
+	// 4. Build active role context
+	var activeRoleDto *dto.SystemRoleDto
+	for _, sr := range systemRoles {
+		if sr.Name == activeRole {
+			r := sr
+			activeRoleDto = &r
+			break
+		}
+	}
+
+	// 5. Build active org context
+	var activeOrgDto *dto.OrgContextDto
+	if activeOrgID != nil {
+		for _, org := range orgs {
+			if org.ID == activeOrgID.String() {
+				o := org
+				activeOrgDto = &o
+				break
+			}
+		}
+	}
+
+	return &dto.MyProfileResponseDto{
+		User:          *userDto,
+		SystemRoles:   systemRoles,
+		Organizations: orgDtos,
+		ActiveRole:    activeRoleDto,
+		ActiveOrg:     activeOrgDto,
+	}, nil
+}
+
+// GetMySystemRoles trả về danh sách system roles của user
+func (s *AuthService) GetMySystemRoles(ctx context.Context, userID uuid.UUID) ([]dto.SystemRoleDto, error) {
+	roles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+	if err != nil {
+		return nil, err
+	}
+
+	roleDtos := make([]dto.SystemRoleDto, len(roles))
+	for i, sr := range roles {
+		roleDtos[i] = dto.SystemRoleDto{
+			ID:   sr.SystemRole.ID.String(),
+			Name: sr.SystemRole.Name,
+		}
+	}
+	return roleDtos, nil
+}
+
 func (s *AuthService) UpdateMe(ctx context.Context, userID uuid.UUID, req dto.UpdateMeRequestDto) (*dto.UserResponseDto, error) {
 	// ===== 1. Build updates map (only non-nil fields) =====
 	updates := make(map[string]interface{})
@@ -651,8 +732,20 @@ func (s *AuthService) UpdateMe(ctx context.Context, userID uuid.UUID, req dto.Up
 		updates["user_name"] = *req.Username
 	}
 
+	if req.FullName != nil {
+		updates["full_name"] = *req.FullName
+	}
+
 	if req.Phone != nil {
 		updates["phone"] = *req.Phone
+	}
+
+	if req.Bio != nil {
+		updates["bio"] = *req.Bio
+	}
+
+	if req.AvatarURL != nil {
+		updates["avatar_url"] = *req.AvatarURL
 	}
 
 	if req.DateOfBirth != nil {

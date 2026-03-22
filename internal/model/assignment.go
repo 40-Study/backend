@@ -27,6 +27,8 @@ type Assignment struct {
 	MemoryLimit int                  `gorm:"default:256" json:"memory_limit"`
 	IsPublished bool                 `gorm:"default:false;index" json:"is_published"`
 	PublishedAt *time.Time           `gorm:"type:timestamp" json:"published_at,omitempty"`
+	StartTime   *time.Time           `gorm:"type:timestamp" json:"start_time,omitempty"`
+	EndTime     *time.Time           `gorm:"type:timestamp" json:"end_time,omitempty"`
 
 	Session     *LivestreamSession `gorm:"foreignKey:SessionID" json:"-"`
 	TestCases   []TestCase         `gorm:"foreignKey:AssignmentID;constraint:OnDelete:CASCADE" json:"test_cases,omitempty"`

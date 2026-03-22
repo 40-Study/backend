@@ -1,0 +1,20 @@
+#!/bin/bash
+# Wrapper that removes cgroup-related options for cgroups v2 compatibility
+REAL_ISOLATE="/usr/local/bin/isolate.real"
+ARGS=()
+SKIP_NEXT=false
+for arg in "$@"; do
+    if $SKIP_NEXT; then
+        SKIP_NEXT=false
+        continue
+    fi
+    case "$arg" in
+        --cg|--cg-mem|--cg-timing|--cg-mem=*|--cg-timing=*)
+            # Skip cgroup-related flags
+            ;;
+        *)
+            ARGS+=("$arg")
+            ;;
+    esac
+done
+exec "$REAL_ISOLATE" "${ARGS[@]}"

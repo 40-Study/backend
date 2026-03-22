@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -71,7 +71,7 @@ func (s *ChatService) SendMessage(ctx context.Context, req dto.SendChatMessageDT
 	}
 
 	go func() {
-		bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		bg, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		session, err := s.livestreamRepo.GetByID(bg, sessionID)
 		if err != nil || session == nil {
@@ -86,11 +86,13 @@ func (s *ChatService) SendMessage(ctx context.Context, req dto.SendChatMessageDT
 		if err != nil {
 			return
 		}
+		// Broadcast via LiveKit data channel
 		if err := s.livekitSvc.SendData(bg, session.RoomName, dto.SendDataDTO{
 			Data:  string(payload),
 			Topic: "lk-chat-message",
 		}); err != nil {
-			log.Printf("chat: livekit broadcast failed for room %s: %v", session.RoomName, err)
+			// Log but don't fail - chat is still saved to DB
+			fmt.Printf("livekit broadcast failed: %v\n", err)
 		}
 	}()
 

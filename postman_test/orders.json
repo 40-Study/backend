@@ -1,0 +1,94 @@
+{
+  "info": {
+    "name": "Orders",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "order_id", "value": "" },
+    { "key": "course_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Create Order",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/orders",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"source\": \"buy_now\",\n  \"course_ids\": [\"{{course_id}}\"],\n  \"coupon_code\": \"\",\n  \"note\": \"Mua khoa hoc\",\n  \"idempotency_key\": \"order-create-001\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Create Order From Cart",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/orders",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"source\": \"cart\",\n  \"coupon_code\": \"\",\n  \"note\": \"Thanh toan gio hang\",\n  \"idempotency_key\": \"order-create-cart-001\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get My Orders",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/orders/me?page=1&limit=10&status="
+      }
+    },
+    {
+      "name": "Get Order Detail",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/orders/{{order_id}}"
+      }
+    },
+    {
+      "name": "Cancel Order",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/orders/{{order_id}}/cancel",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"Khong con nhu cau\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Create Payment Intent",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/orders/{{order_id}}/payment-intent",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"payment_method\": \"bank_transfer\",\n  \"idempotency_key\": \"payment-intent-001\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Payment Status",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/orders/{{order_id}}/payment-status"
+      }
+    },
+    {
+      "name": "Check Payment",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/orders/{{order_id}}/check-payment"
+      }
+    }
+  ]
+}

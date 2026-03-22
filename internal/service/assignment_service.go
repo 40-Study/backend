@@ -80,6 +80,17 @@ func (s *AssignmentService) Create(ctx context.Context, req dto.CreateAssignment
 		MemoryLimit: memoryLimit,
 	}
 
+	if req.StartTime != nil {
+		if t, err := time.Parse(time.RFC3339, *req.StartTime); err == nil {
+			assignment.StartTime = &t
+		}
+	}
+	if req.EndTime != nil {
+		if t, err := time.Parse(time.RFC3339, *req.EndTime); err == nil {
+			assignment.EndTime = &t
+		}
+	}
+
 	if err := s.repo.Create(ctx, assignment); err != nil {
 		return nil, err
 	}
@@ -115,7 +126,7 @@ func (s *AssignmentService) GetBySession(ctx context.Context, sessionID uuid.UUI
 		return nil, err
 	}
 
-	var data []dto.AssignmentResponseDTO
+	data := make([]dto.AssignmentResponseDTO, 0, len(assignments))
 	for _, a := range assignments {
 		data = append(data, s.toResponseDTO(a))
 	}
@@ -165,6 +176,16 @@ func (s *AssignmentService) Update(ctx context.Context, id uuid.UUID, req dto.Up
 	if req.MemoryLimit != nil {
 		assignment.MemoryLimit = *req.MemoryLimit
 	}
+	if req.StartTime != nil {
+		if t, err := time.Parse(time.RFC3339, *req.StartTime); err == nil {
+			assignment.StartTime = &t
+		}
+	}
+	if req.EndTime != nil {
+		if t, err := time.Parse(time.RFC3339, *req.EndTime); err == nil {
+			assignment.EndTime = &t
+		}
+	}
 
 	if err := s.repo.Update(ctx, assignment); err != nil {
 		return nil, err
@@ -178,7 +199,7 @@ func (s *AssignmentService) Delete(ctx context.Context, id uuid.UUID) error {
 }
 
 func (s *AssignmentService) Publish(ctx context.Context, id uuid.UUID, livekitSvc LivekitServiceInterface) (*model.Assignment, error) {
-	assignment, err := s.repo.GetByID(ctx, id)
+	assignment, err := s.repo.GetByIDWithSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -190,21 +211,38 @@ func (s *AssignmentService) Publish(ctx context.Context, id uuid.UUID, livekitSv
 		return nil, err
 	}
 
-	event := map[string]interface{}{
-		"type":          "assignment_published",
-		"assignment_id": id.String(),
-		"title":         assignment.Title,
-		"language":      assignment.Language,
-		"difficulty":    string(assignment.Difficulty),
-		"timestamp":     time.Now().Format(time.RFC3339),
+	// Broadcast to livestream room if session exists
+	// BUT skip broadcasting if start_time is in the future (scheduled assignment)
+	// Frontend will handle broadcasting when the schedule time arrives
+	shouldBroadcast := assignment.Session != nil
+	if assignment.StartTime != nil && assignment.StartTime.After(time.Now()) {
+		shouldBroadcast = false // Don't broadcast for scheduled assignments
 	}
-	eventJSON, _ := json.Marshal(event)
 
-	sendReq := dto.SendDataDTO{
-		Data:  string(eventJSON),
-		Topic: "collaboration",
+	if shouldBroadcast {
+		event := map[string]interface{}{
+			"type":          "assignment_published",
+			"assignment_id": id.String(),
+			"title":         assignment.Title,
+			"language":      assignment.Language,
+			"difficulty":    string(assignment.Difficulty),
+			"timestamp":     time.Now().Format(time.RFC3339),
+		}
+		if assignment.StartTime != nil {
+			event["start_time"] = assignment.StartTime.Format(time.RFC3339)
+		}
+		if assignment.EndTime != nil {
+			event["end_time"] = assignment.EndTime.Format(time.RFC3339)
+		}
+		eventJSON, _ := json.Marshal(event)
+
+		sendReq := dto.SendDataDTO{
+			Data:  string(eventJSON),
+			Topic: "collaboration",
+		}
+		// Dùng SessionID (chính là room name trong LiveKit)
+		_ = livekitSvc.SendData(context.Background(), assignment.SessionID.String(), sendReq)
 	}
-	_ = livekitSvc.SendData(context.Background(), assignment.SessionID.String(), sendReq)
 
 	return s.repo.GetByID(ctx, id)
 }
@@ -270,6 +308,16 @@ func (s *AssignmentService) toResponseDTO(a model.Assignment) dto.AssignmentResp
 		t := a.PublishedAt.Format(time.RFC3339)
 		publishedAt = &t
 	}
+	var startTime *string
+	if a.StartTime != nil {
+		t := a.StartTime.Format(time.RFC3339)
+		startTime = &t
+	}
+	var endTime *string
+	if a.EndTime != nil {
+		t := a.EndTime.Format(time.RFC3339)
+		endTime = &t
+	}
 
 	return dto.AssignmentResponseDTO{
 		ID:          a.ID,
@@ -283,6 +331,8 @@ func (s *AssignmentService) toResponseDTO(a model.Assignment) dto.AssignmentResp
 		MemoryLimit: a.MemoryLimit,
 		IsPublished: a.IsPublished,
 		PublishedAt: publishedAt,
+		StartTime:   startTime,
+		EndTime:     endTime,
 		CreatedAt:   a.CreatedAt.Format(time.RFC3339),
 	}
 }

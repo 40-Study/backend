@@ -13,6 +13,7 @@ import (
 type AssignmentRepositoryInterface interface {
 	Create(ctx context.Context, assignment *model.Assignment) error
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Assignment, error)
+	GetByIDWithSession(ctx context.Context, id uuid.UUID) (*model.Assignment, error)
 	GetByIDWithTestCases(ctx context.Context, id uuid.UUID) (*model.Assignment, error)
 	GetBySession(ctx context.Context, sessionID uuid.UUID, page, pageSize int) ([]model.Assignment, int64, error)
 	GetPublishedBySession(ctx context.Context, sessionID uuid.UUID) ([]model.Assignment, error)
@@ -37,6 +38,20 @@ func (r *AssignmentRepository) Create(ctx context.Context, assignment *model.Ass
 func (r *AssignmentRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Assignment, error) {
 	var assignment model.Assignment
 	err := r.db.WithContext(ctx).First(&assignment, "id = ?", id).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &assignment, nil
+}
+
+func (r *AssignmentRepository) GetByIDWithSession(ctx context.Context, id uuid.UUID) (*model.Assignment, error) {
+	var assignment model.Assignment
+	err := r.db.WithContext(ctx).
+		Preload("Session").
+		First(&assignment, "id = ?", id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

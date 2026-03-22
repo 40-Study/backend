@@ -427,7 +427,36 @@ func (m *MinioClient) EnsureBuckets(ctx context.Context) error {
 		} else {
 			log.Printf("[MinIO] Bucket already exists: %s", bucket)
 		}
+
+		// Set bucket policy to allow public read (for images)
+		if err := m.SetBucketPublicRead(ctx, bucket); err != nil {
+			log.Printf("[MinIO] Warning: Failed to set public policy for bucket %s: %v", bucket, err)
+		}
 	}
+	return nil
+}
+
+// SetBucketPublicRead sets bucket policy to allow anonymous read access
+// This allows images to be displayed directly in browsers without authentication
+func (m *MinioClient) SetBucketPublicRead(ctx context.Context, bucket string) error {
+	// Policy JSON cho phép anonymous read tất cả objects trong bucket
+	policy := fmt.Sprintf(`{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": {"AWS": ["*"]},
+				"Action": ["s3:GetObject"],
+				"Resource": ["arn:aws:s3:::%s/*"]
+			}
+		]
+	}`, bucket)
+
+	err := m.client.SetBucketPolicy(ctx, bucket, policy)
+	if err != nil {
+		return fmt.Errorf("failed to set bucket policy: %w", err)
+	}
+	log.Printf("[MinIO] Set public read policy for bucket: %s", bucket)
 	return nil
 }
 

@@ -11,6 +11,8 @@ type CreateAssignmentDTO struct {
 	StarterCode string   `json:"starter_code"`
 	TimeLimit   int      `json:"time_limit"`
 	MemoryLimit int      `json:"memory_limit"`
+	StartTime   *string  `json:"start_time"`
+	EndTime     *string  `json:"end_time"`
 }
 
 type UpdateAssignmentDTO struct {
@@ -21,6 +23,8 @@ type UpdateAssignmentDTO struct {
 	StarterCode *string   `json:"starter_code"`
 	TimeLimit   *int      `json:"time_limit"`
 	MemoryLimit *int      `json:"memory_limit"`
+	StartTime   *string   `json:"start_time"`
+	EndTime     *string   `json:"end_time"`
 }
 
 type AssignmentResponseDTO struct {
@@ -35,6 +39,8 @@ type AssignmentResponseDTO struct {
 	MemoryLimit int       `json:"memory_limit"`
 	IsPublished bool      `json:"is_published"`
 	PublishedAt *string   `json:"published_at,omitempty"`
+	StartTime   *string   `json:"start_time,omitempty"`
+	EndTime     *string   `json:"end_time,omitempty"`
 	CreatedAt   string    `json:"created_at"`
 }
 
