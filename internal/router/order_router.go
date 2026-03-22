@@ -2,11 +2,16 @@ package router
 
 import (
 	"github.com/gofiber/fiber/v2"
+	"github.com/redis/go-redis/v9"
+	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
 )
 
-func SetupOrderRoutes(api fiber.Router, orderHandler *handler.OrderHandler) {
+func SetupOrderRoutes(api fiber.Router,
+	cfg *config.Config,
+	orderHandler *handler.OrderHandler,
+	redis *redis.Client) {
 	orders := api.Group("/orders")
 
 	authMiddleware := middleware.AuthMiddleware(nil, nil)

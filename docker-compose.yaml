@@ -51,28 +51,16 @@ services:
       - test
 
   judge_server:
-    image: judge0/judge0:latest
+    image: judge0/judge0:1.13.1
     platform: linux/amd64
+    user: root
     volumes:
       - ./judge/judge0.conf:/judge0.conf:ro
-      - ./judge/entrypoint.sh:/entrypoint.sh:ro
-    entrypoint: ["/bin/sh", "/entrypoint.sh"]
-    command: ["./scripts/server"]
+      - ./judge/init-cgroups.sh:/init-cgroups.sh:ro
+    entrypoint: ["/bin/bash", "-c", "/init-cgroups.sh ./scripts/server"]
     ports:
       - "2358:2358"
     privileged: true
-    environment:
-      - CGO_ENABLED=0
-
-    mem_limit: 1g              # server không cần nhiều RAM
-    pids_limit: 2048
-
-    ulimits:
-      stack: 1048576           # 1MB stack thay vì 8MB mặc định
-      nproc: 65535
-      nofile:
-        soft: 65535
-        hard: 65535
 
     restart: always
     depends_on:
@@ -81,30 +69,15 @@ services:
     networks:
       - study_network
 
-
   judge_worker:
-    image: judge0/judge0:latest
+    image: judge0/judge0:1.13.1
     platform: linux/amd64
+    user: root
     volumes:
       - ./judge/judge0.conf:/judge0.conf:ro
-      - ./judge/entrypoint.sh:/entrypoint.sh:ro
-    entrypoint: ["/bin/sh", "/entrypoint.sh"]
-    command: ["./scripts/workers"]
+      - ./judge/init-cgroups.sh:/init-cgroups.sh:ro
+    entrypoint: ["/bin/bash", "-c", "/init-cgroups.sh ./scripts/workers"]
     privileged: true
-
-    mem_limit: 3g              # phần RAM chính cho compile
-    pids_limit: 2048
-
-    environment:
-      - CGO_ENABLED=0
-      - GOMAXPROCS=2           # hạn chế Go spawn quá nhiều OS thread
-
-    ulimits:
-      stack: 1048576           # cực kỳ quan trọng để tránh pthread fail
-      nproc: 65535
-      nofile:
-        soft: 65535
-        hard: 65535
 
     restart: always
     depends_on:

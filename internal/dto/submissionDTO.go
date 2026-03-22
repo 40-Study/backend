@@ -9,17 +9,26 @@ type CreateSubmissionDTO struct {
 	Code         string `json:"code" validate:"required"`
 }
 
+type SubmissionUserDTO struct {
+	ID       uuid.UUID `json:"id"`
+	Username string    `json:"username"`
+	Email    string    `json:"email,omitempty"`
+}
+
 type SubmissionResponseDTO struct {
-	ID              uuid.UUID `json:"id"`
-	AssignmentID    uuid.UUID `json:"assignment_id"`
-	UserID          uuid.UUID `json:"user_id"`
-	Code            string    `json:"code"`
-	Verdict         string    `json:"verdict"`
-	ExecutionTime   int       `json:"execution_time"`
-	MemoryUsed      int       `json:"memory_used"`
-	TestCasesPassed int       `json:"test_cases_passed"`
-	TotalTestCases  int       `json:"total_test_cases"`
-	CreatedAt       string    `json:"created_at"`
+	ID              uuid.UUID          `json:"id"`
+	AssignmentID    uuid.UUID          `json:"assignment_id"`
+	UserID          uuid.UUID          `json:"user_id"`
+	User            *SubmissionUserDTO `json:"user,omitempty"`
+	Language        string             `json:"language"`
+	Code            string             `json:"code"`
+	Verdict         string             `json:"verdict"`
+	Score           int                `json:"score"`
+	ExecutionTime   int                `json:"execution_time"`
+	MemoryUsed      int                `json:"memory_used"`
+	TestCasesPassed int                `json:"test_cases_passed"`
+	TotalTestCases  int                `json:"total_test_cases"`
+	CreatedAt       string             `json:"created_at"`
 }
 
 type SubmissionListDTO struct {
@@ -30,12 +39,13 @@ type SubmissionListDTO struct {
 }
 
 type Judge0SubmissionDTO struct {
-	SourceCode     string `json:"source_code"`
-	LanguageID     int    `json:"language_id"`
-	Stdin          string `json:"stdin"`
-	ExpectedOutput string `json:"expected_output"`
-	CPUTimeLimit   int    `json:"cpu_time_limit"`
-	MemoryLimit    int    `json:"memory_limit"`
+	SourceCode     string  `json:"source_code"`
+	LanguageID     int     `json:"language_id"`
+	Stdin          string  `json:"stdin"`
+	ExpectedOutput string  `json:"expected_output"`
+	CPUTimeLimit   float64 `json:"cpu_time_limit"`
+	MemoryLimit    int     `json:"memory_limit"`
+	Base64Encoded  bool    `json:"base64_encoded,omitempty"`
 }
 
 type Judge0ResponseDTO struct {
@@ -46,7 +56,7 @@ type Judge0ResponseDTO struct {
 	Message       string          `json:"message"`
 	Status        Judge0StatusDTO `json:"status"`
 	Time          string          `json:"time"`
-	Memory        string          `json:"memory"`
+	Memory        int             `json:"memory"`
 }
 
 type Judge0StatusDTO struct {
@@ -73,4 +83,20 @@ type RunCustomCodeDTO struct {
 	Language     string `json:"language" validate:"required"`
 	Code         string `json:"code" validate:"required"`
 	CustomInput  string `json:"custom_input" validate:"required"`
+}
+
+// ExecuteCodeDTO - For free sandbox execution without assignment
+type ExecuteCodeDTO struct {
+	Language string `json:"language" validate:"required"`
+	Code     string `json:"code" validate:"required"`
+	Stdin    string `json:"stdin"`
+}
+
+type ExecuteCodeResponseDTO struct {
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	Error    string `json:"error,omitempty"`
+	ExitCode int    `json:"exit_code"`
+	Time     string `json:"time"`
+	Memory   int    `json:"memory"`
 }

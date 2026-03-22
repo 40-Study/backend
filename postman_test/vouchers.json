@@ -1,0 +1,141 @@
+{
+  "info": {
+    "name": "Vouchers",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "voucher_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Public",
+      "item": [
+        {
+          "name": "Get Public Vouchers",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/vouchers/public"
+          }
+        },
+        {
+          "name": "Get Voucher By Code",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/vouchers/code/{{voucher_code}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "User",
+      "item": [
+        {
+          "name": "Get My Saved Vouchers",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/vouchers/me"
+          }
+        },
+        {
+          "name": "Save Voucher",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/vouchers/{{voucher_id}}/save",
+            "header": [{ "key": "Content-Type", "value": "application/json" }]
+          }
+        },
+        {
+          "name": "Unsave Voucher",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/vouchers/{{voucher_id}}/save"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Create Voucher",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/vouchers",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"SUMMER2024\",\n  \"description\": \"Summer discount\",\n  \"discount_type\": \"percentage\",\n  \"discount_value\": 20,\n  \"min_order_amount\": 100000,\n  \"max_discount_amount\": 500000,\n  \"usage_limit\": 100,\n  \"usage_per_user\": 1,\n  \"start_date\": \"2024-06-01T00:00:00Z\",\n  \"end_date\": \"2024-08-31T23:59:59Z\",\n  \"applicable_course_ids\": [],\n  \"is_active\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Get All Vouchers",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/vouchers?page=1&limit=10"
+          }
+        },
+        {
+          "name": "Get Voucher",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/vouchers/{{voucher_id}}"
+          }
+        },
+        {
+          "name": "Update Voucher",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/vouchers/{{voucher_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Updated summer discount\",\n  \"discount_value\": 25,\n  \"usage_limit\": 200\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Voucher",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/vouchers/{{voucher_id}}"
+          }
+        },
+        {
+          "name": "Restore Voucher",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/vouchers/{{voucher_id}}/restore"
+          }
+        },
+        {
+          "name": "Activate Voucher",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/vouchers/{{voucher_id}}/activate"
+          }
+        },
+        {
+          "name": "Deactivate Voucher",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/vouchers/{{voucher_id}}/deactivate"
+          }
+        },
+        {
+          "name": "Get Voucher Stats",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/vouchers/{{voucher_id}}/stats"
+          }
+        }
+      ]
+    }
+  ]
+}

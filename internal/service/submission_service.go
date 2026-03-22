@@ -26,6 +26,7 @@ type SubmissionServiceInterface interface {
 	GetUserSubmissionsForAssignment(ctx context.Context, assignmentID, userID uuid.UUID) ([]model.Submission, error)
 	RunCode(ctx context.Context, req dto.RunCodeDTO) (*dto.RunCodeResponseDTO, error)
 	RunCustomCode(ctx context.Context, req dto.RunCustomCodeDTO) (*dto.RunCodeResponseDTO, error)
+	ExecuteCode(ctx context.Context, req dto.ExecuteCodeDTO) (*dto.ExecuteCodeResponseDTO, error)
 	ProcessSubmission(ctx context.Context, submissionID uuid.UUID) error
 }
 
@@ -45,6 +46,24 @@ func NewHTTPJudge0Client(baseURL string) *HTTPJudge0Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+	}
+}
+
+// createJudge0Request creates a Judge0 submission request
+// cpuTimeLimit is per test case (not total assignment time), default 5 seconds, max 20 seconds
+func createJudge0Request(sourceCode string, languageID int, stdin string, expectedOutput string, cpuTimeLimit int, memoryLimit int) dto.Judge0SubmissionDTO {
+	// Default 5 seconds per test case if not specified or too high
+	cpuLimit := 5.0
+	if cpuTimeLimit > 0 && cpuTimeLimit <= 20 {
+		cpuLimit = float64(cpuTimeLimit)
+	}
+	return dto.Judge0SubmissionDTO{
+		SourceCode:     sourceCode,
+		LanguageID:     languageID,
+		Stdin:          stdin,
+		ExpectedOutput: expectedOutput,
+		CPUTimeLimit:   cpuLimit,
+		MemoryLimit:    memoryLimit,
 	}
 }
 
@@ -198,6 +217,16 @@ func (s *SubmissionService) ProcessSubmission(ctx context.Context, submissionID 
 		return errors.New("assignment not found")
 	}
 
+	// Handle multiple choice assignments
+	if submission.Language == "json" {
+		return s.processMultipleChoiceSubmission(ctx, submission, assignment)
+	}
+
+	// Handle essay assignments (no auto-grading)
+	if submission.Language == "text" {
+		return s.repo.UpdateVerdict(ctx, submissionID, model.VerdictAccepted, 0, 0, 0, 0)
+	}
+
 	testCases, err := s.testCaseRepo.GetByAssignment(ctx, assignment.ID)
 	if err != nil {
 		return err
@@ -214,14 +243,14 @@ func (s *SubmissionService) ProcessSubmission(ctx context.Context, submissionID 
 	finalVerdict := model.VerdictAccepted
 
 	for _, tc := range testCases {
-		judgeReq := dto.Judge0SubmissionDTO{
-			SourceCode:     submission.Code,
-			LanguageID:     languageID,
-			Stdin:          tc.Input,
-			ExpectedOutput: tc.ExpectedOutput,
-			CPUTimeLimit:   assignment.TimeLimit,
-			MemoryLimit:    assignment.MemoryLimit * 1024,
-		}
+		judgeReq := createJudge0Request(
+			submission.Code,
+			languageID,
+			tc.Input,
+			tc.ExpectedOutput,
+			assignment.TimeLimit,
+			assignment.MemoryLimit*1024,
+		)
 
 		result, err := s.judge0Client.Submit(ctx, judgeReq)
 		if err != nil {
@@ -243,11 +272,7 @@ func (s *SubmissionService) ProcessSubmission(ctx context.Context, submissionID 
 			fmt.Sscanf(result.Time, "%f", &execTime)
 			totalTime += int(execTime * 1000)
 		}
-		if result.Memory != "" {
-			var memUsed int
-			fmt.Sscanf(result.Memory, "%d", &memUsed)
-			totalMemory += memUsed
-		}
+		totalMemory += result.Memory
 	}
 
 	if totalPassed == len(testCases) {
@@ -264,6 +289,84 @@ func (s *SubmissionService) ProcessSubmission(ctx context.Context, submissionID 
 	}
 
 	return s.repo.UpdateVerdict(ctx, submissionID, finalVerdict, avgTime, avgMemory, totalPassed, len(testCases))
+}
+
+// processMultipleChoiceSubmission handles scoring for multiple choice assignments
+func (s *SubmissionService) processMultipleChoiceSubmission(ctx context.Context, submission *model.Submission, assignment *model.Assignment) error {
+	// Parse assignment config to get correct answers
+	var assignmentConfig struct {
+		Type      string `json:"type"`
+		Questions []struct {
+			Question     string   `json:"question"`
+			Answers      []string `json:"answers"`
+			CorrectIndex int      `json:"correctIndex"`
+		} `json:"questions"`
+		// Old format support
+		OldAnswers      []string `json:"answers"`
+		OldCorrectIndex int      `json:"correctIndex"`
+	}
+
+	if err := json.Unmarshal([]byte(assignment.StarterCode), &assignmentConfig); err != nil {
+		return s.repo.UpdateVerdict(ctx, submission.ID, model.VerdictRuntimeError, 0, 0, 0, 0)
+	}
+
+	// Parse student submission
+	var studentSubmission struct {
+		Answers []int `json:"answers"`
+	}
+
+	if err := json.Unmarshal([]byte(submission.Code), &studentSubmission); err != nil {
+		return s.repo.UpdateVerdict(ctx, submission.ID, model.VerdictRuntimeError, 0, 0, 0, 0)
+	}
+
+	// Handle old format (single question)
+	questions := assignmentConfig.Questions
+	if len(questions) == 0 && len(assignmentConfig.OldAnswers) > 0 {
+		questions = []struct {
+			Question     string   `json:"question"`
+			Answers      []string `json:"answers"`
+			CorrectIndex int      `json:"correctIndex"`
+		}{
+			{
+				Question:     assignment.Description,
+				Answers:      assignmentConfig.OldAnswers,
+				CorrectIndex: assignmentConfig.OldCorrectIndex,
+			},
+		}
+	}
+
+	// Score the submission
+	totalQuestions := len(questions)
+	correctCount := 0
+
+	for i, q := range questions {
+		if i < len(studentSubmission.Answers) && studentSubmission.Answers[i] == q.CorrectIndex {
+			correctCount++
+		}
+	}
+
+	// Calculate score (0-100)
+	score := 0
+	if totalQuestions > 0 {
+		score = (correctCount * 100) / totalQuestions
+	}
+
+	// Update submission with score in Code field (JSON with results)
+	resultJSON, _ := json.Marshal(map[string]interface{}{
+		"answers": studentSubmission.Answers,
+		"score":   score,
+		"correct": correctCount,
+		"total":   totalQuestions,
+	})
+	submission.Code = string(resultJSON)
+
+	// Use TestCasesPassed/TotalTestCases to store correct/total
+	verdict := model.VerdictAccepted
+	if correctCount < totalQuestions {
+		verdict = model.VerdictWrongAnswer
+	}
+
+	return s.repo.UpdateVerdictWithCode(ctx, submission.ID, verdict, 0, 0, correctCount, totalQuestions, string(resultJSON))
 }
 
 func (s *SubmissionService) GetByID(ctx context.Context, id uuid.UUID) (*model.Submission, error) {
@@ -341,14 +444,14 @@ func (s *SubmissionService) RunCode(ctx context.Context, req dto.RunCodeDTO) (*d
 	tc := testCases[0]
 	languageID := s.getLanguageID(req.Language)
 
-	judgeReq := dto.Judge0SubmissionDTO{
-		SourceCode:     req.Code,
-		LanguageID:     languageID,
-		Stdin:          tc.Input,
-		ExpectedOutput: tc.ExpectedOutput,
-		CPUTimeLimit:   assignment.TimeLimit,
-		MemoryLimit:    assignment.MemoryLimit * 1024,
-	}
+	judgeReq := createJudge0Request(
+		req.Code,
+		languageID,
+		tc.Input,
+		tc.ExpectedOutput,
+		assignment.TimeLimit,
+		assignment.MemoryLimit*1024,
+	)
 
 	result, err := s.judge0Client.Submit(ctx, judgeReq)
 	if err != nil {
@@ -375,9 +478,7 @@ func (s *SubmissionService) RunCode(ctx context.Context, req dto.RunCodeDTO) (*d
 		fmt.Sscanf(result.Time, "%f", &execTime)
 		response.ExecTime = int(execTime * 1000)
 	}
-	if result.Memory != "" {
-		fmt.Sscanf(result.Memory, "%d", &response.MemUsed)
-	}
+	response.MemUsed = result.Memory
 
 	return response, nil
 }
@@ -432,10 +533,11 @@ func (s *SubmissionService) mapJudge0Status(statusID int) model.SubmissionVerdic
 }
 
 func (s *SubmissionService) toResponseDTO(sub model.Submission) dto.SubmissionResponseDTO {
-	return dto.SubmissionResponseDTO{
+	resp := dto.SubmissionResponseDTO{
 		ID:              sub.ID,
 		AssignmentID:    sub.AssignmentID,
 		UserID:          sub.UserID,
+		Language:        sub.Language,
 		Code:            sub.Code,
 		Verdict:         string(sub.Verdict),
 		ExecutionTime:   sub.ExecutionTime,
@@ -444,6 +546,22 @@ func (s *SubmissionService) toResponseDTO(sub model.Submission) dto.SubmissionRe
 		TotalTestCases:  sub.TotalTestCases,
 		CreatedAt:       sub.CreatedAt.Format(time.RFC3339),
 	}
+
+	// Calculate score (percentage of passed test cases)
+	if sub.TotalTestCases > 0 {
+		resp.Score = (sub.TestCasesPassed * 100) / sub.TotalTestCases
+	}
+
+	// Include user info if available
+	if sub.User != nil && sub.User.ID != uuid.Nil {
+		resp.User = &dto.SubmissionUserDTO{
+			ID:       sub.User.ID,
+			Username: sub.User.UserName,
+			Email:    sub.User.Email,
+		}
+	}
+
+	return resp
 }
 
 func (s *SubmissionService) RunCustomCode(ctx context.Context, req dto.RunCustomCodeDTO) (*dto.RunCodeResponseDTO, error) {
@@ -462,13 +580,14 @@ func (s *SubmissionService) RunCustomCode(ctx context.Context, req dto.RunCustom
 
 	languageID := s.getLanguageID(req.Language)
 
-	judgeReq := dto.Judge0SubmissionDTO{
-		SourceCode:   req.Code,
-		LanguageID:   languageID,
-		Stdin:        req.CustomInput,
-		CPUTimeLimit: assignment.TimeLimit,
-		MemoryLimit:  assignment.MemoryLimit * 1024,
-	}
+	judgeReq := createJudge0Request(
+		req.Code,
+		languageID,
+		req.CustomInput,
+		"",
+		assignment.TimeLimit,
+		assignment.MemoryLimit*1024,
+	)
 
 	result, err := s.judge0Client.Submit(ctx, judgeReq)
 	if err != nil {
@@ -495,9 +614,49 @@ func (s *SubmissionService) RunCustomCode(ctx context.Context, req dto.RunCustom
 		fmt.Sscanf(result.Time, "%f", &execTime)
 		response.ExecTime = int(execTime * 1000)
 	}
-	if result.Memory != "" {
-		fmt.Sscanf(result.Memory, "%d", &response.MemUsed)
+	response.MemUsed = result.Memory
+
+	return response, nil
+}
+
+// ExecuteCode - Free sandbox execution without assignment (default limits: 5s CPU, 128MB memory)
+func (s *SubmissionService) ExecuteCode(ctx context.Context, req dto.ExecuteCodeDTO) (*dto.ExecuteCodeResponseDTO, error) {
+	languageID := s.getLanguageID(req.Language)
+
+	judgeReq := createJudge0Request(
+		req.Code,
+		languageID,
+		req.Stdin,
+		"",
+		5,         // 5 seconds default
+		128*1024,  // 128MB default
+	)
+
+	result, err := s.judge0Client.Submit(ctx, judgeReq)
+	if err != nil {
+		return &dto.ExecuteCodeResponseDTO{
+			Error: err.Error(),
+		}, nil
 	}
+
+	response := &dto.ExecuteCodeResponseDTO{
+		Stdout: result.Stdout,
+		Stderr: result.Stderr,
+		Time:   result.Time,
+	}
+
+	if result.CompileOutput != "" {
+		response.Error = result.CompileOutput
+	}
+
+	// Parse exit code from status
+	if result.Status.ID == 3 {
+		response.ExitCode = 0
+	} else {
+		response.ExitCode = result.Status.ID
+	}
+
+	response.Memory = result.Memory
 
 	return response, nil
 }

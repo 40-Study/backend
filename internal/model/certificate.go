@@ -14,12 +14,11 @@ type Certificate struct {
 	EnrollmentID      uuid.UUID `gorm:"type:uuid;not null;index" json:"enrollment_id"`
 	CertificateNumber string    `gorm:"type:varchar(50);uniqueIndex;not null" json:"certificate_number"`
 	CertificateURL    *string   `gorm:"type:varchar(500);column:certificate_url" json:"certificate_url,omitempty"`
-	IssuedAt          time.Time `gorm:"default:CURRENT_TIMESTAMP" json:"issued_at"`
+	IssuedAt         time.Time `gorm:"default:CURRENT_TIMESTAMP" json:"issued_at"`
 
 	// Relationships
-	User       User       `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
-	Course     Course     `gorm:"foreignKey:CourseID;constraint:OnDelete:CASCADE" json:"-"`
-	Enrollment Enrollment `gorm:"foreignKey:EnrollmentID;constraint:OnDelete:CASCADE" json:"-"`
+	User   User   `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
+	Course Course `gorm:"foreignKey:CourseID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 func (Certificate) TableName() string {

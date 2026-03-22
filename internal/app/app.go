@@ -82,7 +82,8 @@ func New() (*App, error) {
 		handlers.LessonContent,
 		handlers.Enrollment,
 
-		// ===== Video =====
+		// ===== Upload & Video =====
+		handlers.Upload,
 		handlers.VideoUpload,
 		handlers.HLS,
 
@@ -96,6 +97,7 @@ func New() (*App, error) {
 
 		// ===== Order & Payment =====
 		handlers.Order,
+		handlers.Voucher,
 
 		resources.Redis,
 		resources.MinioClient,

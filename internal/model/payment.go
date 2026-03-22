@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 type Order struct {
@@ -95,7 +96,7 @@ type CouponUsage struct {
 func (CouponUsage) TableName() string {
 	return "coupon_usages"
 }
-
+// OrderStatusHistory - Track status changes for orders
 type InstructorPayout struct {
 	BaseModel
 	InstructorID      uuid.UUID       `gorm:"type:uuid;not null;index" json:"instructor_id"`
@@ -118,4 +119,157 @@ type InstructorPayout struct {
 
 func (InstructorPayout) TableName() string {
 	return "instructor_payouts"
+}
+
+// ============================================================
+// VOUCHER MODELS
+// ============================================================
+
+// DiscountUnit - Unit for discount (MONEY or POINT)
+type DiscountUnit string
+
+const (
+	DiscountUnitMoney  DiscountUnit = "MONEY"
+	DiscountUnitPoint DiscountUnit = "POINT"
+)
+
+// DiscountMethod - Method for discount (FIXED or PERCENT)
+type DiscountMethod string
+
+const (
+	DiscountMethodFixed   DiscountMethod = "FIXED"
+	DiscountMethodPercent DiscountMethod = "PERCENT"
+)
+
+// VoucherApplicableType - Type of entity the voucher applies to
+type VoucherApplicableType string
+
+const (
+	VoucherApplicableTypeUser     VoucherApplicableType = "USER"
+	VoucherApplicableTypeRole     VoucherApplicableType = "ROLE"
+	VoucherApplicableTypeTier     VoucherApplicableType = "TIER"
+	VoucherApplicableTypeGroup    VoucherApplicableType = "GROUP"
+	VoucherApplicableTypeProduct  VoucherApplicableType = "PRODUCT"
+	VoucherApplicableTypeCategory VoucherApplicableType = "CATEGORY"
+	VoucherApplicableTypeAll      VoucherApplicableType = "ALL"
+	VoucherApplicableTypeService  VoucherApplicableType = "SERVICE"
+	VoucherApplicableTypeBranch  VoucherApplicableType = "BRANCH"
+)
+
+// Voucher - Main voucher model
+type Voucher struct {
+	ID          uuid.UUID       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	Code        string          `gorm:"type:varchar(50);uniqueIndex;not null" json:"code"`
+	Name        string          `gorm:"type:varchar(255);not null" json:"name"`
+	Description string          `gorm:"type:text" json:"description"`
+
+	// Discount configuration
+	DiscountUnit   DiscountUnit        `gorm:"type:varchar(20);not null" json:"discount_unit"`
+	DiscountMethod DiscountMethod       `gorm:"type:varchar(20);not null" json:"discount_method"`
+
+	// Discount values - depending on unit and method
+	DiscountAmountMoney  *decimal.Decimal `gorm:"type:decimal(12,2)" json:"discount_amount_money,omitempty"`  // MONEY + FIXED
+	DiscountAmountPoints int32            `gorm:"type:int" json:"discount_amount_points,omitempty"`           // POINT + FIXED
+	DiscountPercent     *decimal.Decimal `gorm:"type:decimal(5,2)" json:"discount_percent,omitempty"`       // PERCENT
+
+	// Max discount caps
+	MaxDiscountMoney  *decimal.Decimal `gorm:"type:decimal(12,2)" json:"max_discount_money,omitempty"`  // PERCENT + MONEY
+	MaxDiscountPoints int32            `gorm:"type:int" json:"max_discount_points,omitempty"`         // PERCENT + POINT
+
+	// Minimum purchase requirements
+	MinPurchaseMoney  *decimal.Decimal `gorm:"type:decimal(12,2)" json:"min_purchase_money,omitempty"`
+	MinPurchasePoints int32            `gorm:"type:int" json:"min_purchase_points,omitempty"`
+
+	// Payment method restrictions
+	AcceptAllPaymentMethods bool     `gorm:"type:bool;default:true" json:"accept_all_payment_methods"`
+	PaymentMethodsAccepted  []string `gorm:"type:text[]" json:"payment_methods_accepted"`
+
+	// Usage limits
+	UsedCount   int32 `gorm:"type:int;default:0" json:"used_count"`
+	UsageLimit  int32 `gorm:"type:int" json:"usage_limit"`
+	UsagePerUser int32 `gorm:"type:int;default:1" json:"usage_per_user"`
+
+	// Stacking
+	CanStack bool `gorm:"type:bool;default:false" json:"can_stack"`
+
+	// Date range
+	StartDate *time.Time `gorm:"type:timestamp" json:"start_date,omitempty"`
+	EndDate   *time.Time `gorm:"type:timestamp" json:"end_date,omitempty"`
+
+	// Status
+	IsActive bool `gorm:"type:bool;default:true" json:"is_active"`
+
+	// Soft delete
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+
+	// Relationships
+	Applicabilities []VoucherApplicability `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"-"`
+	Logs           []VoucherLog            `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"-"`
+}
+
+func (Voucher) TableName() string {
+	return "vouchers"
+}
+
+// UserVoucher - User's saved/bookmarked voucher
+type UserVoucher struct {
+	ID         uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	UserID     uuid.UUID  `gorm:"type:uuid;not null;index" json:"user_id"`
+	VoucherID  uuid.UUID  `gorm:"type:uuid;not null;index" json:"voucher_id"`
+	Source     string     `gorm:"type:varchar(50)" json:"source"` // manual, admin_grant, event_reward
+	SavedAt    time.Time  `gorm:"type:timestamp;not null" json:"saved_at"`
+	Notes      string     `gorm:"type:text" json:"notes"`
+
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	// Relationships
+	User    User    `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
+	Voucher Voucher `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"-"`
+}
+
+func (UserVoucher) TableName() string {
+	return "user_vouchers"
+}
+
+// VoucherApplicability - Rules for where voucher can be applied
+type VoucherApplicability struct {
+	ID             uuid.UUID            `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	VoucherID      uuid.UUID            `gorm:"type:uuid;not null;index" json:"voucher_id"`
+	ApplicableType VoucherApplicableType `gorm:"type:varchar(20);not null" json:"applicable_type"`
+	ApplicableID   uuid.UUID            `gorm:"type:uuid;not null" json:"applicable_id"`
+
+	CreatedAt time.Time `json:"created_at"`
+
+	// Relationships
+	Voucher Voucher `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"-"`
+}
+
+func (VoucherApplicability) TableName() string {
+	return "voucher_applicabilities"
+}
+
+// VoucherLog - Audit trail for voucher usage
+type VoucherLog struct {
+	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	UserID     uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
+	VoucherID  uuid.UUID `gorm:"type:uuid;not null;index" json:"voucher_id"`
+	VoucherCode string   `gorm:"type:varchar(50);not null" json:"voucher_code"`
+	OrderID    uuid.UUID `gorm:"type:uuid;not null;index" json:"order_id"`
+	OrderType  string   `gorm:"type:varchar(50)" json:"order_type"`
+	Action     string   `gorm:"type:varchar(20);not null" json:"action"` // used, refunded
+	Amount     int64    `gorm:"type:bigint;not null" json:"amount"`      // Discount amount
+
+	CreatedAt time.Time              `json:"created_at"`
+	Metadata  map[string]interface{} `gorm:"type:jsonb" json:"metadata,omitempty"`
+
+	// Relationships
+	User    User    `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
+	Voucher Voucher `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"-"`
+}
+
+func (VoucherLog) TableName() string {
+	return "voucher_logs"
 }

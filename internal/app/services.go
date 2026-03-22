@@ -40,7 +40,8 @@ type Services struct {
 	LessonContent *service.LessonContentService
 	Enrollment    *service.EnrollmentService
 
-	// ===== Video =====
+	// ===== Upload & Video =====
+	Upload          *service.UploadService
 	VideoUpload     *service.VideoUploadService
 	VideoProcessing *service.VideoProcessingService
 
@@ -59,6 +60,7 @@ type Services struct {
 	Order              *service.OrderService
 	Payment            *service.PaymentService
 	TransactionService *service.TransactionService
+	Voucher           *service.VoucherService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
@@ -203,7 +205,8 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		LessonContent: service.NewLessonContentService(repos.LessonContent, repos.Lesson),
 		Enrollment:    service.NewEnrollmentService(repos.Enrollment, repos.Course, repos.Lesson),
 
-		// ===== Video =====
+		// ===== Upload & Video =====
+		Upload:          service.NewUploadService(resources.MinioClient, resources.Config),
 		VideoUpload:     uploadSvc,
 		VideoProcessing: videoProcessingSvc,
 
@@ -240,6 +243,7 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			transactionSvc,
 		),
 		TransactionService: transactionSvc,
+		Voucher:           service.NewVoucherService(repos.Voucher, repos.User),
 	}
 }
 

@@ -14,6 +14,7 @@ type SubmissionHandlerInterface interface {
 	GetByUser(c *fiber.Ctx) error
 	RunCode(c *fiber.Ctx) error
 	RunCustomCode(c *fiber.Ctx) error
+	ExecuteCode(c *fiber.Ctx) error
 	GetMySubmissions(c *fiber.Ctx) error
 }
 
@@ -114,6 +115,21 @@ func (h *SubmissionHandler) RunCustomCode(c *fiber.Ctx) error {
 	}
 
 	result, err := h.svc.RunCustomCode(c.Context(), req)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(result)
+}
+
+// ExecuteCode - Free sandbox execution without assignment
+func (h *SubmissionHandler) ExecuteCode(c *fiber.Ctx) error {
+	var req dto.ExecuteCodeDTO
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	result, err := h.svc.ExecuteCode(c.Context(), req)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}

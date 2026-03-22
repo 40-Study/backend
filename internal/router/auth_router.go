@@ -24,6 +24,8 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	auth.Post("/switch-profile", authHandler.SwitchProfile)
 	auth.Post("/switch-org", authHandler.SwitchOrg)
 	auth.Get("/me", authHandler.GetMe)
+	auth.Get("/me/profile", authHandler.GetMyProfile)
+	auth.Get("/me/system-roles", authHandler.GetMySystemRoles)
 	auth.Put("/me", authHandler.UpdateMe)
 	auth.Get("/devices", authHandler.GetAllDevices)
 	auth.Post("/logout", authHandler.LogoutOneDevice)

@@ -19,6 +19,7 @@ type SubmissionRepositoryInterface interface {
 	GetLatestByAssignmentAndUser(ctx context.Context, assignmentID, userID uuid.UUID) (*model.Submission, error)
 	Update(ctx context.Context, submission *model.Submission) error
 	UpdateVerdict(ctx context.Context, id uuid.UUID, verdict model.SubmissionVerdict, execTime, memoryUsed, passed, total int) error
+	UpdateVerdictWithCode(ctx context.Context, id uuid.UUID, verdict model.SubmissionVerdict, execTime, memoryUsed, passed, total int, code string) error
 }
 
 type SubmissionRepository struct {
@@ -121,5 +122,19 @@ func (r *SubmissionRepository) UpdateVerdict(ctx context.Context, id uuid.UUID, 
 			"memory_used":       memoryUsed,
 			"test_cases_passed": passed,
 			"total_test_cases":  total,
+		}).Error
+}
+
+func (r *SubmissionRepository) UpdateVerdictWithCode(ctx context.Context, id uuid.UUID, verdict model.SubmissionVerdict, execTime, memoryUsed, passed, total int, code string) error {
+	return r.db.WithContext(ctx).
+		Model(&model.Submission{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"verdict":           verdict,
+			"execution_time":    execTime,
+			"memory_used":       memoryUsed,
+			"test_cases_passed": passed,
+			"total_test_cases":  total,
+			"code":              code,
 		}).Error
 }

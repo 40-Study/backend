@@ -42,21 +42,131 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 }
 
 func Migrate(db *gorm.DB) error {
+	// Drop and recreate problematic tables if they exist with bad schema
+	db.Exec("DROP TABLE IF EXISTS submissions CASCADE")
+	db.Exec("DROP TABLE IF EXISTS test_cases CASCADE")
+	db.Exec("DROP TABLE IF EXISTS assignments CASCADE")
+
 	return db.AutoMigrate(
-		&model.Permission{},
+		// ===== 1. Base Tables (độc lập) =====
 		&model.Organization{},
+
+		// ===== 2. Users & Auth =====
+		&model.User{},
+		&model.VerificationCode{},
+		&model.UserOAuthProvider{},
+		&model.ParentStudentRelation{},
+
+		// ===== 3. Roles & Permissions (phụ thuộc Organization) =====
 		&model.SystemRole{},
+		&model.Permission{},
 		&model.Role{},
 		&model.SystemRolePermission{},
 		&model.RolePermission{},
-		&model.User{},
-		&model.UserOrganizationRole{},
+
+		// ===== 4. User Roles (phụ thuộc User, Organization, Role, SystemRole) =====
 		&model.UserSystemRole{},
-		// Livestream
+		&model.UserOrganizationRole{},
+
+		// ===== 5. Course Management (phụ thuộc User, Organization) =====
+		&model.Category{},
+		&model.Tag{},
+		&model.Course{},
+		&model.Section{},
+		&model.Lesson{},
+		&model.LessonVideo{},
+		&model.LessonArticle{},
+		&model.LessonAttachment{},
+
+		// ===== 6. Enrollment & Progress (phụ thuộc User, Course) =====
+		&model.Enrollment{},
+		&model.LessonProgress{},
+
+		// ===== 7. Certificates (phụ thuộc User, Course, Enrollment) =====
+		&model.Certificate{},
+		&model.UserNote{},
+
+		// ===== 8. Reviews & Discussions (phụ thuộc User, Course) =====
+		&model.Review{},
+		&model.ReviewReaction{},
+		&model.Discussion{},
+		&model.DiscussionVote{},
+
+		// ===== 9. Cart & Wishlist (phụ thuộc User, Course) =====
+		&model.Wishlist{},
+		&model.CartItem{},
+
+		// ===== 10. Quiz & Assessment (phụ thuộc Course) =====
+		&model.Quiz{},
+		&model.Question{},
+		&model.QuestionAnswer{},
+		&model.QuizAttempt{},
+		&model.QuizAttemptAnswer{},
+
+		// ===== 11. Payment & Orders (phụ thuộc User) =====
+		&model.Coupon{},
+		&model.IdempotencyKey{},
+		&model.OrderLock{},
+		&model.Order{},
+		&model.OrderItem{},
+		&model.CouponUsage{},
+		&model.InstructorPayout{},
+		&model.OrderStatusHistory{},
+		&model.PaymentEvent{},
+
+		// ===== 12. Vouchers =====
+		&model.Voucher{},
+		&model.VoucherApplicability{},
+		&model.UserVoucher{},
+		&model.VoucherLog{},
+
+		// ===== 13. Livestream (phụ thuộc User) =====
 		&model.LivestreamSession{},
 		&model.Participant{},
 		&model.ChatMessage{},
 		&model.LivestreamAnalytics{},
+
+		// ===== 14. Assignment & Submission (phụ thuộc Livestream, User) =====
+		&model.Assignment{},
+		&model.TestCase{},
+		&model.Submission{},
+
+		// ===== 15. Video Upload =====
+		&model.VideoUpload{},
+		&model.VideoUploadPart{},
+
+		// ===== 16. Whiteboard =====
+		&model.WhiteboardSnapshot{},
+
+		// ===== 17. Teacher & Class (phụ thuộc User, Organization) =====
+		&model.TeacherProfile{},
+		&model.Class{},
+		&model.TeacherClass{},
+		&model.StudentClass{},
+		&model.ClassSchedule{},
+		&model.Attendance{},
+
+		// ===== 18. Notifications (phụ thuộc User) =====
+		&model.Notification{},
+		&model.NotificationSettings{},
+
+		// ===== 19. Reports (phụ thuộc User) =====
+		&model.Report{},
+
+		// ===== 20. Gamification (phụ thuộc User) =====
+		&model.PointRule{},
+		&model.UserPoint{},
+		&model.PointTransaction{},
+		&model.DailyCheckin{},
+		&model.UserStreak{},
+		&model.Achievement{},
+		&model.UserAchievement{},
+		&model.UserAchievementProgress{},
+		&model.LeaderboardEntry{},
+		&model.Reward{},
+		&model.RewardRedemption{},
+		&model.LearningGoal{},
+		&model.UserPreference{},
 	)
 }
 

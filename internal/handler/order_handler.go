@@ -21,9 +21,8 @@ func NewOrderHandler(orderService service.OrderServiceInterface, paymentService 
 	}
 }
 
-// CreateOrder - POST /api/v1/orders
 func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
-	userIDStr := c.Locals("userID")
+	userIDStr := c.Locals("user_id")
 	if userIDStr == nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
@@ -60,7 +59,7 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 
 // GetOrder - GET /api/v1/orders/:id
 func (h *OrderHandler) GetOrder(c *fiber.Ctx) error {
-	userIDStr := c.Locals("userID")
+	userIDStr := c.Locals("user_id")
 	if userIDStr == nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
@@ -89,7 +88,7 @@ func (h *OrderHandler) GetOrder(c *fiber.Ctx) error {
 
 // GetUserOrders - GET /api/v1/orders/me
 func (h *OrderHandler) GetUserOrders(c *fiber.Ctx) error {
-	userIDStr := c.Locals("userID")
+	userIDStr := c.Locals("user_id")
 	if userIDStr == nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
@@ -122,7 +121,7 @@ func (h *OrderHandler) GetUserOrders(c *fiber.Ctx) error {
 
 // CancelOrder - POST /api/v1/orders/:id/cancel
 func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
-	userIDStr := c.Locals("userID")
+	userIDStr := c.Locals("user_id")
 	if userIDStr == nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
@@ -164,7 +163,7 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 
 // CreatePaymentIntent - POST /api/v1/orders/:id/payment-intent
 func (h *OrderHandler) CreatePaymentIntent(c *fiber.Ctx) error {
-	userIDStr := c.Locals("userID")
+	userIDStr := c.Locals("user_id")
 	if userIDStr == nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",

@@ -43,19 +43,26 @@ func (s *WhiteboardService) GetSnapshot(ctx context.Context, sessionID uuid.UUID
 	}
 	if snapshot == nil {
 		return &dto.WhiteboardSnapshotResponseDTO{
-			SessionID:    sessionID,
-			SnapshotData: "{}",
-			Version:      0,
-			SavedAt:      time.Now().Format(time.RFC3339),
+			SessionID:  sessionID,
+			Elements:   []any{},
+			AppState:   map[string]any{},
+			Version:    0,
+			SavedAt:    time.Now().Format(time.RFC3339),
 		}, nil
 	}
 
+	var data map[string]any
+	if err := json.Unmarshal([]byte(snapshot.SnapshotData), &data); err != nil {
+		data = map[string]any{}
+	}
+
 	return &dto.WhiteboardSnapshotResponseDTO{
-		ID:           snapshot.ID,
-		SessionID:    snapshot.SessionID,
-		SnapshotData: snapshot.SnapshotData,
-		Version:      snapshot.Version,
-		SavedAt:      snapshot.SavedAt.Format(time.RFC3339),
+		ID:        snapshot.ID,
+		SessionID: snapshot.SessionID,
+		Elements:  data["elements"],
+		AppState:  data["app_state"],
+		Version:   snapshot.Version,
+		SavedAt:   snapshot.SavedAt.Format(time.RFC3339),
 	}, nil
 }
 
@@ -65,9 +72,19 @@ func (s *WhiteboardService) SaveSnapshot(ctx context.Context, req dto.Whiteboard
 		return err
 	}
 
+	// Serialize elements + appState to JSON string for storage
+	data := map[string]any{
+		"elements":  req.Elements,
+		"app_state": req.AppState,
+	}
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
 	snapshot := &model.WhiteboardSnapshot{
 		SessionID:    sessionID,
-		SnapshotData: req.SnapshotData,
+		SnapshotData: string(jsonData),
 		Version:      req.Version,
 	}
 

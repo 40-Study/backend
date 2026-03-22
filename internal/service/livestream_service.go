@@ -13,7 +13,6 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
-	"study.com/v1/internal/utils"
 )
 
 type LivestreamServiceInterface interface {
@@ -67,7 +66,10 @@ func (s *LivestreamService) Create(ctx context.Context, req dto.CreateLivestream
 		return nil, errors.New("invalid host_id")
 	}
 
-	roomName := utils.GenerateUniqueCode(16)
+	// Dùng SessionID làm room name trong LiveKit để đảm bảo unique và stable
+	sessionID := uuid.New()
+	roomName := sessionID.String()
+
 	maxViewers := req.MaxViewers
 	if maxViewers <= 0 {
 		maxViewers = 100
@@ -84,10 +86,11 @@ func (s *LivestreamService) Create(ctx context.Context, req dto.CreateLivestream
 	settingsJSON, _ := json.Marshal(settings)
 
 	session := &model.LivestreamSession{
+		BaseModel: model.BaseModel{ID: sessionID},
 		Title:       req.Title,
 		Description: &req.Description,
 		HostID:      hostID,
-		RoomName:    roomName,
+		RoomName:    roomName, // Dùng SessionID làm room name trong LiveKit
 		Status:      model.LivestreamStatusScheduled,
 		MaxViewers:  maxViewers,
 		IsRecorded:  req.IsRecorded,
@@ -291,16 +294,23 @@ func (s *LivestreamService) Join(ctx context.Context, sessionID uuid.UUID, req d
 	// check nếu đã tham gia rồi thì trả về token luôn, không tạo participant mới
 	existing, _ := s.participantRepo.GetBySessionAndUser(ctx, sessionID, userID)
 	if existing != nil {
+		// Update role nếu cần (e.g. host re-join)
+		if existing.Role != role {
+			existing.Role = role
+			_ = s.participantRepo.Update(ctx, existing)
+		}
 		res := s.toParticipantResponseDTO(existing)
 		token, err := s.livekitSvc.CreateJoinToken(ctx, session.RoomName, dto.JoinTokenDTO{
 			Identity: req.UserID,
-			Name:     req.UserID,
+			Name:     req.Name,
 			IsHost:   role == model.ParticipantRoleTeacher,
 		})
 		if err != nil {
 			return nil, err
 		}
 		res.Token = token
+		res.ServerURL = s.cfg.LivekitURL
+		res.RoomName = session.RoomName
 		return res, nil
 	}
 	participant := &model.Participant{
@@ -317,13 +327,15 @@ func (s *LivestreamService) Join(ctx context.Context, sessionID uuid.UUID, req d
 	res.ID = participant.ID
 	token, err := s.livekitSvc.CreateJoinToken(ctx, session.RoomName, dto.JoinTokenDTO{
 		Identity: req.UserID,
-		Name:     req.UserID,
+		Name:     req.Name,
 		IsHost:   role == model.ParticipantRoleTeacher,
 	})
 	if err != nil {
 		return nil, err
 	}
 	res.Token = token
+	res.ServerURL = s.cfg.LivekitURL
+	res.RoomName = session.RoomName
 	// tăng total viewers lên 1 đơn vị
 	_ = s.analyticsRepo.IncrementTotalViewers(ctx, sessionID)
 	s.updatePeakViewers(ctx, sessionID, session.RoomName)

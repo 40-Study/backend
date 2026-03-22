@@ -16,7 +16,6 @@ func SetupCartRoutes(
 ) {
 	auth := middleware.AuthMiddleware(cfg, redis)
 
-	// Cart routes - require authentication
 	cart := api.Group("/cart", auth)
 	{
 		cart.Get("/", cartHandler.GetCart)

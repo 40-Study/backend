@@ -57,6 +57,7 @@ type Repositories struct {
 	Order              *repository.OrderRepository
 	OrderItem          *repository.OrderItemRepository
 	Coupon             *repository.CouponRepository
+	Voucher            *repository.VoucherRepository
 	OrderStatusHistory *repository.OrderStatusHistoryRepository
 	PaymentEvent       *repository.PaymentEventRepository
 	IdempotencyKey     *repository.IdempotencyKeyRepository
@@ -115,6 +116,7 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		Order:              repository.NewOrderRepository(db),
 		OrderItem:          repository.NewOrderItemRepository(db),
 		Coupon:             repository.NewCouponRepository(db),
+		Voucher:            repository.NewVoucherRepository(db),
 		OrderStatusHistory: repository.NewOrderStatusHistoryRepository(db),
 		PaymentEvent:       repository.NewPaymentEventRepository(db),
 		IdempotencyKey:     repository.NewIdempotencyKeyRepository(db),

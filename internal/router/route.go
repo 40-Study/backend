@@ -32,6 +32,7 @@ func SetupAllRoutes(
 	lessonHandler *handler.LessonHandler,
 	lessonContentHandler *handler.LessonContentHandler,
 	enrollmentHandler *handler.EnrollmentHandler,
+	uploadHandler *handler.UploadHandler,
 	videoHandler *handler.VideoUploadHandler,
 	hlsHandler *handler.HLSHandler,
 	livestreamHandler *handler.LivestreamHandler,
@@ -41,6 +42,7 @@ func SetupAllRoutes(
 	whiteboardHandler *handler.WhiteboardHandler,
 	analyticsHandler *handler.AnalyticsHandler,
 	orderHandler *handler.OrderHandler,
+	voucherHandler *handler.VoucherHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 ) {
@@ -70,16 +72,18 @@ func SetupAllRoutes(
 	SetupCourseRoutes(api, cfg, courseHandler, sectionHandler, lessonHandler, redis)
 	SetupLessonContentRoutes(api, cfg, lessonContentHandler, redis)
 	SetupEnrollmentRoutes(api, cfg, enrollmentHandler, redis)
+	SetupUploadRoutes(api, cfg, uploadHandler, redis)
 	SetupVideoUploadRoutes(api, videoHandler, cfg, redis)
 	SetupHLSRoutes(api, hlsHandler)
 	// New livestream learning platform routes
-	SetupLivestreamRoutes(api, livestreamHandler)
-	SetupAssignmentRoutes(api, assignmentHandler)
-	SetupSubmissionRoutes(api, submissionHandler)
-	SetupChatRoutes(api, chatHandler)
-	SetupWhiteboardRoutes(api, whiteboardHandler)
-	SetupAnalyticsRoutes(api, analyticsHandler)
+	SetupLivestreamRoutes(api, cfg, livestreamHandler, redis)
+	SetupAssignmentRoutes(api, cfg, assignmentHandler, redis)
+	SetupSubmissionRoutes(api, cfg, submissionHandler, redis)
+	SetupChatRoutes(api, cfg, chatHandler, redis)
+	SetupWhiteboardRoutes(api, cfg, whiteboardHandler, redis)
+	SetupAnalyticsRoutes(api, cfg, analyticsHandler, redis)
 
 	// Order & Payment routes
-	SetupOrderRoutes(api, orderHandler)
+	SetupOrderRoutes(api, cfg, orderHandler, redis)
+	SetupVoucherRoutes(api, voucherHandler)
 }

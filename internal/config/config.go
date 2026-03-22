@@ -55,6 +55,7 @@ type Config struct {
 	LivekitNodePort  string `mapstructure:"LIVEKIT_NODE_PORT"`
 	LivekitAPIKey    string `mapstructure:"LIVEKIT_API_KEY"`
 	LivekitAPISecret string `mapstructure:"LIVEKIT_API_SECRET"`
+	LivekitURL       string `mapstructure:"LIVEKIT_URL"`
 
 	// JWT Configuration
 	JWTSecret            string `mapstructure:"JWT_SECRET"`

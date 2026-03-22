@@ -2,12 +2,15 @@ package router
 
 import (
 	"github.com/gofiber/fiber/v2"
+	"github.com/redis/go-redis/v9"
+	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
+	"study.com/v1/internal/middleware"
 )
 
-func SetupLivestreamRoutes(api fiber.Router, h *handler.LivestreamHandler) {
+func SetupLivestreamRoutes(api fiber.Router, cfg *config.Config, h *handler.LivestreamHandler, redis *redis.Client) {
 	live := api.Group("/livestream")
-
+	live.Use(middleware.AuthMiddleware(cfg, redis))
 	live.Post("/", h.Create)
 	live.Get("/", h.GetAll)
 	live.Get("/:id", h.GetByID)
@@ -26,9 +29,9 @@ func SetupLivestreamRoutes(api fiber.Router, h *handler.LivestreamHandler) {
 	live.Post("/:id/screenshare/stop", h.StopScreenShare)
 }
 
-func SetupChatRoutes(api fiber.Router, h *handler.ChatHandler) {
+func SetupChatRoutes(api fiber.Router, cfg *config.Config, h *handler.ChatHandler, redis *redis.Client) {
 	chat := api.Group("/chat")
-
+	chat.Use(middleware.AuthMiddleware(cfg, redis))
 	chat.Post("/send", h.Send)
 	chat.Get("/:sessionId/messages", h.GetMessages)
 	chat.Delete("/:id", h.DeleteMessage)
@@ -36,26 +39,28 @@ func SetupChatRoutes(api fiber.Router, h *handler.ChatHandler) {
 	chat.Post("/:id/unpin", h.UnPinMessage)
 }
 
-func SetupWhiteboardRoutes(api fiber.Router, h *handler.WhiteboardHandler) {
+func SetupWhiteboardRoutes(api fiber.Router, cfg *config.Config, h *handler.WhiteboardHandler, redis *redis.Client) {
 	whiteboard := api.Group("/whiteboard")
-
+	whiteboard.Use(middleware.AuthMiddleware(cfg, redis))
 	whiteboard.Get("/:sessionId/snapshot", h.GetSnapshot)
 	whiteboard.Post("/:sessionId/snapshot", h.SaveSnapshot)
 	whiteboard.Post("/:sessionId/event", h.BroadcastEvent)
 }
 
-func SetupAnalyticsRoutes(api fiber.Router, h *handler.AnalyticsHandler) {
+func SetupAnalyticsRoutes(api fiber.Router, cfg *config.Config, h *handler.AnalyticsHandler, redis *redis.Client) {
 	analytics := api.Group("/analytics")
-
+	analytics.Use(middleware.AuthMiddleware(cfg, redis))
 	analytics.Get("/livestream/:sessionId", h.GetLivestreamAnalytics)
 	analytics.Get("/assignment/:assignmentId", h.GetAssignmentAnalytics)
 	analytics.Get("/participants/:sessionId", h.GetParticipantAnalytics)
 }
 
-func SetupAssignmentRoutes(api fiber.Router, h *handler.AssignmentHandler) {
+func SetupAssignmentRoutes(api fiber.Router, cfg *config.Config, h *handler.AssignmentHandler, redis *redis.Client) {
 	assignments := api.Group("/assignments")
+	assignments.Use(middleware.AuthMiddleware(cfg, redis))
 
 	assignments.Post("/", h.Create)
+	assignments.Get("/", h.GetBySession)
 	assignments.Get("/:id", h.GetByID)
 	assignments.Get("/:id/sandbox", h.GetSandbox)
 	assignments.Put("/:id", h.Update)
@@ -68,12 +73,13 @@ func SetupAssignmentRoutes(api fiber.Router, h *handler.AssignmentHandler) {
 	assignments.Delete("/:id/testcases/:tcId", h.DeleteTestCase)
 }
 
-func SetupSubmissionRoutes(api fiber.Router, h *handler.SubmissionHandler) {
+func SetupSubmissionRoutes(api fiber.Router, cfg *config.Config, h *handler.SubmissionHandler, redis *redis.Client) {
 	submissions := api.Group("/submissions")
-
+	submissions.Use(middleware.AuthMiddleware(cfg, redis))
 	submissions.Post("/", h.Submit)
 	submissions.Post("/run", h.RunCode)
 	submissions.Post("/run-custom", h.RunCustomCode)
+	submissions.Post("/execute", h.ExecuteCode) // Free sandbox - no assignment required
 	submissions.Get("/:id", h.GetByID)
 	submissions.Get("/assignment/:assignmentId", h.GetByAssignment)
 	submissions.Get("/my/:assignmentId", h.GetMySubmissions)

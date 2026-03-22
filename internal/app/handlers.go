@@ -37,7 +37,8 @@ type Handlers struct {
 	LessonContent *handler.LessonContentHandler
 	Enrollment    *handler.EnrollmentHandler
 
-	// ===== Video =====
+	// ===== Upload & Video =====
+	Upload      *handler.UploadHandler
 	VideoUpload *handler.VideoUploadHandler
 	HLS         *handler.HLSHandler
 
@@ -50,7 +51,8 @@ type Handlers struct {
 	Analytics  *handler.AnalyticsHandler
 
 	// ===== Order & Payment =====
-	Order *handler.OrderHandler
+	Order   *handler.OrderHandler
+	Voucher *handler.VoucherHandler
 }
 
 func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handlers {
@@ -86,7 +88,8 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handler
 		LessonContent: handler.NewLessonContentHandler(services.LessonContent),
 		Enrollment:    handler.NewEnrollmentHandler(services.Enrollment),
 
-		// ===== Video =====
+		// ===== Upload & Video =====
+		Upload:      handler.NewUploadHandler(services.Upload),
 		VideoUpload: handler.NewVideoUploadHandler(services.VideoUpload),
 		HLS:         handler.NewHLSHandler(minioClient),
 
@@ -99,6 +102,7 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handler
 		Analytics:  handler.NewAnalyticsHandler(services.Analytics),
 
 		// ===== Order & Payment =====
-		Order: handler.NewOrderHandler(services.Order, services.Payment),
+		Order:   handler.NewOrderHandler(services.Order, services.Payment),
+		Voucher: handler.NewVoucherHandler(services.Voucher),
 	}
 }
