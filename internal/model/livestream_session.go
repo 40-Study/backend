@@ -33,7 +33,8 @@ type LivestreamSession struct {
 	Status      LivestreamSessionStatus `gorm:"type:varchar(20);default:'scheduled';index" json:"status"`
 	StartedAt   *time.Time              `gorm:"type:timestamp" json:"started_at,omitempty"`
 	EndedAt     *time.Time              `gorm:"type:timestamp" json:"ended_at,omitempty"`
-	MaxViewers  int64                     `gorm:"default:1000" json:"max_viewers"`
+	ScheduledAt *time.Time              `gorm:"type:timestamp" json:"scheduled_at,omitempty"`
+	MaxViewers  int64                   `gorm:"default:1000" json:"max_viewers"`
 	IsRecorded  bool                    `gorm:"default:true" json:"is_recorded"`
 
 	Settings     LivestreamSettings   `gorm:"type:jsonb;serializer:json;default:'{}'" json:"settings"`

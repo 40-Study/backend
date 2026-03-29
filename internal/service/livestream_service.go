@@ -97,6 +97,14 @@ func (s *LivestreamService) Create(ctx context.Context, req dto.CreateLivestream
 		Settings:    settings,
 	}
 
+	// Parse scheduled_at if provided
+	if req.ScheduledAt != "" {
+		scheduledTime, err := time.Parse(time.RFC3339, req.ScheduledAt)
+		if err == nil {
+			session.ScheduledAt = &scheduledTime
+		}
+	}
+
 	if err := s.repo.Create(ctx, session); err != nil {
 		return nil, err
 	}
@@ -272,7 +280,21 @@ func (s *LivestreamService) Join(ctx context.Context, sessionID uuid.UUID, req d
 		return nil, errors.New("session not found")
 	}
 
-	if session.Status != model.LivestreamStatusLive {
+	// Check if user is host - host can join 30 min early, regular users 10 min early
+	isHost := userID == session.HostID
+	canJoinEarly := false
+	if session.ScheduledAt != nil {
+		var earlyMinutes int
+		if isHost {
+			earlyMinutes = 30
+		} else {
+			earlyMinutes = 10
+		}
+		earlyJoinTime := session.ScheduledAt.Add(-time.Duration(earlyMinutes) * time.Minute)
+		canJoinEarly = time.Now().After(earlyJoinTime)
+	}
+
+	if session.Status != model.LivestreamStatusLive && !canJoinEarly {
 		return nil, errors.New("session is not live")
 	}
 
@@ -454,6 +476,12 @@ func (s *LivestreamService) toResponseDTO(session model.LivestreamSession) dto.L
 
 	settingsJSON, _ := json.Marshal(session.Settings)
 
+	var scheduledAt *string
+	if session.ScheduledAt != nil {
+		t := session.ScheduledAt.Format(time.RFC3339)
+		scheduledAt = &t
+	}
+
 	return dto.LivestreamResponseDTO{
 		ID:          session.ID,
 		Title:       session.Title,
@@ -463,6 +491,7 @@ func (s *LivestreamService) toResponseDTO(session model.LivestreamSession) dto.L
 		Status:      string(session.Status),
 		StartedAt:   startedAt,
 		EndedAt:     endedAt,
+		ScheduledAt: scheduledAt,
 		MaxViewers:  session.MaxViewers,
 		IsRecorded:  session.IsRecorded,
 		Settings:    string(settingsJSON),

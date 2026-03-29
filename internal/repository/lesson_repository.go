@@ -19,6 +19,20 @@ type LessonRepositoryInterface interface {
 	BelongsToSection(ctx context.Context, lessonID, sectionID uuid.UUID) (bool, error)
 	Exists(ctx context.Context, id uuid.UUID) (bool, error)
 	Reorder(ctx context.Context, items []ReorderItem) error
+
+	// LessonContent
+	CreateContent(ctx context.Context, content *model.LessonContent) error
+	GetContentByID(ctx context.Context, id uuid.UUID) (*model.LessonContent, error)
+	GetContentsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]model.LessonContent, error)
+	UpdateContent(ctx context.Context, content *model.LessonContent) error
+	DeleteContent(ctx context.Context, id uuid.UUID) error
+
+	// LessonSession
+	CreateSession(ctx context.Context, session *model.LessonSession) error
+	GetSessionByID(ctx context.Context, id uuid.UUID) (*model.LessonSession, error)
+	GetSessionsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]model.LessonSession, error)
+	UpdateSession(ctx context.Context, session *model.LessonSession) error
+	DeleteSession(ctx context.Context, id uuid.UUID) error
 }
 
 type LessonRepository struct {
@@ -104,4 +118,74 @@ func (r *LessonRepository) Reorder(ctx context.Context, items []ReorderItem) err
 		}
 		return nil
 	})
+}
+
+// LessonContent methods
+
+func (r *LessonRepository) CreateContent(ctx context.Context, content *model.LessonContent) error {
+	return r.db.WithContext(ctx).Create(content).Error
+}
+
+func (r *LessonRepository) GetContentByID(ctx context.Context, id uuid.UUID) (*model.LessonContent, error) {
+	var content model.LessonContent
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&content).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &content, nil
+}
+
+func (r *LessonRepository) GetContentsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]model.LessonContent, error) {
+	var contents []model.LessonContent
+	err := r.db.WithContext(ctx).
+		Where("lesson_id = ?", lessonID).
+		Order("display_order ASC").
+		Find(&contents).Error
+	return contents, err
+}
+
+func (r *LessonRepository) UpdateContent(ctx context.Context, content *model.LessonContent) error {
+	return r.db.WithContext(ctx).Save(content).Error
+}
+
+func (r *LessonRepository) DeleteContent(ctx context.Context, id uuid.UUID) error {
+	return r.db.WithContext(ctx).Unscoped().Delete(&model.LessonContent{}, "id = ?", id).Error
+}
+
+// LessonSession methods
+
+func (r *LessonRepository) CreateSession(ctx context.Context, session *model.LessonSession) error {
+	return r.db.WithContext(ctx).Create(session).Error
+}
+
+func (r *LessonRepository) GetSessionByID(ctx context.Context, id uuid.UUID) (*model.LessonSession, error) {
+	var session model.LessonSession
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&session).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &session, nil
+}
+
+func (r *LessonRepository) GetSessionsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]model.LessonSession, error) {
+	var sessions []model.LessonSession
+	err := r.db.WithContext(ctx).
+		Where("lesson_id = ?", lessonID).
+		Order("start_time ASC").
+		Find(&sessions).Error
+	return sessions, err
+}
+
+func (r *LessonRepository) UpdateSession(ctx context.Context, session *model.LessonSession) error {
+	return r.db.WithContext(ctx).Save(session).Error
+}
+
+func (r *LessonRepository) DeleteSession(ctx context.Context, id uuid.UUID) error {
+	return r.db.WithContext(ctx).Unscoped().Delete(&model.LessonSession{}, "id = ?", id).Error
 }

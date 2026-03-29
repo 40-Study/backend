@@ -15,6 +15,7 @@ type TagRepositoryInterface interface {
 	GetAll(ctx context.Context, page, pageSize int, keyword string) ([]model.Tag, int64, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Tag, error)
 	GetByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Tag, error)
+	Update(ctx context.Context, tag *model.Tag) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	Exists(ctx context.Context, id uuid.UUID) (bool, error)
 }
@@ -70,6 +71,10 @@ func (r *TagRepository) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]model.
 	}
 	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&tags).Error
 	return tags, err
+}
+
+func (r *TagRepository) Update(ctx context.Context, tag *model.Tag) error {
+	return r.db.WithContext(ctx).Save(tag).Error
 }
 
 func (r *TagRepository) Delete(ctx context.Context, id uuid.UUID) error {

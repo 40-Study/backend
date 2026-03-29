@@ -1,78 +1,48 @@
 package dto
 
-import "github.com/google/uuid"
+import (
+	"time"
 
-// LessonVideo DTOs
+	"github.com/google/uuid"
+)
 
-type CreateLessonVideoDTO struct {
-	VideoURL        string  `json:"video_url" validate:"required,safe_url"`
-	VideoHlsURL     *string `json:"video_hls_url" validate:"omitempty,safe_url"`
-	ThumbnailURL    *string `json:"thumbnail_url" validate:"omitempty,safe_url"`
-	DurationSeconds int     `json:"duration_seconds" validate:"required,min=1"`
-	Resolution      *string `json:"resolution"`
-	FileSizeBytes   *int64  `json:"file_size_bytes"`
+// LessonContent DTOs
+// Type: video, livestream, exercise
+
+type CreateLessonContentDTO struct {
+	LessonID     uuid.UUID  `json:"lesson_id" validate:"required"`
+	Type         string     `json:"type" validate:"required,oneof=video livestream exercise"`
+	Title        *string    `json:"title"`
+	VideoURL     *string    `json:"video_url"`
+	Duration     *int       `json:"duration"`
+	StreamID     *string    `json:"stream_id"`
+	ExerciseID   *uuid.UUID `json:"exercise_id"`
+	IsMandatory  *bool      `json:"is_mandatory"`
+	DisplayOrder *int       `json:"display_order"`
 }
 
-type UpdateLessonVideoDTO struct {
-	VideoURL        *string `json:"video_url" validate:"omitempty,safe_url"`
-	VideoHlsURL     *string `json:"video_hls_url" validate:"omitempty,safe_url"`
-	ThumbnailURL    *string `json:"thumbnail_url" validate:"omitempty,safe_url"`
-	DurationSeconds *int    `json:"duration_seconds" validate:"omitempty,min=1"`
-	Resolution      *string `json:"resolution"`
-	FileSizeBytes   *int64  `json:"file_size_bytes"`
+type UpdateLessonContentDTO struct {
+	Type         *string    `json:"type" validate:"omitempty,oneof=video livestream exercise"`
+	Title        *string    `json:"title"`
+	VideoURL     *string    `json:"video_url"`
+	Duration     *int       `json:"duration"`
+	StreamID     *string    `json:"stream_id"`
+	ExerciseID   *uuid.UUID `json:"exercise_id"`
+	IsMandatory  *bool      `json:"is_mandatory"`
+	DisplayOrder *int       `json:"display_order"`
 }
 
-type LessonVideoResponseDTO struct {
-	ID                  uuid.UUID `json:"id"`
-	LessonID            uuid.UUID `json:"lesson_id"`
-	VideoURL            string    `json:"video_url"`
-	VideoHlsURL         *string   `json:"video_hls_url,omitempty"`
-	ThumbnailURL        *string   `json:"thumbnail_url,omitempty"`
-	DurationSeconds     int       `json:"duration_seconds"`
-	Resolution          *string   `json:"resolution,omitempty"`
-	FileSizeBytes       *int64    `json:"file_size_bytes,omitempty"`
-	TranscriptionStatus string    `json:"transcription_status"`
-	CreatedAt           string    `json:"created_at"`
-	UpdatedAt           string    `json:"updated_at"`
-}
-
-// LessonArticle DTOs
-
-type CreateLessonArticleDTO struct {
-	Content         string `json:"content" validate:"required"`
-	ReadingTimeMins *int   `json:"reading_time_minutes"`
-}
-
-type UpdateLessonArticleDTO struct {
-	Content         *string `json:"content"`
-	ReadingTimeMins *int    `json:"reading_time_minutes"`
-}
-
-type LessonArticleResponseDTO struct {
-	ID              uuid.UUID `json:"id"`
-	LessonID        uuid.UUID `json:"lesson_id"`
-	Content         string    `json:"content"`
-	ReadingTimeMins int       `json:"reading_time_minutes"`
-	CreatedAt       string    `json:"created_at"`
-	UpdatedAt       string    `json:"updated_at"`
-}
-
-// LessonAttachment DTOs
-
-type CreateLessonAttachmentDTO struct {
-	FileName      string  `json:"file_name" validate:"required,min=1,max=255"`
-	FileURL       string  `json:"file_url" validate:"required,safe_url"`
-	FileType      *string `json:"file_type"`
-	FileSizeBytes *int64  `json:"file_size_bytes"`
-}
-
-type LessonAttachmentResponseDTO struct {
-	ID            uuid.UUID `json:"id"`
-	LessonID      uuid.UUID `json:"lesson_id"`
-	FileName      string    `json:"file_name"`
-	FileURL       string    `json:"file_url"`
-	FileType      *string   `json:"file_type,omitempty"`
-	FileSizeBytes *int64    `json:"file_size_bytes,omitempty"`
-	DownloadCount int       `json:"download_count"`
-	CreatedAt     string    `json:"created_at"`
+type LessonContentResponseDTO struct {
+	ID           uuid.UUID  `json:"id"`
+	LessonID     uuid.UUID  `json:"lesson_id"`
+	Type         string     `json:"type"`
+	Title        *string    `json:"title,omitempty"`
+	VideoURL     *string    `json:"video_url,omitempty"`
+	Duration     int        `json:"duration"`
+	StreamID     *string    `json:"stream_id,omitempty"`
+	ExerciseID   *uuid.UUID `json:"exercise_id,omitempty"`
+	IsMandatory  bool       `json:"is_mandatory"`
+	DisplayOrder int        `json:"display_order"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }

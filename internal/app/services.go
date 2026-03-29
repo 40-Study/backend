@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"study.com/v1/internal/config"
-	"study.com/v1/internal/queue"
+	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/service"
 )
 
@@ -60,7 +60,7 @@ type Services struct {
 	Order              *service.OrderService
 	Payment            *service.PaymentService
 	TransactionService *service.TransactionService
-	Voucher           *service.VoucherService
+	Voucher            *service.VoucherService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
@@ -68,9 +68,9 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 	transactionSvc := initTransactionService(resources.Config)
 
 	// ================= Video Queue Setup =================
-	var videoQueue *queue.VideoQueueSetup
+	var videoQueue *rabbitmq_queue.VideoQueueSetup
 	if resources.RabbitMQ != nil {
-		videoQueue = queue.NewVideoQueueSetup(resources.RabbitMQ)
+		videoQueue = rabbitmq_queue.NewVideoQueueSetup(resources.RabbitMQ)
 		if err := videoQueue.SetupVideoQueues(); err != nil {
 			log.Printf("Warning: Failed to setup video queues: %v", err)
 			videoQueue = nil
@@ -201,8 +201,8 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		Cart:          service.NewCartService(repos.CartItem, repos.Course, repos.Enrollment),
 		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag),
 		Section:       service.NewSectionService(repos.Section, repos.Course),
-		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, repos.Course),
-		LessonContent: service.NewLessonContentService(repos.LessonContent, repos.Lesson),
+		Lesson:        service.NewLessonService(repos.Lesson, repos.Section),
+		LessonContent: service.NewLessonContentService(repos.Lesson),
 		Enrollment:    service.NewEnrollmentService(repos.Enrollment, repos.Course, repos.Lesson),
 
 		// ===== Upload & Video =====
@@ -243,7 +243,7 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			transactionSvc,
 		),
 		TransactionService: transactionSvc,
-		Voucher:           service.NewVoucherService(repos.Voucher, repos.User),
+		Voucher:            service.NewVoucherService(repos.Voucher, repos.User),
 	}
 }
 

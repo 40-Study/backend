@@ -37,7 +37,6 @@ type Repositories struct {
 	CartItem      *repository.CartItemRepository
 	Section       *repository.SectionRepository
 	Lesson        *repository.LessonRepository
-	LessonContent *repository.LessonContentRepository
 	Enrollment    *repository.EnrollmentRepository
 
 	// ===== Video =====
@@ -97,7 +96,6 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		CartItem:      repository.NewCartItemRepository(db),
 		Section:       repository.NewSectionRepository(db),
 		Lesson:        repository.NewLessonRepository(db),
-		LessonContent: repository.NewLessonContentRepository(db),
 		Enrollment:    repository.NewEnrollmentRepository(db),
 
 		// ===== Video =====

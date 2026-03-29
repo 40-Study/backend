@@ -42,11 +42,6 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 }
 
 func Migrate(db *gorm.DB) error {
-	// Drop and recreate problematic tables if they exist with bad schema
-	db.Exec("DROP TABLE IF EXISTS submissions CASCADE")
-	db.Exec("DROP TABLE IF EXISTS test_cases CASCADE")
-	db.Exec("DROP TABLE IF EXISTS assignments CASCADE")
-
 	return db.AutoMigrate(
 		// ===== 1. Base Tables (độc lập) =====
 		&model.Organization{},

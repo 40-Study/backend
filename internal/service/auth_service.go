@@ -19,24 +19,30 @@ import (
 )
 
 type AuthServiceInterface interface {
+	// Auth
 	RequestRegister(ctx context.Context, req dto.RegisterRequestDto) error
 	Register(ctx context.Context, req dto.VerifyOtpRequestDto) (*dto.RegisterResponseDto, error)
 	Login(ctx context.Context, req dto.LoginRequestDto) (*dto.LoginResponseDto, error)
-	SelectProfile(ctx context.Context, req dto.SelectProfileRequestDto) (*dto.SelectProfileResponseDto, error)
-	SelectOrg(ctx context.Context, req dto.SelectOrgRequestDto) (*dto.SelectProfileResponseDto, error)
-	SwitchProfile(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, req dto.SwitchProfileRequestDto) (*dto.SelectProfileResponseDto, error)
-	SwitchOrg(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, activeRole string, req dto.SwitchOrgRequestDto) (*dto.SelectProfileResponseDto, error)
-	Logout(ctx context.Context, userId, deviceId uuid.UUID) error
-	LogoutAllDevice(ctx context.Context, userId uuid.UUID) error
 	RefreshToken(ctx context.Context, oldRefreshToken string) (*dto.RefreshTokenResponseDto, error)
-	GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserResponseDto, error)
-	GetMyProfile(ctx context.Context, userID uuid.UUID, activeRole string, activeOrgID *uuid.UUID) (*dto.MyProfileResponseDto, error)
-	GetMySystemRoles(ctx context.Context, userID uuid.UUID) ([]dto.SystemRoleDto, error)
-	UpdateMe(ctx context.Context, userID uuid.UUID, req dto.UpdateMeRequestDto) (*dto.UserResponseDto, error)
-	GetAllDevices(ctx context.Context, userID, currentDeviceID uuid.UUID) ([]dto.DeviceSessionDto, error)
-	ChangePassword(ctx context.Context, userID uuid.UUID, req dto.ChangePasswordRequestDto) error
 	RequestPasswordReset(ctx context.Context, email string) error
 	ResetPassword(ctx context.Context, req dto.ResetPasswordRequestDto) error
+	// Role selection
+	GetMyRoles(ctx context.Context, userID uuid.UUID) (*dto.GetMyRolesResponseDto, error)
+	SelectRole(ctx context.Context, req dto.SelectRoleRequestDto) (*dto.SelectRoleResponseDto, error)
+	SwitchRole(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, req dto.SwitchRoleRequestDto) (*dto.SelectRoleResponseDto, error)
+	// Profile management
+	GetSystemRoleOptions(ctx context.Context) ([]dto.SystemRoleOptionDto, error)
+	GetMyProfiles(ctx context.Context, userID uuid.UUID) ([]dto.ProfileDto, error)
+	CreateProfile(ctx context.Context, userID uuid.UUID, req dto.CreateProfileRequestDto) (*dto.ProfileDto, error)
+	DeleteProfile(ctx context.Context, userID uuid.UUID, profileID uuid.UUID) error
+	// User info
+	GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserResponseDto, error)
+	UpdateMe(ctx context.Context, userID uuid.UUID, req dto.UpdateMeRequestDto) (*dto.UserResponseDto, error)
+	// Session
+	GetAllDevices(ctx context.Context, userID, currentDeviceID uuid.UUID) ([]dto.DeviceSessionDto, error)
+	Logout(ctx context.Context, userId, deviceId uuid.UUID) error
+	LogoutAllDevice(ctx context.Context, userId uuid.UUID) error
+	ChangePassword(ctx context.Context, userID uuid.UUID, req dto.ChangePasswordRequestDto) error
 }
 
 type AuthService struct {
@@ -277,8 +283,15 @@ func (s *AuthService) Login(
 		}
 	}
 
+	// NEW: Build unified roles list (system + organization roles)
+	unifiedRoles, err := s.buildUnifiedRoles(ctx, user.ID)
+	if err != nil {
+		log.Printf("[WARN] Failed to build unified roles for user %s: %v", user.ID, err)
+		unifiedRoles = []dto.UnifiedRoleDto{}
+	}
+
 	// User có nhiều roles → chưa chọn role, trả session_token
-	if len(systemRoleDtos) > 1 {
+	if len(unifiedRoles) > 1 {
 		sessionToken := uuid.New().String()
 		pending := PendingLogin{
 			UserID:      user.ID.String(),
@@ -297,18 +310,33 @@ func (s *AuthService) Login(
 		return &dto.LoginResponseDto{
 			Completed:    false,
 			SessionToken: sessionToken,
-			SystemRoles:  systemRoleDtos,
+			Roles:        unifiedRoles,       // NEW: Unified roles
+			SystemRoles:  systemRoleDtos,     // DEPRECATED: Kept for backward compatibility
 		}, nil
 	}
 
-	// User không có system role nào
-	if len(systemRoleDtos) == 0 {
-		return nil, errors.New("user has no active system role assigned")
+	// User không có role nào
+	if len(unifiedRoles) == 0 {
+		return nil, errors.New("user has no active role assigned")
 	}
 
-	// User chỉ có 1 role → tự động chọn, kiểm tra org
-	selectedRole := systemRoleDtos[0]
-	return s.finishLoginWithOrgCheck(ctx, user, req.DeviceInfo, selectedRole, systemRoleDtos)
+	// User chỉ có 1 role → tự động chọn và hoàn tất login
+	singleRole := unifiedRoles[0]
+	result, err := s.completeLoginUnified(ctx, user, req.DeviceInfo, singleRole)
+	if err != nil {
+		return nil, err
+	}
+
+	return &dto.LoginResponseDto{
+		Completed:     true,
+		Roles:         unifiedRoles,
+		SystemRoles:   systemRoleDtos, // DEPRECATED: backward compatibility
+		AccessToken:   result.AccessToken,
+		RefreshToken:  result.RefreshToken,
+		User:          &result.User,
+		ActiveRole:    &singleRole,
+		CurrentDevice: result.CurrentDevice,
+	}, nil
 }
 
 // getUserOrgs trả về danh sách org mà user thuộc (generic, không phụ thuộc role)
@@ -455,7 +483,15 @@ func (s *AuthService) finishLoginWithOrgCheck(
 		log.Printf("[WARN] Failed to check orgs for user %s: %v", user.ID, err)
 	}
 
-	// User thuộc 1+ org → yêu cầu chọn (org hoặc "Độc lập")
+	// Convert SystemRoleDto to UnifiedRoleDto for new flow
+	activeRoleUnified := dto.UnifiedRoleDto{
+		ID:          selectedRole.ID,
+		Type:        "system",
+		RoleName:    selectedRole.Name,
+		DisplayName: selectedRole.Name,
+	}
+
+	// User thuộc 1+ org → yêu cầu chọn (org hoặc "Độc lập") - DEPRECATED flow
 	if len(orgs) > 0 {
 		sessionToken := uuid.New().String()
 		pending := PendingLogin{
@@ -476,7 +512,7 @@ func (s *AuthService) finishLoginWithOrgCheck(
 			SystemRoles:          allRoles,
 			RequiresOrgSelection: true,
 			Organizations:        orgs,
-			ActiveRole:           &selectedRole,
+			ActiveRole:           &activeRoleUnified,
 		}, nil
 	}
 
@@ -492,8 +528,7 @@ func (s *AuthService) finishLoginWithOrgCheck(
 		AccessToken:   result.AccessToken,
 		RefreshToken:  result.RefreshToken,
 		User:          &result.User,
-		ActiveRole:    &result.ActiveRole,
-		ActiveOrg:     result.ActiveOrg,
+		ActiveRole:    &activeRoleUnified,
 		EntryContext:  entryCtx,
 		CurrentDevice: &result.CurrentDevice,
 	}, nil
@@ -1281,5 +1316,460 @@ func (s *AuthService) ResetPassword(ctx context.Context, req dto.ResetPasswordRe
 	userCacheKey := fmt.Sprintf("user_cache:%s", user.ID)
 	_ = s.redisClient.Del(ctx, userCacheKey).Err()
 
+	return nil
+}
+
+// ========== UNIFIED ROLE SELECTION (NEW FLOW) ==========
+
+// GetMyRoles returns unified list of system roles and organization roles
+func (s *AuthService) GetMyRoles(ctx context.Context, userID uuid.UUID) (*dto.GetMyRolesResponseDto, error) {
+	roles, err := s.buildUnifiedRoles(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &dto.GetMyRolesResponseDto{Roles: roles}, nil
+}
+
+// buildUnifiedRoles fetches both SystemRoles and OrganizationRoles, returns as UnifiedRoleDto list
+func (s *AuthService) buildUnifiedRoles(ctx context.Context, userID uuid.UUID) ([]dto.UnifiedRoleDto, error) {
+	var roles []dto.UnifiedRoleDto
+
+	// 1. Get system roles (e.g., "Giáo viên tự do", "Học sinh")
+	systemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load system roles: %w", err)
+	}
+	for _, sr := range systemRoles {
+		if sr.SystemRole == nil {
+			continue
+		}
+		roles = append(roles, dto.UnifiedRoleDto{
+			ID:          sr.ID.String(),
+			Type:        "system",
+			RoleName:    sr.SystemRole.Name,
+			DisplayName: sr.SystemRole.Name, // e.g., "Giáo viên tự do"
+		})
+	}
+
+	// 2. Get organization roles (e.g., "Kế toán - Trường PTIT")
+	orgRoles, err := s.userOrgRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load organization roles: %w", err)
+	}
+	for _, or := range orgRoles {
+		if or.Role == nil || or.Organization == nil {
+			continue
+		}
+		orgID := or.OrganizationID.String()
+		orgName := or.Organization.Name
+		roles = append(roles, dto.UnifiedRoleDto{
+			ID:               or.ID.String(),
+			Type:             "organization",
+			RoleName:         or.Role.Name,
+			OrganizationID:   &orgID,
+			OrganizationName: &orgName,
+			DisplayName:      fmt.Sprintf("%s - %s", or.Role.Name, or.Organization.Name),
+		})
+	}
+
+	return roles, nil
+}
+
+// SelectRole selects a role during login flow (using session_token)
+func (s *AuthService) SelectRole(ctx context.Context, req dto.SelectRoleRequestDto) (*dto.SelectRoleResponseDto, error) {
+	// 1. Get pending login from Redis
+	pendingKey := fmt.Sprintf("pending_login:%s", req.SessionToken)
+	pendingData, err := s.redisClient.Get(ctx, pendingKey).Result()
+	if err == redis.Nil {
+		return nil, errors.New("session expired or invalid, please login again")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending login: %w", err)
+	}
+
+	var pending PendingLogin
+	if err := json.Unmarshal([]byte(pendingData), &pending); err != nil {
+		return nil, fmt.Errorf("failed to parse pending login: %w", err)
+	}
+
+	userID, _ := uuid.Parse(pending.UserID)
+	roleID, err := uuid.Parse(req.RoleID)
+	if err != nil {
+		return nil, errors.New("invalid role_id format")
+	}
+
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, errors.New("user not found")
+	}
+
+	// 2. Validate role ownership and build active role
+	var activeRole dto.UnifiedRoleDto
+	if req.RoleType == "system" {
+		// Validate system role
+		userSystemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+		if err != nil {
+			return nil, fmt.Errorf("failed to load system roles: %w", err)
+		}
+		found := false
+		for _, sr := range userSystemRoles {
+			if sr.ID == roleID && sr.SystemRole != nil {
+				activeRole = dto.UnifiedRoleDto{
+					ID:          sr.ID.String(),
+					Type:        "system",
+					RoleName:    sr.SystemRole.Name,
+					DisplayName: sr.SystemRole.Name,
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, errors.New("user does not have this system role")
+		}
+	} else if req.RoleType == "organization" {
+		// Validate organization role
+		orgRoles, err := s.userOrgRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+		if err != nil {
+			return nil, fmt.Errorf("failed to load organization roles: %w", err)
+		}
+		found := false
+		for _, or := range orgRoles {
+			if or.ID == roleID && or.Role != nil && or.Organization != nil {
+				orgID := or.OrganizationID.String()
+				orgName := or.Organization.Name
+				activeRole = dto.UnifiedRoleDto{
+					ID:               or.ID.String(),
+					Type:             "organization",
+					RoleName:         or.Role.Name,
+					OrganizationID:   &orgID,
+					OrganizationName: &orgName,
+					DisplayName:      fmt.Sprintf("%s - %s", or.Role.Name, or.Organization.Name),
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, errors.New("user does not have this organization role")
+		}
+	} else {
+		return nil, errors.New("invalid role_type: must be 'system' or 'organization'")
+	}
+
+	// 3. Complete login - generate tokens
+	result, err := s.completeLoginUnified(ctx, user, pending.DeviceInfo, activeRole)
+	if err != nil {
+		return nil, err
+	}
+
+	// 4. Delete pending login from Redis
+	_ = s.redisClient.Del(ctx, pendingKey).Err()
+
+	return result, nil
+}
+
+// SwitchRole switches role while already logged in
+func (s *AuthService) SwitchRole(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, req dto.SwitchRoleRequestDto) (*dto.SelectRoleResponseDto, error) {
+	roleID, err := uuid.Parse(req.RoleID)
+	if err != nil {
+		return nil, errors.New("invalid role_id format")
+	}
+
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, errors.New("user not found")
+	}
+
+	// 1. Validate role ownership and build active role
+	var activeRole dto.UnifiedRoleDto
+	if req.RoleType == "system" {
+		userSystemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+		if err != nil {
+			return nil, fmt.Errorf("failed to load system roles: %w", err)
+		}
+		found := false
+		for _, sr := range userSystemRoles {
+			if sr.ID == roleID && sr.SystemRole != nil {
+				activeRole = dto.UnifiedRoleDto{
+					ID:          sr.ID.String(),
+					Type:        "system",
+					RoleName:    sr.SystemRole.Name,
+					DisplayName: sr.SystemRole.Name,
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, errors.New("user does not have this system role")
+		}
+	} else if req.RoleType == "organization" {
+		orgRoles, err := s.userOrgRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+		if err != nil {
+			return nil, fmt.Errorf("failed to load organization roles: %w", err)
+		}
+		found := false
+		for _, or := range orgRoles {
+			if or.ID == roleID && or.Role != nil && or.Organization != nil {
+				orgID := or.OrganizationID.String()
+				orgName := or.Organization.Name
+				activeRole = dto.UnifiedRoleDto{
+					ID:               or.ID.String(),
+					Type:             "organization",
+					RoleName:         or.Role.Name,
+					OrganizationID:   &orgID,
+					OrganizationName: &orgName,
+					DisplayName:      fmt.Sprintf("%s - %s", or.Role.Name, or.Organization.Name),
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, errors.New("user does not have this organization role")
+		}
+	} else {
+		return nil, errors.New("invalid role_type: must be 'system' or 'organization'")
+	}
+
+	// 2. Get device info from session
+	deviceInfo := dto.DeviceInfoDTO{DeviceID: deviceID.String()}
+	sessionKey := fmt.Sprintf("session:%s", userID)
+	sessionData, err := s.redisClient.HGet(ctx, sessionKey, deviceID.String()).Result()
+	if err == nil {
+		var sess struct {
+			DeviceName string `json:"device_name"`
+			UserAgent  string `json:"user_agent"`
+		}
+		if json.Unmarshal([]byte(sessionData), &sess) == nil {
+			deviceInfo.DeviceName = sess.DeviceName
+			deviceInfo.UserAgent = sess.UserAgent
+		}
+	}
+
+	// 3. Complete login with new role
+	return s.completeLoginUnified(ctx, user, deviceInfo, activeRole)
+}
+
+// completeLoginUnified generates JWT tokens for unified role selection
+func (s *AuthService) completeLoginUnified(
+	ctx context.Context,
+	user *model.User,
+	deviceInfo dto.DeviceInfoDTO,
+	activeRole dto.UnifiedRoleDto,
+) (*dto.SelectRoleResponseDto, error) {
+	deviceID, _ := uuid.Parse(deviceInfo.DeviceID)
+
+	// Get/increment user version
+	userVersionKey := fmt.Sprintf("user_version:%s", user.ID)
+	userVersion := int64(1)
+	userVerStr, err := s.redisClient.Get(ctx, userVersionKey).Result()
+	if err == nil {
+		userVersion, _ = strconv.ParseInt(userVerStr, 10, 64)
+	} else if err == redis.Nil {
+		_ = s.redisClient.Set(ctx, userVersionKey, userVersion, 0).Err()
+	}
+
+	// Determine active org for JWT
+	var activeOrgID *uuid.UUID
+	if activeRole.Type == "organization" && activeRole.OrganizationID != nil {
+		parsed, _ := uuid.Parse(*activeRole.OrganizationID)
+		activeOrgID = &parsed
+	}
+
+	// Generate tokens - use RoleName for JWT (for backward compatibility with middleware)
+	accessToken, refreshToken, err := utils.GenerateTokens(s.cfg, user.ID, deviceID, activeRole.RoleName, activeOrgID, userVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	// Save refresh token
+	refreshKey := fmt.Sprintf("auth:refresh:%s", user.ID)
+	if err := s.redisClient.HSet(ctx, refreshKey, deviceID.String(), refreshToken).Err(); err != nil {
+		return nil, err
+	}
+	s.redisClient.Expire(ctx, refreshKey, s.cfg.JWTRefreshExpiration)
+
+	// Save session info
+	type deviceSession struct {
+		DeviceID   uuid.UUID `json:"device_id"`
+		DeviceName string    `json:"device_name"`
+		UserAgent  string    `json:"user_agent"`
+		LoggedInAt string    `json:"logged_in_at"`
+	}
+	sess := deviceSession{
+		DeviceID:   deviceID,
+		DeviceName: deviceInfo.DeviceName,
+		UserAgent:  deviceInfo.UserAgent,
+		LoggedInAt: time.Now().Format(time.RFC3339),
+	}
+	sessBytes, _ := json.Marshal(sess)
+	sessionKey := fmt.Sprintf("session:%s", user.ID)
+	_ = s.redisClient.HSet(ctx, sessionKey, deviceID.String(), sessBytes).Err()
+	s.redisClient.Expire(ctx, sessionKey, s.cfg.JWTRefreshExpiration)
+
+	// Build response
+	var dobStr *string
+	if user.DateOfBirth != nil {
+		formatted := user.DateOfBirth.Format("2006-01-02")
+		dobStr = &formatted
+	}
+
+	return &dto.SelectRoleResponseDto{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		User: dto.UserResponseDto{
+			ID:          user.ID,
+			Username:    user.UserName,
+			Email:       user.Email,
+			FullName:    user.FullName,
+			Phone:       user.Phone,
+			AvatarUrl:   user.AvatarURL,
+			DateOfBirth: dobStr,
+			Bio:         user.Bio,
+			IsActive:    user.IsActive,
+			CreatedAt:   user.CreatedAt.Format(time.RFC3339),
+		},
+		ActiveRole: activeRole,
+		CurrentDevice: &dto.DeviceSessionDto{
+			DeviceID:   deviceID.String(),
+			DeviceName: deviceInfo.DeviceName,
+			UserAgent:  deviceInfo.UserAgent,
+			LoggedInAt: sess.LoggedInAt,
+			IsCurrent:  true,
+		},
+	}, nil
+}
+
+// ========== PROFILE MANAGEMENT ==========
+
+// GetSystemRoleOptions returns all available system roles for creating profiles
+func (s *AuthService) GetSystemRoleOptions(ctx context.Context) ([]dto.SystemRoleOptionDto, error) {
+	roles, _, err := s.systemRoleRepo.GetAllSystemRoles(ctx, 1, 100, "", "active")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system roles: %w", err)
+	}
+
+	result := make([]dto.SystemRoleOptionDto, len(roles))
+	for i, role := range roles {
+		var desc *string
+		if role.Description.Valid {
+			desc = &role.Description.String
+		}
+		result[i] = dto.SystemRoleOptionDto{
+			ID:          role.ID.String(),
+			Name:        role.Name,
+			Description: desc,
+		}
+	}
+	return result, nil
+}
+
+// GetMyProfiles returns all profiles (UserSystemRoles) of a user
+func (s *AuthService) GetMyProfiles(ctx context.Context, userID uuid.UUID) ([]dto.ProfileDto, error) {
+	userRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user profiles: %w", err)
+	}
+
+	result := make([]dto.ProfileDto, 0, len(userRoles))
+	for _, ur := range userRoles {
+		if ur.SystemRole == nil {
+			continue
+		}
+		var desc *string
+		if ur.SystemRole.Description.Valid {
+			desc = &ur.SystemRole.Description.String
+		}
+		result = append(result, dto.ProfileDto{
+			ID:           ur.ID.String(),
+			SystemRoleID: ur.SystemRoleID.String(),
+			RoleName:     ur.SystemRole.Name,
+			Description:  desc,
+			Status:       ur.Status,
+			CreatedAt:    ur.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	return result, nil
+}
+
+// CreateProfile creates a new profile for user with given system role
+func (s *AuthService) CreateProfile(ctx context.Context, userID uuid.UUID, req dto.CreateProfileRequestDto) (*dto.ProfileDto, error) {
+	systemRoleID, err := uuid.Parse(req.SystemRoleID)
+	if err != nil {
+		return nil, errors.New("invalid system_role_id")
+	}
+
+	// Check if system role exists
+	systemRole, err := s.systemRoleRepo.GetSystemRoleByID(ctx, systemRoleID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system role: %w", err)
+	}
+	if systemRole == nil {
+		return nil, errors.New("system role not found")
+	}
+
+	// Check if user already has this profile
+	existing, err := s.userSystemRoleRepo.FindByUserAndSystemRole(ctx, userID, systemRoleID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing profile: %w", err)
+	}
+	if existing != nil {
+		return nil, errors.New("you already have this profile")
+	}
+
+	// Create new profile
+	userSystemRole := &model.UserSystemRole{
+		UserID:       userID,
+		SystemRoleID: systemRoleID,
+		Status:       "active",
+		GrantedAt:    time.Now(),
+	}
+	if err := s.userSystemRoleRepo.Create(ctx, userSystemRole); err != nil {
+		return nil, fmt.Errorf("failed to create profile: %w", err)
+	}
+
+	var desc *string
+	if systemRole.Description.Valid {
+		desc = &systemRole.Description.String
+	}
+	return &dto.ProfileDto{
+		ID:           userSystemRole.ID.String(),
+		SystemRoleID: systemRoleID.String(),
+		RoleName:     systemRole.Name,
+		Description:  desc,
+		Status:       userSystemRole.Status,
+		CreatedAt:    userSystemRole.CreatedAt.Format(time.RFC3339),
+	}, nil
+}
+
+// DeleteProfile removes a profile from user
+func (s *AuthService) DeleteProfile(ctx context.Context, userID uuid.UUID, profileID uuid.UUID) error {
+	// Check if profile exists and belongs to user
+	profile, err := s.userSystemRoleRepo.FindByID(ctx, profileID)
+	if err != nil {
+		return fmt.Errorf("failed to find profile: %w", err)
+	}
+	if profile == nil {
+		return errors.New("profile not found")
+	}
+	if profile.UserID != userID {
+		return errors.New("profile does not belong to you")
+	}
+
+	// Check if user has at least 2 profiles (can't delete last one)
+	profiles, err := s.userSystemRoleRepo.FindByUserID(ctx, userID, "active")
+	if err != nil {
+		return fmt.Errorf("failed to count profiles: %w", err)
+	}
+	if len(profiles) <= 1 {
+		return errors.New("cannot delete your last profile")
+	}
+
+	// Soft delete
+	if err := s.userSystemRoleRepo.Delete(ctx, profileID); err != nil {
+		return fmt.Errorf("failed to delete profile: %w", err)
+	}
 	return nil
 }

@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -23,15 +22,18 @@ type CourseRepositoryInterface interface {
 }
 
 type CourseFilterDBParams struct {
-	CategoryID *uuid.UUID
-	Level      string
-	Status     string
-	Keyword    string
-	IsFree     *bool
-	MinPrice   *float64
-	MaxPrice   *float64
-	Page       int
-	PageSize   int
+	CategoryID   *uuid.UUID
+	InstructorID *uuid.UUID
+	Level        string
+	Status       string
+	Keyword      string
+	IsFree       *bool
+	IsFeatured   *bool
+	MinPrice     *float64
+	MaxPrice     *float64
+	TagIDs       []uuid.UUID
+	Page         int
+	PageSize     int
 }
 
 type CourseRepository struct {
@@ -61,6 +63,9 @@ func (r *CourseRepository) GetAll(ctx context.Context, params CourseFilterDBPara
 	if params.CategoryID != nil {
 		query = query.Where("category_id = ?", *params.CategoryID)
 	}
+	if params.InstructorID != nil {
+		query = query.Where("instructor_id = ?", *params.InstructorID)
+	}
 	if params.Level != "" {
 		query = query.Where("level = ?", params.Level)
 	}
@@ -70,11 +75,18 @@ func (r *CourseRepository) GetAll(ctx context.Context, params CourseFilterDBPara
 	if params.IsFree != nil {
 		query = query.Where("is_free = ?", *params.IsFree)
 	}
+	if params.IsFeatured != nil {
+		query = query.Where("is_featured = ?", *params.IsFeatured)
+	}
 	if params.MinPrice != nil {
 		query = query.Where("price >= ?", *params.MinPrice)
 	}
 	if params.MaxPrice != nil {
 		query = query.Where("price <= ?", *params.MaxPrice)
+	}
+	if len(params.TagIDs) > 0 {
+		query = query.Joins("JOIN course_tags ON course_tags.course_id = courses.id").
+			Where("course_tags.tag_id IN ?", params.TagIDs)
 	}
 	query = utils.ApplyKeywordSearch(query, params.Keyword, "courses.title", "courses.short_description")
 
@@ -143,7 +155,7 @@ func (r *CourseRepository) Delete(ctx context.Context, id uuid.UUID) error {
 func (r *CourseRepository) ReplaceTags(ctx context.Context, course *model.Course, tags []model.Tag) error {
 	err := r.db.WithContext(ctx).Model(course).Association("Tags").Replace(tags)
 	if err != nil {
-		return fmt.Errorf("failed to replace tags: %w", err)
+		return err
 	}
 	return nil
 }

@@ -1,17 +1,24 @@
 package dto
 
-import "github.com/google/uuid"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 // Section DTOs
 
 type CreateSectionDTO struct {
-	Title       string  `json:"title" validate:"required,min=2,max=255"`
-	Description *string `json:"description"`
+	CourseID     uuid.UUID `json:"course_id"`
+	Title        string    `json:"title" validate:"required,min=2,max=255"`
+	Description  *string   `json:"description"`
+	DisplayOrder int       `json:"display_order"`
 }
 
 type UpdateSectionDTO struct {
-	Title       *string `json:"title" validate:"omitempty,min=2,max=255"`
-	Description *string `json:"description"`
+	Title        *string `json:"title" validate:"omitempty,min=2,max=255"`
+	Description  *string `json:"description"`
+	DisplayOrder *int    `json:"display_order"`
 }
 
 type SectionResponseDTO struct {
@@ -21,8 +28,8 @@ type SectionResponseDTO struct {
 	Description  *string             `json:"description,omitempty"`
 	DisplayOrder int                 `json:"display_order"`
 	Lessons      []LessonResponseDTO `json:"lessons,omitempty"`
-	CreatedAt    string              `json:"created_at"`
-	UpdatedAt    string              `json:"updated_at"`
+	CreatedAt    time.Time           `json:"created_at"`
+	UpdatedAt    time.Time           `json:"updated_at"`
 }
 
 type ReorderItemDTO struct {

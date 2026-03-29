@@ -8,6 +8,7 @@ type CreateLivestreamDTO struct {
 	HostID      string `json:"host_id" validate:"required,uuid"`
 	MaxViewers  int64  `json:"max_viewers"`
 	IsRecorded  bool   `json:"is_recorded"`
+	ScheduledAt string `json:"scheduled_at"`
 }
 
 type UpdateLivestreamDTO struct {
@@ -39,6 +40,7 @@ type LivestreamResponseDTO struct {
 	Status      string    `json:"status"`
 	StartedAt   *string   `json:"started_at,omitempty"`
 	EndedAt     *string   `json:"ended_at,omitempty"`
+	ScheduledAt *string   `json:"scheduled_at,omitempty"`
 	MaxViewers  int64     `json:"max_viewers"`
 	IsRecorded  bool      `json:"is_recorded"`
 	Settings    string    `json:"settings"`

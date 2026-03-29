@@ -64,7 +64,13 @@ func (r *LivestreamRepository) GetAll(ctx context.Context, page, pageSize int, s
 
 	query := r.db.WithContext(ctx).Model(&model.LivestreamSession{})
 	if status != "" {
-		query = query.Where("status = ?", status)
+		// Handle comma-separated status values (e.g., "live,scheduled")
+		statuses := utils.SplitAndTrim(status, ",")
+		if len(statuses) == 1 {
+			query = query.Where("status = ?", statuses[0])
+		} else if len(statuses) > 1 {
+			query = query.Where("status IN ?", statuses)
+		}
 	}
 	if hostID != nil {
 		query = query.Where("host_id = ?", hostID)

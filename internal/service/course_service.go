@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -57,27 +56,25 @@ func (s *CourseService) CreateCourse(ctx context.Context, req dto.CreateCourseDT
 	if language == "" {
 		language = "vi"
 	}
-	price := decimal.NewFromInt(0)
-	if req.Price != nil {
-		price = *req.Price
-	}
 
 	course := &model.Course{
-		InstructorID:     req.InstructorID,
-		CategoryID:       req.CategoryID,
-		Title:            req.Title,
-		Slug:             utils.GenerateSlug(req.Title),
-		ShortDescription: req.ShortDescription,
-		Description:      req.Description,
-		ThumbnailURL:     req.ThumbnailURL,
-		PreviewVideoURL:  req.PreviewVideoURL,
-		Level:            level,
-		Language:         language,
-		Price:            price,
-		Requirements:     req.Requirements,
-		Objectives:       req.Objectives,
-		TargetAudience:   req.TargetAudience,
-		Status:           "draft",
+		InstructorID:      req.InstructorID,
+		CategoryID:        req.CategoryID,
+		Title:             req.Title,
+		Slug:              utils.GenerateSlug(req.Title),
+		ShortDescription:  req.ShortDescription,
+		Description:       req.Description,
+		ThumbnailURL:      req.ThumbnailURL,
+		PreviewVideoURL:   req.PreviewVideoURL,
+		Level:             level,
+		Language:          language,
+		Price:             req.Price,
+		DiscountPrice:     req.DiscountPrice,
+		DiscountExpiresAt: req.DiscountExpiresAt,
+		Requirements:      req.Requirements,
+		Objectives:        req.Objectives,
+		TargetAudience:    req.TargetAudience,
+		Status:            "draft",
 	}
 
 	if req.IsFree != nil {
@@ -111,15 +108,18 @@ func (s *CourseService) GetAllCourses(ctx context.Context, params dto.CourseFilt
 	}
 
 	dbParams := repository.CourseFilterDBParams{
-		CategoryID: params.CategoryID,
-		Level:      params.Level,
-		Status:     params.Status,
-		Keyword:    params.Keyword,
-		IsFree:     params.IsFree,
-		MinPrice:   params.MinPrice,
-		MaxPrice:   params.MaxPrice,
-		Page:       params.Page,
-		PageSize:   params.PageSize,
+		CategoryID:   params.CategoryID,
+		InstructorID: params.InstructorID,
+		Level:        params.Level,
+		Status:       params.Status,
+		Keyword:      params.Keyword,
+		IsFree:       params.IsFree,
+		IsFeatured:   params.IsFeatured,
+		MinPrice:     params.MinPrice,
+		MaxPrice:     params.MaxPrice,
+		TagIDs:       params.TagIDs,
+		Page:         params.Page,
+		PageSize:     params.PageSize,
 	}
 
 	courses, total, err := s.courseRepo.GetAll(ctx, dbParams)
@@ -157,17 +157,17 @@ func (s *CourseService) GetCourseByID(ctx context.Context, id uuid.UUID) (*dto.C
 	for i, sec := range course.Sections {
 		lessons := make([]dto.LessonResponseDTO, len(sec.Lessons))
 		for j, les := range sec.Lessons {
-			lessons[j] = toLessonResponseDTO(&les)
+			lessons[j] = s.toLessonResponseDTO(&les, nil, nil)
 		}
 		sections[i] = dto.SectionResponseDTO{
 			ID:           sec.ID,
-			CourseID:     sec.CourseID,
+			CourseID:     sec.CourseID, 
 			Title:        sec.Title,
 			Description:  sec.Description,
 			DisplayOrder: sec.DisplayOrder,
 			Lessons:      lessons,
-			CreatedAt:    sec.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			UpdatedAt:    sec.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			CreatedAt:    sec.CreatedAt,
+			UpdatedAt:    sec.UpdatedAt,
 		}
 	}
 	detail.Sections = sections
@@ -220,6 +220,12 @@ func (s *CourseService) UpdateCourse(ctx context.Context, id uuid.UUID, req dto.
 	if req.Price != nil {
 		course.Price = *req.Price
 	}
+	if req.DiscountPrice != nil {
+		course.DiscountPrice = req.DiscountPrice
+	}
+	if req.DiscountExpiresAt != nil {
+		course.DiscountExpiresAt = req.DiscountExpiresAt
+	}
 	if req.Status != nil {
 		course.Status = *req.Status
 	}
@@ -270,39 +276,48 @@ func (s *CourseService) DeleteCourse(ctx context.Context, id uuid.UUID) error {
 
 func (s *CourseService) toCourseResponseDTO(course *model.Course) *dto.CourseResponseDTO {
 	resp := &dto.CourseResponseDTO{
-		ID:               course.ID,
-		InstructorID:     course.InstructorID,
-		CategoryID:       course.CategoryID,
-		Title:            course.Title,
-		Slug:             course.Slug,
-		ShortDescription: course.ShortDescription,
-		Description:      course.Description,
-		ThumbnailURL:     course.ThumbnailURL,
-		PreviewVideoURL:  course.PreviewVideoURL,
-		Level:            course.Level,
-		Language:         course.Language,
-		Price:            course.Price,
-		DiscountPrice:    course.DiscountPrice,
+		ID:                course.ID,
+		InstructorID:      course.InstructorID,
+		CategoryID:        course.CategoryID,
+		Title:             course.Title,
+		Slug:              course.Slug,
+		ShortDescription:  course.ShortDescription,
+		Description:       course.Description,
+		ThumbnailURL:      course.ThumbnailURL,
+		PreviewVideoURL:   course.PreviewVideoURL,
+		Level:             course.Level,
+		Language:          course.Language,
+		Price:             course.Price,
+		DiscountPrice:     course.DiscountPrice,
+		DiscountExpiresAt: course.DiscountExpiresAt,
 		TotalDurationMins: course.TotalDurationMins,
-		TotalLessons:     course.TotalLessons,
-		TotalStudents:    course.TotalStudents,
-		AverageRating:    course.AverageRating,
-		TotalReviews:     course.TotalReviews,
-		Requirements:     course.Requirements,
-		Objectives:       course.Objectives,
-		TargetAudience:   course.TargetAudience,
-		Status:           course.Status,
-		IsFeatured:       course.IsFeatured,
-		IsFree:           course.IsFree,
-		CreatedAt:        course.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:        course.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		TotalLessons:      course.TotalLessons,
+		TotalStudents:     course.TotalStudents,
+		AverageRating:     course.AverageRating,
+		TotalReviews:      course.TotalReviews,
+		Requirements:      course.Requirements,
+		Objectives:        course.Objectives,
+		TargetAudience:    course.TargetAudience,
+		Status:            course.Status,
+		PublishedAt:       course.PublishedAt,
+		IsFeatured:        course.IsFeatured,
+		IsFree:            course.IsFree,
+		CreatedAt:         course.CreatedAt,
+		UpdatedAt:         course.UpdatedAt,
 	}
 
 	if course.Category != nil {
 		resp.Category = &dto.CategoryResponseDTO{
-			ID:   course.Category.ID,
-			Name: course.Category.Name,
-			Slug: course.Category.Slug,
+			ID:           course.Category.ID,
+			ParentID:     course.Category.ParentID,
+			Name:         course.Category.Name,
+			Slug:         course.Category.Slug,
+			Description:  course.Category.Description,
+			IconURL:      course.Category.IconURL,
+			DisplayOrder: course.Category.DisplayOrder,
+			IsActive:     course.Category.IsActive,
+			CreatedAt:    course.Category.CreatedAt,
+			UpdatedAt:    course.Category.UpdatedAt,
 		}
 	}
 
@@ -321,16 +336,57 @@ func (s *CourseService) toCourseResponseDTO(course *model.Course) *dto.CourseRes
 	return resp
 }
 
-func toLessonResponseDTO(lesson *model.Lesson) dto.LessonResponseDTO {
-	return dto.LessonResponseDTO{
+func (s *CourseService) toLessonResponseDTO(lesson *model.Lesson, contents []model.LessonContent, sessions []model.LessonSession) dto.LessonResponseDTO {
+	resp := dto.LessonResponseDTO{
 		ID:           lesson.ID,
 		SectionID:    lesson.SectionID,
 		Title:        lesson.Title,
 		Description:  lesson.Description,
-		ContentType:  lesson.ContentType,
 		DisplayOrder: lesson.DisplayOrder,
 		DurationMins: lesson.DurationMins,
 		IsPreview:    lesson.IsPreview,
 		IsMandatory:  lesson.IsMandatory,
+		CreatedAt:    lesson.CreatedAt,
+		UpdatedAt:    lesson.UpdatedAt,
 	}
+
+	if len(contents) > 0 {
+		resp.Contents = make([]dto.LessonContentResponseDTO, len(contents))
+		for i, c := range contents {
+			resp.Contents[i] = dto.LessonContentResponseDTO{
+				ID:           c.ID,
+				LessonID:     c.LessonID,
+				Type:         c.Type,
+				Title:        c.Title,
+				VideoURL:     c.VideoURL,
+				Duration:     c.Duration,
+				StreamID:     c.StreamID,
+				DisplayOrder: c.DisplayOrder,
+				CreatedAt:    c.CreatedAt,
+				UpdatedAt:    c.UpdatedAt,
+			}
+		}
+	}
+
+	if len(sessions) > 0 {
+		resp.Sessions = make([]dto.LessonSessionResponseDTO, len(sessions))
+		for i, sess := range sessions {
+			resp.Sessions[i] = dto.LessonSessionResponseDTO{
+				ID:          sess.ID,
+				LessonID:    sess.LessonID,
+				Title:       sess.Title,
+				Description: sess.Description,
+				StartTime:   sess.StartTime,
+				EndTime:     sess.EndTime,
+				MeetingURL:  sess.MeetingURL,
+				MeetingID:   sess.MeetingID,
+				HostID:      sess.HostID,
+				Status:      sess.Status,
+				CreatedAt:   sess.CreatedAt,
+				UpdatedAt:   sess.UpdatedAt,
+			}
+		}
+	}
+
+	return resp
 }

@@ -136,7 +136,6 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 		return nil, ErrCourseNotFound
 	}
 
-	// Calculate subtotal
 	subtotal := decimal.Zero
 	for _, course := range courses {
 		price := course.Price

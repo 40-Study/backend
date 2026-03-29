@@ -7,7 +7,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"study.com/v1/internal/database/seeds"
+	asynq_queue "study.com/v1/internal/queue/asynq"
 	"study.com/v1/internal/router"
+	"study.com/v1/internal/socket"
 )
 
 type App struct {
@@ -23,7 +25,11 @@ func New() (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize resources: %w", err)
 	}
-
+	hub := socket.NewHub()
+	go hub.Run()
+	notifier := socket.NewNotifier(hub)
+	asynq_queue.RegisterTasks(resources.Queue, notifier)
+	go resources.Queue.Start()
 	repos := InitRepositories(resources.DB)
 
 	seeder := seeds.NewSeeder(resources.DB)
@@ -101,6 +107,7 @@ func New() (*App, error) {
 
 		resources.Redis,
 		resources.MinioClient,
+		resources.Queue,
 	)
 
 	return &App{

@@ -1,0 +1,122 @@
+{
+  "info": {
+    "name": "Course Exercises (Bài tập khóa học)",
+    "description": "Bài tập trong khóa học, học viên phải hoàn thành để tiếp tục học. Không giới hạn thời gian, Judge0 chấm.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "token", "value": "" },
+    { "key": "exercise_id", "value": "" },
+    { "key": "testcase_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Create Course Exercise",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/exercises",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Fibonacci Sequence\",\n  \"description\": \"Write a function that returns the nth Fibonacci number.\",\n  \"difficulty\": \"medium\",\n  \"language\": [\"python\", \"go\", \"javascript\"],\n  \"starter_code\": \"def fibonacci(n):\\n    # Your code here\\n    pass\",\n  \"time_limit\": 2,\n  \"memory_limit\": 256,\n  \"pass_percentage\": 100\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Exercise By ID",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/exercises/{{exercise_id}}"
+      }
+    },
+    {
+      "name": "Update Exercise",
+      "request": {
+        "method": "PUT",
+        "url": "{{base_url}}/exercises/{{exercise_id}}",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Fibonacci Sequence - Updated\",\n  \"difficulty\": \"hard\",\n  \"pass_percentage\": 80\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete Exercise",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/exercises/{{exercise_id}}"
+      }
+    },
+    {
+      "name": "Get Test Cases",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/exercises/{{exercise_id}}/testcases"
+      }
+    },
+    {
+      "name": "Add Test Case",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/exercises/{{exercise_id}}/testcases",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"input\": \"5\",\n  \"expected_output\": \"5\",\n  \"is_hidden\": false,\n  \"display_order\": 1\n}"
+        }
+      }
+    },
+    {
+      "name": "Import Test Cases (Batch)",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/exercises/{{exercise_id}}/testcases/import",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"test_cases\": [\n    { \"input\": \"0\", \"expected_output\": \"0\", \"is_hidden\": false, \"display_order\": 1 },\n    { \"input\": \"1\", \"expected_output\": \"1\", \"is_hidden\": false, \"display_order\": 2 },\n    { \"input\": \"10\", \"expected_output\": \"55\", \"is_hidden\": true, \"display_order\": 3 },\n    { \"input\": \"20\", \"expected_output\": \"6765\", \"is_hidden\": true, \"display_order\": 4 }\n  ]\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete Test Case",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/exercises/{{exercise_id}}/testcases/{{testcase_id}}"
+      }
+    },
+    {
+      "name": "Submit Solution",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/exercises/{{exercise_id}}/submit",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"language\": \"python\",\n  \"code\": \"def fibonacci(n):\\n    if n <= 1:\\n        return n\\n    return fibonacci(n-1) + fibonacci(n-2)\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get My Submissions",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/exercises/{{exercise_id}}/submissions?page=1&page_size=10",
+          "host": ["{{base_url}}"],
+          "path": ["exercises", "{{exercise_id}}", "submissions"],
+          "query": [
+            { "key": "page", "value": "1" },
+            { "key": "page_size", "value": "10" }
+          ]
+        }
+      }
+    }
+  ]
+}

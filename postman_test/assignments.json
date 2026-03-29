@@ -1,6 +1,7 @@
 {
   "info": {
-    "name": "Assignments",
+    "name": "Live Assignments (Bài tập trong buổi livestream)",
+    "description": "Bài tập real-time trong livestream, thời gian ngắn, recap sau buổi học. Khác với CourseExercise (bài tập khóa học).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -16,14 +17,14 @@
   },
   "item": [
     {
-      "name": "Create Assignment",
+      "name": "Create Live Assignment",
       "request": {
         "method": "POST",
         "url": "{{base_url}}/assignments",
         "header": [{ "key": "Content-Type", "value": "application/json" }],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"title\": \"Two Sum\",\n  \"description\": \"Given an array of integers, return indices of the two numbers such that they add up to a specific target.\",\n  \"difficulty\": \"easy\",\n  \"language\": [\"python\", \"go\", \"javascript\"],\n  \"starter_code\": \"def two_sum(nums, target):\\n    pass\",\n  \"time_limit\": 2,\n  \"memory_limit\": 256\n}"
+          "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"title\": \"Two Sum\",\n  \"description\": \"Given an array of integers, return indices of the two numbers such that they add up to a specific target.\",\n  \"difficulty\": \"easy\",\n  \"language\": [\"python\", \"go\", \"javascript\"],\n  \"starter_code\": \"def two_sum(nums, target):\\n    pass\",\n  \"time_limit\": 2,\n  \"memory_limit\": 256,\n  \"duration_minutes\": 15,\n  \"show_in_recap\": true\n}"
         }
       }
     },

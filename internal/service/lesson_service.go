@@ -11,52 +11,42 @@ import (
 )
 
 type LessonServiceInterface interface {
-	CreateLesson(ctx context.Context, courseID, sectionID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error)
-	GetAllLessons(ctx context.Context, courseID, sectionID uuid.UUID) ([]dto.LessonResponseDTO, error)
-	UpdateLesson(ctx context.Context, courseID, sectionID, lessonID uuid.UUID, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error)
-	DeleteLesson(ctx context.Context, courseID, sectionID, lessonID uuid.UUID) error
-	ReorderLessons(ctx context.Context, courseID, sectionID uuid.UUID, req dto.ReorderDTO) error
+	CreateLesson(ctx context.Context, sectionID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error)
+	GetAllLessons(ctx context.Context, sectionID uuid.UUID) ([]dto.LessonResponseDTO, error)
+	GetLessonByID(ctx context.Context, lessonID uuid.UUID) (*dto.LessonResponseDTO, error)
+	UpdateLesson(ctx context.Context, sectionID, lessonID uuid.UUID, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error)
+	DeleteLesson(ctx context.Context, sectionID, lessonID uuid.UUID) error
+	ReorderLessons(ctx context.Context, sectionID uuid.UUID, req dto.ReorderDTO) error
 }
 
 type LessonService struct {
-	lessonRepo  repository.LessonRepositoryInterface
-	sectionRepo repository.SectionRepositoryInterface
-	courseRepo  repository.CourseRepositoryInterface
+	lessonRepo     repository.LessonRepositoryInterface
+	sectionRepo    repository.SectionRepositoryInterface
 }
 
 func NewLessonService(
 	lessonRepo repository.LessonRepositoryInterface,
 	sectionRepo repository.SectionRepositoryInterface,
-	courseRepo repository.CourseRepositoryInterface,
 ) *LessonService {
 	return &LessonService{
 		lessonRepo:  lessonRepo,
 		sectionRepo: sectionRepo,
-		courseRepo:  courseRepo,
 	}
 }
 
-func (s *LessonService) validateCourseSection(ctx context.Context, courseID, sectionID uuid.UUID) error {
-	exists, err := s.courseRepo.Exists(ctx, courseID)
+func (s *LessonService) validateSection(ctx context.Context, sectionID uuid.UUID) error {
+	exists, err := s.sectionRepo.Exists(ctx, sectionID)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		return errors.New("course not found")
-	}
-
-	belongs, err := s.sectionRepo.BelongsToCourse(ctx, sectionID, courseID)
-	if err != nil {
-		return err
-	}
-	if !belongs {
-		return errors.New("section not found in this course")
+		return errors.New("section not found")
 	}
 	return nil
 }
 
-func (s *LessonService) CreateLesson(ctx context.Context, courseID, sectionID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error) {
-	if err := s.validateCourseSection(ctx, courseID, sectionID); err != nil {
+func (s *LessonService) CreateLesson(ctx context.Context, sectionID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error) {
+	if err := s.validateSection(ctx, sectionID); err != nil {
 		return nil, err
 	}
 
@@ -65,13 +55,17 @@ func (s *LessonService) CreateLesson(ctx context.Context, courseID, sectionID uu
 		return nil, err
 	}
 
+	displayOrder := maxOrder + 1
+	if req.DisplayOrder > 0 {
+		displayOrder = req.DisplayOrder
+	}
+
 	lesson := &model.Lesson{
 		ID:           uuid.New(),
 		SectionID:    sectionID,
 		Title:        req.Title,
 		Description:  req.Description,
-		ContentType:  req.ContentType,
-		DisplayOrder: maxOrder + 1,
+		DisplayOrder: displayOrder,
 		IsMandatory:  true,
 	}
 
@@ -89,12 +83,11 @@ func (s *LessonService) CreateLesson(ctx context.Context, courseID, sectionID uu
 		return nil, err
 	}
 
-	result := toLessonResponseDTO(lesson)
-	return &result, nil
+	return s.toLessonResponseDTO(lesson, nil, nil), nil
 }
 
-func (s *LessonService) GetAllLessons(ctx context.Context, courseID, sectionID uuid.UUID) ([]dto.LessonResponseDTO, error) {
-	if err := s.validateCourseSection(ctx, courseID, sectionID); err != nil {
+func (s *LessonService) GetAllLessons(ctx context.Context, sectionID uuid.UUID) ([]dto.LessonResponseDTO, error) {
+	if err := s.validateSection(ctx, sectionID); err != nil {
 		return nil, err
 	}
 
@@ -105,14 +98,36 @@ func (s *LessonService) GetAllLessons(ctx context.Context, courseID, sectionID u
 
 	result := make([]dto.LessonResponseDTO, len(lessons))
 	for i, les := range lessons {
-		result[i] = toLessonResponseDTO(&les)
+		result[i] = *s.toLessonResponseDTO(&les, nil, nil)
 	}
 
 	return result, nil
 }
 
-func (s *LessonService) UpdateLesson(ctx context.Context, courseID, sectionID, lessonID uuid.UUID, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error) {
-	if err := s.validateCourseSection(ctx, courseID, sectionID); err != nil {
+func (s *LessonService) GetLessonByID(ctx context.Context, lessonID uuid.UUID) (*dto.LessonResponseDTO, error) {
+	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	if lesson == nil {
+		return nil, errors.New("lesson not found")
+	}
+
+	contents, err := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
+	if err != nil {
+		return nil, err
+	}
+
+	sessions, err := s.lessonRepo.GetSessionsByLessonID(ctx, lessonID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.toLessonResponseDTO(lesson, contents, sessions), nil
+}
+
+func (s *LessonService) UpdateLesson(ctx context.Context, sectionID, lessonID uuid.UUID, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error) {
+	if err := s.validateSection(ctx, sectionID); err != nil {
 		return nil, err
 	}
 
@@ -138,8 +153,8 @@ func (s *LessonService) UpdateLesson(ctx context.Context, courseID, sectionID, l
 	if req.Description != nil {
 		lesson.Description = req.Description
 	}
-	if req.ContentType != nil {
-		lesson.ContentType = *req.ContentType
+	if req.DisplayOrder != nil {
+		lesson.DisplayOrder = *req.DisplayOrder
 	}
 	if req.DurationMins != nil {
 		lesson.DurationMins = *req.DurationMins
@@ -155,12 +170,14 @@ func (s *LessonService) UpdateLesson(ctx context.Context, courseID, sectionID, l
 		return nil, err
 	}
 
-	result := toLessonResponseDTO(lesson)
-	return &result, nil
+	contents, _ := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
+	sessions, _ := s.lessonRepo.GetSessionsByLessonID(ctx, lessonID)
+
+	return s.toLessonResponseDTO(lesson, contents, sessions), nil
 }
 
-func (s *LessonService) DeleteLesson(ctx context.Context, courseID, sectionID, lessonID uuid.UUID) error {
-	if err := s.validateCourseSection(ctx, courseID, sectionID); err != nil {
+func (s *LessonService) DeleteLesson(ctx context.Context, sectionID, lessonID uuid.UUID) error {
+	if err := s.validateSection(ctx, sectionID); err != nil {
 		return err
 	}
 
@@ -175,8 +192,8 @@ func (s *LessonService) DeleteLesson(ctx context.Context, courseID, sectionID, l
 	return s.lessonRepo.Delete(ctx, lessonID)
 }
 
-func (s *LessonService) ReorderLessons(ctx context.Context, courseID, sectionID uuid.UUID, req dto.ReorderDTO) error {
-	if err := s.validateCourseSection(ctx, courseID, sectionID); err != nil {
+func (s *LessonService) ReorderLessons(ctx context.Context, sectionID uuid.UUID, req dto.ReorderDTO) error {
+	if err := s.validateSection(ctx, sectionID); err != nil {
 		return err
 	}
 
@@ -196,4 +213,59 @@ func (s *LessonService) ReorderLessons(ctx context.Context, courseID, sectionID 
 	}
 
 	return s.lessonRepo.Reorder(ctx, items)
+}
+
+func (s *LessonService) toLessonResponseDTO(lesson *model.Lesson, contents []model.LessonContent, sessions []model.LessonSession) *dto.LessonResponseDTO {
+	resp := &dto.LessonResponseDTO{
+		ID:           lesson.ID,
+		SectionID:    lesson.SectionID,
+		Title:        lesson.Title,
+		Description:  lesson.Description,
+		DisplayOrder: lesson.DisplayOrder,
+		DurationMins: lesson.DurationMins,
+		IsPreview:    lesson.IsPreview,
+		IsMandatory:  lesson.IsMandatory,
+		CreatedAt:    lesson.CreatedAt,
+		UpdatedAt:    lesson.UpdatedAt,
+	}
+
+	if len(contents) > 0 {
+		resp.Contents = make([]dto.LessonContentResponseDTO, len(contents))
+		for i, c := range contents {
+			resp.Contents[i] = dto.LessonContentResponseDTO{
+				ID:           c.ID,
+				LessonID:     c.LessonID,
+				Type:         c.Type,
+				Title:        c.Title,
+				VideoURL:     c.VideoURL,
+				Duration:     c.Duration,
+				StreamID:     c.StreamID,
+				DisplayOrder: c.DisplayOrder,
+				CreatedAt:    c.CreatedAt,
+				UpdatedAt:    c.UpdatedAt,
+			}
+		}
+	}
+
+	if len(sessions) > 0 {
+		resp.Sessions = make([]dto.LessonSessionResponseDTO, len(sessions))
+		for i, sess := range sessions {
+			resp.Sessions[i] = dto.LessonSessionResponseDTO{
+				ID:          sess.ID,
+				LessonID:    sess.LessonID,
+				Title:       sess.Title,
+				Description: sess.Description,
+				StartTime:   sess.StartTime,
+				EndTime:     sess.EndTime,
+				MeetingURL:  sess.MeetingURL,
+				MeetingID:   sess.MeetingID,
+				HostID:      sess.HostID,
+				Status:      sess.Status,
+				CreatedAt:   sess.CreatedAt,
+				UpdatedAt:   sess.UpdatedAt,
+			}
+		}
+	}
+
+	return resp
 }

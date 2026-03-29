@@ -28,20 +28,22 @@ type UpdateAssignmentDTO struct {
 }
 
 type AssignmentResponseDTO struct {
-	ID          uuid.UUID `json:"id"`
-	SessionID   uuid.UUID `json:"session_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Difficulty  string    `json:"difficulty"`
-	Language    []string  `json:"language"`
-	StarterCode string    `json:"starter_code"`
-	TimeLimit   int       `json:"time_limit"`
-	MemoryLimit int       `json:"memory_limit"`
-	IsPublished bool      `json:"is_published"`
-	PublishedAt *string   `json:"published_at,omitempty"`
-	StartTime   *string   `json:"start_time,omitempty"`
-	EndTime     *string   `json:"end_time,omitempty"`
-	CreatedAt   string    `json:"created_at"`
+	ID           uuid.UUID `json:"id"`
+	SessionID    uuid.UUID `json:"session_id"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	Difficulty   string    `json:"difficulty"`
+	Language     []string  `json:"language"`
+	StarterCode  string    `json:"starter_code"`
+	TimeLimit    int       `json:"time_limit"`
+	MemoryLimit  int       `json:"memory_limit"`
+	DurationMins int       `json:"duration_minutes"`
+	IsPublished  bool      `json:"is_published"`
+	PublishedAt  *string   `json:"published_at,omitempty"`
+	StartTime    *string   `json:"start_time,omitempty"`
+	EndTime      *string   `json:"end_time,omitempty"`
+	ShowInRecap  bool      `json:"show_in_recap"`
+	CreatedAt    string    `json:"created_at"`
 }
 
 type AssignmentListDTO struct {

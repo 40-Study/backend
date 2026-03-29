@@ -18,6 +18,7 @@ type SectionRepositoryInterface interface {
 	GetMaxDisplayOrder(ctx context.Context, courseID uuid.UUID) (int, error)
 	BelongsToCourse(ctx context.Context, sectionID, courseID uuid.UUID) (bool, error)
 	Reorder(ctx context.Context, items []ReorderItem) error
+	Exists(ctx context.Context, id uuid.UUID) (bool, error)
 }
 
 type ReorderItem struct {
@@ -105,4 +106,10 @@ func (r *SectionRepository) Reorder(ctx context.Context, items []ReorderItem) er
 		}
 		return nil
 	})
+}
+
+func (r *SectionRepository) Exists(ctx context.Context, id uuid.UUID) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Section{}).Where("id = ?", id).Count(&count).Error
+	return count > 0, err
 }

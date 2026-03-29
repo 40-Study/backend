@@ -14,6 +14,7 @@ func SetupCourseRoutes(
 	courseHandler *handler.CourseHandler,
 	sectionHandler *handler.SectionHandler,
 	lessonHandler *handler.LessonHandler,
+	lessonContentHandler *handler.LessonContentHandler,
 	redis *redis.Client,
 ) {
 	auth := middleware.AuthMiddleware(cfg, redis)
@@ -30,23 +31,40 @@ func SetupCourseRoutes(
 		courses.Put("/:id", auth, courseHandler.UpdateCourse)
 		courses.Delete("/:id", auth, courseHandler.DeleteCourse)
 
-		// Sections (nested under course) - all protected
 		sections := courses.Group("/:courseId/sections", auth)
 		{
 			sections.Post("/", sectionHandler.CreateSection)
 			sections.Get("/", sectionHandler.GetAllSections)
+			sections.Get("/:id", sectionHandler.GetSectionByID)
 			sections.Put("/reorder", sectionHandler.ReorderSections)
 			sections.Put("/:id", sectionHandler.UpdateSection)
 			sections.Delete("/:id", sectionHandler.DeleteSection)
 
-			// Lessons (nested under section) - all protected
-			lessons := sections.Group("/:sectionId/lessons")
+			lessons := sections.Group("/:sectionId/lessons", auth)
 			{
 				lessons.Post("/", lessonHandler.CreateLesson)
 				lessons.Get("/", lessonHandler.GetAllLessons)
+				lessons.Get("/:id", lessonHandler.GetLessonByID)
 				lessons.Put("/reorder", lessonHandler.ReorderLessons)
 				lessons.Put("/:id", lessonHandler.UpdateLesson)
 				lessons.Delete("/:id", lessonHandler.DeleteLesson)
+
+				contents := lessons.Group("/:lessonId/contents", auth)
+				{
+					contents.Post("/", lessonContentHandler.CreateContent)
+					contents.Get("/", lessonContentHandler.GetContent)
+					contents.Put("/:id", lessonContentHandler.UpdateContent)
+					contents.Delete("/:id", lessonContentHandler.DeleteContent)
+
+					// Sessions (nested under lesson) - all protected
+					sessions := lessons.Group("/:lessonId/sessions", auth)
+					{
+						sessions.Post("/", lessonContentHandler.CreateSession)
+						sessions.Get("/", lessonContentHandler.GetSessions)
+						sessions.Put("/:id", lessonContentHandler.UpdateSession)
+						sessions.Delete("/:id", lessonContentHandler.DeleteSession)
+					}
+				}
 			}
 		}
 	}

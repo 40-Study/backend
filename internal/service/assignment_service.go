@@ -320,20 +320,22 @@ func (s *AssignmentService) toResponseDTO(a model.Assignment) dto.AssignmentResp
 	}
 
 	return dto.AssignmentResponseDTO{
-		ID:          a.ID,
-		SessionID:   a.SessionID,
-		Title:       a.Title,
-		Description: a.Description,
-		Difficulty:  string(a.Difficulty),
-		Language:    []string(a.Language),
-		StarterCode: a.StarterCode,
-		TimeLimit:   a.TimeLimit,
-		MemoryLimit: a.MemoryLimit,
-		IsPublished: a.IsPublished,
-		PublishedAt: publishedAt,
-		StartTime:   startTime,
-		EndTime:     endTime,
-		CreatedAt:   a.CreatedAt.Format(time.RFC3339),
+		ID:           a.ID,
+		SessionID:    a.SessionID,
+		Title:        a.Title,
+		Description:  a.Description,
+		Difficulty:   string(a.Difficulty),
+		Language:     []string(a.Language),
+		StarterCode:  a.StarterCode,
+		TimeLimit:    a.TimeLimit,
+		MemoryLimit:  a.MemoryLimit,
+		DurationMins: a.DurationMins,
+		IsPublished:  a.IsPublished,
+		PublishedAt:  publishedAt,
+		StartTime:    startTime,
+		EndTime:      endTime,
+		ShowInRecap:  a.ShowInRecap,
+		CreatedAt:    a.CreatedAt.Format(time.RFC3339),
 	}
 }
 

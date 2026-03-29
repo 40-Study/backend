@@ -1,6 +1,10 @@
 package utils
 
-import "gorm.io/gorm"
+import (
+	"strings"
+
+	"gorm.io/gorm"
+)
 
 // ApplyPagination applies OFFSET and LIMIT to a query.
 func ApplyPagination(query *gorm.DB, page, pageSize int) *gorm.DB {
@@ -61,4 +65,20 @@ func ApplyActiveStatus(query *gorm.DB, status string, tablePrefix string) *gorm.
 	default: // "active" or empty
 		return query.Where(col+" = ?", true)
 	}
+}
+
+// SplitAndTrim splits a string by delimiter and trims whitespace from each part.
+func SplitAndTrim(s string, sep string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, sep)
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }

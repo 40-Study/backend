@@ -17,14 +17,14 @@ func NewSectionHandler(service service.SectionServiceInterface) *SectionHandler 
 }
 
 func (h *SectionHandler) CreateSection(c *fiber.Ctx) error {
-	courseID, err := uuid.Parse(c.Params("courseId"))
+	courseID, err := uuid.Parse(c.Params("course_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid course ID",
 			"error":   err.Error(),
 		})
 	}
-
+	
 	var req dto.CreateSectionDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -55,7 +55,7 @@ func (h *SectionHandler) CreateSection(c *fiber.Ctx) error {
 }
 
 func (h *SectionHandler) GetAllSections(c *fiber.Ctx) error {
-	courseID, err := uuid.Parse(c.Params("courseId"))
+	courseID, err := uuid.Parse(c.Params("course_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid course ID",
@@ -77,8 +77,31 @@ func (h *SectionHandler) GetAllSections(c *fiber.Ctx) error {
 	})
 }
 
+func (h *SectionHandler) GetSectionByID(c *fiber.Ctx) error {
+	sectionID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid section ID",
+			"error":   err.Error(),
+		})
+	}
+
+	section, err := h.service.GetSectionByID(c.Context(), sectionID)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"message": "Section not found",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Section retrieved successfully",
+		"data":    section,
+	})
+}
+
 func (h *SectionHandler) UpdateSection(c *fiber.Ctx) error {
-	courseID, err := uuid.Parse(c.Params("courseId"))
+	courseID, err := uuid.Parse(c.Params("course_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid course ID",
@@ -124,7 +147,7 @@ func (h *SectionHandler) UpdateSection(c *fiber.Ctx) error {
 }
 
 func (h *SectionHandler) DeleteSection(c *fiber.Ctx) error {
-	courseID, err := uuid.Parse(c.Params("courseId"))
+	courseID, err := uuid.Parse(c.Params("course_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid course ID",
@@ -153,7 +176,7 @@ func (h *SectionHandler) DeleteSection(c *fiber.Ctx) error {
 }
 
 func (h *SectionHandler) ReorderSections(c *fiber.Ctx) error {
-	courseID, err := uuid.Parse(c.Params("courseId"))
+	courseID, err := uuid.Parse(c.Params("course_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid course ID",

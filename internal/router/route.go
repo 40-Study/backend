@@ -6,6 +6,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
+	asynq_queue "study.com/v1/internal/queue/asynq"
 )
 
 func SetupAllRoutes(
@@ -45,6 +46,7 @@ func SetupAllRoutes(
 	voucherHandler *handler.VoucherHandler,
 	redis *redis.Client,
 	minio *minio.Client,
+	aq *asynq_queue.Queue,
 ) {
 	api := app.Group("/api")
 
@@ -69,8 +71,7 @@ func SetupAllRoutes(
 	SetupClassRoutes(api, classHandler, classScheduleHandler, attendanceHandler)
 	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis)
 	SetupCartRoutes(api, cfg, cartHandler, redis)
-	SetupCourseRoutes(api, cfg, courseHandler, sectionHandler, lessonHandler, redis)
-	SetupLessonContentRoutes(api, cfg, lessonContentHandler, redis)
+	SetupCourseRoutes(api, cfg, courseHandler, sectionHandler, lessonHandler, lessonContentHandler, redis)
 	SetupEnrollmentRoutes(api, cfg, enrollmentHandler, redis)
 	SetupUploadRoutes(api, cfg, uploadHandler, redis)
 	SetupVideoUploadRoutes(api, videoHandler, cfg, redis)
