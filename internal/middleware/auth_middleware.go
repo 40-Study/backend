@@ -42,7 +42,7 @@ func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 		}
 
 		// ===== 3. Check user_version (for logout all) =====
-		userVersionKey := fmt.Sprintf("user_version:%s", claims.UserID)
+		userVersionKey := fmt.Sprintf("auth:user_version:%s", claims.UserID)
 		userVerStr, err := rdb.Get(c.Context(), userVersionKey).Result()
 		if err == redis.Nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{

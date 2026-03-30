@@ -174,6 +174,7 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			repos.User,
 			repos.Role,
 			repos.Organization,
+			resources.Redis,
 		),
 
 		Permission: service.NewPermissionService(repos.Permission),

@@ -14,7 +14,7 @@ import (
 func (s *AuthService) GetAllDevices(ctx context.Context, userID, currentDeviceID uuid.UUID) ([]dto.DeviceSessionDto, error) {
 	
 	// ===== 1. Get all sessions from Redis =====
-	sessionKey := fmt.Sprintf("session:%s", userID)
+	sessionKey := fmt.Sprintf("auth:session:%s", userID)
 	allSessions, err := s.redisClient.HGetAll(ctx, sessionKey).Result()
 	
 	if err == redis.Nil {

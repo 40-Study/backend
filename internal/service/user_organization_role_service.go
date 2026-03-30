@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -23,10 +24,11 @@ type UserOrganizationRoleServiceInterface interface {
 }
 
 type UserOrganizationRoleService struct {
-	repo     repository.UserOrganizationRoleRepositoryInterface
-	userRepo repository.UserRepositoryInterface
-	roleRepo repository.RoleRepositoryInterface
-	orgRepo  repository.OrganizationRepositoryInterface
+	repo        repository.UserOrganizationRoleRepositoryInterface
+	userRepo    repository.UserRepositoryInterface
+	roleRepo    repository.RoleRepositoryInterface
+	orgRepo     repository.OrganizationRepositoryInterface
+	redisClient *redis.Client
 }
 
 func NewUserOrganizationRoleService(
@@ -34,12 +36,14 @@ func NewUserOrganizationRoleService(
 	userRepo repository.UserRepositoryInterface,
 	roleRepo repository.RoleRepositoryInterface,
 	orgRepo repository.OrganizationRepositoryInterface,
+	redisClient *redis.Client,
 ) *UserOrganizationRoleService {
 	return &UserOrganizationRoleService{
-		repo:     repo,
-		userRepo: userRepo,
-		roleRepo: roleRepo,
-		orgRepo:  orgRepo,
+		repo:        repo,
+		userRepo:    userRepo,
+		roleRepo:    roleRepo,
+		orgRepo:     orgRepo,
+		redisClient: redisClient,
 	}
 }
 
@@ -209,6 +213,7 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 }
 
 // RevokeOrgRoleFromUser thu hoi organization role tu user
+// Security: Increments user_version to invalidate existing JWT tokens immediately
 func (s *UserOrganizationRoleService) RevokeOrgRoleFromUser(ctx context.Context, userID, orgRoleID, revokedBy uuid.UUID) error {
 	user, err := s.userRepo.FindUserByID(ctx, userID)
 	if err != nil {
@@ -234,7 +239,19 @@ func (s *UserOrganizationRoleService) RevokeOrgRoleFromUser(ctx context.Context,
 		return errors.New("organization role already inactive for this user")
 	}
 
-	return s.repo.UpdateStatus(ctx, orgRoleID, model.UserOrgRoleStatusInactive, &revokedBy)
+	// Update status in database
+	if err := s.repo.UpdateStatus(ctx, orgRoleID, model.UserOrgRoleStatusInactive, &revokedBy); err != nil {
+		return err
+	}
+
+	// Security: Increment user_version to invalidate all existing tokens
+	// This forces user to re-login with updated roles
+	if s.redisClient != nil {
+		userVersionKey := fmt.Sprintf("auth:user_version:%s", userID)
+		s.redisClient.Incr(ctx, userVersionKey)
+	}
+
+	return nil
 }
 
 // GetUsersWithOrgRoleByRoleID lay users theo organization role

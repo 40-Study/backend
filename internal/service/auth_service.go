@@ -75,41 +75,73 @@ func NewAuthService(
 	}
 }
 
+// ==================== LOGIN ATTEMPT TRACKING ====================
+// Security: Prevents brute force attacks by locking accounts after too many failed attempts
+
+const (
+	maxLoginAttempts    = 5
+	loginLockoutMinutes = 15
+	loginWindowMinutes  = 5
+)
+
+func (s *AuthService) recordFailedLogin(ctx context.Context, email string) {
+	attemptsKey := fmt.Sprintf("login_attempts:%s", email)
+	lockKey := fmt.Sprintf("login_locked:%s", email)
+
+	count, err := s.redisClient.Incr(ctx, attemptsKey).Result()
+	if err != nil {
+		log.Printf("[WARN] Failed to record login attempt for %s: %v", email, err)
+		return
+	}
+
+	// Set expiry on first attempt
+	if count == 1 {
+		s.redisClient.Expire(ctx, attemptsKey, time.Duration(loginWindowMinutes)*time.Minute)
+	}
+
+	// Lock account if max attempts exceeded
+	if int(count) >= maxLoginAttempts {
+		s.redisClient.Set(ctx, lockKey, "1", time.Duration(loginLockoutMinutes)*time.Minute)
+		log.Printf("[SECURITY] Account locked due to %d failed login attempts: %s", count, email)
+	}
+}
+
+// clearFailedLogin removes failed attempt counter on successful login
+func (s *AuthService) clearFailedLogin(ctx context.Context, email string) {
+	attemptsKey := fmt.Sprintf("login_attempts:%s", email)
+	s.redisClient.Del(ctx, attemptsKey)
+}
+
 // PendingRegistration stores registration data temporarily in Redis
 // Redis key: register:otp:{email}
 // TTL: 5 minutes
+// Security: OTP is stored as hash (SHA256 with email salt) to prevent plaintext exposure
 type PendingRegistration struct {
-	Email        string   `json:"email"`
-	PasswordHash string   `json:"password_hash"`
-	UserName     string   `json:"user_name"`
-	FullName     string   `json:"full_name,omitempty"`
-	RoleIDs      []string `json:"role_ids"`
-	OTP          string   `json:"otp"`
-	CreatedAt    string   `json:"created_at"`
+	Email        string `json:"email"`
+	PasswordHash string `json:"password_hash"`
+	UserName     string `json:"user_name"`
+	FullName     string `json:"full_name,omitempty"`
+	RoleID       string `json:"role_id"`
+	OTPHash      string `json:"otp_hash"` // Hashed OTP, not plaintext
+	Attempts     int    `json:"attempts"` // OTP verification attempts
+	CreatedAt    string `json:"created_at"`
 }
 
 func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterRequestDto) error {
-	if len(req.RoleIDs) > 0 {
-		roleUUIDs := make([]uuid.UUID, len(req.RoleIDs))
-		for i, idStr := range req.RoleIDs {
-			id, err := uuid.Parse(idStr)
-			if err != nil {
-				return fmt.Errorf("invalid role_id: %s", idStr)
-			}
-			roleUUIDs[i] = id
-		}
-		roles, err := s.systemRoleRepo.GetSystemRoleByIDs(ctx, roleUUIDs)
-		if err != nil {
-			return fmt.Errorf("failed to validate system roles: %w", err)
-		}
-		if len(roles) != len(req.RoleIDs) {
-			return errors.New("one or more role IDs are invalid")
-		}
-		for _, r := range roles {
-			if r.Status != "active" {
-				return errors.New("system role is not active: " + r.Name)
-			}
-		}
+	// Validate system role
+	roleID, err := uuid.Parse(req.RoleID)
+	if err != nil {
+		return fmt.Errorf("invalid role_id: %s", req.RoleID)
+	}
+	roles, err := s.systemRoleRepo.GetSystemRoleByIDs(ctx, []uuid.UUID{roleID})
+	if err != nil {
+		return fmt.Errorf("failed to validate system role: %w", err)
+	}
+	if len(roles) != 1 {
+		return errors.New("role ID is invalid")
+	}
+	if roles[0].Status != "active" {
+		return errors.New("system role is not active: " + roles[0].Name)
 	}
 
 	existingUser, err := s.userRepo.FindUserByEmail(ctx, req.Email)
@@ -125,20 +157,22 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 	if err != nil {
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
-
-	// ===== 6. Generate OTP (6 digits) =====
 	otp, err := utils.GenerateOTP(6)
 	if err != nil {
 		return fmt.Errorf("failed to generate OTP: %w", err)
 	}
+
+	// Hash OTP before storing (security: prevent plaintext exposure if Redis is compromised)
+	otpHash := utils.HashOTP(otp, req.Email)
 
 	pendingData := PendingRegistration{
 		Email:        req.Email,
 		PasswordHash: passwordHash,
 		UserName:     req.UserName,
 		FullName:     req.FullName,
-		RoleIDs:      req.RoleIDs,
-		OTP:          otp,
+		RoleID:       req.RoleID,
+		OTPHash:      otpHash,
+		Attempts:     0,
 		CreatedAt:    time.Now().Format(time.RFC3339),
 	}
 
@@ -182,8 +216,25 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		return nil, fmt.Errorf("failed to parse pending registration: %w", err)
 	}
 
-	if pending.OTP != req.OTP {
-		return nil, errors.New("invalid OTP")
+	// ===== 4. Check OTP attempts (max 5) =====
+	const maxOTPAttempts = 5
+	if pending.Attempts >= maxOTPAttempts {
+		// Delete pending registration to force user to request new OTP
+		_ = s.redisClient.Del(ctx, pendingKey).Err()
+		return nil, errors.New("too many failed attempts, please request a new OTP")
+	}
+
+	// ===== 5. Verify OTP using constant-time comparison =====
+	if !utils.VerifyOTP(req.OTP, pending.OTPHash, req.Email) {
+		// Increment attempts and save back
+		pending.Attempts++
+		pendingBytes, _ := json.Marshal(pending)
+		ttl, _ := s.redisClient.TTL(ctx, pendingKey).Result()
+		if ttl > 0 {
+			_ = s.redisClient.Set(ctx, pendingKey, pendingBytes, ttl).Err()
+		}
+		remaining := maxOTPAttempts - pending.Attempts
+		return nil, fmt.Errorf("invalid OTP, %d attempts remaining", remaining)
 	}
 
 	// Prepare FullName pointer
@@ -206,27 +257,16 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	if len(pending.RoleIDs) > 0 {
-		roleUUIDs := make([]uuid.UUID, len(pending.RoleIDs))
-		for i, idStr := range pending.RoleIDs {
-			id, _ := uuid.Parse(idStr)
-			roleUUIDs[i] = id
-		}
-		sysRoles, _ := s.systemRoleRepo.GetSystemRoleByIDs(ctx, roleUUIDs)
-		now := time.Now()
-		for _, r := range sysRoles {
-			if r.Status != "active" {
-				continue
-			}
-			_ = s.userSystemRoleRepo.Create(ctx, &model.UserSystemRole{
-				UserID:       user.ID,
-				SystemRoleID: r.ID,
-				GrantedAt:    now,
-				GrantedBy:    nil,
-				Status:       model.UserSystemRoleStatusActive,
-			})
-		}
-	}
+	// Assign the selected system role to user
+	roleID, _ := uuid.Parse(pending.RoleID)
+	now := time.Now()
+	_ = s.userSystemRoleRepo.Create(ctx, &model.UserSystemRole{
+		UserID:       user.ID,
+		SystemRoleID: roleID,
+		GrantedAt:    now,
+		GrantedBy:    nil,
+		Status:       model.UserSystemRoleStatusActive,
+	})
 
 	_ = s.redisClient.Del(ctx, pendingKey).Err()
 
@@ -235,7 +275,7 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		Email:    user.Email,
 		UserName: user.UserName,
 		FullName: fullName,
-		RoleIDs:  pending.RoleIDs,
+		RoleID:   pending.RoleID,
 	}, nil
 }
 
@@ -253,16 +293,31 @@ func (s *AuthService) Login(
 	req dto.LoginRequestDto,
 ) (*dto.LoginResponseDto, error) {
 
+	// ===== 1. Check if account is locked due to failed attempts =====
+	lockKey := fmt.Sprintf("login_locked:%s", req.Email)
+	if locked, _ := s.redisClient.Exists(ctx, lockKey).Result(); locked > 0 {
+		ttl, _ := s.redisClient.TTL(ctx, lockKey).Result()
+		return nil, fmt.Errorf("account temporarily locked due to too many failed attempts, try again in %d minutes", int(ttl.Minutes())+1)
+	}
+
+	// ===== 2. Validate credentials =====
 	user, err := s.userRepo.FindUserByEmail(ctx, req.Email)
 	if err != nil {
 		return nil, err
 	}
+
+	// Track failed login attempts
 	if user == nil || !utils.CheckPassword(req.Password, user.PasswordHash) {
+		s.recordFailedLogin(ctx, req.Email)
 		return nil, errors.New("invalid email or password")
 	}
+
 	if !user.IsActive {
 		return nil, errors.New("account is inactive")
 	}
+
+	// ===== 3. Clear failed attempts on successful login =====
+	s.clearFailedLogin(ctx, req.Email)
 
 	_, err = uuid.Parse(req.DeviceInfo.DeviceID)
 	if err != nil {
@@ -386,7 +441,7 @@ func (s *AuthService) completeLogin(
 	activeRole dto.SystemRoleDto,
 	allRoles []dto.SystemRoleDto,
 	activeOrg *dto.OrgContextDto,
-) (*dto.SelectProfileResponseDto, error) {
+) (*dto.SelectRoleResponseDto, error) {
 
 	deviceID, _ := uuid.Parse(deviceInfo.DeviceID)
 
@@ -443,7 +498,7 @@ func (s *AuthService) completeLogin(
 		dob = &f
 	}
 
-	return &dto.SelectProfileResponseDto{
+	return &dto.SelectRoleResponseDto{
 		Completed:    true,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -457,10 +512,15 @@ func (s *AuthService) completeLogin(
 			IsActive:    user.IsActive,
 			CreatedAt:   user.CreatedAt.Format(time.RFC3339),
 		},
-		ActiveRole:  activeRole,
+		ActiveRole: dto.UnifiedRoleDto{
+			ID:          activeRole.ID,
+			Type:        "system",
+			RoleName:    activeRole.Name,
+			DisplayName: activeRole.Name,
+		},
 		ActiveOrg:   activeOrg,
 		SystemRoles: allRoles,
-		CurrentDevice: dto.DeviceSessionDto{
+		CurrentDevice: &dto.DeviceSessionDto{
 			DeviceID:   deviceID.String(),
 			DeviceName: deviceInfo.DeviceName,
 			UserAgent:  deviceInfo.UserAgent,
@@ -530,11 +590,11 @@ func (s *AuthService) finishLoginWithOrgCheck(
 		User:          &result.User,
 		ActiveRole:    &activeRoleUnified,
 		EntryContext:  entryCtx,
-		CurrentDevice: &result.CurrentDevice,
+		CurrentDevice: result.CurrentDevice,
 	}, nil
 }
 
-func (s *AuthService) SelectProfile(ctx context.Context, req dto.SelectProfileRequestDto) (*dto.SelectProfileResponseDto, error) {
+func (s *AuthService) SelectProfile(ctx context.Context, req dto.SelectProfileRequestDto) (*dto.SelectRoleResponseDto, error) {
 	pendingKey := fmt.Sprintf("pending_login:%s", req.SessionToken)
 	pendingData, err := s.redisClient.Get(ctx, pendingKey).Result()
 	if err == redis.Nil {
@@ -578,13 +638,18 @@ func (s *AuthService) SelectProfile(ctx context.Context, req dto.SelectProfileRe
 		pendingBytes, _ := json.Marshal(pending)
 		_ = s.redisClient.Set(ctx, pendingKey, pendingBytes, 5*time.Minute).Err()
 
-		return &dto.SelectProfileResponseDto{
+		return &dto.SelectRoleResponseDto{
 			Completed:            false,
 			SessionToken:         req.SessionToken,
 			RequiresOrgSelection: true,
 			Organizations:        orgs,
-			ActiveRole:           *selectedRole,
-			SystemRoles:          pending.SystemRoles,
+			ActiveRole: dto.UnifiedRoleDto{
+				ID:          selectedRole.ID,
+				Type:        "system",
+				RoleName:    selectedRole.Name,
+				DisplayName: selectedRole.Name,
+			},
+			SystemRoles: pending.SystemRoles,
 		}, nil
 	}
 
@@ -598,10 +663,10 @@ func (s *AuthService) SelectProfile(ctx context.Context, req dto.SelectProfileRe
 	return result, nil
 }
 
-func (s *AuthService) SwitchProfile(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, req dto.SwitchProfileRequestDto) (*dto.SelectProfileResponseDto, error) {
-	roleID, err := uuid.Parse(req.SystemRoleID)
+func (s *AuthService) SwitchProfile(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, req dto.SwitchProfileRequestDto) (*dto.SelectRoleResponseDto, error) {
+	roleID, err := uuid.Parse(req.ProfileID)
 	if err != nil {
-		return nil, errors.New("invalid system_role_id format")
+		return nil, errors.New("invalid profile_id format")
 	}
 
 	userSystemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
@@ -647,12 +712,17 @@ func (s *AuthService) SwitchProfile(ctx context.Context, userID uuid.UUID, devic
 	orgs, _ := s.tryAutoSelectOrg(ctx, userID)
 	if len(orgs) > 0 {
 		// Có org → trả danh sách để FE chọn org hoặc "Độc lập", gọi switch-org
-		return &dto.SelectProfileResponseDto{
+		return &dto.SelectRoleResponseDto{
 			Completed:            false,
 			RequiresOrgSelection: true,
 			Organizations:        orgs,
-			ActiveRole:           *selectedRole,
-			SystemRoles:          allRoles,
+			ActiveRole: dto.UnifiedRoleDto{
+				ID:          selectedRole.ID,
+				Type:        "system",
+				RoleName:    selectedRole.Name,
+				DisplayName: selectedRole.Name,
+			},
+			SystemRoles: allRoles,
 		}, nil
 	}
 
@@ -667,7 +737,7 @@ func (s *AuthService) SwitchProfile(ctx context.Context, userID uuid.UUID, devic
 
 // SelectOrg chọn org sau khi đã chọn role (dùng session_token).
 // organization_id rỗng = chọn chế độ "Độc lập" (active_org=null).
-func (s *AuthService) SelectOrg(ctx context.Context, req dto.SelectOrgRequestDto) (*dto.SelectProfileResponseDto, error) {
+func (s *AuthService) SelectOrg(ctx context.Context, req dto.SelectOrgRequestDto) (*dto.SelectRoleResponseDto, error) {
 	pendingKey := fmt.Sprintf("pending_login:%s", req.SessionToken)
 	pendingData, err := s.redisClient.Get(ctx, pendingKey).Result()
 	if err == redis.Nil {
@@ -723,7 +793,7 @@ func (s *AuthService) SelectOrg(ctx context.Context, req dto.SelectOrgRequestDto
 
 // SwitchOrg đổi org khi đã đăng nhập (giữ nguyên role).
 // organization_id rỗng = chuyển về chế độ "Độc lập" (active_org=null).
-func (s *AuthService) SwitchOrg(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, activeRole string, req dto.SwitchOrgRequestDto) (*dto.SelectProfileResponseDto, error) {
+func (s *AuthService) SwitchOrg(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, activeRole string, req dto.SwitchOrgRequestDto) (*dto.SelectRoleResponseDto, error) {
 	var selectedOrg *dto.OrgContextDto
 
 	if req.OrganizationID != "" {
@@ -1179,15 +1249,18 @@ func (s *AuthService) determineEntryContext(systemRoles []dto.SystemRoleDto) *dt
 }
 
 // PasswordResetOTP represents the OTP data stored in Redis
+// PasswordResetOTP stores password reset data in Redis
+// Security: OTP is stored as hash to prevent plaintext exposure
 type PasswordResetOTP struct {
-	OTP       string `json:"otp"`
+	OTPHash   string `json:"otp_hash"` // SHA256 hash of OTP with email salt
+	Email     string `json:"email"`    // Email used as salt for hashing
 	Attempt   int    `json:"attempt"`
 	ExpiredAt int64  `json:"expired_at"`
 }
 
 const (
-	maxOTPAttempts = 5
-	otpTTL         = 5 * time.Minute
+	maxPasswordResetAttempts = 5
+	otpTTL                   = 5 * time.Minute
 )
 
 func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) error {
@@ -1209,10 +1282,14 @@ func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) er
 		return errors.New("failed to generate OTP")
 	}
 
-	// ===== 5. Store OTP in Redis =====
+	// Hash OTP before storing (security: prevent plaintext exposure)
+	otpHash := utils.HashOTP(otp, email)
+
+	// ===== 5. Store hashed OTP in Redis =====
 	otpKey := fmt.Sprintf("password_reset:otp:%s", user.ID)
 	otpData := PasswordResetOTP{
-		OTP:       otp,
+		OTPHash:   otpHash,
+		Email:     email,
 		Attempt:   0,
 		ExpiredAt: time.Now().Add(otpTTL).Unix(),
 	}
@@ -1269,17 +1346,17 @@ func (s *AuthService) ResetPassword(ctx context.Context, req dto.ResetPasswordRe
 	}
 
 	// ===== 4. Check attempt limit =====
-	if otpData.Attempt >= maxOTPAttempts {
+	if otpData.Attempt >= maxPasswordResetAttempts {
 		_ = s.redisClient.Del(ctx, otpKey).Err()
 		return errors.New("too many failed attempts, please request a new OTP")
 	}
 
-	// ===== 5. Verify OTP =====
-	if otpData.OTP != req.Otp {
+	// ===== 5. Verify OTP using constant-time comparison =====
+	if !utils.VerifyOTP(req.Otp, otpData.OTPHash, otpData.Email) {
 		// Increment attempt count
 		otpData.Attempt++
 
-		if otpData.Attempt >= maxOTPAttempts {
+		if otpData.Attempt >= maxPasswordResetAttempts {
 			// Max attempts reached - delete OTP
 			_ = s.redisClient.Del(ctx, otpKey).Err()
 			return errors.New("too many failed attempts, please request a new OTP")
@@ -1290,7 +1367,8 @@ func (s *AuthService) ResetPassword(ctx context.Context, req dto.ResetPasswordRe
 		remainingTTL := time.Until(time.Unix(otpData.ExpiredAt, 0))
 		_ = s.redisClient.Set(ctx, otpKey, updatedBytes, remainingTTL).Err()
 
-		return errors.New("invalid OTP")
+		remaining := maxPasswordResetAttempts - otpData.Attempt
+		return fmt.Errorf("invalid OTP, %d attempts remaining", remaining)
 	}
 
 	// ===== 6. OTP valid - Hash new password =====
@@ -1771,5 +1849,11 @@ func (s *AuthService) DeleteProfile(ctx context.Context, userID uuid.UUID, profi
 	if err := s.userSystemRoleRepo.Delete(ctx, profileID); err != nil {
 		return fmt.Errorf("failed to delete profile: %w", err)
 	}
+
+	// Security: Increment user_version to invalidate existing tokens
+	// Forces user to re-login with updated profiles
+	userVersionKey := fmt.Sprintf("auth:user_version:%s", userID)
+	s.redisClient.Incr(ctx, userVersionKey)
+
 	return nil
 }
