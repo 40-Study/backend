@@ -1,0 +1,8 @@
+[
+  {"name": "Lap trinh Web", "slug": "lap-trinh-web", "description": "Khoa hoc lap trinh web", "display_order": 1},
+  {"name": "Lap trinh Mobile", "slug": "lap-trinh-mobile", "description": "Khoa hoc lap trinh ung dung di dong", "display_order": 2},
+  {"name": "Khoa hoc Du lieu", "slug": "khoa-hoc-du-lieu", "description": "Data Science va Machine Learning", "display_order": 3},
+  {"name": "DevOps & Cloud", "slug": "devops-cloud", "description": "CI/CD, Docker, Kubernetes, AWS", "display_order": 4},
+  {"name": "Thiet ke UI/UX", "slug": "thiet-ke-ui-ux", "description": "Thiet ke giao dien nguoi dung", "display_order": 5},
+  {"name": "Lap trinh Game", "slug": "lap-trinh-game", "description": "Game development", "display_order": 6}
+]

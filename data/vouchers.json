@@ -1,0 +1,35 @@
+[
+  {
+    "code": "WELCOME20",
+    "name": "Chao Mung Hoc Vien Moi",
+    "description": "Giam 20% cho hoc vien dang ky lan dau",
+    "discount_unit": "MONEY",
+    "discount_method": "PERCENT",
+    "discount_percent": 20,
+    "max_discount_money": 200000,
+    "usage_limit": 500,
+    "is_active": true
+  },
+  {
+    "code": "SUMMER50K",
+    "name": "Khuyen Mai He 50K",
+    "description": "Giam 50,000 VND cho don hang tu 300,000 VND",
+    "discount_unit": "MONEY",
+    "discount_method": "FIXED",
+    "discount_amount_money": 50000,
+    "min_purchase_money": 300000,
+    "usage_limit": 1000,
+    "is_active": true
+  },
+  {
+    "code": "VIP100",
+    "name": "Uu Dai VIP 100K",
+    "description": "Giam 100,000 VND cho don hang tu 500,000 VND",
+    "discount_unit": "MONEY",
+    "discount_method": "FIXED",
+    "discount_amount_money": 100000,
+    "min_purchase_money": 500000,
+    "usage_limit": 100,
+    "is_active": true
+  }
+]

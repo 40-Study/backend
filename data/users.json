@@ -1,0 +1,50 @@
+[
+  {
+    "email": "admin@demo.com",
+    "password": "Demo@123",
+    "user_name": "admin",
+    "full_name": "Admin Demo",
+    "system_roles": ["SYSTEM_ADMIN"],
+    "is_verified": true
+  },
+  {
+    "email": "teacher1@demo.com",
+    "password": "Demo@123",
+    "user_name": "nguyenvana",
+    "full_name": "Nguyen Van A",
+    "system_roles": ["TEACHER"],
+    "is_verified": true
+  },
+  {
+    "email": "teacher2@demo.com",
+    "password": "Demo@123",
+    "user_name": "tranthib",
+    "full_name": "Tran Thi B",
+    "system_roles": ["TEACHER"],
+    "is_verified": true
+  },
+  {
+    "email": "student1@demo.com",
+    "password": "Demo@123",
+    "user_name": "levanc",
+    "full_name": "Le Van C",
+    "system_roles": ["STUDENT"],
+    "is_verified": true
+  },
+  {
+    "email": "student2@demo.com",
+    "password": "Demo@123",
+    "user_name": "phamthid",
+    "full_name": "Pham Thi D",
+    "system_roles": ["STUDENT"],
+    "is_verified": true
+  },
+  {
+    "email": "parent1@demo.com",
+    "password": "Demo@123",
+    "user_name": "hoangvane",
+    "full_name": "Hoang Van E",
+    "system_roles": ["PARENT"],
+    "is_verified": true
+  }
+]

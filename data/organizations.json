@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Trung tam Lap trinh ABC",
+    "description": "Trung tam dao tao lap trinh hang dau",
+    "status": "active"
+  },
+  {
+    "name": "Hoc vien CNTT XYZ",
+    "description": "Hoc vien cong nghe thong tin",
+    "status": "active"
+  }
+]

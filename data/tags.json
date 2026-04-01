@@ -1,0 +1,17 @@
+[
+  {"name": "JavaScript", "slug": "javascript"},
+  {"name": "TypeScript", "slug": "typescript"},
+  {"name": "React", "slug": "react"},
+  {"name": "Next.js", "slug": "nextjs"},
+  {"name": "Node.js", "slug": "nodejs"},
+  {"name": "Python", "slug": "python"},
+  {"name": "Django", "slug": "django"},
+  {"name": "Machine Learning", "slug": "machine-learning"},
+  {"name": "Flutter", "slug": "flutter"},
+  {"name": "Docker", "slug": "docker"},
+  {"name": "Kubernetes", "slug": "kubernetes"},
+  {"name": "AWS", "slug": "aws"},
+  {"name": "Figma", "slug": "figma"},
+  {"name": "Tailwind", "slug": "tailwind"},
+  {"name": "Git", "slug": "git"}
+]

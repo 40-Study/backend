@@ -156,13 +156,12 @@ func (s *Seeder) SeedRoles(filePath string) error {
 }
 
 func (s *Seeder) SeedAll(dataDir string) error {
-	// Seed all permission files from permissions folder
+	// 1. Permissions
 	permissionsDir := filepath.Join(dataDir, "permissions")
 	files, err := ioutil.ReadDir(permissionsDir)
 	if err != nil {
 		return fmt.Errorf("failed to read permissions directory: %w", err)
 	}
-
 	for _, file := range files {
 		if filepath.Ext(file.Name()) == ".json" {
 			filePath := filepath.Join(permissionsDir, file.Name())
@@ -172,9 +171,48 @@ func (s *Seeder) SeedAll(dataDir string) error {
 		}
 	}
 
-	// Seed roles
-	rolesFilePath := filepath.Join(dataDir, "roles.json")
-	if err := s.SeedRoles(rolesFilePath); err != nil {
+	// 2. Roles (depends on permissions)
+	if err := s.SeedRoles(filepath.Join(dataDir, "roles.json")); err != nil {
+		return err
+	}
+
+	// 3. Users (depends on roles)
+	if err := s.SeedUsers(filepath.Join(dataDir, "users.json")); err != nil {
+		return err
+	}
+
+	// 4. Organizations (independent)
+	if err := s.SeedOrganizations(filepath.Join(dataDir, "organizations.json")); err != nil {
+		return err
+	}
+
+	// 5. Categories (independent)
+	if err := s.SeedCategories(filepath.Join(dataDir, "categories.json")); err != nil {
+		return err
+	}
+
+	// 6. Tags (independent)
+	if err := s.SeedTags(filepath.Join(dataDir, "tags.json")); err != nil {
+		return err
+	}
+
+	// 7. Courses (depends on users, categories, tags)
+	if err := s.SeedCourses(filepath.Join(dataDir, "courses.json")); err != nil {
+		return err
+	}
+
+	// 8. Vouchers (independent)
+	if err := s.SeedVouchers(filepath.Join(dataDir, "vouchers.json")); err != nil {
+		return err
+	}
+
+	// 9. Enrollments (depends on users, courses)
+	if err := s.SeedEnrollments(); err != nil {
+		return err
+	}
+
+	// 10. Classes (depends on users, courses)
+	if err := s.SeedClasses(); err != nil {
 		return err
 	}
 
