@@ -62,6 +62,9 @@ type Repositories struct {
 	PaymentEvent       *repository.PaymentEventRepository
 	IdempotencyKey     *repository.IdempotencyKeyRepository
 	OrderLock          *repository.OrderLockRepository
+
+	// ===== Wallet =====
+	Wallet *repository.WalletRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -121,6 +124,9 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		PaymentEvent:       repository.NewPaymentEventRepository(db),
 		IdempotencyKey:     repository.NewIdempotencyKeyRepository(db),
 		OrderLock:          repository.NewOrderLockRepository(db),
+
+		// ===== Wallet =====
+		Wallet: repository.NewWalletRepository(db),
 	}
 
 }

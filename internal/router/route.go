@@ -43,6 +43,7 @@ func SetupAllRoutes(
 	analyticsHandler *handler.AnalyticsHandler,
 	orderHandler *handler.OrderHandler,
 	voucherHandler *handler.VoucherHandler,
+	walletHandler *handler.WalletHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 ) {
@@ -86,4 +87,7 @@ func SetupAllRoutes(
 	// Order & Payment routes
 	SetupOrderRoutes(api, cfg, orderHandler, redis)
 	SetupVoucherRoutes(api, voucherHandler)
+
+	// Wallet routes
+	SetupWalletRoutes(api, cfg, walletHandler, redis)
 }

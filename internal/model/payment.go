@@ -11,6 +11,7 @@ import (
 
 type Order struct {
 	ID                   uuid.UUID       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	CreatedAt            time.Time       `gorm:"autoCreateTime" json:"created_at"`
 	UserID               uuid.UUID       `gorm:"type:uuid;not null;index" json:"user_id"`
 	OrderNumber          string          `gorm:"type:varchar(50);uniqueIndex;not null" json:"order_number"`
 	Subtotal             decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"subtotal"`

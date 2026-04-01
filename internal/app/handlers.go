@@ -53,6 +53,9 @@ type Handlers struct {
 	// ===== Order & Payment =====
 	Order   *handler.OrderHandler
 	Voucher *handler.VoucherHandler
+
+	// ===== Wallet =====
+	Wallet *handler.WalletHandler
 }
 
 func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handlers {
@@ -104,5 +107,8 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handler
 		// ===== Order & Payment =====
 		Order:   handler.NewOrderHandler(services.Order, services.Payment),
 		Voucher: handler.NewVoucherHandler(services.Voucher),
+
+		// ===== Wallet =====
+		Wallet: handler.NewWalletHandler(services.Wallet),
 	}
 }
