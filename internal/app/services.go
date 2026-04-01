@@ -60,7 +60,10 @@ type Services struct {
 	Order              *service.OrderService
 	Payment            *service.PaymentService
 	TransactionService *service.TransactionService
-	Voucher           *service.VoucherService
+	Voucher            *service.VoucherService
+
+	// ===== Wallet =====
+	Wallet *service.WalletService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
@@ -243,7 +246,10 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			transactionSvc,
 		),
 		TransactionService: transactionSvc,
-		Voucher:           service.NewVoucherService(repos.Voucher, repos.User),
+		Voucher:            service.NewVoucherService(repos.Voucher, repos.User),
+
+		// ===== Wallet =====
+		Wallet: service.NewWalletService(repos.Wallet),
 	}
 }
 

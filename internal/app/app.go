@@ -99,6 +99,9 @@ func New() (*App, error) {
 		handlers.Order,
 		handlers.Voucher,
 
+		// ===== Wallet =====
+		handlers.Wallet,
+
 		resources.Redis,
 		resources.MinioClient,
 	)
