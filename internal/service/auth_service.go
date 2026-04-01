@@ -647,6 +647,32 @@ func (s *AuthService) GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserRes
 	return userResponse, nil
 }
 
+// getUserOrgs returns user's organizations from org roles
+func (s *AuthService) getUserOrgs(ctx context.Context, userID uuid.UUID) ([]dto.OrgContextDto, error) {
+	orgRoles, err := s.userOrgRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+	if err != nil {
+		return nil, err
+	}
+
+	// Deduplicate orgs (user may have multiple roles in same org)
+	orgMap := make(map[string]dto.OrgContextDto)
+	for _, or := range orgRoles {
+		if or.Organization == nil {
+			continue
+		}
+		orgMap[or.OrganizationID.String()] = dto.OrgContextDto{
+			ID:   or.OrganizationID.String(),
+			Name: or.Organization.Name,
+		}
+	}
+
+	orgs := make([]dto.OrgContextDto, 0, len(orgMap))
+	for _, org := range orgMap {
+		orgs = append(orgs, org)
+	}
+	return orgs, nil
+}
+
 // GetMyProfile trả về full profile: user info + system roles + organizations + active context
 func (s *AuthService) GetMyProfile(ctx context.Context, userID uuid.UUID, activeRole string, activeOrgID *uuid.UUID) (*dto.MyProfileResponseDto, error) {
 	// 1. Get user info
