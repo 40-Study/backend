@@ -66,6 +66,8 @@ type Services struct {
 	Achievement *service.AchievementService
 	Leaderboard *service.LeaderboardService
 	UserStats   *service.UserStatsService
+	// ===== Wallet =====
+	Wallet *service.WalletService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
@@ -257,6 +259,8 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		Achievement: service.NewAchievementService(repos.Achievement),
 		Leaderboard: service.NewLeaderboardService(repos.Leaderboard),
 		UserStats:   service.NewUserStatsService(repos.UserStats),
+		// ===== Wallet =====
+		Wallet: service.NewWalletService(repos.Wallet),
 	}
 }
 

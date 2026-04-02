@@ -103,6 +103,8 @@ func New() (*App, error) {
 		handlers.Achievement,
 		handlers.Leaderboard,
 		handlers.UserStats,
+		// ===== Wallet =====
+		handlers.Wallet,
 
 		resources.Redis,
 		resources.MinioClient,

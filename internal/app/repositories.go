@@ -67,6 +67,8 @@ type Repositories struct {
 	Achievement *repository.AchievementRepository
 	Leaderboard *repository.LeaderboardRepository
 	UserStats   *repository.UserStatsRepository
+	// ===== Wallet =====
+	Wallet *repository.WalletRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -131,6 +133,8 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		Achievement: repository.NewAchievementRepository(db),
 		Leaderboard: repository.NewLeaderboardRepository(db),
 		UserStats:   repository.NewUserStatsRepository(db),
+		// ===== Wallet =====
+		Wallet: repository.NewWalletRepository(db),
 	}
 
 }

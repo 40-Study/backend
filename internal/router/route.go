@@ -46,6 +46,7 @@ func SetupAllRoutes(
 	achievementHandler *handler.AchievementHandler,
 	leaderboardHandler *handler.LeaderboardHandler,
 	userStatsHandler *handler.UserStatsHandler,
+	walletHandler *handler.WalletHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 ) {
@@ -94,4 +95,6 @@ func SetupAllRoutes(
 	SetupAchievementRoutes(api, cfg, achievementHandler, redis)
 	SetupLeaderboardRoutes(api, cfg, leaderboardHandler, redis)
 	SetupUserStatsRoutes(api, userStatsHandler)
+	// Wallet routes
+	SetupWalletRoutes(api, cfg, walletHandler, redis)
 }

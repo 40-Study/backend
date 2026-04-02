@@ -58,6 +58,8 @@ type Handlers struct {
 	Achievement *handler.AchievementHandler
 	Leaderboard *handler.LeaderboardHandler
 	UserStats   *handler.UserStatsHandler
+	// ===== Wallet =====
+	Wallet *handler.WalletHandler
 }
 
 func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handlers {
@@ -114,5 +116,7 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handler
 		Achievement: handler.NewAchievementHandler(services.Achievement),
 		Leaderboard: handler.NewLeaderboardHandler(services.Leaderboard),
 		UserStats:   handler.NewUserStatsHandler(services.UserStats),
+		// ===== Wallet =====
+		Wallet: handler.NewWalletHandler(services.Wallet),
 	}
 }
