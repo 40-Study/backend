@@ -23,9 +23,9 @@ type Repositories struct {
 	TeacherProfile *repository.TeacherProfileRepository
 
 	// ===== Class =====
-	Class         *repository.ClassRepository
-	ClassSchedule *repository.ClassScheduleRepository
-	Attendance    *repository.AttendanceRepository
+	Class              *repository.ClassRepository
+	ClassLessonContent *repository.ClassLessonContentRepository
+	Attendance         *repository.AttendanceRepository
 
 	// ===== Course & Student =====
 	Course  *repository.CourseRepository
@@ -82,9 +82,9 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		TeacherProfile: repository.NewTeacherProfileRepository(db),
 
 		// ===== Class =====
-		Class:         repository.NewClassRepository(db),
-		ClassSchedule: repository.NewClassScheduleRepository(db),
-		Attendance:    repository.NewAttendanceRepository(db),
+		Class:              repository.NewClassRepository(db),
+		ClassLessonContent: repository.NewClassLessonContentRepository(db),
+		Attendance:         repository.NewAttendanceRepository(db),
 
 		// ===== Course & Student =====
 		Course:  repository.NewCourseRepository(db),
@@ -120,5 +120,4 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		IdempotencyKey:     repository.NewIdempotencyKeyRepository(db),
 		OrderLock:          repository.NewOrderLockRepository(db),
 	}
-
 }

@@ -157,7 +157,6 @@ func (q *Queue) Start() error {
 			log.Printf("[asynq] ▶ Processing %s (payload=%d bytes)", t.Type(), len(t.Payload()))
 
 			err := h.ProcessTask(ctx, t)
-			// elapsed là thời gian thực thi task, dùng để log performance
 			elapsed := time.Since(start)
 			if err != nil {
 				log.Printf("[asynq] ✗ Failed %s: %v (elapsed=%v)", t.Type(), err, elapsed)

@@ -10,13 +10,11 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-// Handler handles WebSocket connections
 type Handler struct {
 	hub        *Hub
 	authorizer ChannelAuthorizer
 }
 
-// NewHandler creates a new WebSocket handler
 func NewHandler(hub *Hub, authorizer ChannelAuthorizer) *Handler {
 	return &Handler{hub: hub, authorizer: authorizer}
 }
@@ -67,7 +65,6 @@ func (h *Handler) handleConnection(conn net.Conn, userID uuid.UUID) {
 	client.ReadPump()
 }
 
-// HandleWebSocketFastHTTP handles WebSocket for raw fasthttp context
 func (h *Handler) HandleWebSocketFastHTTP(ctx *fasthttp.RequestCtx, userID uuid.UUID) {
 	ctx.HijackSetNoResponse(true)
 	ctx.Hijack(func(conn net.Conn) {

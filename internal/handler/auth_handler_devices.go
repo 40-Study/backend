@@ -21,7 +21,7 @@ func (h *AuthHandler) GetAllDevices(c *fiber.Ctx) error {
 		})
 	}
 
-	// ===== 2. Get device_id from token =====
+	// 
 	device_id := c.Locals("device_id")
 	if device_id == nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{

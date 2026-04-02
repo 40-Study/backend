@@ -14,8 +14,8 @@ type LessonServiceInterface interface {
 	CreateLesson(ctx context.Context, sectionID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error)
 	GetAllLessons(ctx context.Context, sectionID uuid.UUID) ([]dto.LessonResponseDTO, error)
 	GetLessonByID(ctx context.Context, lessonID uuid.UUID) (*dto.LessonResponseDTO, error)
-	UpdateLesson(ctx context.Context, sectionID, lessonID uuid.UUID, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error)
-	DeleteLesson(ctx context.Context, sectionID, lessonID uuid.UUID) error
+	UpdateLesson(ctx context.Context, lessonID uuid.UUID, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error)
+	DeleteLesson(ctx context.Context, lessonID uuid.UUID) error
 	ReorderLessons(ctx context.Context, sectionID uuid.UUID, req dto.ReorderDTO) error
 }
 
@@ -83,7 +83,7 @@ func (s *LessonService) CreateLesson(ctx context.Context, sectionID uuid.UUID, r
 		return nil, err
 	}
 
-	return s.toLessonResponseDTO(lesson, nil, nil), nil
+	return s.toLessonResponseDTO(lesson, nil), nil
 }
 
 func (s *LessonService) GetAllLessons(ctx context.Context, sectionID uuid.UUID) ([]dto.LessonResponseDTO, error) {
@@ -98,7 +98,7 @@ func (s *LessonService) GetAllLessons(ctx context.Context, sectionID uuid.UUID) 
 
 	result := make([]dto.LessonResponseDTO, len(lessons))
 	for i, les := range lessons {
-		result[i] = *s.toLessonResponseDTO(&les, nil, nil)
+		result[i] = *s.toLessonResponseDTO(&les, nil)
 	}
 
 	return result, nil
@@ -118,27 +118,10 @@ func (s *LessonService) GetLessonByID(ctx context.Context, lessonID uuid.UUID) (
 		return nil, err
 	}
 
-	sessions, err := s.lessonRepo.GetSessionsByLessonID(ctx, lessonID)
-	if err != nil {
-		return nil, err
-	}
-
-	return s.toLessonResponseDTO(lesson, contents, sessions), nil
+	return s.toLessonResponseDTO(lesson, contents), nil
 }
 
-func (s *LessonService) UpdateLesson(ctx context.Context, sectionID, lessonID uuid.UUID, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error) {
-	if err := s.validateSection(ctx, sectionID); err != nil {
-		return nil, err
-	}
-
-	belongs, err := s.lessonRepo.BelongsToSection(ctx, lessonID, sectionID)
-	if err != nil {
-		return nil, err
-	}
-	if !belongs {
-		return nil, errors.New("lesson not found in this section")
-	}
-
+func (s *LessonService) UpdateLesson(ctx context.Context, lessonID uuid.UUID, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error) {
 	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
 	if err != nil {
 		return nil, err
@@ -171,22 +154,17 @@ func (s *LessonService) UpdateLesson(ctx context.Context, sectionID, lessonID uu
 	}
 
 	contents, _ := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
-	sessions, _ := s.lessonRepo.GetSessionsByLessonID(ctx, lessonID)
 
-	return s.toLessonResponseDTO(lesson, contents, sessions), nil
+	return s.toLessonResponseDTO(lesson, contents), nil
 }
 
-func (s *LessonService) DeleteLesson(ctx context.Context, sectionID, lessonID uuid.UUID) error {
-	if err := s.validateSection(ctx, sectionID); err != nil {
-		return err
-	}
-
-	belongs, err := s.lessonRepo.BelongsToSection(ctx, lessonID, sectionID)
+func (s *LessonService) DeleteLesson(ctx context.Context, lessonID uuid.UUID) error {
+	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
 	if err != nil {
 		return err
 	}
-	if !belongs {
-		return errors.New("lesson not found in this section")
+	if lesson == nil {
+		return errors.New("lesson not found")
 	}
 
 	return s.lessonRepo.Delete(ctx, lessonID)
@@ -197,25 +175,28 @@ func (s *LessonService) ReorderLessons(ctx context.Context, sectionID uuid.UUID,
 		return err
 	}
 
+	ids := make([]uuid.UUID, len(req.Items))
 	items := make([]repository.ReorderItem, len(req.Items))
 	for i, item := range req.Items {
-		belongs, err := s.lessonRepo.BelongsToSection(ctx, item.ID, sectionID)
-		if err != nil {
-			return err
-		}
-		if !belongs {
-			return errors.New("lesson " + item.ID.String() + " does not belong to this section")
-		}
+		ids[i] = item.ID
 		items[i] = repository.ReorderItem{
 			ID:           item.ID,
 			DisplayOrder: item.DisplayOrder,
 		}
 	}
 
+	count, err := s.lessonRepo.CountByIDsAndSection(ctx, ids, sectionID)
+	if err != nil {
+		return err
+	}
+	if count != int64(len(ids)) {
+		return errors.New("one or more lessons do not belong to this section")
+	}
+
 	return s.lessonRepo.Reorder(ctx, items)
 }
 
-func (s *LessonService) toLessonResponseDTO(lesson *model.Lesson, contents []model.LessonContent, sessions []model.LessonSession) *dto.LessonResponseDTO {
+func (s *LessonService) toLessonResponseDTO(lesson *model.Lesson, contents []model.LessonContent) *dto.LessonResponseDTO {
 	resp := &dto.LessonResponseDTO{
 		ID:           lesson.ID,
 		SectionID:    lesson.SectionID,
@@ -239,30 +220,9 @@ func (s *LessonService) toLessonResponseDTO(lesson *model.Lesson, contents []mod
 				Title:        c.Title,
 				VideoURL:     c.VideoURL,
 				Duration:     c.Duration,
-				StreamID:     c.StreamID,
 				DisplayOrder: c.DisplayOrder,
 				CreatedAt:    c.CreatedAt,
 				UpdatedAt:    c.UpdatedAt,
-			}
-		}
-	}
-
-	if len(sessions) > 0 {
-		resp.Sessions = make([]dto.LessonSessionResponseDTO, len(sessions))
-		for i, sess := range sessions {
-			resp.Sessions[i] = dto.LessonSessionResponseDTO{
-				ID:          sess.ID,
-				LessonID:    sess.LessonID,
-				Title:       sess.Title,
-				Description: sess.Description,
-				StartTime:   sess.StartTime,
-				EndTime:     sess.EndTime,
-				MeetingURL:  sess.MeetingURL,
-				MeetingID:   sess.MeetingID,
-				HostID:      sess.HostID,
-				Status:      sess.Status,
-				CreatedAt:   sess.CreatedAt,
-				UpdatedAt:   sess.UpdatedAt,
 			}
 		}
 	}

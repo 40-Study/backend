@@ -60,19 +60,3 @@ func (StudentClass) TableName() string {
 	return "student_classes"
 }
 
-type ClassSchedule struct {
-	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	ClassID   uuid.UUID `gorm:"type:uuid;not null;index;column:class_id"`
-	DayOfWeek int       `gorm:"not null;column:day_of_week" json:"day_of_week"` // 0=Sun, 1=Mon, ..., 6=Sat
-	StartTime string    `gorm:"type:time;not null;column:start_time" json:"start_time"`
-	EndTime   string    `gorm:"type:time;not null;column:end_time" json:"end_time"`
-	Room      *string   `gorm:"type:varchar(100)" json:"room,omitempty"`
-	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
-
-	// Relationships
-	Class Class `gorm:"foreignKey:ClassID;constraint:OnDelete:CASCADE" json:"-"`
-}
-
-func (ClassSchedule) TableName() string {
-	return "class_schedules"
-}

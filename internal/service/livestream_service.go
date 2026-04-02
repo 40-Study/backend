@@ -12,6 +12,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
+	asynq_queue "study.com/v1/internal/queue/asynq"
 	"study.com/v1/internal/repository"
 )
 
@@ -39,6 +40,7 @@ type LivestreamService struct {
 	analyticsRepo   repository.AnalyticsRepositoryInterface
 	redis           *redis.Client
 	livekitSvc      LivekitServiceInterface
+	q               *asynq_queue.Queue
 	cfg             *config.Config
 }
 
@@ -48,6 +50,7 @@ func NewLivestreamService(
 	analyticsRepo repository.AnalyticsRepositoryInterface,
 	redis *redis.Client,
 	livekitSvc LivekitServiceInterface,
+	q *asynq_queue.Queue,
 	cfg *config.Config,
 ) *LivestreamService {
 	return &LivestreamService{
@@ -56,14 +59,44 @@ func NewLivestreamService(
 		analyticsRepo:   analyticsRepo,
 		redis:           redis,
 		livekitSvc:      livekitSvc,
+		q:               q,
 		cfg:             cfg,
 	}
+}
+
+func livestreamJoinedKey(sessionID uuid.UUID) string {
+	return fmt.Sprintf("livestream:%s:joined", sessionID.String())
 }
 
 func (s *LivestreamService) Create(ctx context.Context, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error) {
 	hostID, err := uuid.Parse(req.HostID)
 	if err != nil {
 		return nil, errors.New("invalid host_id")
+	}
+
+	classID, err := uuid.Parse(req.ClassID)
+	if err != nil {
+		return nil, errors.New("invalid class_id")
+	}
+
+	// CourseID optional
+	var courseIDPtr *uuid.UUID
+	if req.CourseID != "" {
+		courseID, err := uuid.Parse(req.CourseID)
+		if err != nil {
+			return nil, errors.New("invalid course_id")
+		}
+		courseIDPtr = &courseID
+	}
+
+	// LessonContentID optional
+	var lessonContentIDPtr *uuid.UUID
+	if req.LessonContentID != "" {
+		lcID, err := uuid.Parse(req.LessonContentID)
+		if err != nil {
+			return nil, errors.New("invalid lesson_content_id")
+		}
+		lessonContentIDPtr = &lcID
 	}
 
 	// Dùng SessionID làm room name trong LiveKit để đảm bảo unique và stable
@@ -83,21 +116,23 @@ func (s *LivestreamService) Create(ctx context.Context, req dto.CreateLivestream
 		IsPollsEnabled:       true,
 		WhiteboardLocked:     false,
 	}
-	settingsJSON, _ := json.Marshal(settings)
 
 	session := &model.LivestreamSession{
-		BaseModel: model.BaseModel{ID: sessionID},
-		Title:       req.Title,
-		Description: &req.Description,
-		HostID:      hostID,
-		RoomName:    roomName, // Dùng SessionID làm room name trong LiveKit
-		Status:      model.LivestreamStatusScheduled,
-		MaxViewers:  maxViewers,
-		IsRecorded:  req.IsRecorded,
-		Settings:    settings,
+		BaseModel:       model.BaseModel{ID: sessionID},
+		Title:           req.Title,
+		Description:     &req.Description,
+		HostID:          hostID,
+		ClassID:         classID,
+		CourseID:        courseIDPtr,
+		LessonContentID: lessonContentIDPtr,
+		RoomName:        roomName,
+		Status:          model.LivestreamStatusScheduled,
+		MaxViewers:      maxViewers,
+		IsRecorded:      req.IsRecorded,
+		Settings:        settings,
 	}
 
-	// Parse scheduled_at if provided
+	// Set ScheduledAt trước khi lưu DB
 	if req.ScheduledAt != "" {
 		scheduledTime, err := time.Parse(time.RFC3339, req.ScheduledAt)
 		if err == nil {
@@ -109,20 +144,18 @@ func (s *LivestreamService) Create(ctx context.Context, req dto.CreateLivestream
 		return nil, err
 	}
 
-	livekitReq := dto.CreateRoomDTO{
-		RoomName:        roomName,
-		EmptyTimeout:    3600,
-		MaxParticipants: uint32(maxViewers),
-		Metadata:        string(settingsJSON),
-	}
-	if _, err := s.livekitSvc.CreateRoom(ctx, livekitReq); err != nil {
-		_ = s.repo.Delete(ctx, session.ID)
-		return nil, fmt.Errorf("failed to create livekit room: %w", err)
+	// Enqueue reminder tasks sau khi lưu DB thành công
+	if session.ScheduledAt != nil {
+		payload := asynq_queue.ScheduleLivestreamRemindPayload{
+			SessionID:   sessionID,
+			ClassID:     &classID,
+			Title:       req.Title,
+			ScheduledAt: *session.ScheduledAt,
+		}
+		s.q.Enqueue(asynq_queue.TaskScheduleLivestreamRemind, payload, "notifications")
 	}
 
-	analytics := &model.LivestreamAnalytics{
-		SessionID: session.ID,
-	}
+	analytics := &model.LivestreamAnalytics{SessionID: session.ID}
 	_ = s.analyticsRepo.Create(ctx, analytics)
 
 	return session, nil
@@ -140,8 +173,6 @@ func (s *LivestreamService) GetByID(ctx context.Context, id uuid.UUID) (*dto.Liv
 	detail := &dto.LivestreamDetailDTO{
 		LivestreamResponseDTO: s.toResponseDTO(*session),
 	}
-
-	// Enrich with LiveKit data only when session is live
 	if session.Status == model.LivestreamStatusLive {
 		if room, err := s.livekitSvc.GetRoom(ctx, session.RoomName); err == nil {
 			detail.ActiveParticipants = int(room.NumParticipants)
@@ -236,7 +267,21 @@ func (s *LivestreamService) Start(ctx context.Context, id uuid.UUID) (*model.Liv
 		return nil, errors.New("session cannot be started")
 	}
 
+	// Tạo room LiveKit khi start
+	settingsJSON, _ := json.Marshal(session.Settings)
+	livekitReq := dto.CreateRoomDTO{
+		RoomName:        session.RoomName,
+		EmptyTimeout:    3600,
+		MaxParticipants: uint32(session.MaxViewers),
+		Metadata:        string(settingsJSON),
+	}
+	if _, err := s.livekitSvc.CreateRoom(ctx, livekitReq); err != nil {
+		return nil, fmt.Errorf("failed to create livekit room: %w", err)
+	}
+
 	if err := s.repo.StartSession(ctx, id); err != nil {
+		// Cleanup room nếu update DB fail
+		_ = s.livekitSvc.DeleteRoom(ctx, session.RoomName)
 		return nil, err
 	}
 
@@ -261,6 +306,8 @@ func (s *LivestreamService) End(ctx context.Context, id uuid.UUID) (*model.Lives
 	}
 
 	_ = s.livekitSvc.DeleteRoom(ctx, session.RoomName)
+	// Cleanup Redis joined set
+	s.redis.Del(ctx, livestreamJoinedKey(id))
 
 	return s.repo.GetByID(ctx, id)
 }
@@ -333,6 +380,10 @@ func (s *LivestreamService) Join(ctx context.Context, sessionID uuid.UUID, req d
 		res.Token = token
 		res.ServerURL = s.cfg.LivekitURL
 		res.RoomName = session.RoomName
+		// Track joined user in Redis for reminder filtering
+		key := livestreamJoinedKey(sessionID)
+		s.redis.SAdd(ctx, key, userID.String())
+		s.redis.Expire(ctx, key, 24*time.Hour)
 		return res, nil
 	}
 	participant := &model.Participant{
@@ -361,6 +412,11 @@ func (s *LivestreamService) Join(ctx context.Context, sessionID uuid.UUID, req d
 	// tăng total viewers lên 1 đơn vị
 	_ = s.analyticsRepo.IncrementTotalViewers(ctx, sessionID)
 	s.updatePeakViewers(ctx, sessionID, session.RoomName)
+
+	// Track joined user in Redis for reminder filtering (TTL 24h as fallback cleanup)
+	key := livestreamJoinedKey(sessionID)
+	s.redis.SAdd(ctx, key, userID.String())
+	s.redis.Expire(ctx, key, 24*time.Hour)
 
 	return res, nil
 }
@@ -483,19 +539,22 @@ func (s *LivestreamService) toResponseDTO(session model.LivestreamSession) dto.L
 	}
 
 	return dto.LivestreamResponseDTO{
-		ID:          session.ID,
-		Title:       session.Title,
-		Description: ptrToStr(session.Description),
-		HostID:      session.HostID,
-		RoomName:    session.RoomName,
-		Status:      string(session.Status),
-		StartedAt:   startedAt,
-		EndedAt:     endedAt,
-		ScheduledAt: scheduledAt,
-		MaxViewers:  session.MaxViewers,
-		IsRecorded:  session.IsRecorded,
-		Settings:    string(settingsJSON),
-		CreatedAt:   session.CreatedAt.Format(time.RFC3339),
+		ID:              session.ID,
+		Title:           session.Title,
+		Description:     ptrToStr(session.Description),
+		HostID:          session.HostID,
+		ClassID:         session.ClassID,
+		CourseID:         session.CourseID,
+		LessonContentID: session.LessonContentID,
+		RoomName:        session.RoomName,
+		Status:          string(session.Status),
+		StartedAt:       startedAt,
+		EndedAt:         endedAt,
+		ScheduledAt:     scheduledAt,
+		MaxViewers:      session.MaxViewers,
+		IsRecorded:      session.IsRecorded,
+		Settings:        string(settingsJSON),
+		CreatedAt:       session.CreatedAt.Format(time.RFC3339),
 	}
 }
 

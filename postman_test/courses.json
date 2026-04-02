@@ -10,8 +10,8 @@
     { "key": "section_id", "value": "" },
     { "key": "lesson_id", "value": "" },
     { "key": "content_id", "value": "" },
-    { "key": "session_id", "value": "" },
-    { "key": "exercise_id", "value": "" }
+    { "key": "exercise_id", "value": "" },
+    { "key": "class_id", "value": "" }
   ],
   "auth": {
     "type": "bearer",
@@ -153,24 +153,24 @@
       "name": "Lessons",
       "item": [
         {
-          "name": "Get All Lessons",
+          "name": "Get All Lessons (by Section)",
           "request": {
             "method": "GET",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons"
+            "url": "{{base_url}}/sections/{{section_id}}/lessons"
           }
         },
         {
           "name": "Get Lesson By ID",
           "request": {
             "method": "GET",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}"
+            "url": "{{base_url}}/lessons/{{lesson_id}}"
           }
         },
         {
           "name": "Create Lesson",
           "request": {
             "method": "POST",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons",
+            "url": "{{base_url}}/sections/{{section_id}}/lessons",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
@@ -182,7 +182,7 @@
           "name": "Update Lesson",
           "request": {
             "method": "PUT",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}",
+            "url": "{{base_url}}/lessons/{{lesson_id}}",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
@@ -194,7 +194,7 @@
           "name": "Reorder Lessons",
           "request": {
             "method": "PUT",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/reorder",
+            "url": "{{base_url}}/sections/{{section_id}}/lessons/reorder",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
@@ -206,7 +206,7 @@
           "name": "Delete Lesson",
           "request": {
             "method": "DELETE",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}"
+            "url": "{{base_url}}/lessons/{{lesson_id}}"
           }
         }
       ]
@@ -218,14 +218,14 @@
           "name": "Get Contents",
           "request": {
             "method": "GET",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}/contents"
+            "url": "{{base_url}}/lessons/{{lesson_id}}/contents"
           }
         },
         {
           "name": "Create Content (Video)",
           "request": {
             "method": "POST",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}/contents",
+            "url": "{{base_url}}/lessons/{{lesson_id}}/contents",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
@@ -237,11 +237,11 @@
           "name": "Create Content (Livestream)",
           "request": {
             "method": "POST",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}/contents",
+            "url": "{{base_url}}/lessons/{{lesson_id}}/contents",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"type\": \"livestream\",\n  \"title\": \"Live Session\",\n  \"stream_id\": \"live_123\",\n  \"is_mandatory\": false\n}"
+              "raw": "{\n  \"type\": \"livestream\",\n  \"title\": \"Live Session\",\n  \"is_mandatory\": false\n}"
             }
           }
         },
@@ -249,7 +249,7 @@
           "name": "Create Content (Exercise)",
           "request": {
             "method": "POST",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}/contents",
+            "url": "{{base_url}}/lessons/{{lesson_id}}/contents",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
@@ -258,10 +258,22 @@
           }
         },
         {
+          "name": "Reorder Contents",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/lessons/{{lesson_id}}/contents/reorder",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"id\": \"<content_uuid_1>\", \"display_order\": 0 },\n    { \"id\": \"<content_uuid_2>\", \"display_order\": 1 },\n    { \"id\": \"<content_uuid_3>\", \"display_order\": 2 }\n  ]\n}"
+            }
+          }
+        },
+        {
           "name": "Update Content",
           "request": {
             "method": "PUT",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}/contents/{{content_id}}",
+            "url": "{{base_url}}/lessons/{{lesson_id}}/contents/{{content_id}}",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
@@ -273,53 +285,73 @@
           "name": "Delete Content",
           "request": {
             "method": "DELETE",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}/contents/{{content_id}}"
+            "url": "{{base_url}}/lessons/{{lesson_id}}/contents/{{content_id}}"
           }
         }
       ]
     },
     {
-      "name": "Sessions (Livestream/Meeting)",
+      "name": "Class-Content Schedule",
       "item": [
         {
-          "name": "Get Sessions",
-          "request": {
-            "method": "GET",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}/sessions"
-          }
-        },
-        {
-          "name": "Create Session",
+          "name": "Assign Class to Content",
           "request": {
             "method": "POST",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}/sessions",
+            "url": "{{base_url}}/lesson-contents/{{content_id}}/classes",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"title\": \"Weekly Live Session\",\n  \"description\": \"Interactive Q&A session\",\n  \"start_time\": \"2026-04-01T10:00:00Z\",\n  \"end_time\": \"2026-04-01T11:00:00Z\",\n  \"meeting_url\": \"https://meet.example.com/session-123\",\n  \"meeting_id\": \"session-123\",\n  \"host_id\": \"<host_user_id>\"\n}"
+              "raw": "{\n  \"class_id\": \"<class_uuid>\",\n  \"open_date\": \"2026-04-10T00:00:00Z\",\n  \"due_date\": \"2026-04-17T23:59:59Z\",\n  \"scheduled_at\": \"2026-04-10T09:00:00Z\",\n  \"end_at\": \"2026-04-10T11:00:00Z\"\n}"
             }
           }
         },
         {
-          "name": "Update Session",
+          "name": "Bulk Assign Classes to Content",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/lesson-contents/{{content_id}}/classes/bulk",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"class_ids\": [],\n  \"open_date\": \"2026-04-10T00:00:00Z\",\n  \"due_date\": \"2026-04-17T23:59:59Z\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Classes for Content",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/lesson-contents/{{content_id}}/classes?page=1&page_size=20",
+              "host": ["{{base_url}}"],
+              "path": ["lesson-contents", "{{content_id}}", "classes"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Class-Content Schedule",
           "request": {
             "method": "PUT",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}/sessions/{{session_id}}",
+            "url": "{{base_url}}/lesson-contents/{{content_id}}/classes/{{class_id}}",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"title\": \"Updated Session Title\",\n  \"status\": \"live\"\n}"
+              "raw": "{\n  \"open_date\": \"2026-04-15T00:00:00Z\",\n  \"due_date\": \"2026-04-22T23:59:59Z\",\n  \"scheduled_at\": \"2026-04-15T14:00:00Z\",\n  \"end_at\": \"2026-04-15T16:00:00Z\",\n  \"status\": \"scheduled\"\n}"
             }
           }
         },
         {
-          "name": "Delete Session",
+          "name": "Remove Class from Content",
           "request": {
             "method": "DELETE",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}/sessions/{{session_id}}"
+            "url": "{{base_url}}/lesson-contents/{{content_id}}/classes/{{class_id}}"
           }
         }
       ]
-    }
+    },
   ]
 }

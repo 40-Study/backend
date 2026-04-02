@@ -26,9 +26,9 @@ type Services struct {
 	TeacherProfile *service.TeacherProfileService
 
 	// ===== Class =====
-	Class         *service.ClassService
-	ClassSchedule *service.ClassScheduleService
-	Attendance    *service.AttendanceService
+	Class              *service.ClassService
+	ClassLessonContent *service.ClassLessonContentService
+	Attendance         *service.AttendanceService
 
 	// ===== Course Management =====
 	Category      *service.CategoryService
@@ -109,6 +109,7 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		repos.Analytics,
 		resources.Redis,
 		livekitSvc,
+		resources.Queue,
 		resources.Config,
 	)
 
@@ -192,9 +193,9 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		TeacherProfile: service.NewTeacherProfileService(repos.TeacherProfile),
 
 		// ===== Class =====
-		Class:         service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student),
-		ClassSchedule: service.NewClassScheduleService(repos.ClassSchedule, repos.Class),
-		Attendance:    service.NewAttendanceService(repos.Attendance),
+		Class:              service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student),
+		ClassLessonContent: service.NewClassLessonContentService(repos.ClassLessonContent, repos.Class, repos.Lesson, repos.Enrollment, livestreamSvc),
+		Attendance:         service.NewAttendanceService(repos.Attendance),
 
 		// ===== Course Management =====
 		Category:      service.NewCategoryService(repos.Category),

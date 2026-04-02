@@ -10,12 +10,10 @@ import (
 // Type: video, livestream, exercise
 
 type CreateLessonContentDTO struct {
-	LessonID     uuid.UUID  `json:"lesson_id" validate:"required"`
 	Type         string     `json:"type" validate:"required,oneof=video livestream exercise"`
 	Title        *string    `json:"title"`
 	VideoURL     *string    `json:"video_url"`
 	Duration     *int       `json:"duration"`
-	StreamID     *string    `json:"stream_id"`
 	ExerciseID   *uuid.UUID `json:"exercise_id"`
 	IsMandatory  *bool      `json:"is_mandatory"`
 	DisplayOrder *int       `json:"display_order"`
@@ -26,7 +24,6 @@ type UpdateLessonContentDTO struct {
 	Title        *string    `json:"title"`
 	VideoURL     *string    `json:"video_url"`
 	Duration     *int       `json:"duration"`
-	StreamID     *string    `json:"stream_id"`
 	ExerciseID   *uuid.UUID `json:"exercise_id"`
 	IsMandatory  *bool      `json:"is_mandatory"`
 	DisplayOrder *int       `json:"display_order"`
@@ -39,7 +36,6 @@ type LessonContentResponseDTO struct {
 	Title        *string    `json:"title,omitempty"`
 	VideoURL     *string    `json:"video_url,omitempty"`
 	Duration     int        `json:"duration"`
-	StreamID     *string    `json:"stream_id,omitempty"`
 	ExerciseID   *uuid.UUID `json:"exercise_id,omitempty"`
 	IsMandatory  bool       `json:"is_mandatory"`
 	DisplayOrder int        `json:"display_order"`

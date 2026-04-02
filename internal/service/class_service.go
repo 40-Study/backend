@@ -17,6 +17,7 @@ type ClassServiceInterface interface {
 	GetClassByID(ctx context.Context, id uuid.UUID) (*dto.ClassResponseDTO, error)
 	UpdateClass(ctx context.Context, id uuid.UUID, req dto.UpdateClassDTO) (*dto.ClassResponseDTO, error)
 	DeleteClass(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	GetClassesByCourseID(ctx context.Context, courseID uuid.UUID) ([]dto.ClassResponseDTO, error)
 
 	AssignTeacherToClass(ctx context.Context, classID uuid.UUID, req dto.AssignTeacherDTO) (*dto.TeacherClassResponseDTO, error)
 	AssignTeachersToClass(ctx context.Context, classID uuid.UUID, req dto.AssignTeachersDTO) ([]dto.TeacherClassResponseDTO, error)
@@ -504,6 +505,18 @@ func (s *ClassService) GetStudentsByClass(ctx context.Context, classID uuid.UUID
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
+}
+
+func (s *ClassService) GetClassesByCourseID(ctx context.Context, courseID uuid.UUID) ([]dto.ClassResponseDTO, error) {
+	classes, err := s.classRepo.GetByCourseID(ctx, courseID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]dto.ClassResponseDTO, len(classes))
+	for i, c := range classes {
+		result[i] = *s.toClassResponseDTO(ctx, &c)
+	}
+	return result, nil
 }
 
 func (s *ClassService) toClassResponseDTO(ctx context.Context, class *model.Class) *dto.ClassResponseDTO {

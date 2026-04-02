@@ -22,6 +22,7 @@ type EnrollmentRepositoryInterface interface {
 
 	// Lookup
 	GetCourseIDByLessonID(ctx context.Context, lessonID uuid.UUID) (uuid.UUID, error)
+	GetEnrolledUserIDsByCourseID(ctx context.Context, courseID uuid.UUID) ([]uuid.UUID, error)
 
 	// LessonProgress
 	UpsertLessonProgress(ctx context.Context, progress *model.LessonProgress) error
@@ -135,6 +136,15 @@ func (r *EnrollmentRepository) GetCourseIDByLessonID(ctx context.Context, lesson
 		return uuid.Nil, errors.New("lesson not found in any course")
 	}
 	return result.CourseID, nil
+}
+
+func (r *EnrollmentRepository) GetEnrolledUserIDsByCourseID(ctx context.Context, courseID uuid.UUID) ([]uuid.UUID, error) {
+	var userIDs []uuid.UUID
+	err := r.db.WithContext(ctx).
+		Model(&model.Enrollment{}).
+		Where("course_id = ?", courseID).
+		Pluck("user_id", &userIDs).Error
+	return userIDs, err
 }
 
 // LessonProgress

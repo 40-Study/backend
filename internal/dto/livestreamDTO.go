@@ -3,12 +3,15 @@ package dto
 import "github.com/google/uuid"
 
 type CreateLivestreamDTO struct {
-	Title       string `json:"title" validate:"required,min=3,max=255"`
-	Description string `json:"description"`
-	HostID      string `json:"host_id" validate:"required,uuid"`
-	MaxViewers  int64  `json:"max_viewers"`
-	IsRecorded  bool   `json:"is_recorded"`
-	ScheduledAt string `json:"scheduled_at"`
+	Title           string `json:"title" validate:"required,min=3,max=255"`
+	Description     string `json:"description"`
+	HostID          string `json:"host_id" validate:"required,uuid"`
+	ClassID         string `json:"class_id" validate:"required,uuid"`
+	CourseID        string `json:"course_id" validate:"omitempty,uuid"`
+	LessonContentID string `json:"lesson_content_id" validate:"omitempty,uuid"`
+	MaxViewers      int64  `json:"max_viewers"`
+	IsRecorded      bool   `json:"is_recorded"`
+	ScheduledAt     string `json:"scheduled_at"`
 }
 
 type UpdateLivestreamDTO struct {
@@ -32,19 +35,22 @@ type LeaveLivestreamDTO struct {
 }
 
 type LivestreamResponseDTO struct {
-	ID          uuid.UUID `json:"id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	HostID      uuid.UUID `json:"host_id"`
-	RoomName    string    `json:"room_name"`
-	Status      string    `json:"status"`
-	StartedAt   *string   `json:"started_at,omitempty"`
-	EndedAt     *string   `json:"ended_at,omitempty"`
-	ScheduledAt *string   `json:"scheduled_at,omitempty"`
-	MaxViewers  int64     `json:"max_viewers"`
-	IsRecorded  bool      `json:"is_recorded"`
-	Settings    string    `json:"settings"`
-	CreatedAt   string    `json:"created_at"`
+	ID              uuid.UUID  `json:"id"`
+	Title           string     `json:"title"`
+	Description     string     `json:"description"`
+	HostID          uuid.UUID  `json:"host_id"`
+	ClassID         uuid.UUID  `json:"class_id"`
+	CourseID        *uuid.UUID `json:"course_id,omitempty"`
+	LessonContentID *uuid.UUID `json:"lesson_content_id,omitempty"`
+	RoomName        string     `json:"room_name"`
+	Status          string     `json:"status"`
+	StartedAt       *string    `json:"started_at,omitempty"`
+	EndedAt         *string    `json:"ended_at,omitempty"`
+	ScheduledAt     *string    `json:"scheduled_at,omitempty"`
+	MaxViewers      int64      `json:"max_viewers"`
+	IsRecorded      bool       `json:"is_recorded"`
+	Settings        string     `json:"settings"`
+	CreatedAt       string     `json:"created_at"`
 }
 
 type LivestreamListDTO struct {

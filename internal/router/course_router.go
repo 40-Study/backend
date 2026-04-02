@@ -15,6 +15,9 @@ func SetupCourseRoutes(
 	sectionHandler *handler.SectionHandler,
 	lessonHandler *handler.LessonHandler,
 	lessonContentHandler *handler.LessonContentHandler,
+	classHandler *handler.ClassHandler,
+	classLessonContentHandler *handler.ClassLessonContentHandler,
+	attendanceHandler *handler.AttendanceHandler,
 	redis *redis.Client,
 ) {
 	auth := middleware.AuthMiddleware(cfg, redis)
@@ -31,7 +34,41 @@ func SetupCourseRoutes(
 		courses.Put("/:id", auth, courseHandler.UpdateCourse)
 		courses.Delete("/:id", auth, courseHandler.DeleteCourse)
 
-		sections := courses.Group("/:courseId/sections", auth)
+		// Classes under courses
+		classes := courses.Group("/:course_id/classes", auth)
+		{
+			classes.Get("/", classHandler.GetClassesByCourseID)
+			classes.Post("/", classHandler.CreateClassForCourse)
+			classes.Get("/:id", classHandler.GetClassByID)
+			classes.Put("/:id", classHandler.UpdateClass)
+			classes.Delete("/:id", classHandler.DeleteClass)
+
+			// Teacher-Class
+			classes.Post("/:id/teachers", classHandler.AssignTeacherToClass)
+			classes.Delete("/:id/teachers/:teacherId", classHandler.RemoveTeacherFromClass)
+			classes.Get("/:id/teachers", classHandler.GetTeachersByClass)
+
+			// Student-Class
+			classes.Post("/:id/students", classHandler.EnrollStudentToClass)
+			classes.Delete("/:id/students/:studentId", classHandler.RemoveStudentFromClass)
+			classes.Get("/:id/students", classHandler.GetStudentsByClass)
+
+			// Content schedule for class
+			classes.Get("/:id/contents", classLessonContentHandler.GetContentScheduleForClass)
+
+			// Attendances
+			attendances := classes.Group("/:classId/attendances")
+			{
+				attendances.Post("/", attendanceHandler.MarkAttendance)
+				attendances.Get("/", attendanceHandler.GetAllAttendances)
+				attendances.Get("/:id", attendanceHandler.GetAttendanceByID)
+				attendances.Put("/:id", attendanceHandler.UpdateAttendance)
+				attendances.Delete("/:id", attendanceHandler.DeleteAttendance)
+			}
+		}
+
+		// Sections under courses
+		sections := courses.Group("/:course_id/sections", auth)
 		{
 			sections.Post("/", sectionHandler.CreateSection)
 			sections.Get("/", sectionHandler.GetAllSections)
@@ -39,33 +76,42 @@ func SetupCourseRoutes(
 			sections.Put("/reorder", sectionHandler.ReorderSections)
 			sections.Put("/:id", sectionHandler.UpdateSection)
 			sections.Delete("/:id", sectionHandler.DeleteSection)
-
-			lessons := sections.Group("/:sectionId/lessons", auth)
-			{
-				lessons.Post("/", lessonHandler.CreateLesson)
-				lessons.Get("/", lessonHandler.GetAllLessons)
-				lessons.Get("/:id", lessonHandler.GetLessonByID)
-				lessons.Put("/reorder", lessonHandler.ReorderLessons)
-				lessons.Put("/:id", lessonHandler.UpdateLesson)
-				lessons.Delete("/:id", lessonHandler.DeleteLesson)
-
-				contents := lessons.Group("/:lessonId/contents", auth)
-				{
-					contents.Post("/", lessonContentHandler.CreateContent)
-					contents.Get("/", lessonContentHandler.GetContent)
-					contents.Put("/:id", lessonContentHandler.UpdateContent)
-					contents.Delete("/:id", lessonContentHandler.DeleteContent)
-
-					// Sessions (nested under lesson) - all protected
-					sessions := lessons.Group("/:lessonId/sessions", auth)
-					{
-						sessions.Post("/", lessonContentHandler.CreateSession)
-						sessions.Get("/", lessonContentHandler.GetSessions)
-						sessions.Put("/:id", lessonContentHandler.UpdateSession)
-						sessions.Delete("/:id", lessonContentHandler.DeleteSession)
-					}
-				}
-			}
 		}
+	}
+
+	// Sections - flattened routes for lessons
+	sectionLessons := api.Group("/sections/:section_id/lessons", auth)
+	{
+		sectionLessons.Post("/", lessonHandler.CreateLesson)
+		sectionLessons.Get("/", lessonHandler.GetAllLessons)
+		sectionLessons.Put("/reorder", lessonHandler.ReorderLessons)
+	}
+
+	// Lessons - flattened routes
+	lessons := api.Group("/lessons", auth)
+	{
+		lessons.Get("/:id", lessonHandler.GetLessonByID)
+		lessons.Put("/:id", lessonHandler.UpdateLesson)
+		lessons.Delete("/:id", lessonHandler.DeleteLesson)
+
+		// Contents under lessons
+		contents := lessons.Group("/:lesson_id/contents")
+		{
+			contents.Post("/", lessonContentHandler.CreateContent)
+			contents.Get("/", lessonContentHandler.GetContent)
+			contents.Put("/reorder", lessonContentHandler.ReorderContents)
+			contents.Put("/:id", lessonContentHandler.UpdateContent)
+			contents.Delete("/:id", lessonContentHandler.DeleteContent)
+		}
+	}
+
+	// ClassLessonContent routes - assign classes to lesson contents with scheduling
+	lessonContents := api.Group("/lesson-contents", auth)
+	{
+		lessonContents.Post("/:id/classes/bulk", classLessonContentHandler.BulkAssignClassesToContent)
+		lessonContents.Post("/:id/classes", classLessonContentHandler.AssignClassToContent)
+		lessonContents.Get("/:id/classes", classLessonContentHandler.GetClassesForContent)
+		lessonContents.Put("/:id/classes/:class_id", classLessonContentHandler.UpdateClassContentSchedule)
+		lessonContents.Delete("/:id/classes/:class_id", classLessonContentHandler.RemoveClassFromContent)
 	}
 }

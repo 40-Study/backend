@@ -20,6 +20,7 @@ type LivestreamRepositoryInterface interface {
 	UpdateStatus(ctx context.Context, id uuid.UUID, status model.LivestreamSessionStatus) error
 	StartSession(ctx context.Context, id uuid.UUID) error
 	EndSession(ctx context.Context, id uuid.UUID) error
+	WithTx(tx *gorm.DB) LivestreamRepositoryInterface
 }
 
 type LivestreamRepository struct {
@@ -30,6 +31,9 @@ func NewLivestreamRepository(db *gorm.DB) *LivestreamRepository {
 	return &LivestreamRepository{db: db}
 }
 
+func (r *LivestreamRepository) WithTx(tx *gorm.DB) LivestreamRepositoryInterface {
+	return &LivestreamRepository{db: tx}
+}
 func (r *LivestreamRepository) Create(ctx context.Context, session *model.LivestreamSession) error {
 	return r.db.WithContext(ctx).Create(session).Error
 }

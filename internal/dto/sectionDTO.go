@@ -9,10 +9,9 @@ import (
 // Section DTOs
 
 type CreateSectionDTO struct {
-	CourseID     uuid.UUID `json:"course_id"`
-	Title        string    `json:"title" validate:"required,min=2,max=255"`
-	Description  *string   `json:"description"`
-	DisplayOrder int       `json:"display_order"`
+	Title        string  `json:"title" validate:"required,min=2,max=255"`
+	Description  *string `json:"description"`
+	DisplayOrder int     `json:"display_order"`
 }
 
 type UpdateSectionDTO struct {

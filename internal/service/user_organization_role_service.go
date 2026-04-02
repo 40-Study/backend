@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"study.com/v1/internal/constants"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -247,7 +248,7 @@ func (s *UserOrganizationRoleService) RevokeOrgRoleFromUser(ctx context.Context,
 	// Security: Increment user_version to invalidate all existing tokens
 	// This forces user to re-login with updated roles
 	if s.redisClient != nil {
-		userVersionKey := fmt.Sprintf("auth:user_version:%s", userID)
+		userVersionKey := constants.KeyUserVersion(userID.String())
 		s.redisClient.Incr(ctx, userVersionKey)
 	}
 

@@ -42,6 +42,13 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 }
 
 func Migrate(db *gorm.DB) error {
+	// Drop deprecated column from old schema
+	if db.Migrator().HasColumn(&model.Lesson{}, "content_type") {
+		if err := db.Migrator().DropColumn(&model.Lesson{}, "content_type"); err != nil {
+			log.Printf("[WARN] Failed to drop lessons.content_type column: %v", err)
+		}
+	}
+
 	return db.AutoMigrate(
 		// ===== 1. Base Tables (độc lập) =====
 		&model.Organization{},
@@ -69,6 +76,7 @@ func Migrate(db *gorm.DB) error {
 		&model.Course{},
 		&model.Section{},
 		&model.Lesson{},
+		&model.LessonContent{},
 		&model.LessonVideo{},
 		&model.LessonArticle{},
 		&model.LessonAttachment{},
@@ -138,8 +146,7 @@ func Migrate(db *gorm.DB) error {
 		&model.Class{},
 		&model.TeacherClass{},
 		&model.StudentClass{},
-		&model.ClassSchedule{},
-		&model.Attendance{},
+				&model.Attendance{},
 
 		// ===== 18. Notifications (phụ thuộc User) =====
 		&model.Notification{},

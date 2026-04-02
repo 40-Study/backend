@@ -9,13 +9,12 @@ import (
 // Lesson DTOs
 
 type CreateLessonDTO struct {
-	SectionID    uuid.UUID `json:"section_id" validate:"required"`
 	Title        string    `json:"title" validate:"required,min=2,max=255"`
 	Description  *string   `json:"description"`
 	DisplayOrder int       `json:"display_order" validate:"min=0"`
 	DurationMins *int      `json:"duration_minutes"`
 	IsPreview    *bool     `json:"is_preview"`
-	IsMandatory  *bool     `json:"is_mandatory"`
+	IsMandatory  *bool     `json:"is_mandatory"` // có ý nghĩa là học viên phải hoàn thành bài học này mới được xem các bài học khác trong cùng section hay không
 }
 
 type UpdateLessonDTO struct {
@@ -37,7 +36,6 @@ type LessonResponseDTO struct {
 	IsPreview    bool                       `json:"is_preview"`
 	IsMandatory  bool                       `json:"is_mandatory"`
 	Contents     []LessonContentResponseDTO `json:"contents,omitempty"`
-	Sessions     []LessonSessionResponseDTO `json:"sessions,omitempty"`
 	CreatedAt    time.Time                  `json:"created_at"`
 	UpdatedAt    time.Time                  `json:"updated_at"`
 }

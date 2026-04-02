@@ -16,10 +16,8 @@ func NewLessonContentHandler(service service.LessonContentServiceInterface) *Les
 	return &LessonContentHandler{service: service}
 }
 
-// Content handlers
-
 func (h *LessonContentHandler) CreateContent(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
+	lessonID, err := uuid.Parse(c.Params("lesson_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid lesson ID", "error": err.Error(),
@@ -40,7 +38,14 @@ func (h *LessonContentHandler) CreateContent(c *fiber.Ctx) error {
 		})
 	}
 
-	content, err := h.service.CreateContent(c.Context(), lessonID, req)
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	content, err := h.service.CreateContent(c.Context(), lessonID, userID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create content", "error": err.Error(),
@@ -53,7 +58,7 @@ func (h *LessonContentHandler) CreateContent(c *fiber.Ctx) error {
 }
 
 func (h *LessonContentHandler) GetContent(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
+	lessonID, err := uuid.Parse(c.Params("lesson_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid lesson ID", "error": err.Error(),
@@ -106,6 +111,39 @@ func (h *LessonContentHandler) UpdateContent(c *fiber.Ctx) error {
 	})
 }
 
+func (h *LessonContentHandler) ReorderContents(c *fiber.Ctx) error {
+	lessonID, err := uuid.Parse(c.Params("lesson_id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid lesson ID", "error": err.Error(),
+		})
+	}
+
+	var req dto.ReorderDTO
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid request body", "error": err.Error(),
+		})
+	}
+
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
+	if err := h.service.ReorderContents(c.Context(), lessonID, req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Failed to reorder contents", "error": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Contents reordered successfully",
+	})
+}
+
 func (h *LessonContentHandler) DeleteContent(c *fiber.Ctx) error {
 	contentID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
@@ -122,114 +160,5 @@ func (h *LessonContentHandler) DeleteContent(c *fiber.Ctx) error {
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Content deleted successfully",
-	})
-}
-
-// Session handlers
-
-func (h *LessonContentHandler) CreateSession(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid lesson ID", "error": err.Error(),
-		})
-	}
-
-	var req dto.CreateLessonSessionDTO
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body", "error": err.Error(),
-		})
-	}
-
-	if errors := utils.ValidateStruct(req); len(errors) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
-	}
-
-	session, err := h.service.CreateSession(c.Context(), lessonID, req)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to create session", "error": err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message": "Session created successfully", "data": session,
-	})
-}
-
-func (h *LessonContentHandler) GetSessions(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid lesson ID", "error": err.Error(),
-		})
-	}
-
-	sessions, err := h.service.GetSessionsByLessonID(c.Context(), lessonID)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to retrieve sessions", "error": err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Sessions retrieved successfully", "data": sessions,
-	})
-}
-
-func (h *LessonContentHandler) UpdateSession(c *fiber.Ctx) error {
-	sessionID, err := uuid.Parse(c.Params("id"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid session ID", "error": err.Error(),
-		})
-	}
-
-	var req dto.UpdateLessonSessionDTO
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body", "error": err.Error(),
-		})
-	}
-
-	if errors := utils.ValidateStruct(req); len(errors) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
-	}
-
-	session, err := h.service.UpdateSession(c.Context(), sessionID, req)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to update session", "error": err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Session updated successfully", "data": session,
-	})
-}
-
-func (h *LessonContentHandler) DeleteSession(c *fiber.Ctx) error {
-	sessionID, err := uuid.Parse(c.Params("id"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid session ID", "error": err.Error(),
-		})
-	}
-
-	if err := h.service.DeleteSession(c.Context(), sessionID); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to delete session", "error": err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Session deleted successfully",
 	})
 }

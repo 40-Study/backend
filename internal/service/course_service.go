@@ -157,7 +157,7 @@ func (s *CourseService) GetCourseByID(ctx context.Context, id uuid.UUID) (*dto.C
 	for i, sec := range course.Sections {
 		lessons := make([]dto.LessonResponseDTO, len(sec.Lessons))
 		for j, les := range sec.Lessons {
-			lessons[j] = s.toLessonResponseDTO(&les, nil, nil)
+			lessons[j] = s.toLessonResponseDTO(&les, nil)
 		}
 		sections[i] = dto.SectionResponseDTO{
 			ID:           sec.ID,
@@ -336,7 +336,7 @@ func (s *CourseService) toCourseResponseDTO(course *model.Course) *dto.CourseRes
 	return resp
 }
 
-func (s *CourseService) toLessonResponseDTO(lesson *model.Lesson, contents []model.LessonContent, sessions []model.LessonSession) dto.LessonResponseDTO {
+func (s *CourseService) toLessonResponseDTO(lesson *model.Lesson, contents []model.LessonContent) dto.LessonResponseDTO {
 	resp := dto.LessonResponseDTO{
 		ID:           lesson.ID,
 		SectionID:    lesson.SectionID,
@@ -360,30 +360,9 @@ func (s *CourseService) toLessonResponseDTO(lesson *model.Lesson, contents []mod
 				Title:        c.Title,
 				VideoURL:     c.VideoURL,
 				Duration:     c.Duration,
-				StreamID:     c.StreamID,
 				DisplayOrder: c.DisplayOrder,
 				CreatedAt:    c.CreatedAt,
 				UpdatedAt:    c.UpdatedAt,
-			}
-		}
-	}
-
-	if len(sessions) > 0 {
-		resp.Sessions = make([]dto.LessonSessionResponseDTO, len(sessions))
-		for i, sess := range sessions {
-			resp.Sessions[i] = dto.LessonSessionResponseDTO{
-				ID:          sess.ID,
-				LessonID:    sess.LessonID,
-				Title:       sess.Title,
-				Description: sess.Description,
-				StartTime:   sess.StartTime,
-				EndTime:     sess.EndTime,
-				MeetingURL:  sess.MeetingURL,
-				MeetingID:   sess.MeetingID,
-				HostID:      sess.HostID,
-				Status:      sess.Status,
-				CreatedAt:   sess.CreatedAt,
-				UpdatedAt:   sess.UpdatedAt,
 			}
 		}
 	}

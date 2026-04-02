@@ -113,7 +113,6 @@ type Lesson struct {
 
 	Section  Section         `gorm:"foreignKey:SectionID;constraint:OnDelete:CASCADE" json:"-"`
 	Contents []LessonContent `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"contents,omitempty"`
-	Sessions []LessonSession `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"sessions,omitempty"`
 
 	Attachments []LessonAttachment `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
 
@@ -137,9 +136,6 @@ type LessonContent struct {
 	VideoURL *string `gorm:"type:varchar(500)" json:"video_url,omitempty"`
 	Duration int     `gorm:"default:0" json:"duration"`
 
-	// Livestream fields
-	StreamID *string `gorm:"type:varchar(255)" json:"stream_id,omitempty"`
-
 	// Exercise fields (bài tập khóa học)
 	ExerciseID *uuid.UUID `gorm:"type:uuid" json:"exercise_id,omitempty"`
 
@@ -159,28 +155,3 @@ func (LessonContent) TableName() string {
 	return "lesson_contents"
 }
 
-type LessonSession struct {
-	ID       uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	LessonID uuid.UUID `gorm:"type:uuid;not null;index" json:"lesson_id"`
-
-	Title       string  `gorm:"type:varchar(255);not null" json:"title"`
-	Description *string `gorm:"type:text" json:"description,omitempty"`
-
-	StartTime time.Time  `gorm:"not null;index" json:"start_time"`
-	EndTime   *time.Time `json:"end_time,omitempty"`
-
-	MeetingURL *string `gorm:"type:varchar(500)" json:"meeting_url,omitempty"`
-	MeetingID  *string `gorm:"type:varchar(255)" json:"meeting_id,omitempty"`
-	HostID     *string `gorm:"type:varchar(255)" json:"host_id,omitempty"`
-
-	Status string `gorm:"type:varchar(20);default:'scheduled';index" json:"status"`
-
-	CreatedAt time.Time
-	UpdatedAt time.Time
-
-	Lesson Lesson `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
-}
-
-func (LessonSession) TableName() string {
-	return "lesson_sessions"
-}

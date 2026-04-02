@@ -49,7 +49,7 @@ func (s *SectionService) CreateSection(ctx context.Context, courseID uuid.UUID, 
 	if err := s.validateCourse(ctx, courseID); err != nil {
 		return nil, err
 	}
-
+	// Determine display order
 	maxOrder, err := s.sectionRepo.GetMaxDisplayOrder(ctx, courseID)
 	if err != nil {
 		return nil, err
@@ -88,7 +88,7 @@ func (s *SectionService) GetAllSections(ctx context.Context, courseID uuid.UUID)
 	for i, sec := range sections {
 		lessons := make([]dto.LessonResponseDTO, len(sec.Lessons))
 		for j, les := range sec.Lessons {
-			lessons[j] = s.toLessonResponseDTO(&les, nil, nil)
+			lessons[j] = s.toLessonResponseDTO(&les, nil)
 		}
 		result[i] = *s.toSectionResponseDTO(&sec, lessons)
 	}
@@ -107,7 +107,7 @@ func (s *SectionService) GetSectionByID(ctx context.Context, sectionID uuid.UUID
 
 	lessons := make([]dto.LessonResponseDTO, len(section.Lessons))
 	for j, les := range section.Lessons {
-		lessons[j] = s.toLessonResponseDTO(&les, nil, nil)
+		lessons[j] = s.toLessonResponseDTO(&les, nil)
 	}
 
 	return s.toSectionResponseDTO(section, lessons), nil
@@ -150,7 +150,7 @@ func (s *SectionService) UpdateSection(ctx context.Context, courseID, sectionID 
 
 	lessons := make([]dto.LessonResponseDTO, len(section.Lessons))
 	for j, les := range section.Lessons {
-		lessons[j] = s.toLessonResponseDTO(&les, nil, nil)
+		lessons[j] = s.toLessonResponseDTO(&les, nil)
 	}
 
 	return s.toSectionResponseDTO(section, lessons), nil
@@ -208,7 +208,7 @@ func (s *SectionService) toSectionResponseDTO(section *model.Section, lessons []
 	}
 }
 
-func (s *SectionService) toLessonResponseDTO(lesson *model.Lesson, contents []model.LessonContent, sessions []model.LessonSession) dto.LessonResponseDTO {
+func (s *SectionService) toLessonResponseDTO(lesson *model.Lesson, contents []model.LessonContent) dto.LessonResponseDTO {
 	resp := dto.LessonResponseDTO{
 		ID:           lesson.ID,
 		SectionID:    lesson.SectionID,
@@ -232,30 +232,9 @@ func (s *SectionService) toLessonResponseDTO(lesson *model.Lesson, contents []mo
 				Title:        c.Title,
 				VideoURL:     c.VideoURL,
 				Duration:     c.Duration,
-				StreamID:     c.StreamID,
 				DisplayOrder: c.DisplayOrder,
 				CreatedAt:    c.CreatedAt,
 				UpdatedAt:    c.UpdatedAt,
-			}
-		}
-	}
-
-	if len(sessions) > 0 {
-		resp.Sessions = make([]dto.LessonSessionResponseDTO, len(sessions))
-		for i, sess := range sessions {
-			resp.Sessions[i] = dto.LessonSessionResponseDTO{
-				ID:          sess.ID,
-				LessonID:    sess.LessonID,
-				Title:       sess.Title,
-				Description: sess.Description,
-				StartTime:   sess.StartTime,
-				EndTime:     sess.EndTime,
-				MeetingURL:  sess.MeetingURL,
-				MeetingID:   sess.MeetingID,
-				HostID:      sess.HostID,
-				Status:      sess.Status,
-				CreatedAt:   sess.CreatedAt,
-				UpdatedAt:   sess.UpdatedAt,
 			}
 		}
 	}

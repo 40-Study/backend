@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"fmt"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -24,7 +26,7 @@ func (h *SectionHandler) CreateSection(c *fiber.Ctx) error {
 			"error":   err.Error(),
 		})
 	}
-	
+
 	var req dto.CreateSectionDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -55,6 +57,7 @@ func (h *SectionHandler) CreateSection(c *fiber.Ctx) error {
 }
 
 func (h *SectionHandler) GetAllSections(c *fiber.Ctx) error {
+
 	courseID, err := uuid.Parse(c.Params("course_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -62,6 +65,7 @@ func (h *SectionHandler) GetAllSections(c *fiber.Ctx) error {
 			"error":   err.Error(),
 		})
 	}
+	fmt.Print(courseID)
 
 	sections, err := h.service.GetAllSections(c.Context(), courseID)
 	if err != nil {

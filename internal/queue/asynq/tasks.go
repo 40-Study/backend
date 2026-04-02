@@ -8,27 +8,32 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+	"study.com/v1/internal/repository"
 	"study.com/v1/internal/socket"
 )
 
 // ===================== Task Types =====================
 
 const (
-	TaskClassReminder    = "class_reminder"
-	TaskAssignmentDeadline = "assignment_deadline"
-	TaskDailyCheckin     = "daily_checkin"
-	TaskStreakWarning     = "streak_warning"
-	TaskPaymentPending   = "payment_pending"
+	TaskLessonReminder           string = "lesson_reminder"
+	TaskScheduleLivestreamRemind string = "schedule_livestream_remind"
+	TaskAutoStartLivestream      string = "auto_start_livestream"
+	TaskAssignmentDeadline       string = "assignment_deadline"
+	TaskPaymentPending           string = "payment_pending"
+	TaskDailyCheckin             string = "daily_checkin"
+	TaskStreakWarning            string = "streak_warning"
 )
 
 // ===================== Payloads =====================
 
 type ClassReminderPayload struct {
-	ClassID   uuid.UUID   `json:"class_id"`
-	ClassName string      `json:"class_name"`
-	Room      string      `json:"room,omitempty"`
-	StartTime string      `json:"start_time"` // HH:MM
-	UserIDs   []uuid.UUID `json:"user_ids"`
+	SessionID  uuid.UUID  `json:"session_id"`
+	ClassID    uuid.UUID  `json:"class_id"`
+	CourseID   *uuid.UUID `json:"course_id,omitempty"`
+	ClassName  string     `json:"class_name"`
+	Room       string     `json:"room,omitempty"`
+	StartTime  string     `json:"start_time"` // HH:MM
 	MinsBefore int        `json:"mins_before"`
 }
 
@@ -46,16 +51,153 @@ type PaymentPendingPayload struct {
 	TotalAmount string    `json:"total_amount"`
 }
 
+type ScheduleLivestreamRemindPayload struct {
+	SessionID   uuid.UUID  `json:"session_id"`
+	ClassID     *uuid.UUID `json:"class_id,omitempty"`
+	CourseID    *uuid.UUID `json:"course_id,omitempty"`
+	Title       string     `json:"title"`
+	ScheduledAt time.Time  `json:"scheduled_at"`
+}
+
+type AutoStartLivestreamPayload struct {
+	SessionID uuid.UUID `json:"session_id"`
+}
+
+type LivestreamStarter func(ctx context.Context, sessionID uuid.UUID) error
+
 // ===================== Register =====================
 
-func RegisterTasks(q *Queue, notifier *socket.Notifier) {
+func RegisterTasks(q *Queue, notifier *socket.Notifier, classRepo repository.ClassRepositoryInterface, enrollmentRepo repository.EnrollmentRepositoryInterface, redisClient *redis.Client, livestreamStarter LivestreamStarter) {
 
+	q.Handle(TaskScheduleLivestreamRemind, func(ctx context.Context, payload []byte) error {
+		var p ScheduleLivestreamRemindPayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return fmt.Errorf("unmarshal schedule livestream remind: %w", err)
+		}
 
+		var reminderName string
+		if p.ClassID != nil {
+			class, err := classRepo.GetByID(ctx, *p.ClassID)
+			if err != nil || class == nil {
+				log.Printf("[task] Schedule livestream remind: class not found %s", p.ClassID)
+				return nil
+			}
+			reminderName = class.Name
+		} else if p.CourseID != nil {
+			reminderName = p.Title
+		} else {
+			log.Printf("[task] Schedule livestream remind: no class_id or course_id")
+			return nil
+		}
 
-	q.Handle(TaskClassReminder, func(ctx context.Context, payload []byte) error {
+		reminderPayload := ClassReminderPayload{
+			SessionID: p.SessionID,
+			CourseID:  p.CourseID,
+			ClassName: reminderName,
+			Room:      p.Title,
+			StartTime: p.ScheduledAt.Format("15:04"),
+		}
+		if p.ClassID != nil {
+			reminderPayload.ClassID = *p.ClassID
+		}
+
+		reminders := []struct {
+			mins int
+			at   time.Time
+		}{
+			{30, p.ScheduledAt.Add(-30 * time.Minute)},
+			{15, p.ScheduledAt.Add(-15 * time.Minute)},
+			{5, p.ScheduledAt.Add(-5 * time.Minute)},
+			{1, p.ScheduledAt.Add(-1 * time.Minute)},
+		}
+
+		log.Printf("[task] Processing schedule_livestream_remind: class=%s scheduledAt=%v now=%v", reminderName, p.ScheduledAt, time.Now())
+
+		for _, r := range reminders {
+			reminderPayload.MinsBefore = r.mins
+			if r.at.Before(time.Now()) {
+				log.Printf("[task]   SKIP reminder -%d min (at=%v) — already past", r.mins, r.at)
+			} else {
+				log.Printf("[task]   OK reminder -%d min (at=%v)", r.mins, r.at)
+			}
+			q.ScheduleAt(TaskLessonReminder, reminderPayload, r.at, "notifications")
+		}
+
+		autoStartPayload := AutoStartLivestreamPayload{SessionID: p.SessionID}
+		autoStartAt := p.ScheduledAt.Add(-5 * time.Minute)
+		if autoStartAt.Before(time.Now()) {
+			log.Printf("[task]   SKIP auto-start (at=%v) — already past", autoStartAt)
+		} else {
+			log.Printf("[task]   OK auto-start (at=%v)", autoStartAt)
+		}
+		q.ScheduleAt(TaskAutoStartLivestream, autoStartPayload, autoStartAt, "notifications")
+
+		log.Printf("[task] Done scheduling for %s", reminderName)
+		return nil
+	})
+
+	q.Handle(TaskAutoStartLivestream, func(ctx context.Context, payload []byte) error {
+		var p AutoStartLivestreamPayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return fmt.Errorf("unmarshal auto start livestream: %w", err)
+		}
+
+		log.Printf("[task] Auto-start livestream triggered for session %s", p.SessionID)
+
+		err := livestreamStarter(ctx, p.SessionID)
+		if err != nil {
+			log.Printf("[task] Auto-start livestream FAILED session=%s err=%v", p.SessionID, err)
+		} else {
+			log.Printf("[task] Auto-start livestream SUCCESS session=%s — room is now LIVE", p.SessionID)
+		}
+		return nil
+	})
+
+	q.Handle(TaskLessonReminder, func(ctx context.Context, payload []byte) error {
 		var p ClassReminderPayload
 		if err := json.Unmarshal(payload, &p); err != nil {
 			return fmt.Errorf("unmarshal class reminder: %w", err)
+		}
+
+		var userIDs []uuid.UUID
+
+		if p.CourseID != nil {
+			// Course-based: lấy enrolled students
+			enrolledIDs, err := enrollmentRepo.GetEnrolledUserIDsByCourseID(ctx, *p.CourseID)
+			if err != nil {
+				log.Printf("[task] Course reminder: failed to get enrolled users: %v", err)
+				return nil
+			}
+			userIDs = enrolledIDs
+		} else {
+			// Class-based: flow cũ
+			studentCount, _ := classRepo.GetStudentCount(ctx, p.ClassID)
+			if studentCount == 0 {
+				return nil
+			}
+			students, _, _ := classRepo.GetStudents(ctx, p.ClassID, 1, int(studentCount))
+			for _, sc := range students {
+				userIDs = append(userIDs, sc.StudentID)
+			}
+		}
+
+		// Filter out already-joined users
+		redisKey := fmt.Sprintf("livestream:%s:joined", p.SessionID.String())
+		joinedUsers, _ := redisClient.SMembers(ctx, redisKey).Result()
+		joinedSet := make(map[string]bool)
+		for _, uid := range joinedUsers {
+			joinedSet[uid] = true
+		}
+
+		var filteredIDs []uuid.UUID
+		for _, uid := range userIDs {
+			if !joinedSet[uid.String()] {
+				filteredIDs = append(filteredIDs, uid)
+			}
+		}
+
+		if len(filteredIDs) == 0 {
+			return nil
 		}
 
 		room := p.Room
@@ -65,90 +207,15 @@ func RegisterTasks(q *Queue, notifier *socket.Notifier) {
 
 		noti := socket.NotificationPayload{
 			ID:               uuid.New(),
-			Title:            fmt.Sprintf("Lịch học sắp bắt đầu: %s", p.ClassName),
-			Content:          fmt.Sprintf("Lớp %s sẽ bắt đầu sau %d phút tại %s (lúc %s)", p.ClassName, p.MinsBefore, room, p.StartTime),
-			NotificationType: "class_reminder",
+			Title:            fmt.Sprintf("Livestream sắp bắt đầu: %s", p.ClassName),
+			Content:          fmt.Sprintf("%s sẽ bắt đầu sau %d phút tại %s (lúc %s)", p.ClassName, p.MinsBefore, room, p.StartTime),
+			NotificationType: "livestream_reminder",
 			CreatedAt:        time.Now().UTC().Format(time.RFC3339),
 		}
 
-		log.Printf("[task] Class reminder: class=%s, %d min before, users=%d", p.ClassName, p.MinsBefore, len(p.UserIDs))
-		notifier.SendNotificationToMany(p.UserIDs, noti)
+		log.Printf("[task] Reminder sent: class=%s, -%d min, start=%s, notify=%d users", p.ClassName, p.MinsBefore, p.StartTime, len(filteredIDs))
+		notifier.SendNotificationToMany(filteredIDs, noti)
 		return nil
 	})
 
-	// q.Handle(TaskAssignmentDeadline, func(ctx context.Context, payload []byte) error {
-	// 	var p AssignmentDeadlinePayload
-	// 	if err := json.Unmarshal(payload, &p); err != nil {
-	// 		return fmt.Errorf("unmarshal assignment deadline: %w", err)
-	// 	}
-
-	// 	refType := "assignment"
-	// 	noti := socket.NotificationPayload{
-	// 		ID:               uuid.New(),
-	// 		Title:            fmt.Sprintf("Deadline sắp tới: %s", p.Title),
-	// 		Content:          fmt.Sprintf("Bài tập \"%s\" sẽ hết hạn sau %d phút", p.Title, p.MinsBefore),
-	// 		NotificationType: "assignment_deadline",
-	// 		ReferenceType:    &refType,
-	// 		ReferenceID:      &p.AssignmentID,
-	// 		CreatedAt:        time.Now().UTC().Format(time.RFC3339),
-	// 	}
-
-	// 	log.Printf("[task] Assignment deadline: %s, %d min before, users=%d", p.Title, p.MinsBefore, len(p.UserIDs))
-	// 	notifier.SendNotificationToMany(p.UserIDs, noti)
-	// 	return nil
-	// })
-
-	// q.Handle(TaskPaymentPending, func(ctx context.Context, payload []byte) error {
-	// 	var p PaymentPendingPayload
-	// 	if err := json.Unmarshal(payload, &p); err != nil {
-	// 		return fmt.Errorf("unmarshal payment pending: %w", err)
-	// 	}
-
-	// 	refType := "order"
-	// 	noti := socket.NotificationPayload{
-	// 		ID:               uuid.New(),
-	// 		Title:            "Đơn hàng chờ thanh toán",
-	// 		Content:          fmt.Sprintf("Đơn hàng #%s (%s) đang chờ thanh toán", p.OrderNumber, p.TotalAmount),
-	// 		NotificationType: "payment_pending",
-	// 		ReferenceType:    &refType,
-	// 		ReferenceID:      &p.OrderID,
-	// 		CreatedAt:        time.Now().UTC().Format(time.RFC3339),
-	// 	}
-
-	// 	log.Printf("[task] Payment pending: order=%s, user=%s", p.OrderNumber, p.UserID)
-	// 	notifier.SendNotification(p.UserID, noti)
-	// 	return nil
-	// })
-
-
-	// q.Schedule(TaskDailyCheckin, DailyAt(7, 0), func(ctx context.Context, _ []byte) error {
-	// 	noti := socket.NotificationPayload{
-	// 		ID:               uuid.New(),
-	// 		Title:            "Điểm danh hàng ngày",
-	// 		Content:          "Đừng quên điểm danh hôm nay để giữ streak!",
-	// 		NotificationType: "daily_checkin",
-	// 		CreatedAt:        time.Now().UTC().Format(time.RFC3339),
-	// 	}
-
-	// 	onlineUsers := notifier.GetOnlineUsers()
-	// 	log.Printf("[task] Daily checkin reminder: %d online users", len(onlineUsers))
-	// 	notifier.SendNotificationToMany(onlineUsers, noti)
-	// 	return nil
-	// }, "low")
-
-	// q.Schedule(TaskStreakWarning, DailyAt(20, 0), func(ctx context.Context, _ []byte) error {
-	// 	// Gửi nhắc streak cho tất cả user online
-	// 	noti := socket.NotificationPayload{
-	// 		ID:               uuid.New(),
-	// 		Title:            "Streak sắp mất!",
-	// 		Content:          "Hoàn thành bài học hôm nay để duy trì streak!",
-	// 		NotificationType: "streak_warning",
-	// 		CreatedAt:        time.Now().UTC().Format(time.RFC3339),
-	// 	}
-
-	// 	onlineUsers := notifier.GetOnlineUsers()
-	// 	log.Printf("[task] Streak warning: %d online users", len(onlineUsers))
-	// 	notifier.SendNotificationToMany(onlineUsers, noti)
-	// 	return nil
-	// }, "notifications")
 }

@@ -100,13 +100,10 @@ type LoginResponseDto struct {
 	Completed    bool   `json:"completed"`
 	SessionToken string `json:"session_token,omitempty"`
 
-	// NEW: Unified roles list (gộp SystemRole + OrganizationRole)
+	// Unified roles list (gộp SystemRole + OrganizationRole)
 	// Hiển thị: "Giáo viên tự do", "Kế toán - Trường PTIT", etc.
-	Roles []UnifiedRoleDto `json:"roles,omitempty"`
-
-	// DEPRECATED: Giữ lại cho backward compatibility
-	SystemRoles          []SystemRoleDto `json:"system_roles,omitempty"`
-	RequiresOrgSelection bool            `json:"requires_org_selection,omitempty"`
+	Roles                []UnifiedRoleDto `json:"roles,omitempty"`
+	RequiresOrgSelection bool             `json:"requires_org_selection,omitempty"`
 	Organizations        []OrgContextDto `json:"organizations,omitempty"`
 
 	// Chỉ có khi Completed = true
@@ -275,7 +272,6 @@ type SelectRoleResponseDto struct {
 	User                 UserResponseDto   `json:"user"`
 	ActiveRole           UnifiedRoleDto    `json:"active_role"`
 	ActiveOrg            *OrgContextDto    `json:"active_org,omitempty"`
-	SystemRoles          []SystemRoleDto   `json:"system_roles,omitempty"`
 	EntryContext         *EntryContext     `json:"entry_context,omitempty"`
 	CurrentDevice        *DeviceSessionDto `json:"current_device,omitempty"`
 }

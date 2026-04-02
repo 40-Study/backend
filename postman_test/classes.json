@@ -1,15 +1,15 @@
 {
   "info": {
-    "name": "Classes",
+    "name": "Classes (under Courses)",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "base_url", "value": "http://localhost:3000/api" },
     { "key": "token", "value": "" },
+    { "key": "course_id", "value": "" },
     { "key": "class_id", "value": "" },
     { "key": "teacher_id", "value": "" },
     { "key": "student_id", "value": "" },
-    { "key": "schedule_id", "value": "" },
     { "key": "attendance_id", "value": "" }
   ],
   "auth": {
@@ -21,36 +21,36 @@
       "name": "Classes",
       "item": [
         {
-          "name": "Create Class",
+          "name": "Get Classes by Course",
           "request": {
-            "method": "POST",
-            "url": "{{base_url}}/classes",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"CS101\",\n  \"description\": \"Intro to Computer Science\",\n  \"course_id\": null,\n  \"max_students\": 50,\n  \"start_date\": \"2025-01-01\",\n  \"end_date\": \"2025-06-01\"\n}"
-            }
+            "method": "GET",
+            "url": "{{base_url}}/courses/{{course_id}}/classes"
           }
         },
         {
-          "name": "Get All Classes",
+          "name": "Create Class for Course",
           "request": {
-            "method": "GET",
-            "url": "{{base_url}}/classes"
+            "method": "POST",
+            "url": "{{base_url}}/courses/{{course_id}}/classes",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"CS101\",\n  \"description\": \"Intro to Computer Science\",\n  \"max_students\": 50,\n  \"start_date\": \"2025-01-01\",\n  \"end_date\": \"2025-06-01\"\n}"
+            }
           }
         },
         {
           "name": "Get Class By ID",
           "request": {
             "method": "GET",
-            "url": "{{base_url}}/classes/{{class_id}}"
+            "url": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}"
           }
         },
         {
           "name": "Update Class",
           "request": {
             "method": "PUT",
-            "url": "{{base_url}}/classes/{{class_id}}",
+            "url": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
@@ -62,7 +62,7 @@
           "name": "Delete Class",
           "request": {
             "method": "DELETE",
-            "url": "{{base_url}}/classes/{{class_id}}"
+            "url": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}"
           }
         }
       ]
@@ -74,11 +74,11 @@
           "name": "Assign Teacher To Class",
           "request": {
             "method": "POST",
-            "url": "{{base_url}}/classes/{{class_id}}/teachers",
+            "url": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}/teachers",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"teachers\": [\n    {\n      \"teacher_id\": \"<teacher_uuid>\",\n      \"role\": \"main\"\n    }\n  ]\n}"
+              "raw": "{\n  \"teacher_id\": \"<teacher_uuid>\",\n  \"role\": \"primary\"\n}"
             }
           }
         },
@@ -86,14 +86,14 @@
           "name": "Remove Teacher From Class",
           "request": {
             "method": "DELETE",
-            "url": "{{base_url}}/classes/{{class_id}}/teachers/{{teacher_id}}"
+            "url": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}/teachers/{{teacher_id}}"
           }
         },
         {
           "name": "Get Teachers By Class",
           "request": {
             "method": "GET",
-            "url": "{{base_url}}/classes/{{class_id}}/teachers"
+            "url": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}/teachers"
           }
         }
       ]
@@ -105,7 +105,7 @@
           "name": "Enroll Student To Class",
           "request": {
             "method": "POST",
-            "url": "{{base_url}}/classes/{{class_id}}/students",
+            "url": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}/students",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
@@ -117,57 +117,34 @@
           "name": "Remove Student From Class",
           "request": {
             "method": "DELETE",
-            "url": "{{base_url}}/classes/{{class_id}}/students/{{student_id}}"
+            "url": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}/students/{{student_id}}"
           }
         },
         {
           "name": "Get Students By Class",
           "request": {
             "method": "GET",
-            "url": "{{base_url}}/classes/{{class_id}}/students"
+            "url": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}/students"
           }
         }
       ]
     },
     {
-      "name": "Schedules",
+      "name": "Content Schedule",
       "item": [
         {
-          "name": "Create Class Schedule",
-          "request": {
-            "method": "POST",
-            "url": "{{base_url}}/classes/{{class_id}}/schedules",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"day_of_week\": 1,\n  \"start_time\": \"08:00\",\n  \"end_time\": \"10:00\",\n  \"room\": \"A101\"\n}"
-            }
-          }
-        },
-        {
-          "name": "Get All Class Schedules",
+          "name": "Get Content Schedule for Class",
           "request": {
             "method": "GET",
-            "url": "{{base_url}}/classes/{{class_id}}/schedules"
-          }
-        },
-        {
-          "name": "Update Class Schedule",
-          "request": {
-            "method": "PUT",
-            "url": "{{base_url}}/classes/{{class_id}}/schedules/{{schedule_id}}",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"day_of_week\": 2,\n  \"start_time\": \"09:00\",\n  \"end_time\": \"11:00\",\n  \"room\": \"B202\"\n}"
+            "url": {
+              "raw": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}/contents?page=1&page_size=20",
+              "host": ["{{base_url}}"],
+              "path": ["courses", "{{course_id}}", "classes", "{{class_id}}", "contents"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "20" }
+              ]
             }
-          }
-        },
-        {
-          "name": "Delete Class Schedule",
-          "request": {
-            "method": "DELETE",
-            "url": "{{base_url}}/classes/{{class_id}}/schedules/{{schedule_id}}"
           }
         }
       ]
@@ -179,7 +156,7 @@
           "name": "Mark Attendance",
           "request": {
             "method": "POST",
-            "url": "{{base_url}}/classes/{{class_id}}/attendances",
+            "url": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}/attendances",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
@@ -191,21 +168,21 @@
           "name": "Get All Attendances",
           "request": {
             "method": "GET",
-            "url": "{{base_url}}/classes/{{class_id}}/attendances"
+            "url": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}/attendances"
           }
         },
         {
           "name": "Get Attendance By ID",
           "request": {
             "method": "GET",
-            "url": "{{base_url}}/classes/{{class_id}}/attendances/{{attendance_id}}"
+            "url": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}/attendances/{{attendance_id}}"
           }
         },
         {
           "name": "Update Attendance",
           "request": {
             "method": "PUT",
-            "url": "{{base_url}}/classes/{{class_id}}/attendances/{{attendance_id}}",
+            "url": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}/attendances/{{attendance_id}}",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
@@ -217,7 +194,7 @@
           "name": "Delete Attendance",
           "request": {
             "method": "DELETE",
-            "url": "{{base_url}}/classes/{{class_id}}/attendances/{{attendance_id}}"
+            "url": "{{base_url}}/courses/{{course_id}}/classes/{{class_id}}/attendances/{{attendance_id}}"
           }
         }
       ]

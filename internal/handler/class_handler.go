@@ -13,6 +13,8 @@ type ClassHandlerInterface interface {
 	GetClassByID(c *fiber.Ctx) error
 	UpdateClass(c *fiber.Ctx) error
 	DeleteClass(c *fiber.Ctx) error
+	GetClassesByCourseID(c *fiber.Ctx) error
+	CreateClassForCourse(c *fiber.Ctx) error
 	AssignTeacherToClass(c *fiber.Ctx) error
 	RemoveTeacherFromClass(c *fiber.Ctx) error
 	GetTeachersByClass(c *fiber.Ctx) error
@@ -52,6 +54,38 @@ func (h *ClassHandler) CreateClass(c *fiber.Ctx) error {
 	})
 }
 
+func (h *ClassHandler) CreateClassForCourse(c *fiber.Ctx) error {
+	courseID, err := uuid.Parse(c.Params("course_id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid course ID",
+			"error":   err.Error(),
+		})
+	}
+
+	var req dto.CreateClassDTO
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid request body",
+			"error":   err.Error(),
+		})
+	}
+	req.CourseID = &courseID
+
+	class, err := h.service.CreateClass(c.Context(), req)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Failed to create class",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"message": "Class created successfully",
+		"data":    class,
+	})
+}
+
 func (h *ClassHandler) GetAllClasses(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
@@ -62,6 +96,29 @@ func (h *ClassHandler) GetAllClasses(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve classes",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Classes retrieved successfully",
+		"data":    classes,
+	})
+}
+
+func (h *ClassHandler) GetClassesByCourseID(c *fiber.Ctx) error {
+	courseID, err := uuid.Parse(c.Params("course_id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid course ID",
+			"error":   err.Error(),
+		})
+	}
+
+	classes, err := h.service.GetClassesByCourseID(c.Context(), courseID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to get classes",
 			"error":   err.Error(),
 		})
 	}

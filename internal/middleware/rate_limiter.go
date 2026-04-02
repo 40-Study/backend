@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/redis/go-redis/v9"
+	"study.com/v1/internal/constants"
 )
 
 // RateLimitConfig holds rate limiting configuration
@@ -143,7 +144,7 @@ func NewLoginAttemptTracker(rdb *redis.Client) *LoginAttemptTracker {
 // RecordFailedAttempt records a failed login attempt
 // Returns true if account should be locked
 func (t *LoginAttemptTracker) RecordFailedAttempt(ctx context.Context, email string) (bool, int, error) {
-	key := fmt.Sprintf("login_attempts:%s", email)
+	key := constants.KeyLoginAttempts(email)
 
 	count, err := t.rdb.Incr(ctx, key).Result()
 	if err != nil {
@@ -162,7 +163,7 @@ func (t *LoginAttemptTracker) RecordFailedAttempt(ctx context.Context, email str
 
 	// Lock account if max attempts exceeded
 	if int(count) >= t.maxAttempts {
-		lockKey := fmt.Sprintf("login_locked:%s", email)
+		lockKey := constants.KeyLoginLocked(email)
 		t.rdb.Set(ctx, lockKey, "1", t.lockoutDuration)
 		return true, remaining, nil
 	}
@@ -172,7 +173,7 @@ func (t *LoginAttemptTracker) RecordFailedAttempt(ctx context.Context, email str
 
 // IsLocked checks if account is locked
 func (t *LoginAttemptTracker) IsLocked(ctx context.Context, email string) (bool, time.Duration, error) {
-	lockKey := fmt.Sprintf("login_locked:%s", email)
+	lockKey := constants.KeyLoginLocked(email)
 
 	exists, err := t.rdb.Exists(ctx, lockKey).Result()
 	if err != nil {
@@ -193,7 +194,7 @@ func (t *LoginAttemptTracker) IsLocked(ctx context.Context, email string) (bool,
 
 // ClearAttempts clears failed attempts after successful login
 func (t *LoginAttemptTracker) ClearAttempts(ctx context.Context, email string) error {
-	key := fmt.Sprintf("login_attempts:%s", email)
+	key := constants.KeyLoginAttempts(email)
 	return t.rdb.Del(ctx, key).Err()
 }
 
