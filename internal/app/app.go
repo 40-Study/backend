@@ -99,9 +99,6 @@ func New() (*App, error) {
 		handlers.Order,
 		handlers.Voucher,
 
-		// ===== Wallet =====
-		handlers.Wallet,
-
 		// ===== Gamification =====
 		handlers.Achievement,
 		handlers.Leaderboard,

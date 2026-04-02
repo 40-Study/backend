@@ -62,9 +62,6 @@ type Services struct {
 	TransactionService *service.TransactionService
 	Voucher            *service.VoucherService
 
-	// ===== Wallet =====
-	Wallet *service.WalletService
-
 	// ===== Gamification =====
 	Achievement *service.AchievementService
 	Leaderboard *service.LeaderboardService
@@ -252,9 +249,6 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		),
 		TransactionService: transactionSvc,
 		Voucher:            service.NewVoucherService(repos.Voucher, repos.User),
-
-		// ===== Wallet =====
-		Wallet: service.NewWalletService(repos.Wallet),
 
 		// ===== Gamification =====
 		Achievement: service.NewAchievementService(repos.Achievement),

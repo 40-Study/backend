@@ -54,9 +54,6 @@ type Handlers struct {
 	Order   *handler.OrderHandler
 	Voucher *handler.VoucherHandler
 
-	// ===== Wallet =====
-	Wallet *handler.WalletHandler
-
 	// ===== Gamification =====
 	Achievement *handler.AchievementHandler
 	Leaderboard *handler.LeaderboardHandler
@@ -112,9 +109,6 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handler
 		// ===== Order & Payment =====
 		Order:   handler.NewOrderHandler(services.Order, services.Payment),
 		Voucher: handler.NewVoucherHandler(services.Voucher),
-
-		// ===== Wallet =====
-		Wallet: handler.NewWalletHandler(services.Wallet),
 
 		// ===== Gamification =====
 		Achievement: handler.NewAchievementHandler(services.Achievement),
