@@ -62,6 +62,14 @@ type Repositories struct {
 	PaymentEvent       *repository.PaymentEventRepository
 	IdempotencyKey     *repository.IdempotencyKeyRepository
 	OrderLock          *repository.OrderLockRepository
+
+	// ===== Wallet =====
+	Wallet *repository.WalletRepository
+
+	// ===== Gamification =====
+	Achievement *repository.AchievementRepository
+	Leaderboard *repository.LeaderboardRepository
+	UserStats   *repository.UserStatsRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -121,6 +129,14 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		PaymentEvent:       repository.NewPaymentEventRepository(db),
 		IdempotencyKey:     repository.NewIdempotencyKeyRepository(db),
 		OrderLock:          repository.NewOrderLockRepository(db),
+
+		// ===== Wallet =====
+		Wallet: repository.NewWalletRepository(db),
+
+		// ===== Gamification =====
+		Achievement: repository.NewAchievementRepository(db),
+		Leaderboard: repository.NewLeaderboardRepository(db),
+		UserStats:   repository.NewUserStatsRepository(db),
 	}
 
 }

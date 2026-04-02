@@ -99,6 +99,14 @@ func New() (*App, error) {
 		handlers.Order,
 		handlers.Voucher,
 
+		// ===== Wallet =====
+		handlers.Wallet,
+
+		// ===== Gamification =====
+		handlers.Achievement,
+		handlers.Leaderboard,
+		handlers.UserStats,
+
 		resources.Redis,
 		resources.MinioClient,
 	)

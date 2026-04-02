@@ -60,7 +60,15 @@ type Services struct {
 	Order              *service.OrderService
 	Payment            *service.PaymentService
 	TransactionService *service.TransactionService
-	Voucher           *service.VoucherService
+	Voucher            *service.VoucherService
+
+	// ===== Wallet =====
+	Wallet *service.WalletService
+
+	// ===== Gamification =====
+	Achievement *service.AchievementService
+	Leaderboard *service.LeaderboardService
+	UserStats   *service.UserStatsService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
@@ -243,7 +251,15 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			transactionSvc,
 		),
 		TransactionService: transactionSvc,
-		Voucher:           service.NewVoucherService(repos.Voucher, repos.User),
+		Voucher:            service.NewVoucherService(repos.Voucher, repos.User),
+
+		// ===== Wallet =====
+		Wallet: service.NewWalletService(repos.Wallet),
+
+		// ===== Gamification =====
+		Achievement: service.NewAchievementService(repos.Achievement),
+		Leaderboard: service.NewLeaderboardService(repos.Leaderboard),
+		UserStats:   service.NewUserStatsService(repos.UserStats),
 	}
 }
 
