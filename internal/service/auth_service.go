@@ -1028,7 +1028,6 @@ func (s *AuthService) GetMyProfile(ctx context.Context, userID uuid.UUID, active
 		}
 	}
 
-	// 4. Build active role context
 	var activeRoleDto *dto.SystemRoleDto
 	for _, sr := range systemRoles {
 		if sr.Name == activeRole {
@@ -1038,7 +1037,6 @@ func (s *AuthService) GetMyProfile(ctx context.Context, userID uuid.UUID, active
 		}
 	}
 
-	// 5. Build active org context
 	var activeOrgDto *dto.OrgContextDto
 	if activeOrgID != nil {
 		for _, org := range orgs {
