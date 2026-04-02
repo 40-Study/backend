@@ -35,6 +35,7 @@ type ClassRepositoryInterface interface {
 	RemoveStudent(ctx context.Context, classID, studentID uuid.UUID) error
 	GetStudents(ctx context.Context, classID uuid.UUID, page, pageSize int) ([]model.StudentClass, int64, error)
 	GetStudentCount(ctx context.Context, classID uuid.UUID) (int64, error)
+	GetClassesByTeacher(ctx context.Context, teacherID uuid.UUID) ([]model.Class, error)
 }
 
 type ClassRepository struct {
@@ -242,4 +243,17 @@ func (r *ClassRepository) GetStudentCount(ctx context.Context, classID uuid.UUID
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.StudentClass{}).Where("class_id = ?", classID).Count(&count).Error
 	return count, err
+}
+
+func (r *ClassRepository) GetClassesByTeacher(ctx context.Context, teacherID uuid.UUID) ([]model.Class, error) {
+	var classes []model.Class
+	if err := r.db.WithContext(ctx).
+		Model(&model.Class{}).
+		Joins("JOIN teacher_classes ON teacher_classes.class_id = classes.id").
+		Where("teacher_classes.teacher_id = ?", teacherID).
+		Order("classes.created_at DESC").
+		Find(&classes).Error; err != nil {
+		return nil, err
+	}
+	return classes, nil
 }

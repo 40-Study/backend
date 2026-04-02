@@ -62,6 +62,10 @@ type Services struct {
 	TransactionService *service.TransactionService
 	Voucher            *service.VoucherService
 
+	// ===== Gamification =====
+	Achievement *service.AchievementService
+	Leaderboard *service.LeaderboardService
+	UserStats   *service.UserStatsService
 	// ===== Wallet =====
 	Wallet *service.WalletService
 }
@@ -149,6 +153,9 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		repos.Assignment,
 	)
 
+	classSvc := service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student, repos.ParentStudent)
+	teacherSvc := service.NewTeacherService(repos.Teacher, classSvc)
+
 	// ================= Return Services =================
 	return &Services{
 		// ===== Auth =====
@@ -189,14 +196,14 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			repos.UserOrganizationRole,
 		),
 
-		// ===== Teacher =====
-		Teacher:        service.NewTeacherService(repos.Teacher),
-		TeacherProfile: service.NewTeacherProfileService(repos.TeacherProfile),
-
 		// ===== Class =====
-		Class:         service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student),
+		Class:         classSvc,
 		ClassSchedule: service.NewClassScheduleService(repos.ClassSchedule, repos.Class),
 		Attendance:    service.NewAttendanceService(repos.Attendance),
+
+		// ===== Teacher =====
+		Teacher:        teacherSvc,
+		TeacherProfile: service.NewTeacherProfileService(repos.TeacherProfile),
 
 		// ===== Course Management =====
 		Category:      service.NewCategoryService(repos.Category),
@@ -248,6 +255,10 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		TransactionService: transactionSvc,
 		Voucher:            service.NewVoucherService(repos.Voucher, repos.User),
 
+		// ===== Gamification =====
+		Achievement: service.NewAchievementService(repos.Achievement),
+		Leaderboard: service.NewLeaderboardService(repos.Leaderboard),
+		UserStats:   service.NewUserStatsService(repos.UserStats),
 		// ===== Wallet =====
 		Wallet: service.NewWalletService(repos.Wallet),
 	}
