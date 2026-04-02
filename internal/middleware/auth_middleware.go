@@ -1,26 +1,18 @@
 package middleware
 
 import (
-	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/redis/go-redis/v9"
 	"study.com/v1/internal/config"
+	"study.com/v1/internal/constants"
 	"study.com/v1/internal/utils"
 )
 
 func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// ===== 1. Get access token from Header or Cookie =====
 		var accessToken string
-
-		// Try Header first: Authorization: Bearer <token>
-		authHeader := c.Get("Authorization")
-		if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
-			accessToken = strings.TrimPrefix(authHeader, "Bearer ")
-		}
 
 		// Fallback to Cookie
 		if accessToken == "" {
@@ -33,7 +25,6 @@ func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 			})
 		}
 
-		// ===== 2. Parse and validate JWT =====
 		claims, err := utils.ParseToken(cfg, accessToken)
 		if err != nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -42,7 +33,7 @@ func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 		}
 
 		// ===== 3. Check user_version (for logout all) =====
-		userVersionKey := fmt.Sprintf("auth:user_version:%s", claims.UserID)
+		userVersionKey := constants.KeyUserVersion(claims.UserID.String())
 		userVerStr, err := rdb.Get(c.Context(), userVersionKey).Result()
 		if err == redis.Nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -76,10 +67,6 @@ func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 		return c.Next()
 	}
 }
-
-// Hybrid approach:
-// - Logout 1 device: Xóa refresh token từ Redis (access token vẫn valid đến hết hạn)
-// - Logout all devices: Increment userVersion → TẤT CẢ tokens invalid ngay lập tức
 
 func RequirePermissions(permissions ...string) fiber.Handler {
 	return func(c *fiber.Ctx) error {

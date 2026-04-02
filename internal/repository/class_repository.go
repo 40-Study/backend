@@ -17,6 +17,7 @@ type ClassRepositoryInterface interface {
 	Update(ctx context.Context, class *model.Class) error
 	Delete(ctx context.Context, id uuid.UUID, hardDelete bool) error
 	Exists(ctx context.Context, id uuid.UUID) (bool, error)
+	GetByCourseID(ctx context.Context, courseID uuid.UUID) ([]model.Class, error)
 
 	// Class relationship checks
 	TeacherClassExists(ctx context.Context, classID, teacherID uuid.UUID) (bool, error)
@@ -96,7 +97,7 @@ func (r *ClassRepository) Delete(ctx context.Context, id uuid.UUID, hardDelete b
 			if err := tx.Where("class_id = ?", id).Delete(&model.StudentClass{}).Error; err != nil {
 				return err
 			}
-			if err := tx.Where("class_id = ?", id).Delete(&model.ClassSchedule{}).Error; err != nil {
+			if err := tx.Where("class_id = ?", id).Delete(&model.ClassLessonContent{}).Error; err != nil {
 				return err
 			}
 			if err := tx.Where("class_id = ?", id).Delete(&model.Attendance{}).Error; err != nil {
@@ -112,6 +113,15 @@ func (r *ClassRepository) Exists(ctx context.Context, id uuid.UUID) (bool, error
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.Class{}).Where("id = ?", id).Count(&count).Error
 	return count > 0, err
+}
+
+func (r *ClassRepository) GetByCourseID(ctx context.Context, courseID uuid.UUID) ([]model.Class, error) {
+	var classes []model.Class
+	err := r.db.WithContext(ctx).
+		Where("course_id = ?", courseID).
+		Order("created_at DESC").
+		Find(&classes).Error
+	return classes, err
 }
 
 // Class relationship checks

@@ -74,6 +74,7 @@ type AnalyticsRepositoryInterface interface {
 	IncrementTotalViewers(ctx context.Context, sessionID uuid.UUID) error
 	IncrementTotalMessages(ctx context.Context, sessionID uuid.UUID) error
 	GetSubmissionStats(ctx context.Context, assignmentID uuid.UUID) (map[string]interface{}, error)
+	WithTx(tx *gorm.DB) AnalyticsRepositoryInterface
 }
 
 type AnalyticsRepository struct {
@@ -82,6 +83,10 @@ type AnalyticsRepository struct {
 
 func NewAnalyticsRepository(db *gorm.DB) *AnalyticsRepository {
 	return &AnalyticsRepository{db: db}
+}
+
+func (r *AnalyticsRepository) WithTx(tx *gorm.DB) AnalyticsRepositoryInterface {
+	return &AnalyticsRepository{db: tx}
 }
 
 func (r *AnalyticsRepository) GetBySession(ctx context.Context, sessionID uuid.UUID) (*model.LivestreamAnalytics, error) {

@@ -2,6 +2,9 @@ package utils
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"math/big"
 )
 
@@ -16,4 +19,18 @@ func GenerateOTP(length int) (string, error) {
 		otp[i] = charset[num.Int64()]
 	}
 	return string(otp), nil
+}
+
+// HashOTP creates a SHA256 hash of the OTP with email as salt
+// This prevents storing plaintext OTP in Redis
+func HashOTP(otp, email string) string {
+	h := sha256.New()
+	h.Write([]byte(otp + ":" + email))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// VerifyOTP compares OTP using constant-time comparison to prevent timing attacks
+func VerifyOTP(inputOTP, storedHash, email string) bool {
+	inputHash := HashOTP(inputOTP, email)
+	return subtle.ConstantTimeCompare([]byte(inputHash), []byte(storedHash)) == 1
 }

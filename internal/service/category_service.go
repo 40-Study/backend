@@ -192,7 +192,7 @@ func (s *CategoryService) toCategoryResponseDTO(category *model.Category) *dto.C
 		IconURL:      category.IconURL,
 		DisplayOrder: category.DisplayOrder,
 		IsActive:     category.IsActive,
-		CreatedAt:    category.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:    category.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:    category.CreatedAt,
+		UpdatedAt:    category.UpdatedAt,
 	}
 }

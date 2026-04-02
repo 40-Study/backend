@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"study.com/v1/internal/queue"
+	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/storage"
 )
@@ -43,8 +43,8 @@ type VideoProcessingServiceInterface interface {
 }
 
 type VideoProcessingService struct {
-	processor     *queue.VideoProcessor
-	queueSetup    *queue.VideoQueueSetup
+	processor     *rabbitmq_queue.VideoProcessor
+	queueSetup    *rabbitmq_queue.VideoQueueSetup
 	uploadRepo    repository.VideoUploadRepositoryInterface
 	uploadService VideoUploadServiceInterface
 	workerCtx     context.Context
@@ -55,10 +55,10 @@ func NewVideoProcessingService(
 	uploadRepo repository.VideoUploadRepositoryInterface,
 	storage *storage.MinioClient,
 	uploadService VideoUploadServiceInterface,
-	rabbitMQService *queue.RabbitMQService,
+	rabbitMQService *rabbitmq_queue.RabbitMQService,
 ) (*VideoProcessingService, error) {
 	// Initialize queue setup reusing existing RabbitMQ connection
-	queueSetup := queue.NewVideoQueueSetup(rabbitMQService)
+	queueSetup := rabbitmq_queue.NewVideoQueueSetup(rabbitMQService)
 
 	// Setup video queues
 	err := queueSetup.SetupVideoQueues()
@@ -70,7 +70,7 @@ func NewVideoProcessingService(
 	storageAdapter := &MinioClientAdapter{storage: storage}
 
 	// Initialize video processor
-	processor := queue.NewVideoProcessor(
+	processor := rabbitmq_queue.NewVideoProcessor(
 		uploadRepo,              // Interface type
 		storageAdapter,          // Adapter for storage interface
 		"ffmpeg",                // ffmpeg path
@@ -95,14 +95,14 @@ func (vps *VideoProcessingService) StartWorker(ctx context.Context) error {
 	// Start consuming video processing messages
 	err := vps.queueSetup.StartVideoProcessingConsumer(
 		vps.workerCtx,
-		func(message queue.VideoProcessingMessage) error {
+		func(message rabbitmq_queue.VideoProcessingMessage) error {
 			log.Printf("Processing video for upload: %s", message.UploadID)
 
 			// Set default processing options if not provided
 			if message.ProcessingOptions.GenerateThumbnail == false &&
 				message.ProcessingOptions.ScanForViruses == false &&
 				len(message.ProcessingOptions.EncodeProfiles) == 0 {
-				message.ProcessingOptions = queue.VideoProcessingOptions{
+				message.ProcessingOptions = rabbitmq_queue.VideoProcessingOptions{
 					GenerateThumbnail: true,
 					ScanForViruses:    true,
 					ExtractMetadata:   true,
@@ -172,7 +172,7 @@ func (vps *VideoProcessingService) performCleanup(ctx context.Context) {
 	}
 
 	// Publish cleanup message to queue for other cleanup tasks
-	cleanupMessage := queue.CleanupMessage{
+	cleanupMessage := rabbitmq_queue.CleanupMessage{
 		TaskType:       "scheduled_cleanup",
 		OlderThanHours: 24,
 		CreatedAt:      time.Now().Unix(),

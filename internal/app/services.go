@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"study.com/v1/internal/config"
-	"study.com/v1/internal/queue"
+	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/service"
 )
 
@@ -22,13 +22,13 @@ type Services struct {
 	Profile      *service.ProfileService
 
 	// ===== Teacher =====
-	Teacher        *service.TeacherService
+	Teacher        service.TeacherServiceInterface
 	TeacherProfile *service.TeacherProfileService
 
 	// ===== Class =====
-	Class         *service.ClassService
-	ClassSchedule *service.ClassScheduleService
-	Attendance    *service.AttendanceService
+	Class              *service.ClassService
+	ClassLessonContent *service.ClassLessonContentService
+	Attendance         *service.AttendanceService
 
 	// ===== Course Management =====
 	Category      *service.CategoryService
@@ -75,9 +75,9 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 	transactionSvc := initTransactionService(resources.Config)
 
 	// ================= Video Queue Setup =================
-	var videoQueue *queue.VideoQueueSetup
+	var videoQueue *rabbitmq_queue.VideoQueueSetup
 	if resources.RabbitMQ != nil {
-		videoQueue = queue.NewVideoQueueSetup(resources.RabbitMQ)
+		videoQueue = rabbitmq_queue.NewVideoQueueSetup(resources.RabbitMQ)
 		if err := videoQueue.SetupVideoQueues(); err != nil {
 			log.Printf("Warning: Failed to setup video queues: %v", err)
 			videoQueue = nil
@@ -116,6 +116,7 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		repos.Analytics,
 		resources.Redis,
 		livekitSvc,
+		resources.Queue,
 		resources.Config,
 	)
 
@@ -184,6 +185,7 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			repos.User,
 			repos.Role,
 			repos.Organization,
+			resources.Redis,
 		),
 
 		Permission: service.NewPermissionService(repos.Permission),
@@ -197,9 +199,9 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		),
 
 		// ===== Class =====
-		Class:         classSvc,
-		ClassSchedule: service.NewClassScheduleService(repos.ClassSchedule, repos.Class),
-		Attendance:    service.NewAttendanceService(repos.Attendance),
+		Class:              service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student, repos.ParentStudent),
+		ClassLessonContent: service.NewClassLessonContentService(repos.ClassLessonContent, repos.Class, repos.Lesson, repos.Enrollment, livestreamSvc),
+		Attendance:         service.NewAttendanceService(repos.Attendance),
 
 		// ===== Teacher =====
 		Teacher:        teacherSvc,
@@ -211,8 +213,8 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		Cart:          service.NewCartService(repos.CartItem, repos.Course, repos.Enrollment),
 		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag),
 		Section:       service.NewSectionService(repos.Section, repos.Course),
-		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, repos.Course),
-		LessonContent: service.NewLessonContentService(repos.LessonContent, repos.Lesson),
+		Lesson:        service.NewLessonService(repos.Lesson, repos.Section),
+		LessonContent: service.NewLessonContentService(repos.Lesson),
 		Enrollment:    service.NewEnrollmentService(repos.Enrollment, repos.Course, repos.Lesson),
 
 		// ===== Upload & Video =====

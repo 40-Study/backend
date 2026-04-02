@@ -65,6 +65,67 @@ func (h *TagHandler) GetAllTags(c *fiber.Ctx) error {
 	})
 }
 
+func (h *TagHandler) GetTagByID(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid tag ID",
+			"error":   err.Error(),
+		})
+	}
+
+	tag, err := h.service.GetTagByID(c.Context(), id)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"message": "Tag not found",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Tag retrieved successfully",
+		"data":    tag,
+	})
+}
+
+func (h *TagHandler) UpdateTag(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid tag ID",
+			"error":   err.Error(),
+		})
+	}
+
+	var req dto.UpdateTagDTO
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid request body",
+			"error":   err.Error(),
+		})
+	}
+
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
+	tag, err := h.service.UpdateTag(c.Context(), id, req)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Failed to update tag",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Tag updated successfully",
+		"data":    tag,
+	})
+}
+
 func (h *TagHandler) DeleteTag(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {

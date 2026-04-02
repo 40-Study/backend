@@ -90,7 +90,6 @@ type Section struct {
 	Description  *string   `gorm:"type:text" json:"description,omitempty"`
 	DisplayOrder int       `gorm:"not null" json:"display_order"`
 
-	// Relationships
 	Course  Course   `gorm:"foreignKey:CourseID;constraint:OnDelete:CASCADE" json:"-"`
 	Lessons []Lesson `gorm:"foreignKey:SectionID;constraint:OnDelete:CASCADE" json:"-"`
 }
@@ -104,23 +103,55 @@ type Lesson struct {
 	SectionID    uuid.UUID `gorm:"type:uuid;not null;index" json:"section_id"`
 	Title        string    `gorm:"type:varchar(255);not null" json:"title"`
 	Description  *string   `gorm:"type:text" json:"description,omitempty"`
-	ContentType  string    `gorm:"type:varchar(20);not null;check:content_type IN ('video', 'article', 'quiz', 'assignment')" json:"content_type"`
-	DisplayOrder int       `gorm:"not null" json:"display_order"`
+	DisplayOrder int       `gorm:"not null;index" json:"display_order"`
 	DurationMins int       `gorm:"default:0;column:duration_minutes" json:"duration_minutes"`
 	IsPreview    bool      `gorm:"default:false" json:"is_preview"`
 	IsMandatory  bool      `gorm:"default:true" json:"is_mandatory"`
 
-	// Relationships
-	Section        Section            `gorm:"foreignKey:SectionID;constraint:OnDelete:CASCADE" json:"-"`
-	Video          *LessonVideo       `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
-	Article        *LessonArticle     `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
-	Attachments    []LessonAttachment `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
-	Quiz           *Quiz              `gorm:"foreignKey:LessonID" json:"-"`
-	LessonProgress []LessonProgress   `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
-	UserNotes      []UserNote         `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
-	Discussions    []Discussion       `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+
+	Section  Section         `gorm:"foreignKey:SectionID;constraint:OnDelete:CASCADE" json:"-"`
+	Contents []LessonContent `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"contents,omitempty"`
+
+	Attachments []LessonAttachment `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
+
+	Quiz           *Quiz            `gorm:"foreignKey:LessonID" json:"-"`
+	LessonProgress []LessonProgress `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 func (Lesson) TableName() string {
 	return "lessons"
 }
+
+type LessonContent struct {
+	ID       uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	LessonID uuid.UUID `gorm:"type:uuid;not null;index" json:"lesson_id"`
+
+	Type string `gorm:"type:varchar(20);not null;check:type IN ('video','livestream','exercise')" json:"type"`
+
+	Title *string `gorm:"type:varchar(255)" json:"title,omitempty"`
+
+	// Video fields
+	VideoURL *string `gorm:"type:varchar(500)" json:"video_url,omitempty"`
+	Duration int     `gorm:"default:0" json:"duration"`
+
+	// Exercise fields (bài tập khóa học)
+	ExerciseID *uuid.UUID `gorm:"type:uuid" json:"exercise_id,omitempty"`
+
+	// Bắt buộc hoàn thành mới được học tiếp
+	IsMandatory bool `gorm:"default:true" json:"is_mandatory"`
+
+	DisplayOrder int `gorm:"default:0;index" json:"display_order"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+
+	Lesson   Lesson          `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
+	Exercise *CourseExercise `gorm:"foreignKey:ExerciseID" json:"exercise,omitempty"`
+}
+
+func (LessonContent) TableName() string {
+	return "lesson_contents"
+}
+

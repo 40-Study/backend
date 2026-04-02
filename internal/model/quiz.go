@@ -10,23 +10,40 @@ import (
 
 type Quiz struct {
 	BaseModel
-	LessonID           *uuid.UUID      `gorm:"type:uuid;uniqueIndex" json:"lesson_id,omitempty"`
-	CourseID           *uuid.UUID      `gorm:"type:uuid;index" json:"course_id,omitempty"`
-	Title              string          `gorm:"type:varchar(255);not null" json:"title"`
-	Description        *string         `gorm:"type:text" json:"description,omitempty"`
-	TimeLimitMins      *int            `gorm:"column:time_limit_minutes" json:"time_limit_minutes,omitempty"`
-	PassPercentage     decimal.Decimal `gorm:"type:decimal(5,2);default:70.00" json:"pass_percentage"`
-	MaxAttempts        *int            `gorm:"default:3" json:"max_attempts,omitempty"`
-	ShuffleQuestions   bool            `gorm:"default:true" json:"shuffle_questions"`
-	ShuffleAnswers     bool            `gorm:"default:true" json:"shuffle_answers"`
-	ShowCorrectAnswers bool            `gorm:"default:true" json:"show_correct_answers"`
-	IsAIGenerated      bool            `gorm:"default:false" json:"is_ai_generated"`
+	// Quiz có thể thuộc về Lesson, Course, hoặc LivestreamSession
+	LessonID  *uuid.UUID `gorm:"type:uuid;index" json:"lesson_id,omitempty"`
+	CourseID  *uuid.UUID `gorm:"type:uuid;index" json:"course_id,omitempty"`
+	SessionID *uuid.UUID `gorm:"type:uuid;index" json:"session_id,omitempty"` // Live quiz
+
+	Title          string          `gorm:"type:varchar(255);not null" json:"title"`
+	Description    *string         `gorm:"type:text" json:"description,omitempty"`
+	TimeLimitMins  *int            `gorm:"column:time_limit_minutes" json:"time_limit_minutes,omitempty"`
+	PassPercentage decimal.Decimal `gorm:"type:decimal(5,2);default:70.00" json:"pass_percentage"`
+	MaxAttempts    *int            `gorm:"default:3" json:"max_attempts,omitempty"`
+
+	// Quiz trigger type
+	// 'manual' = giáo viên trigger thủ công trong live
+	// 'scheduled' = hẹn giờ xuất hiện
+	// 'ai_triggered' = AI tự động push khi detect học sinh mất tập trung
+	// 'video_checkpoint' = xuất hiện tại thời điểm cụ thể trong video
+	TriggerType string `gorm:"type:varchar(20);default:'manual';check:trigger_type IN ('manual','scheduled','ai_triggered','video_checkpoint')" json:"trigger_type"`
+
+	// Scheduling fields
+	ScheduledAt    *time.Time `json:"scheduled_at,omitempty"`     // Thời gian hiển thị quiz (scheduled)
+	VideoTimestamp *int       `json:"video_timestamp,omitempty"` // Giây trong video để trigger (video_checkpoint)
+
+	// Display options
+	ShuffleQuestions   bool `gorm:"default:true" json:"shuffle_questions"`
+	ShuffleAnswers     bool `gorm:"default:true" json:"shuffle_answers"`
+	ShowCorrectAnswers bool `gorm:"default:true" json:"show_correct_answers"`
+	IsAIGenerated      bool `gorm:"default:false" json:"is_ai_generated"`
 
 	// Relationships
-	Lesson    *Lesson       `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
-	Course    *Course       `gorm:"foreignKey:CourseID;constraint:OnDelete:CASCADE" json:"-"`
-	Questions []Question    `gorm:"foreignKey:QuizID;constraint:OnDelete:CASCADE" json:"-"`
-	Attempts  []QuizAttempt `gorm:"foreignKey:QuizID;constraint:OnDelete:CASCADE" json:"-"`
+	Lesson    *Lesson            `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
+	Course    *Course            `gorm:"foreignKey:CourseID;constraint:OnDelete:CASCADE" json:"-"`
+	Session   *LivestreamSession `gorm:"foreignKey:SessionID;constraint:OnDelete:CASCADE" json:"-"`
+	Questions []Question         `gorm:"foreignKey:QuizID;constraint:OnDelete:CASCADE" json:"-"`
+	Attempts  []QuizAttempt      `gorm:"foreignKey:QuizID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 func (Quiz) TableName() string {

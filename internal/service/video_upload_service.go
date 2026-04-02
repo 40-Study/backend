@@ -14,7 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
-	"study.com/v1/internal/queue"
+	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/storage"
 )
@@ -45,16 +45,16 @@ type VideoUploadServiceInterface interface {
 type VideoUploadService struct {
 	uploadRepo   repository.VideoUploadRepositoryInterface // Repository để lưu trạng thái upload vào PostgreSQL
 	storage      *storage.MinioClient                      // MinIO client để upload file lên S3-compatible storage
-	queueService *queue.RabbitMQService                    // RabbitMQ để gửi job xử lý video
-	videoQueue   *queue.VideoQueueSetup                    // Direct access to video queue for processing
+	queueService *rabbitmq_queue.RabbitMQService           // RabbitMQ để gửi job xử lý video
+	videoQueue   *rabbitmq_queue.VideoQueueSetup           // Direct access to video queue for processing
 	redisClient  *redis.Client                             // Redis client để track active uploads (SADD/SREM active_uploads set)
 }
 
 func NewVideoUploadService(
 	uploadRepo repository.VideoUploadRepositoryInterface,
 	storage *storage.MinioClient,
-	queueService *queue.RabbitMQService,
-	videoQueue *queue.VideoQueueSetup,
+	queueService *rabbitmq_queue.RabbitMQService,
+	videoQueue *rabbitmq_queue.VideoQueueSetup,
 	redisClient *redis.Client,
 ) *VideoUploadService {
 	return &VideoUploadService{
@@ -677,7 +677,7 @@ func (s *VideoUploadService) calculateChunkSize(totalSize, chunkSize int64, chun
 
 func (s *VideoUploadService) enqueueProcessingTask(ctx context.Context, upload *model.VideoUpload, etag string) error {
 	// Create processing message with default processing options
-	message := queue.VideoProcessingMessage{
+	message := rabbitmq_queue.VideoProcessingMessage{
 		UploadID:     upload.ID,
 		ObjectKey:    upload.ObjectKey,
 		Bucket:       upload.Bucket,
@@ -689,7 +689,7 @@ func (s *VideoUploadService) enqueueProcessingTask(ctx context.Context, upload *
 		ETag:         etag,
 		RetryCount:   0,
 		CreatedAt:    time.Now().Unix(),
-		ProcessingOptions: queue.VideoProcessingOptions{
+		ProcessingOptions: rabbitmq_queue.VideoProcessingOptions{
 			GenerateThumbnail: true,
 			ScanForViruses:    false, // Can be enabled based on requirements
 			ExtractMetadata:   true,

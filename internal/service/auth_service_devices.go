@@ -3,10 +3,10 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"study.com/v1/internal/constants"
 	"study.com/v1/internal/dto"
 )
 
@@ -14,7 +14,7 @@ import (
 func (s *AuthService) GetAllDevices(ctx context.Context, userID, currentDeviceID uuid.UUID) ([]dto.DeviceSessionDto, error) {
 	
 	// ===== 1. Get all sessions from Redis =====
-	sessionKey := fmt.Sprintf("auth:session:%s", userID)
+	sessionKey := constants.KeySession(userID.String())
 	allSessions, err := s.redisClient.HGetAll(ctx, sessionKey).Result()
 	
 	if err == redis.Nil {

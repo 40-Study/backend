@@ -101,7 +101,7 @@ func AllModels() []interface{} {
 		&Class{},
 		&TeacherClass{},
 		&StudentClass{},
-		&ClassSchedule{},
+		&ClassLessonContent{},
 		&Attendance{},
 	}
 }

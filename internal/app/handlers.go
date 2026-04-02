@@ -23,9 +23,9 @@ type Handlers struct {
 	TeacherProfile *handler.TeacherProfileHandler
 
 	// ===== Class =====
-	Class         *handler.ClassHandler
-	ClassSchedule *handler.ClassScheduleHandler
-	Attendance    *handler.AttendanceHandler
+	Class              *handler.ClassHandler
+	ClassLessonContent *handler.ClassLessonContentHandler
+	Attendance         *handler.AttendanceHandler
 
 	// ===== Course Management =====
 	Category      *handler.CategoryHandler
@@ -81,9 +81,9 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handler
 		TeacherProfile: handler.NewTeacherProfileHandler(services.TeacherProfile),
 
 		// ===== Class =====
-		Class:         handler.NewClassHandler(services.Class),
-		ClassSchedule: handler.NewClassScheduleHandler(services.ClassSchedule),
-		Attendance:    handler.NewAttendanceHandler(services.Attendance),
+		Class:              handler.NewClassHandler(services.Class),
+		ClassLessonContent: handler.NewClassLessonContentHandler(services.ClassLessonContent),
+		Attendance:         handler.NewAttendanceHandler(services.Attendance),
 
 		// ===== Course Management =====
 		Category:      handler.NewCategoryHandler(services.Category),

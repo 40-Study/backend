@@ -6,6 +6,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
+	asynq_queue "study.com/v1/internal/queue/asynq"
 )
 
 func SetupAllRoutes(
@@ -22,7 +23,7 @@ func SetupAllRoutes(
 	teacherHandler *handler.TeacherHandler,
 	teacherProfileHandler *handler.TeacherProfileHandler,
 	classHandler *handler.ClassHandler,
-	classScheduleHandler *handler.ClassScheduleHandler,
+	classLessonContentHandler *handler.ClassLessonContentHandler,
 	attendanceHandler *handler.AttendanceHandler,
 	categoryHandler *handler.CategoryHandler,
 	tagHandler *handler.TagHandler,
@@ -49,6 +50,7 @@ func SetupAllRoutes(
 	walletHandler *handler.WalletHandler,
 	redis *redis.Client,
 	minio *minio.Client,
+	aq *asynq_queue.Queue,
 ) {
 	api := app.Group("/api")
 
@@ -70,11 +72,10 @@ func SetupAllRoutes(
 	SetupProfileRoutes(api, cfg, profileHandler, redis)
 	SetupTeacherRoutes(api, cfg, teacherHandler, redis)
 	SetupTeacherProfileRoutes(api, teacherProfileHandler)
-	SetupClassRoutes(api, cfg, classHandler, classScheduleHandler, attendanceHandler, redis)
+	SetupClassRoutes(api, cfg, classHandler, attendanceHandler, redis)
 	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis)
 	SetupCartRoutes(api, cfg, cartHandler, redis)
-	SetupCourseRoutes(api, cfg, courseHandler, sectionHandler, lessonHandler, redis)
-	SetupLessonContentRoutes(api, cfg, lessonContentHandler, redis)
+	SetupCourseRoutes(api, cfg, courseHandler, sectionHandler, lessonHandler, lessonContentHandler, classHandler, classLessonContentHandler, attendanceHandler, redis)
 	SetupEnrollmentRoutes(api, cfg, enrollmentHandler, redis)
 	SetupUploadRoutes(api, cfg, uploadHandler, redis)
 	SetupVideoUploadRoutes(api, videoHandler, cfg, redis)

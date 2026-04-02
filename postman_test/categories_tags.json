@@ -74,7 +74,24 @@
           "request": {
             "auth": { "type": "noauth" },
             "method": "GET",
-            "url": "{{base_url}}/tags"
+            "url": {
+              "raw": "{{base_url}}/tags?page=1&page_size=20",
+              "host": ["{{base_url}}"],
+              "path": ["tags"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "20" },
+                { "key": "keyword", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Tag By ID (public)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{base_url}}/tags/{{tag_id}}"
           }
         },
         {
@@ -86,6 +103,18 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"golang\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Update Tag",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/tags/{{tag_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"go-language\"\n}"
             }
           }
         },

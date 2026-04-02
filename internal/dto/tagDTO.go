@@ -1,6 +1,10 @@
 package dto
 
-import "github.com/google/uuid"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 // Tag DTOs
 
@@ -8,11 +12,15 @@ type CreateTagDTO struct {
 	Name string `json:"name" validate:"required,min=1,max=50"`
 }
 
+type UpdateTagDTO struct {
+	Name *string `json:"name" validate:"omitempty,min=1,max=50"`
+}
+
 type TagResponseDTO struct {
 	ID        uuid.UUID `json:"id"`
 	Name      string    `json:"name"`
 	Slug      string    `json:"slug"`
-	CreatedAt string    `json:"created_at"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type TagListResponseDTO struct {

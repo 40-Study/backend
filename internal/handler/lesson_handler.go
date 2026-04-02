@@ -17,15 +17,7 @@ func NewLessonHandler(service service.LessonServiceInterface) *LessonHandler {
 }
 
 func (h *LessonHandler) CreateLesson(c *fiber.Ctx) error {
-	courseID, err := uuid.Parse(c.Params("courseId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid course ID",
-			"error":   err.Error(),
-		})
-	}
-
-	sectionID, err := uuid.Parse(c.Params("sectionId"))
+	sectionID, err := uuid.Parse(c.Params("section_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid section ID",
@@ -48,7 +40,7 @@ func (h *LessonHandler) CreateLesson(c *fiber.Ctx) error {
 		})
 	}
 
-	lesson, err := h.service.CreateLesson(c.Context(), courseID, sectionID, req)
+	lesson, err := h.service.CreateLesson(c.Context(), sectionID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create lesson",
@@ -63,15 +55,7 @@ func (h *LessonHandler) CreateLesson(c *fiber.Ctx) error {
 }
 
 func (h *LessonHandler) GetAllLessons(c *fiber.Ctx) error {
-	courseID, err := uuid.Parse(c.Params("courseId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid course ID",
-			"error":   err.Error(),
-		})
-	}
-
-	sectionID, err := uuid.Parse(c.Params("sectionId"))
+	sectionID, err := uuid.Parse(c.Params("section_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid section ID",
@@ -79,7 +63,7 @@ func (h *LessonHandler) GetAllLessons(c *fiber.Ctx) error {
 		})
 	}
 
-	lessons, err := h.service.GetAllLessons(c.Context(), courseID, sectionID)
+	lessons, err := h.service.GetAllLessons(c.Context(), sectionID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve lessons",
@@ -93,23 +77,30 @@ func (h *LessonHandler) GetAllLessons(c *fiber.Ctx) error {
 	})
 }
 
+func (h *LessonHandler) GetLessonByID(c *fiber.Ctx) error {
+	lessonID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid lesson ID",
+			"error":   err.Error(),
+		})
+	}
+
+	lesson, err := h.service.GetLessonByID(c.Context(), lessonID)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"message": "Lesson not found",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Lesson retrieved successfully",
+		"data":    lesson,
+	})
+}
+
 func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
-	courseID, err := uuid.Parse(c.Params("courseId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid course ID",
-			"error":   err.Error(),
-		})
-	}
-
-	sectionID, err := uuid.Parse(c.Params("sectionId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid section ID",
-			"error":   err.Error(),
-		})
-	}
-
 	lessonID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -133,7 +124,7 @@ func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
 		})
 	}
 
-	lesson, err := h.service.UpdateLesson(c.Context(), courseID, sectionID, lessonID, req)
+	lesson, err := h.service.UpdateLesson(c.Context(), lessonID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update lesson",
@@ -148,22 +139,6 @@ func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
 }
 
 func (h *LessonHandler) DeleteLesson(c *fiber.Ctx) error {
-	courseID, err := uuid.Parse(c.Params("courseId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid course ID",
-			"error":   err.Error(),
-		})
-	}
-
-	sectionID, err := uuid.Parse(c.Params("sectionId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid section ID",
-			"error":   err.Error(),
-		})
-	}
-
 	lessonID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -172,7 +147,7 @@ func (h *LessonHandler) DeleteLesson(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteLesson(c.Context(), courseID, sectionID, lessonID); err != nil {
+	if err := h.service.DeleteLesson(c.Context(), lessonID); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete lesson",
 			"error":   err.Error(),
@@ -185,15 +160,7 @@ func (h *LessonHandler) DeleteLesson(c *fiber.Ctx) error {
 }
 
 func (h *LessonHandler) ReorderLessons(c *fiber.Ctx) error {
-	courseID, err := uuid.Parse(c.Params("courseId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid course ID",
-			"error":   err.Error(),
-		})
-	}
-
-	sectionID, err := uuid.Parse(c.Params("sectionId"))
+	sectionID, err := uuid.Parse(c.Params("section_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid section ID",
@@ -216,7 +183,7 @@ func (h *LessonHandler) ReorderLessons(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.ReorderLessons(c.Context(), courseID, sectionID, req); err != nil {
+	if err := h.service.ReorderLessons(c.Context(), sectionID, req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to reorder lessons",
 			"error":   err.Error(),

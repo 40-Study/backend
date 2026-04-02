@@ -23,9 +23,9 @@ type Repositories struct {
 	TeacherProfile *repository.TeacherProfileRepository
 
 	// ===== Class =====
-	Class         *repository.ClassRepository
-	ClassSchedule *repository.ClassScheduleRepository
-	Attendance    *repository.AttendanceRepository
+	Class              *repository.ClassRepository
+	ClassLessonContent *repository.ClassLessonContentRepository
+	Attendance         *repository.AttendanceRepository
 
 	// ===== Course & Student =====
 	Course  *repository.CourseRepository
@@ -37,7 +37,6 @@ type Repositories struct {
 	CartItem      *repository.CartItemRepository
 	Section       *repository.SectionRepository
 	Lesson        *repository.LessonRepository
-	LessonContent *repository.LessonContentRepository
 	Enrollment    *repository.EnrollmentRepository
 
 	// ===== Video =====
@@ -90,9 +89,9 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		TeacherProfile: repository.NewTeacherProfileRepository(db),
 
 		// ===== Class =====
-		Class:         repository.NewClassRepository(db),
-		ClassSchedule: repository.NewClassScheduleRepository(db),
-		Attendance:    repository.NewAttendanceRepository(db),
+		Class:              repository.NewClassRepository(db),
+		ClassLessonContent: repository.NewClassLessonContentRepository(db),
+		Attendance:         repository.NewAttendanceRepository(db),
 
 		// ===== Course & Student =====
 		Course:  repository.NewCourseRepository(db),
@@ -104,7 +103,6 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		CartItem:      repository.NewCartItemRepository(db),
 		Section:       repository.NewSectionRepository(db),
 		Lesson:        repository.NewLessonRepository(db),
-		LessonContent: repository.NewLessonContentRepository(db),
 		Enrollment:    repository.NewEnrollmentRepository(db),
 
 		// ===== Video =====
@@ -136,5 +134,4 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		// ===== Wallet =====
 		Wallet: repository.NewWalletRepository(db),
 	}
-
 }

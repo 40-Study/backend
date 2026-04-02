@@ -10,7 +10,8 @@ import (
 	"study.com/v1/internal/cache"
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/database"
-	"study.com/v1/internal/queue"
+	asynq_queue "study.com/v1/internal/queue/asynq"
+	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/storage"
 )
 
@@ -19,8 +20,9 @@ type Resources struct {
 	Redis        *redis.Client
 	MinioClient  *minio.Client
 	MinioWrapper *storage.MinioClient
-	RabbitMQ     *queue.RabbitMQService
+	RabbitMQ     *rabbitmq_queue.RabbitMQService
 	Config       *config.Config
+	Queue        *asynq_queue.Queue
 }
 
 func InitResources() (*Resources, error) {
@@ -60,11 +62,12 @@ func InitResources() (*Resources, error) {
 		}
 	}
 
-	rabbitMQ, err := queue.NewRabbitMQService(cfg)
+	rabbitMQ, err := rabbitmq_queue.NewRabbitMQService(cfg)
 	if err != nil {
 		log.Printf("Warning: Failed to connect to RabbitMQ: %v", err)
 	}
 
+	aq := asynq_queue.New(cfg)
 	return &Resources{
 		DB:           db,
 		Redis:        rdb,
@@ -72,6 +75,7 @@ func InitResources() (*Resources, error) {
 		MinioWrapper: minioWrapper,
 		RabbitMQ:     rabbitMQ,
 		Config:       cfg,
+		Queue:        aq,
 	}, nil
 }
 
@@ -86,6 +90,9 @@ func (r *Resources) Close() error {
 		if err := r.RabbitMQ.Close(); err != nil {
 			log.Printf("Error closing RabbitMQ: %v", err)
 		}
+	}
+	if r.Queue != nil {
+		r.Queue.Stop()
 	}
 	return nil
 }

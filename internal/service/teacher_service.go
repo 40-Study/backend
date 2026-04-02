@@ -22,7 +22,7 @@ type TeacherService struct {
 	classService ClassServiceInterface
 }
 
-func NewTeacherService(repo repository.TeacherRepositoryInterface, classService ClassServiceInterface) *TeacherService {
+func NewTeacherService(repo repository.TeacherRepositoryInterface, classService ClassServiceInterface) TeacherServiceInterface {
 	return &TeacherService{repo: repo, classService: classService}
 }
 

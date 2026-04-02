@@ -62,18 +62,22 @@ type OrgRoleDto struct {
 // ProfileDto - Unified profile (gộp từ SystemRole và OrgRole)
 // Type: "system" = SystemRole, "org" = OrgRole
 type ProfileDto struct {
-	ID               uuid.UUID  `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
-	Type             string     `json:"type" example:"system"`
-	DisplayName      string     `json:"display_name" example:"Giáo viên Trung tâm A"`
+	ID               string     `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Type             string     `json:"type,omitempty" example:"system"`
+	SystemRoleID     string     `json:"system_role_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440000"`
+	DisplayName      string     `json:"display_name,omitempty" example:"Giáo viên Trung tâm A"`
 	RoleName         string     `json:"role_name" example:"TEACHER"`
-	OrganizationID   *uuid.UUID `json:"organization_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Description      *string    `json:"description,omitempty" example:"Giáo viên trong hệ thống"`
+	Status           string     `json:"status,omitempty" example:"active"`
+	CreatedAt        string     `json:"created_at,omitempty" example:"2024-01-01T00:00:00Z"`
+	OrganizationID   *string    `json:"organization_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440000"`
 	OrganizationName *string    `json:"organization_name,omitempty" example:"Trung tâm A"`
 }
 
 // LastProfileDto - Lưu vào Redis để track profile cuối cùng
 type LastProfileDto struct {
-	Type string    `json:"type"` // "system" | "org"
-	ID   uuid.UUID `json:"id"`   // UserSystemRole.ID hoặc UserOrganizationRole.ID
+	Type string    `json:"type"`
+	ID   uuid.UUID `json:"id"` 
 }
 
 // OrgContextDto - Organization context trong login flow
@@ -82,13 +86,32 @@ type OrgContextDto struct {
 	Name string `json:"name" example:"Trường THPT ABC"`
 }
 
+// EntryContext - Gợi ý FE navigate đến đâu sau login
+type EntryContext struct {
+	PrimaryRole   string `json:"primary_role" example:"STUDENT"`
+	RequiresSetup bool   `json:"requires_setup" example:"false"`
+	SetupEndpoint string `json:"setup_endpoint,omitempty" example:"/me/children"`
+}
 
-// LoginResponseDto - Login response
-// Profile info lấy qua GET /auth/profiles
+// LoginResponseDto - Multi-step login:
+// Step 1: Nếu có nhiều role (system + org) → trả session_token + roles để chọn
+// Auto-complete khi chỉ có 1 role
 type LoginResponseDto struct {
-	AccessToken   string            `json:"access_token"`
-	RefreshToken  string            `json:"refresh_token"`
-	User          *UserResponseDto  `json:"user"`
+	Completed    bool   `json:"completed"`
+	SessionToken string `json:"session_token,omitempty"`
+
+	// Unified roles list (gộp SystemRole + OrganizationRole)
+	// Hiển thị: "Giáo viên tự do", "Kế toán - Trường PTIT", etc.
+	Roles                []UnifiedRoleDto `json:"roles,omitempty"`
+	RequiresOrgSelection bool             `json:"requires_org_selection,omitempty"`
+	Organizations        []OrgContextDto `json:"organizations,omitempty"`
+
+	// Chỉ có khi Completed = true
+	AccessToken   string            `json:"access_token,omitempty"`
+	RefreshToken  string            `json:"refresh_token,omitempty"`
+	User          *UserResponseDto  `json:"user,omitempty"`
+	ActiveRole    *UnifiedRoleDto   `json:"active_role,omitempty"` // Changed to UnifiedRoleDto
+	EntryContext  *EntryContext     `json:"entry_context,omitempty"`
 	CurrentDevice *DeviceSessionDto `json:"current_device,omitempty"`
 }
 
@@ -160,8 +183,8 @@ type ChangePasswordRequestDto struct {
 
 
 // RegisterRequestDto - Request body for POST /auth/register/request
-// Gửi thông tin đăng ký và nhận OTP qua email. Chỉ gán 1 system role.
-// Sau này muốn thêm role thì dùng chức năng thêm profile.
+// Gửi thông tin đăng ký và nhận OTP qua email. Chỉ chọn 1 system role.
+// Sau này có thể thêm role qua profile management hoặc được tổ chức mời.
 type RegisterRequestDto struct {
 	Email           string `json:"email" validate:"required,email,max=255" example:"student@example.com"`
 	Password        string `json:"password" validate:"required,min=8,max=72" example:"SecurePass123!"`
@@ -211,3 +234,73 @@ type MyProfileResponseDto struct {
 	ActiveRole    *SystemRoleDto      `json:"active_role,omitempty"`
 	ActiveOrg     *OrgContextDto      `json:"active_org,omitempty"`
 }
+
+// ========== UNIFIED ROLE SELECTION (NEW FLOW) ==========
+
+// UnifiedRoleDto - Một role có thể là SystemRole hoặc OrganizationRole
+// Frontend hiển thị list này để user chọn 1 cái
+type UnifiedRoleDto struct {
+	ID               string  `json:"id"`                          // UserSystemRole.ID hoặc UserOrganizationRole.ID
+	Type             string  `json:"type"`                        // "system" hoặc "organization"
+	RoleName         string  `json:"role_name"`                   // Tên role: "Giáo viên tự do", "Kế toán", etc.
+	OrganizationID   *string `json:"organization_id,omitempty"`   // Chỉ có nếu type="organization"
+	OrganizationName *string `json:"organization_name,omitempty"` // Chỉ có nếu type="organization"
+	DisplayName      string  `json:"display_name"`                // "Giáo viên tự do" hoặc "Kế toán - Trường PTIT"
+}
+
+// GetMyRolesResponseDto - Response cho GET /auth/my-roles
+type GetMyRolesResponseDto struct {
+	Roles []UnifiedRoleDto `json:"roles"`
+}
+
+// SelectRoleRequestDto - Request cho POST /auth/select-role
+// Gộp SelectProfile + SelectOrg thành 1 bước
+type SelectRoleRequestDto struct {
+	SessionToken string `json:"session_token" validate:"required"`
+	RoleID       string `json:"role_id" validate:"required,uuid"` // UserSystemRole.ID hoặc UserOrganizationRole.ID
+	RoleType     string `json:"role_type" validate:"required,oneof=system organization"`
+}
+
+// SelectRoleResponseDto - Response sau khi chọn role xong
+type SelectRoleResponseDto struct {
+	Completed            bool              `json:"completed"`
+	SessionToken         string            `json:"session_token,omitempty"`
+	RequiresOrgSelection bool              `json:"requires_org_selection,omitempty"`
+	Organizations        []OrgContextDto   `json:"organizations,omitempty"`
+	AccessToken          string            `json:"access_token,omitempty"`
+	RefreshToken         string            `json:"refresh_token,omitempty"`
+	User                 UserResponseDto   `json:"user"`
+	ActiveRole           UnifiedRoleDto    `json:"active_role"`
+	ActiveOrg            *OrgContextDto    `json:"active_org,omitempty"`
+	EntryContext         *EntryContext     `json:"entry_context,omitempty"`
+	CurrentDevice        *DeviceSessionDto `json:"current_device,omitempty"`
+}
+
+// SwitchRoleRequestDto - Đổi role khi đã đăng nhập
+type SwitchRoleRequestDto struct {
+	RoleID   string `json:"role_id" validate:"required,uuid"`
+	RoleType string `json:"role_type" validate:"required,oneof=system organization"`
+}
+
+// SwitchOrgRequestDto - Đổi org khi đã đăng nhập (giữ nguyên role)
+// OrganizationID rỗng = chuyển về chế độ "Độc lập" (không thuộc org nào)
+type SwitchOrgRequestDto struct {
+	OrganizationID string `json:"organization_id,omitempty" validate:"omitempty,uuid"`
+}
+
+// ========== PROFILE MANAGEMENT ==========
+// Mỗi user có thể tạo nhiều profile (giống FB: cá nhân, page, business)
+// Profile = UserSystemRole (liên kết user với 1 system role đã seed sẵn)
+
+// SystemRoleOptionDto - System role có sẵn để tạo profile
+type SystemRoleOptionDto struct {
+	ID          string  `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Name        string  `json:"name" example:"TEACHER"`
+	Description *string `json:"description,omitempty" example:"Giáo viên"`
+}
+
+// CreateProfileRequestDto - Tạo profile mới với system role
+type CreateProfileRequestDto struct {
+	SystemRoleID string `json:"system_role_id" validate:"required,uuid" example:"550e8400-e29b-41d4-a716-446655440000"`
+}
+

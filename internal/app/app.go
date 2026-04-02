@@ -1,13 +1,17 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/google/uuid"
 	"study.com/v1/internal/database/seeds"
+	asynq_queue "study.com/v1/internal/queue/asynq"
 	"study.com/v1/internal/router"
+	"study.com/v1/internal/socket"
 )
 
 type App struct {
@@ -23,7 +27,9 @@ func New() (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize resources: %w", err)
 	}
-
+	hub := socket.NewHub()
+	go hub.Run()
+	notifier := socket.NewNotifier(hub)
 	repos := InitRepositories(resources.DB)
 
 	seeder := seeds.NewSeeder(resources.DB)
@@ -32,6 +38,14 @@ func New() (*App, error) {
 	}
 
 	services := InitServices(resources, repos)
+
+	// Register tasks sau khi có services để có thể inject livestream starter
+	livestreamStarter := func(ctx context.Context, sessionID uuid.UUID) error {
+		_, err := services.Livestream.Start(ctx, sessionID)
+		return err
+	}
+	asynq_queue.RegisterTasks(resources.Queue, notifier, repos.Class, repos.Enrollment, resources.Redis, livestreamStarter)
+	go resources.Queue.Start()
 	handlers := InitHandlers(services, resources.MinioWrapper)
 
 	fiberApp := fiber.New()
@@ -69,7 +83,7 @@ func New() (*App, error) {
 
 		// ===== Class =====
 		handlers.Class,
-		handlers.ClassSchedule,
+		handlers.ClassLessonContent,
 		handlers.Attendance,
 
 		// ===== Course Management =====
@@ -108,6 +122,7 @@ func New() (*App, error) {
 
 		resources.Redis,
 		resources.MinioClient,
+		resources.Queue,
 	)
 
 	return &App{

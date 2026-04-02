@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"study.com/v1/internal/config"
+	"study.com/v1/internal/constants"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -19,23 +20,30 @@ import (
 )
 
 type AuthServiceInterface interface {
+	// Auth
 	RequestRegister(ctx context.Context, req dto.RegisterRequestDto) error
 	Register(ctx context.Context, req dto.VerifyOtpRequestDto) (*dto.RegisterResponseDto, error)
 	Login(ctx context.Context, req dto.LoginRequestDto) (*dto.LoginResponseDto, error)
-	SwitchProfile(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, req dto.SwitchProfileRequestDto) (*dto.SwitchProfileResponseDto, error)
-	GetProfiles(ctx context.Context, userID uuid.UUID) ([]dto.ProfileDto, error)
-	AddSystemProfile(ctx context.Context, userID uuid.UUID, req dto.AddSystemProfileRequestDto) (*dto.AddSystemProfileResponseDto, error)
-	Logout(ctx context.Context, userId, deviceId uuid.UUID) error
-	LogoutAllDevice(ctx context.Context, userId uuid.UUID) error
 	RefreshToken(ctx context.Context, oldRefreshToken string) (*dto.RefreshTokenResponseDto, error)
-	GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserResponseDto, error)
-	GetMyProfile(ctx context.Context, userID uuid.UUID, activeRole string, activeOrgID *uuid.UUID) (*dto.MyProfileResponseDto, error)
-	GetMySystemRoles(ctx context.Context, userID uuid.UUID) ([]dto.SystemRoleDto, error)
-	UpdateMe(ctx context.Context, userID uuid.UUID, req dto.UpdateMeRequestDto) (*dto.UserResponseDto, error)
-	GetAllDevices(ctx context.Context, userID, currentDeviceID uuid.UUID) ([]dto.DeviceSessionDto, error)
-	ChangePassword(ctx context.Context, userID uuid.UUID, req dto.ChangePasswordRequestDto) error
 	RequestPasswordReset(ctx context.Context, email string) error
 	ResetPassword(ctx context.Context, req dto.ResetPasswordRequestDto) error
+	// Role selection
+	GetMyRoles(ctx context.Context, userID uuid.UUID) (*dto.GetMyRolesResponseDto, error)
+	SelectRole(ctx context.Context, req dto.SelectRoleRequestDto) (*dto.SelectRoleResponseDto, error)
+	SwitchRole(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, req dto.SwitchRoleRequestDto) (*dto.SelectRoleResponseDto, error)
+	// Profile management
+	GetSystemRoleOptions(ctx context.Context) ([]dto.SystemRoleOptionDto, error)
+	GetMyProfiles(ctx context.Context, userID uuid.UUID) ([]dto.ProfileDto, error)
+	CreateProfile(ctx context.Context, userID uuid.UUID, req dto.CreateProfileRequestDto) (*dto.ProfileDto, error)
+	DeleteProfile(ctx context.Context, userID uuid.UUID, profileID uuid.UUID) error
+	// User info
+	GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserResponseDto, error)
+	UpdateMe(ctx context.Context, userID uuid.UUID, req dto.UpdateMeRequestDto) (*dto.UserResponseDto, error)
+	// Session
+	GetAllDevices(ctx context.Context, userID, currentDeviceID uuid.UUID) ([]dto.DeviceSessionDto, error)
+	Logout(ctx context.Context, userId, deviceId uuid.UUID) error
+	LogoutAllDevice(ctx context.Context, userId uuid.UUID) error
+	ChangePassword(ctx context.Context, userID uuid.UUID, req dto.ChangePasswordRequestDto) error
 }
 
 type AuthService struct {
@@ -68,32 +76,70 @@ func NewAuthService(
 	}
 }
 
+// ==================== LOGIN ATTEMPT TRACKING ====================
+// Security: Prevents brute force attacks by locking accounts after too many failed attempts
+
+const (
+	maxLoginAttempts    = 5
+	loginLockoutMinutes = 15
+	loginWindowMinutes  = 5
+)
+
+func (s *AuthService) recordFailedLogin(ctx context.Context, email string) {
+	attemptsKey := constants.KeyLoginAttempts(email)
+	lockKey := constants.KeyLoginLocked(email)
+
+	count, err := s.redisClient.Incr(ctx, attemptsKey).Result()
+	if err != nil {
+		log.Printf("[WARN] Failed to record login attempt for %s: %v", email, err)
+		return
+	}
+
+	// Set expiry on first attempt
+	if count == 1 {
+		s.redisClient.Expire(ctx, attemptsKey, time.Duration(loginWindowMinutes)*time.Minute)
+	}
+
+	// Lock account if max attempts exceeded
+	if int(count) >= maxLoginAttempts {
+		s.redisClient.Set(ctx, lockKey, "1", time.Duration(loginLockoutMinutes)*time.Minute)
+		log.Printf("[SECURITY] Account locked due to %d failed login attempts: %s", count, email)
+	}
+}
+
+// clearFailedLogin removes failed attempt counter on successful login
+func (s *AuthService) clearFailedLogin(ctx context.Context, email string) {
+	attemptsKey := constants.KeyLoginAttempts(email)
+	s.redisClient.Del(ctx, attemptsKey)
+}
+
 // PendingRegistration stores registration data temporarily in Redis
-// Redis key: auth:register:otp:{email}
+// Redis key: register:otp:{email}
 // TTL: 5 minutes
+// Security: OTP is stored as hash (SHA256 with email salt) to prevent plaintext exposure
 type PendingRegistration struct {
 	Email        string `json:"email"`
 	PasswordHash string `json:"password_hash"`
 	UserName     string `json:"user_name"`
 	FullName     string `json:"full_name,omitempty"`
 	RoleID       string `json:"role_id"`
-	OTP          string `json:"otp"`
+	OTPHash      string `json:"otp_hash"` // Hashed OTP, not plaintext
+	Attempts     int    `json:"attempts"` // OTP verification attempts
 	CreatedAt    string `json:"created_at"`
 }
 
 func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterRequestDto) error {
-	// Validate role_id
+	// Validate system role
 	roleID, err := uuid.Parse(req.RoleID)
 	if err != nil {
-		return errors.New("invalid role_id format")
+		return fmt.Errorf("invalid role_id: %s", req.RoleID)
 	}
-
 	roles, err := s.systemRoleRepo.GetSystemRoleByIDs(ctx, []uuid.UUID{roleID})
 	if err != nil {
 		return fmt.Errorf("failed to validate system role: %w", err)
 	}
-	if len(roles) == 0 {
-		return errors.New("role_id not found")
+	if len(roles) != 1 {
+		return errors.New("role ID is invalid")
 	}
 	if roles[0].Status != "active" {
 		return errors.New("system role is not active: " + roles[0].Name)
@@ -107,17 +153,18 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 		return errors.New("email already registered")
 	}
 
-	// Hash password
+	// ===== 5. Hash password =====
 	passwordHash, err := utils.HashPassword(req.Password)
 	if err != nil {
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
-
-	// Generate OTP (6 digits)
 	otp, err := utils.GenerateOTP(6)
 	if err != nil {
 		return fmt.Errorf("failed to generate OTP: %w", err)
 	}
+
+	// Hash OTP before storing (security: prevent plaintext exposure if Redis is compromised)
+	otpHash := utils.HashOTP(otp, req.Email)
 
 	pendingData := PendingRegistration{
 		Email:        req.Email,
@@ -125,13 +172,14 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 		UserName:     req.UserName,
 		FullName:     req.FullName,
 		RoleID:       req.RoleID,
-		OTP:          otp,
+		OTPHash:      otpHash,
+		Attempts:     0,
 		CreatedAt:    time.Now().Format(time.RFC3339),
 	}
 
 	// ===== 8. Save to Redis with TTL (5 minutes) =====
-	// Key format: auth:register:otp:{email}
-	pendingKey := fmt.Sprintf("auth:register:otp:%s", req.Email)
+	// Key format: register:otp:{email}
+	pendingKey := constants.KeyRegisterOTP(req.Email)
 	pendingBytes, err := json.Marshal(pendingData)
 	if err != nil {
 		return fmt.Errorf("failed to marshal pending data: %w", err)
@@ -154,7 +202,7 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 
 func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto) (*dto.RegisterResponseDto, error) {
 	// ===== 2. Get pending registration from Redis =====
-	pendingKey := fmt.Sprintf("auth:register:otp:%s", req.Email)
+	pendingKey := constants.KeyRegisterOTP(req.Email)
 	pendingData, err := s.redisClient.Get(ctx, pendingKey).Result()
 	if err == redis.Nil {
 		return nil, errors.New("registration request not found or expired, please request again")
@@ -169,8 +217,25 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		return nil, fmt.Errorf("failed to parse pending registration: %w", err)
 	}
 
-	if pending.OTP != req.OTP {
-		return nil, errors.New("invalid OTP")
+	// ===== 4. Check OTP attempts (max 5) =====
+	const maxOTPAttempts = 5
+	if pending.Attempts >= maxOTPAttempts {
+		// Delete pending registration to force user to request new OTP
+		_ = s.redisClient.Del(ctx, pendingKey).Err()
+		return nil, errors.New("too many failed attempts, please request a new OTP")
+	}
+
+	// ===== 5. Verify OTP using constant-time comparison =====
+	if !utils.VerifyOTP(req.OTP, pending.OTPHash, req.Email) {
+		// Increment attempts and save back
+		pending.Attempts++
+		pendingBytes, _ := json.Marshal(pending)
+		ttl, _ := s.redisClient.TTL(ctx, pendingKey).Result()
+		if ttl > 0 {
+			_ = s.redisClient.Set(ctx, pendingKey, pendingBytes, ttl).Err()
+		}
+		remaining := maxOTPAttempts - pending.Attempts
+		return nil, fmt.Errorf("invalid OTP, %d attempts remaining", remaining)
 	}
 
 	// Prepare FullName pointer
@@ -193,21 +258,18 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	// Gán 1 system role
+	// Assign the selected system role to user
 	roleID, _ := uuid.Parse(pending.RoleID)
-	if err := s.userSystemRoleRepo.Create(ctx, &model.UserSystemRole{
+	now := time.Now()
+	_ = s.userSystemRoleRepo.Create(ctx, &model.UserSystemRole{
 		UserID:       user.ID,
 		SystemRoleID: roleID,
-		GrantedAt:    time.Now(),
+		GrantedAt:    now,
 		GrantedBy:    nil,
 		Status:       model.UserSystemRoleStatusActive,
-	}); err != nil {
-		return nil, fmt.Errorf("failed to assign system role: %w", err)
-	}
+	})
 
-	if err := s.redisClient.Del(ctx, pendingKey).Err(); err != nil {
-		log.Printf("[WARN] Failed to delete pending registration key: %v", err)
-	}
+	_ = s.redisClient.Del(ctx, pendingKey).Err()
 
 	return &dto.RegisterResponseDto{
 		ID:       user.ID.String(),
@@ -218,142 +280,167 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 	}, nil
 }
 
-// GetProfiles trả về danh sách tất cả profiles của user (gộp từ SystemRole + OrgRole)
-func (s *AuthService) GetProfiles(ctx context.Context, userID uuid.UUID) ([]dto.ProfileDto, error) {
-	var profiles []dto.ProfileDto
-
-	// 1. Lấy system roles
-	systemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
-	if err != nil {
-		log.Printf("[WARN] Failed to load system roles for user %s: %v", userID, err)
-	}
-	for _, sr := range systemRoles {
-		if sr.SystemRole == nil {
-			continue
-		}
-		profiles = append(profiles, dto.ProfileDto{
-			ID:          sr.ID,
-			Type:        "system",
-			DisplayName: sr.SystemRole.Name,
-			RoleName:    sr.SystemRole.Name,
-		})
-	}
-
-	// 2. Lấy org roles
-	orgRoles, err := s.userOrgRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
-	if err != nil {
-		log.Printf("[WARN] Failed to load org roles for user %s: %v", userID, err)
-	}
-	for _, or := range orgRoles {
-		if or.Role == nil || or.Organization == nil {
-			continue
-		}
-		orgName := or.Organization.Name
-		profiles = append(profiles, dto.ProfileDto{
-			ID:               or.ID,
-			Type:             "org",
-			DisplayName:      or.Role.Name + " " + or.Organization.Name,
-			RoleName:         or.Role.Name,
-			OrganizationID:   &or.OrganizationID,
-			OrganizationName: &orgName,
-		})
-	}
-
-	return profiles, nil
-}
-
-// getLastProfile lấy last profile từ Redis
-func (s *AuthService) getLastProfile(ctx context.Context, userID uuid.UUID) *dto.LastProfileDto {
-	lastProfileKey := fmt.Sprintf("auth:last_profile:%s", userID)
-	data, err := s.redisClient.Get(ctx, lastProfileKey).Result()
-	if err != nil {
-		return nil
-	}
-	var lastProfile dto.LastProfileDto
-	if err := json.Unmarshal([]byte(data), &lastProfile); err != nil {
-		return nil
-	}
-	return &lastProfile
-}
-
-// saveLastProfile lưu last profile vào Redis
-func (s *AuthService) saveLastProfile(ctx context.Context, userID uuid.UUID, profile dto.ProfileDto) {
-	lastProfile := dto.LastProfileDto{
-		Type: profile.Type,
-		ID:   profile.ID,
-	}
-	data, _ := json.Marshal(lastProfile)
-	lastProfileKey := fmt.Sprintf("auth:last_profile:%s", userID)
-	_ = s.redisClient.Set(ctx, lastProfileKey, data, 0).Err()
-}
-
-// findProfileByLastProfile tìm profile trong danh sách dựa trên last profile
-func (s *AuthService) findProfileByLastProfile(profiles []dto.ProfileDto, lastProfile *dto.LastProfileDto) *dto.ProfileDto {
-	if lastProfile == nil {
-		return nil
-	}
-	for _, p := range profiles {
-		if p.Type == lastProfile.Type && p.ID == lastProfile.ID {
-			return &p
-		}
-	}
-	return nil
+// PendingLogin stores login data temporarily in Redis while user selects a profile/org
+type PendingLogin struct {
+	UserID       string              `json:"user_id"`
+	DeviceInfo   dto.DeviceInfoDTO   `json:"device_info"`
+	SystemRoles  []dto.SystemRoleDto `json:"system_roles"`
+	SelectedRole *dto.SystemRoleDto  `json:"selected_role,omitempty"`
+	CreatedAt    string              `json:"created_at"`
 }
 
 func (s *AuthService) Login(
 	ctx context.Context,
 	req dto.LoginRequestDto,
 ) (*dto.LoginResponseDto, error) {
-	// 1. Validate user
+
+	// ===== 1. Check if account is locked due to failed attempts =====
+	lockKey := constants.KeyLoginLocked(req.Email)
+	if locked, _ := s.redisClient.Exists(ctx, lockKey).Result(); locked > 0 {
+		ttl, _ := s.redisClient.TTL(ctx, lockKey).Result()
+		return nil, fmt.Errorf("account temporarily locked due to too many failed attempts, try again in %d minutes", int(ttl.Minutes())+1)
+	}
+
+	// ===== 2. Validate credentials =====
 	user, err := s.userRepo.FindUserByEmail(ctx, req.Email)
 	if err != nil {
 		return nil, err
 	}
+
+	// Track failed login attempts
 	if user == nil || !utils.CheckPassword(req.Password, user.PasswordHash) {
+		s.recordFailedLogin(ctx, req.Email)
 		return nil, errors.New("invalid email or password")
 	}
+
 	if !user.IsActive {
 		return nil, errors.New("account is inactive")
 	}
 
-	deviceID, err := uuid.Parse(req.DeviceInfo.DeviceID)
+	// ===== 3. Clear failed attempts on successful login =====
+	s.clearFailedLogin(ctx, req.Email)
+
+	_, err = uuid.Parse(req.DeviceInfo.DeviceID)
 	if err != nil {
 		return nil, errors.New("invalid device_id format")
 	}
 
-	// 2. Lấy danh sách profiles
-	profiles, err := s.GetProfiles(ctx, user.ID)
+	systemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, user.ID, "active")
 	if err != nil {
-		return nil, fmt.Errorf("failed to load profiles: %w", err)
-	}
-	if len(profiles) == 0 {
-		return nil, errors.New("user has no active profile assigned")
+		log.Printf("[WARN] Failed to load system roles for user %s: %v", user.ID, err)
+		systemRoles = []model.UserSystemRole{}
 	}
 
-	// 3. Tự động chọn profile: ưu tiên last_profile, fallback về profile đầu tiên
-	lastProfile := s.getLastProfile(ctx, user.ID)
-	selectedProfile := s.findProfileByLastProfile(profiles, lastProfile)
-	if selectedProfile == nil {
-		selectedProfile = &profiles[0]
+	systemRoleDtos := make([]dto.SystemRoleDto, len(systemRoles))
+	for i, sr := range systemRoles {
+		systemRoleDtos[i] = dto.SystemRoleDto{
+			ID:   sr.SystemRole.ID.String(),
+			Name: sr.SystemRole.Name,
+		}
 	}
 
-	// 4. Hoàn tất login
-	return s.completeLoginWithProfile(ctx, user, req.DeviceInfo, deviceID, *selectedProfile)
+	// NEW: Build unified roles list (system + organization roles)
+	unifiedRoles, err := s.buildUnifiedRoles(ctx, user.ID)
+	if err != nil {
+		log.Printf("[WARN] Failed to build unified roles for user %s: %v", user.ID, err)
+		unifiedRoles = []dto.UnifiedRoleDto{}
+	}
+
+	// User có nhiều roles → chưa chọn role, trả session_token
+	if len(unifiedRoles) > 1 {
+		sessionToken := uuid.New().String()
+		pending := PendingLogin{
+			UserID:      user.ID.String(),
+			DeviceInfo:  req.DeviceInfo,
+			SystemRoles: systemRoleDtos,
+			CreatedAt:   time.Now().Format(time.RFC3339),
+		}
+		pendingBytes, err := json.Marshal(pending)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal pending login: %w", err)
+		}
+		pendingKey := constants.KeyPendingLogin(sessionToken)
+		if err := s.redisClient.Set(ctx, pendingKey, pendingBytes, 5*time.Minute).Err(); err != nil {
+			return nil, fmt.Errorf("failed to save pending login: %w", err)
+		}
+		// trả về khi user có nhiều hơn 1 role để chọn, client sẽ gọi API chọn role tiếp theo
+		return &dto.LoginResponseDto{
+			Completed:    true,
+			SessionToken: sessionToken,
+			Roles:        unifiedRoles,
+		}, nil
+	}
+
+	if len(unifiedRoles) == 0 {
+		return nil, errors.New("user has no active role assigned")
+	}
+
+	singleRole := unifiedRoles[0]
+	result, err := s.completeLoginUnified(ctx, user, req.DeviceInfo, singleRole)
+	if err != nil {
+		return nil, err
+	}
+
+	// trả về khi user chỉ có 1 role duy nhất, auto-login luôn mà không cần chọn role nữa
+	return &dto.LoginResponseDto{
+		Completed:     true,
+		Roles:         unifiedRoles,
+		AccessToken:   result.AccessToken,
+		RefreshToken:  result.RefreshToken,
+		User:          &result.User,
+		ActiveRole:    &singleRole,
+		CurrentDevice: result.CurrentDevice,
+	}, nil
 }
 
-// completeLoginWithProfile tạo JWT tokens, lưu session vào Redis
-func (s *AuthService) completeLoginWithProfile(
+func (s *AuthService) getUserOrgs(ctx context.Context, userID uuid.UUID) ([]dto.OrgContextDto, error) {
+	userOrgRoles, err := s.userOrgRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool)
+	var orgs []dto.OrgContextDto
+	for _, uor := range userOrgRoles {
+		if uor.Organization == nil {
+			continue
+		}
+		orgID := uor.OrganizationID.String()
+		if seen[orgID] {
+			continue
+		}
+		seen[orgID] = true
+		orgs = append(orgs, dto.OrgContextDto{
+			ID:   orgID,
+			Name: uor.Organization.Name,
+		})
+	}
+	return orgs, nil
+}
+
+func (s *AuthService) tryAutoSelectOrg(ctx context.Context, userID uuid.UUID) ([]dto.OrgContextDto, error) {
+	orgs, err := s.getUserOrgs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(orgs) == 0 {
+		return nil, nil
+	}
+	return orgs, nil
+}
+
+// completeLogin tạo JWT tokens, lưu session vào Redis, trả SelectProfileResponseDto
+func (s *AuthService) completeLogin(
 	ctx context.Context,
 	user *model.User,
 	deviceInfo dto.DeviceInfoDTO,
-	deviceID uuid.UUID,
-	activeProfile dto.ProfileDto,
-) (*dto.LoginResponseDto, error) {
-	// Lưu last_profile
-	s.saveLastProfile(ctx, user.ID, activeProfile)
+	activeRole dto.SystemRoleDto,
+	activeOrg *dto.OrgContextDto,
+) (*dto.SelectRoleResponseDto, error) {
 
-	// User version cho token invalidation
-	userVersionKey := fmt.Sprintf("auth:user_version:%s", user.ID)
+	deviceID, _ := uuid.Parse(deviceInfo.DeviceID)
+
+	userVersionKey := constants.KeyUserVersion(user.ID.String())
 	userVersion := int64(1)
 	userVerStr, err := s.redisClient.Get(ctx, userVersionKey).Result()
 	if err == nil {
@@ -362,50 +449,55 @@ func (s *AuthService) completeLoginWithProfile(
 		_ = s.redisClient.Set(ctx, userVersionKey, userVersion, 0).Err()
 	}
 
-	// Org ID - đã là *uuid.UUID
-	activeOrgID := activeProfile.OrganizationID
+	var activeOrgID *uuid.UUID
+	if activeOrg != nil {
+		parsed, _ := uuid.Parse(activeOrg.ID)
+		activeOrgID = &parsed
+	}
 
-	// Generate tokens
-	accessToken, refreshToken, err := utils.GenerateTokens(s.cfg, user.ID, deviceID, activeProfile.RoleName, activeOrgID, userVersion)
+	accessToken, refreshToken, err := utils.GenerateTokens(s.cfg, user.ID, deviceID, activeRole.Name, activeOrgID, userVersion)
 	if err != nil {
 		return nil, err
 	}
 
-	// Lưu refresh token
-	refreshKey := fmt.Sprintf("auth:refresh:%s", user.ID)
+	refreshKey := constants.KeyRefresh(user.ID.String())
 	if err := s.redisClient.HSet(ctx, refreshKey, deviceID.String(), refreshToken).Err(); err != nil {
 		return nil, err
 	}
 	s.redisClient.Expire(ctx, refreshKey, s.cfg.JWTRefreshExpiration)
 
-	// Lưu device session
 	type deviceSession struct {
 		DeviceID   uuid.UUID `json:"device_id"`
 		DeviceName string    `json:"device_name"`
 		UserAgent  string    `json:"user_agent"`
 		LoggedInAt string    `json:"logged_in_at"`
 	}
-	sessionKey := fmt.Sprintf("auth:session:%s", user.ID)
+	sessionKey := constants.KeySession(user.ID.String())
 	sessionPayload := deviceSession{
 		DeviceID:   deviceID,
 		DeviceName: deviceInfo.DeviceName,
 		UserAgent:  deviceInfo.UserAgent,
 		LoggedInAt: time.Now().Format(time.RFC3339),
 	}
-	sessionBytes, _ := json.Marshal(sessionPayload)
-	_ = s.redisClient.HSet(ctx, sessionKey, deviceID.String(), sessionBytes).Err()
+	sessionBytes, err := json.Marshal(sessionPayload)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.redisClient.HSet(ctx, sessionKey, deviceID.String(), sessionBytes).Err(); err != nil {
+		return nil, err
+	}
 
-	// Build response
 	var dob *string
 	if user.DateOfBirth != nil {
 		f := user.DateOfBirth.Format("2006-01-02")
 		dob = &f
 	}
 
-	return &dto.LoginResponseDto{
+	return &dto.SelectRoleResponseDto{
+		Completed:    true,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
-		User: &dto.UserResponseDto{
+		User: dto.UserResponseDto{
 			ID:          user.ID,
 			Username:    user.UserName,
 			Email:       user.Email,
@@ -415,6 +507,13 @@ func (s *AuthService) completeLoginWithProfile(
 			IsActive:    user.IsActive,
 			CreatedAt:   user.CreatedAt.Format(time.RFC3339),
 		},
+		ActiveRole: dto.UnifiedRoleDto{
+			ID:          activeRole.ID,
+			Type:        "system",
+			RoleName:    activeRole.Name,
+			DisplayName: activeRole.Name,
+		},
+		ActiveOrg:   activeOrg,
 		CurrentDevice: &dto.DeviceSessionDto{
 			DeviceID:   deviceID.String(),
 			DeviceName: deviceInfo.DeviceName,
@@ -424,34 +523,170 @@ func (s *AuthService) completeLoginWithProfile(
 	}, nil
 }
 
-// SwitchProfile đổi profile khi đã đăng nhập
-func (s *AuthService) SwitchProfile(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, req dto.SwitchProfileRequestDto) (*dto.SwitchProfileResponseDto, error) {
-	profileID, err := uuid.Parse(req.ProfileID)
+// finishLoginWithOrgCheck kiểm tra org context sau khi đã chọn role.
+// 0 org → hoàn tất login (active_org=null). 1+ org → yêu cầu chọn org (hoặc "Độc lập").
+func (s *AuthService) finishLoginWithOrgCheck(
+	ctx context.Context,
+	user *model.User,
+	deviceInfo dto.DeviceInfoDTO,
+	selectedRole dto.SystemRoleDto,
+	allRoles []dto.SystemRoleDto,
+) (*dto.LoginResponseDto, error) {
+	orgs, err := s.tryAutoSelectOrg(ctx, user.ID)
+	if err != nil {
+		log.Printf("[WARN] Failed to check orgs for user %s: %v", user.ID, err)
+	}
+
+	// Convert SystemRoleDto to UnifiedRoleDto for new flow
+	activeRoleUnified := dto.UnifiedRoleDto{
+		ID:          selectedRole.ID,
+		Type:        "system",
+		RoleName:    selectedRole.Name,
+		DisplayName: selectedRole.Name,
+	}
+
+	// User thuộc 1+ org → yêu cầu chọn (org hoặc "Độc lập") - DEPRECATED flow
+	if len(orgs) > 0 {
+		sessionToken := uuid.New().String()
+		pending := PendingLogin{
+			UserID:       user.ID.String(),
+			DeviceInfo:   deviceInfo,
+			SystemRoles:  allRoles,
+			SelectedRole: &selectedRole,
+			CreatedAt:    time.Now().Format(time.RFC3339),
+		}
+		pendingBytes, _ := json.Marshal(pending)
+		pendingKey := constants.KeyPendingLogin(sessionToken)
+		if err := s.redisClient.Set(ctx, pendingKey, pendingBytes, 5*time.Minute).Err(); err != nil {
+			return nil, fmt.Errorf("failed to save pending login: %w", err)
+		}
+		return &dto.LoginResponseDto{
+			Completed:            false,
+			SessionToken:         sessionToken,
+			RequiresOrgSelection: true,
+			Organizations:        orgs,
+			ActiveRole:           &activeRoleUnified,
+		}, nil
+	}
+
+	// 0 org → hoàn tất ngay với active_org=null
+	result, err := s.completeLogin(ctx, user, deviceInfo, selectedRole, nil)
+	if err != nil {
+		return nil, err
+	}
+	entryCtx := s.determineEntryContext(allRoles)
+	return &dto.LoginResponseDto{
+		Completed:     true,
+		AccessToken:   result.AccessToken,
+		RefreshToken:  result.RefreshToken,
+		User:          &result.User,
+		ActiveRole:    &activeRoleUnified,
+		EntryContext:  entryCtx,
+		CurrentDevice: result.CurrentDevice,
+	}, nil
+}
+
+func (s *AuthService) SelectProfile(ctx context.Context, req dto.SelectProfileRequestDto) (*dto.SelectRoleResponseDto, error) {
+	pendingKey := constants.KeyPendingLogin(req.SessionToken)
+	pendingData, err := s.redisClient.Get(ctx, pendingKey).Result()
+	if err == redis.Nil {
+		return nil, errors.New("session expired or invalid, please login again")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending login: %w", err)
+	}
+
+	var pending PendingLogin
+	if err := json.Unmarshal([]byte(pendingData), &pending); err != nil {
+		return nil, fmt.Errorf("failed to parse pending login: %w", err)
+	}
+
+	var selectedRole *dto.SystemRoleDto
+	for _, role := range pending.SystemRoles {
+		if role.ID == req.SystemRoleID {
+			selectedRole = &role
+			break
+		}
+	}
+	if selectedRole == nil {
+		return nil, errors.New("invalid system_role_id: user does not have this role")
+	}
+
+	userID, _ := uuid.Parse(pending.UserID)
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, errors.New("user not found")
+	}
+
+	// Kiểm tra org context
+	orgs, err := s.tryAutoSelectOrg(ctx, userID)
+	if err != nil {
+		log.Printf("[WARN] Failed to check orgs for user %s: %v", userID, err)
+	}
+
+	if len(orgs) > 0 {
+		// Có org → cập nhật pending với role đã chọn, yêu cầu chọn org (hoặc "Độc lập")
+		pending.SelectedRole = selectedRole
+		pendingBytes, _ := json.Marshal(pending)
+		_ = s.redisClient.Set(ctx, pendingKey, pendingBytes, 5*time.Minute).Err()
+
+		return &dto.SelectRoleResponseDto{
+			Completed:            false,
+			SessionToken:         req.SessionToken,
+			RequiresOrgSelection: true,
+			Organizations:        orgs,
+			ActiveRole: dto.UnifiedRoleDto{
+				ID:          selectedRole.ID,
+				Type:        "system",
+				RoleName:    selectedRole.Name,
+				DisplayName: selectedRole.Name,
+			},
+		}, nil
+	}
+
+	// 0 org → hoàn tất với active_org=null
+	result, err := s.completeLogin(ctx, user, pending.DeviceInfo, *selectedRole, nil)
+	if err != nil {
+		return nil, err
+	}
+	result.EntryContext = s.determineEntryContext(pending.SystemRoles)
+	_ = s.redisClient.Del(ctx, pendingKey).Err()
+	return result, nil
+}
+
+func (s *AuthService) SwitchProfile(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, req dto.SwitchProfileRequestDto) (*dto.SelectRoleResponseDto, error) {
+	roleID, err := uuid.Parse(req.ProfileID)
 	if err != nil {
 		return nil, errors.New("invalid profile_id format")
 	}
 
-	// Lấy danh sách profiles
-	profiles, err := s.GetProfiles(ctx, userID)
+	userSystemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
 	if err != nil {
-		return nil, fmt.Errorf("failed to load profiles: %w", err)
+		return nil, fmt.Errorf("failed to load system roles: %w", err)
 	}
 
-	// Tìm profile được chọn
-	var selectedProfile *dto.ProfileDto
-	for _, p := range profiles {
-		if p.Type == req.ProfileType && p.ID == profileID {
-			selectedProfile = &p
-			break
+	var selectedRole *dto.SystemRoleDto
+	allRoles := make([]dto.SystemRoleDto, len(userSystemRoles))
+	for i, sr := range userSystemRoles {
+		allRoles[i] = dto.SystemRoleDto{
+			ID:   sr.SystemRole.ID.String(),
+			Name: sr.SystemRole.Name,
+		}
+		if sr.SystemRole.ID == roleID {
+			selectedRole = &allRoles[i]
 		}
 	}
-	if selectedProfile == nil {
-		return nil, errors.New("user does not have this profile")
+	if selectedRole == nil {
+		return nil, errors.New("user does not have this system role")
 	}
 
-	// Lấy device info từ session
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, errors.New("user not found")
+	}
+
 	deviceInfo := dto.DeviceInfoDTO{DeviceID: deviceID.String()}
-	sessionKey := fmt.Sprintf("auth:session:%s", userID)
+	sessionKey := constants.KeySession(userID.String())
 	sessionData, err := s.redisClient.HGet(ctx, sessionKey, deviceID.String()).Result()
 	if err == nil {
 		var sess struct {
@@ -464,54 +699,171 @@ func (s *AuthService) SwitchProfile(ctx context.Context, userID uuid.UUID, devic
 		}
 	}
 
-	// Lưu last_profile
-	s.saveLastProfile(ctx, userID, *selectedProfile)
-
-	// User version
-	userVersionKey := fmt.Sprintf("auth:user_version:%s", userID)
-	userVersion := int64(1)
-	userVerStr, err := s.redisClient.Get(ctx, userVersionKey).Result()
-	if err == nil {
-		userVersion, _ = strconv.ParseInt(userVerStr, 10, 64)
+	// Khi switch role → check org
+	orgs, _ := s.tryAutoSelectOrg(ctx, userID)
+	if len(orgs) > 0 {
+		// Có org → trả danh sách để FE chọn org hoặc "Độc lập", gọi switch-org
+		return &dto.SelectRoleResponseDto{
+			Completed:            false,
+			RequiresOrgSelection: true,
+			Organizations:        orgs,
+			ActiveRole: dto.UnifiedRoleDto{
+				ID:          selectedRole.ID,
+				Type:        "system",
+				RoleName:    selectedRole.Name,
+				DisplayName: selectedRole.Name,
+			},
+		}, nil
 	}
 
-	// Org ID - đã là *uuid.UUID
-	activeOrgID := selectedProfile.OrganizationID
-
-	// Generate tokens
-	accessToken, refreshToken, err := utils.GenerateTokens(s.cfg, userID, deviceID, selectedProfile.RoleName, activeOrgID, userVersion)
+	// 0 org → hoàn tất với active_org=null
+	result, err := s.completeLogin(ctx, user, deviceInfo, *selectedRole, nil)
 	if err != nil {
 		return nil, err
 	}
+	result.EntryContext = s.determineEntryContext(allRoles)
+	return result, nil
+}
 
-	// Update refresh token
-	refreshKey := fmt.Sprintf("auth:refresh:%s", userID)
-	_ = s.redisClient.HSet(ctx, refreshKey, deviceID.String(), refreshToken).Err()
-	s.redisClient.Expire(ctx, refreshKey, s.cfg.JWTRefreshExpiration)
+// SelectOrg chọn org sau khi đã chọn role (dùng session_token).
+// organization_id rỗng = chọn chế độ "Độc lập" (active_org=null).
+func (s *AuthService) SelectOrg(ctx context.Context, req dto.SelectOrgRequestDto) (*dto.SelectRoleResponseDto, error) {
+	pendingKey := constants.KeyPendingLogin(req.SessionToken)
+	pendingData, err := s.redisClient.Get(ctx, pendingKey).Result()
+	if err == redis.Nil {
+		return nil, errors.New("session expired or invalid, please login again")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending login: %w", err)
+	}
 
-	return &dto.SwitchProfileResponseDto{
-		AccessToken:   accessToken,
-		RefreshToken:  refreshToken,
-		ActiveProfile: *selectedProfile,
-		CurrentDevice: dto.DeviceSessionDto{
-			DeviceID:   deviceID.String(),
-			DeviceName: deviceInfo.DeviceName,
-			UserAgent:  deviceInfo.UserAgent,
-			LoggedInAt: time.Now().Format(time.RFC3339),
-		},
-	}, nil
+	var pending PendingLogin
+	if err := json.Unmarshal([]byte(pendingData), &pending); err != nil {
+		return nil, fmt.Errorf("failed to parse pending login: %w", err)
+	}
+
+	if pending.SelectedRole == nil {
+		return nil, errors.New("no role selected yet, please call select-profile first")
+	}
+
+	userID, _ := uuid.Parse(pending.UserID)
+
+	var selectedOrg *dto.OrgContextDto
+
+	// organization_id rỗng = chế độ "Độc lập"
+	if req.OrganizationID != "" {
+		orgs, err := s.getUserOrgs(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load organizations: %w", err)
+		}
+		for _, org := range orgs {
+			if org.ID == req.OrganizationID {
+				selectedOrg = &org
+				break
+			}
+		}
+		if selectedOrg == nil {
+			return nil, errors.New("invalid organization_id: user does not belong to this organization")
+		}
+	}
+
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, errors.New("user not found")
+	}
+
+	result, err := s.completeLogin(ctx, user, pending.DeviceInfo, *pending.SelectedRole, selectedOrg)
+	if err != nil {
+		return nil, err
+	}
+	result.EntryContext = s.determineEntryContext(pending.SystemRoles)
+	_ = s.redisClient.Del(ctx, pendingKey).Err()
+	return result, nil
+}
+
+// SwitchOrg đổi org khi đã đăng nhập (giữ nguyên role).
+// organization_id rỗng = chuyển về chế độ "Độc lập" (active_org=null).
+func (s *AuthService) SwitchOrg(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, activeRole string, req dto.SwitchOrgRequestDto) (*dto.SelectRoleResponseDto, error) {
+	var selectedOrg *dto.OrgContextDto
+
+	if req.OrganizationID != "" {
+		orgID, err := uuid.Parse(req.OrganizationID)
+		if err != nil {
+			return nil, errors.New("invalid organization_id format")
+		}
+
+		orgs, err := s.getUserOrgs(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load organizations: %w", err)
+		}
+
+		for _, org := range orgs {
+			parsed, _ := uuid.Parse(org.ID)
+			if parsed == orgID {
+				selectedOrg = &org
+				break
+			}
+		}
+		if selectedOrg == nil {
+			return nil, errors.New("user does not belong to this organization")
+		}
+	}
+
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, errors.New("user not found")
+	}
+
+	// Lấy tất cả system roles
+	userSystemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load system roles: %w", err)
+	}
+
+	var currentRole dto.SystemRoleDto
+	allRoles := make([]dto.SystemRoleDto, len(userSystemRoles))
+	for i, sr := range userSystemRoles {
+		allRoles[i] = dto.SystemRoleDto{
+			ID:   sr.SystemRole.ID.String(),
+			Name: sr.SystemRole.Name,
+		}
+		if sr.SystemRole.Name == activeRole {
+			currentRole = allRoles[i]
+		}
+	}
+
+	deviceInfo := dto.DeviceInfoDTO{DeviceID: deviceID.String()}
+	sessionKey := constants.KeySession(userID.String())
+	sessionData, err := s.redisClient.HGet(ctx, sessionKey, deviceID.String()).Result()
+	if err == nil {
+		var sess struct {
+			DeviceName string `json:"device_name"`
+			UserAgent  string `json:"user_agent"`
+		}
+		if json.Unmarshal([]byte(sessionData), &sess) == nil {
+			deviceInfo.DeviceName = sess.DeviceName
+			deviceInfo.UserAgent = sess.UserAgent
+		}
+	}
+
+	result, err := s.completeLogin(ctx, user, deviceInfo, currentRole, selectedOrg)
+	if err != nil {
+		return nil, err
+	}
+	result.EntryContext = s.determineEntryContext(allRoles)
+	return result, nil
 }
 
 func (s *AuthService) Logout(ctx context.Context, userId, deviceId uuid.UUID) error {
 
 	// 1. Remove refresh token of this device
-	refreshKey := fmt.Sprintf("auth:refresh:%s", userId)
+	refreshKey := constants.KeyRefresh(userId.String())
 	if err := s.redisClient.HDel(ctx, refreshKey, deviceId.String()).Err(); err != nil {
 		return err
 	}
 
 	// 2. Remove device session
-	sessionKey := fmt.Sprintf("auth:session:%s", userId)
+	sessionKey := constants.KeySession(userId.String())
 	if err := s.redisClient.HDel(ctx, sessionKey, deviceId.String()).Err(); err != nil {
 		return err
 	}
@@ -532,7 +884,7 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldRefreshToken string) 
 	}
 
 	// ===== 2. Check user_version (for logout all) =====
-	userVersionKey := fmt.Sprintf("auth:user_version:%s", claims.UserID)
+	userVersionKey := constants.KeyUserVersion(claims.UserID.String())
 	userVerStr, err := s.redisClient.Get(ctx, userVersionKey).Result()
 	if err == redis.Nil {
 		return nil, errors.New("user session not found - please login again")
@@ -548,7 +900,7 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldRefreshToken string) 
 
 	// ===== 3. Check if refresh token exists in Redis (Using HGET) =====
 	// Key used in Login: auth:refresh:{userID}
-	refreshTokenKey := fmt.Sprintf("auth:refresh:%s", claims.UserID)
+	refreshTokenKey := constants.KeyRefresh(claims.UserID.String())
 	storedToken, err := s.redisClient.HGet(ctx, refreshTokenKey, claims.DeviceID.String()).Result()
 	if err == redis.Nil {
 		return nil, errors.New("refresh token not found - please login again")
@@ -582,7 +934,7 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldRefreshToken string) 
 }
 
 func (s *AuthService) GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserResponseDto, error) {
-	userCacheKey := fmt.Sprintf("auth:user_cache:%s", userID)
+	userCacheKey := constants.KeyUserCache(userID.String())
 
 	// ===== 1. Check Redis cache first (if redis is available) =====
 	if s.redisClient != nil {
@@ -647,32 +999,6 @@ func (s *AuthService) GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserRes
 	return userResponse, nil
 }
 
-// getUserOrgs returns user's organizations from org roles
-func (s *AuthService) getUserOrgs(ctx context.Context, userID uuid.UUID) ([]dto.OrgContextDto, error) {
-	orgRoles, err := s.userOrgRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
-	if err != nil {
-		return nil, err
-	}
-
-	// Deduplicate orgs (user may have multiple roles in same org)
-	orgMap := make(map[string]dto.OrgContextDto)
-	for _, or := range orgRoles {
-		if or.Organization == nil {
-			continue
-		}
-		orgMap[or.OrganizationID.String()] = dto.OrgContextDto{
-			ID:   or.OrganizationID.String(),
-			Name: or.Organization.Name,
-		}
-	}
-
-	orgs := make([]dto.OrgContextDto, 0, len(orgMap))
-	for _, org := range orgMap {
-		orgs = append(orgs, org)
-	}
-	return orgs, nil
-}
-
 // GetMyProfile trả về full profile: user info + system roles + organizations + active context
 func (s *AuthService) GetMyProfile(ctx context.Context, userID uuid.UUID, activeRole string, activeOrgID *uuid.UUID) (*dto.MyProfileResponseDto, error) {
 	// 1. Get user info
@@ -702,7 +1028,6 @@ func (s *AuthService) GetMyProfile(ctx context.Context, userID uuid.UUID, active
 		}
 	}
 
-	// 4. Build active role context
 	var activeRoleDto *dto.SystemRoleDto
 	for _, sr := range systemRoles {
 		if sr.Name == activeRole {
@@ -712,7 +1037,6 @@ func (s *AuthService) GetMyProfile(ctx context.Context, userID uuid.UUID, active
 		}
 	}
 
-	// 5. Build active org context
 	var activeOrgDto *dto.OrgContextDto
 	if activeOrgID != nil {
 		for _, org := range orgs {
@@ -795,7 +1119,7 @@ func (s *AuthService) UpdateMe(ctx context.Context, userID uuid.UUID, req dto.Up
 
 	// ===== 4. Invalidate cache (graceful - ignore errors) =====
 	if s.redisClient != nil {
-		userCacheKey := fmt.Sprintf("auth:user_cache:%s", userID)
+		userCacheKey := constants.KeyUserCache(userID.String())
 		_ = s.redisClient.Del(ctx, userCacheKey).Err()
 	}
 
@@ -830,7 +1154,7 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID uuid.UUID, req 
 
 	// ===== 4. Cache: Invalidate user cache =====
 	if s.redisClient != nil {
-		userCacheKey := fmt.Sprintf("auth:user_cache:%s", userID)
+		userCacheKey := constants.KeyUserCache(userID.String())
 		_ = s.redisClient.Del(ctx, userCacheKey).Err() // Ignore error - cache miss is acceptable
 	}
 
@@ -852,32 +1176,79 @@ func (s *AuthService) revokeAllSessions(ctx context.Context, userID uuid.UUID) e
 	}
 
 	// 1. INCR user_version → all access tokens become invalid immediately
-	userVersionKey := fmt.Sprintf("auth:user_version:%s", userID)
+	userVersionKey := constants.KeyUserVersion(userID.String())
 	if err := s.redisClient.Incr(ctx, userVersionKey).Err(); err != nil {
 		return err
 	}
 
 	// 2. DEL auth:refresh:{userId} → remove all refresh tokens (HASH)
-	refreshKey := fmt.Sprintf("auth:refresh:%s", userID)
+	refreshKey := constants.KeyRefresh(userID.String())
 	_ = s.redisClient.Del(ctx, refreshKey).Err()
 
-	// 3. DEL session:{userId} → remove all device sessions (HASH)
-	sessionKey := fmt.Sprintf("auth:session:%s", userID)
+	// 3. DEL auth:session:{userId} → remove all device sessions (HASH)
+	sessionKey := constants.KeySession(userID.String())
 	_ = s.redisClient.Del(ctx, sessionKey).Err()
 
 	return nil
 }
 
+// determineEntryContext xác định context điều hướng dựa trên system roles
+func (s *AuthService) determineEntryContext(systemRoles []dto.SystemRoleDto) *dto.EntryContext {
+	if len(systemRoles) == 0 {
+		return nil
+	}
+
+	// Priority mapping: ORG_OWNER > PARENT > TEACHER > STUDENT
+	priorityMap := map[string]int{
+		"ORG_OWNER": 4,
+		"PARENT":    3,
+		"TEACHER":   2,
+		"STUDENT":   1,
+	}
+
+	var primaryRole string
+	maxPriority := 0
+
+	for _, role := range systemRoles {
+		if p, ok := priorityMap[role.Name]; ok && p > maxPriority {
+			maxPriority = p
+			primaryRole = role.Name
+		}
+	}
+
+	if primaryRole == "" {
+		primaryRole = systemRoles[0].Name
+	}
+
+	ctx := &dto.EntryContext{PrimaryRole: primaryRole}
+
+	switch primaryRole {
+	case "PARENT":
+		ctx.RequiresSetup = true
+		ctx.SetupEndpoint = "/me/children"
+	case "ORG_OWNER":
+		ctx.RequiresSetup = true
+		ctx.SetupEndpoint = "/me/organizations"
+	default:
+		ctx.RequiresSetup = false
+	}
+
+	return ctx
+}
+
 // PasswordResetOTP represents the OTP data stored in Redis
+// PasswordResetOTP stores password reset data in Redis
+// Security: OTP is stored as hash to prevent plaintext exposure
 type PasswordResetOTP struct {
-	OTP       string `json:"otp"`
+	OTPHash   string `json:"otp_hash"` // SHA256 hash of OTP with email salt
+	Email     string `json:"email"`    // Email used as salt for hashing
 	Attempt   int    `json:"attempt"`
 	ExpiredAt int64  `json:"expired_at"`
 }
 
 const (
-	maxOTPAttempts = 5
-	otpTTL         = 5 * time.Minute
+	maxPasswordResetAttempts = 5
+	otpTTL                   = 5 * time.Minute
 )
 
 func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) error {
@@ -899,10 +1270,14 @@ func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) er
 		return errors.New("failed to generate OTP")
 	}
 
-	// ===== 5. Store OTP in Redis =====
-	otpKey := fmt.Sprintf("auth:password_reset:otp:%s", user.ID)
+	// Hash OTP before storing (security: prevent plaintext exposure)
+	otpHash := utils.HashOTP(otp, email)
+
+	// ===== 5. Store hashed OTP in Redis =====
+	otpKey := constants.KeyPasswordReset(user.ID.String())
 	otpData := PasswordResetOTP{
-		OTP:       otp,
+		OTPHash:   otpHash,
+		Email:     email,
 		Attempt:   0,
 		ExpiredAt: time.Now().Add(otpTTL).Unix(),
 	}
@@ -938,7 +1313,7 @@ func (s *AuthService) ResetPassword(ctx context.Context, req dto.ResetPasswordRe
 	}
 
 	// ===== 2. Get OTP from Redis =====
-	otpKey := fmt.Sprintf("auth:password_reset:otp:%s", user.ID)
+	otpKey := constants.KeyPasswordReset(user.ID.String())
 	otpBytes, err := s.redisClient.Get(ctx, otpKey).Result()
 	if err == redis.Nil {
 		return errors.New("OTP not found or expired")
@@ -959,17 +1334,17 @@ func (s *AuthService) ResetPassword(ctx context.Context, req dto.ResetPasswordRe
 	}
 
 	// ===== 4. Check attempt limit =====
-	if otpData.Attempt >= maxOTPAttempts {
+	if otpData.Attempt >= maxPasswordResetAttempts {
 		_ = s.redisClient.Del(ctx, otpKey).Err()
 		return errors.New("too many failed attempts, please request a new OTP")
 	}
 
-	// ===== 5. Verify OTP =====
-	if otpData.OTP != req.Otp {
+	// ===== 5. Verify OTP using constant-time comparison =====
+	if !utils.VerifyOTP(req.Otp, otpData.OTPHash, otpData.Email) {
 		// Increment attempt count
 		otpData.Attempt++
 
-		if otpData.Attempt >= maxOTPAttempts {
+		if otpData.Attempt >= maxPasswordResetAttempts {
 			// Max attempts reached - delete OTP
 			_ = s.redisClient.Del(ctx, otpKey).Err()
 			return errors.New("too many failed attempts, please request a new OTP")
@@ -980,7 +1355,8 @@ func (s *AuthService) ResetPassword(ctx context.Context, req dto.ResetPasswordRe
 		remainingTTL := time.Until(time.Unix(otpData.ExpiredAt, 0))
 		_ = s.redisClient.Set(ctx, otpKey, updatedBytes, remainingTTL).Err()
 
-		return errors.New("invalid OTP")
+		remaining := maxPasswordResetAttempts - otpData.Attempt
+		return fmt.Errorf("invalid OTP, %d attempts remaining", remaining)
 	}
 
 	// ===== 6. OTP valid - Hash new password =====
@@ -1003,69 +1379,483 @@ func (s *AuthService) ResetPassword(ctx context.Context, req dto.ResetPasswordRe
 	// } optional
 
 	// ===== 10. Invalidate user cache =====
-	userCacheKey := fmt.Sprintf("auth:user_cache:%s", user.ID)
+	userCacheKey := constants.KeyUserCache(user.ID.String())
 	_ = s.redisClient.Del(ctx, userCacheKey).Err()
 
 	return nil
 }
 
-// AddSystemProfile thêm system profile mới cho user (TEACHER, STUDENT, PARENT, ORG_OWNER)
-func (s *AuthService) AddSystemProfile(ctx context.Context, userID uuid.UUID, req dto.AddSystemProfileRequestDto) (*dto.AddSystemProfileResponseDto, error) {
-	// 1. Parse và validate system_role_id
+// ========== UNIFIED ROLE SELECTION (NEW FLOW) ==========
+
+// GetMyRoles returns unified list of system roles and organization roles
+func (s *AuthService) GetMyRoles(ctx context.Context, userID uuid.UUID) (*dto.GetMyRolesResponseDto, error) {
+	roles, err := s.buildUnifiedRoles(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &dto.GetMyRolesResponseDto{Roles: roles}, nil
+}
+
+// buildUnifiedRoles fetches both SystemRoles and OrganizationRoles, returns as UnifiedRoleDto list
+func (s *AuthService) buildUnifiedRoles(ctx context.Context, userID uuid.UUID) ([]dto.UnifiedRoleDto, error) {
+	var roles []dto.UnifiedRoleDto
+
+	// 1. Get system roles (e.g., "Giáo viên tự do", "Học sinh")
+	systemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load system roles: %w", err)
+	}
+	for _, sr := range systemRoles {
+		if sr.SystemRole == nil {
+			continue
+		}
+		roles = append(roles, dto.UnifiedRoleDto{
+			ID:          sr.ID.String(),
+			Type:        "system",
+			RoleName:    sr.SystemRole.Name,
+			DisplayName: sr.SystemRole.Name, // e.g., "Giáo viên tự do"
+		})
+	}
+
+	// 2. Get organization roles (e.g., "Kế toán - Trường PTIT")
+	orgRoles, err := s.userOrgRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load organization roles: %w", err)
+	}
+	for _, or := range orgRoles {
+		if or.Role == nil || or.Organization == nil {
+			continue
+		}
+		orgID := or.OrganizationID.String()
+		orgName := or.Organization.Name
+		roles = append(roles, dto.UnifiedRoleDto{
+			ID:               or.ID.String(),
+			Type:             "organization",
+			RoleName:         or.Role.Name,
+			OrganizationID:   &orgID,
+			OrganizationName: &orgName,
+			DisplayName:      fmt.Sprintf("%s - %s", or.Role.Name, or.Organization.Name),
+		})
+	}
+
+	return roles, nil
+}
+
+// SelectRole selects a role during login flow (using session_token)
+func (s *AuthService) SelectRole(ctx context.Context, req dto.SelectRoleRequestDto) (*dto.SelectRoleResponseDto, error) {
+	// 1. Get pending login from Redis
+	pendingKey := constants.KeyPendingLogin(req.SessionToken)
+	pendingData, err := s.redisClient.Get(ctx, pendingKey).Result()
+	if err == redis.Nil {
+		return nil, errors.New("session expired or invalid, please login again")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending login: %w", err)
+	}
+
+	var pending PendingLogin
+	if err := json.Unmarshal([]byte(pendingData), &pending); err != nil {
+		return nil, fmt.Errorf("failed to parse pending login: %w", err)
+	}
+
+	userID, _ := uuid.Parse(pending.UserID)
+	roleID, err := uuid.Parse(req.RoleID)
+	if err != nil {
+		return nil, errors.New("invalid role_id format")
+	}
+
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, errors.New("user not found")
+	}
+
+	// 2. Validate role ownership and build active role
+	var activeRole dto.UnifiedRoleDto
+	if req.RoleType == "system" {
+		// Validate system role
+		userSystemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+		if err != nil {
+			return nil, fmt.Errorf("failed to load system roles: %w", err)
+		}
+		found := false
+		for _, sr := range userSystemRoles {
+			if sr.ID == roleID && sr.SystemRole != nil {
+				activeRole = dto.UnifiedRoleDto{
+					ID:          sr.ID.String(),
+					Type:        "system",
+					RoleName:    sr.SystemRole.Name,
+					DisplayName: sr.SystemRole.Name,
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, errors.New("user does not have this system role")
+		}
+	} else if req.RoleType == "organization" {
+		// Validate organization role
+		orgRoles, err := s.userOrgRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+		if err != nil {
+			return nil, fmt.Errorf("failed to load organization roles: %w", err)
+		}
+		found := false
+		for _, or := range orgRoles {
+			if or.ID == roleID && or.Role != nil && or.Organization != nil {
+				orgID := or.OrganizationID.String()
+				orgName := or.Organization.Name
+				activeRole = dto.UnifiedRoleDto{
+					ID:               or.ID.String(),
+					Type:             "organization",
+					RoleName:         or.Role.Name,
+					OrganizationID:   &orgID,
+					OrganizationName: &orgName,
+					DisplayName:      fmt.Sprintf("%s - %s", or.Role.Name, or.Organization.Name),
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, errors.New("user does not have this organization role")
+		}
+	} else {
+		return nil, errors.New("invalid role_type: must be 'system' or 'organization'")
+	}
+
+	// 3. Complete login - generate tokens
+	result, err := s.completeLoginUnified(ctx, user, pending.DeviceInfo, activeRole)
+	if err != nil {
+		return nil, err
+	}
+
+	// 4. Delete pending login from Redis
+	_ = s.redisClient.Del(ctx, pendingKey).Err()
+
+	return result, nil
+}
+
+// SwitchRole switches role while already logged in
+func (s *AuthService) SwitchRole(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, req dto.SwitchRoleRequestDto) (*dto.SelectRoleResponseDto, error) {
+	roleID, err := uuid.Parse(req.RoleID)
+	if err != nil {
+		return nil, errors.New("invalid role_id format")
+	}
+
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, errors.New("user not found")
+	}
+
+	// 1. Validate role ownership and build active role
+	var activeRole dto.UnifiedRoleDto
+	if req.RoleType == "system" {
+		userSystemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+		if err != nil {
+			return nil, fmt.Errorf("failed to load system roles: %w", err)
+		}
+		found := false
+		for _, sr := range userSystemRoles {
+			if sr.ID == roleID && sr.SystemRole != nil {
+				activeRole = dto.UnifiedRoleDto{
+					ID:          sr.ID.String(),
+					Type:        "system",
+					RoleName:    sr.SystemRole.Name,
+					DisplayName: sr.SystemRole.Name,
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, errors.New("user does not have this system role")
+		}
+	} else if req.RoleType == "organization" {
+		orgRoles, err := s.userOrgRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+		if err != nil {
+			return nil, fmt.Errorf("failed to load organization roles: %w", err)
+		}
+		found := false
+		for _, or := range orgRoles {
+			if or.ID == roleID && or.Role != nil && or.Organization != nil {
+				orgID := or.OrganizationID.String()
+				orgName := or.Organization.Name
+				activeRole = dto.UnifiedRoleDto{
+					ID:               or.ID.String(),
+					Type:             "organization",
+					RoleName:         or.Role.Name,
+					OrganizationID:   &orgID,
+					OrganizationName: &orgName,
+					DisplayName:      fmt.Sprintf("%s - %s", or.Role.Name, or.Organization.Name),
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, errors.New("user does not have this organization role")
+		}
+	} else {
+		return nil, errors.New("invalid role_type: must be 'system' or 'organization'")
+	}
+
+	// 2. Get device info from session
+	deviceInfo := dto.DeviceInfoDTO{DeviceID: deviceID.String()}
+	sessionKey := constants.KeySession(userID.String())
+	sessionData, err := s.redisClient.HGet(ctx, sessionKey, deviceID.String()).Result()
+	if err == nil {
+		var sess struct {
+			DeviceName string `json:"device_name"`
+			UserAgent  string `json:"user_agent"`
+		}
+		if json.Unmarshal([]byte(sessionData), &sess) == nil {
+			deviceInfo.DeviceName = sess.DeviceName
+			deviceInfo.UserAgent = sess.UserAgent
+		}
+	}
+
+	// 3. Complete login with new role
+	return s.completeLoginUnified(ctx, user, deviceInfo, activeRole)
+}
+
+// completeLoginUnified generates JWT tokens for unified role selection
+func (s *AuthService) completeLoginUnified(
+	ctx context.Context,
+	user *model.User,
+	deviceInfo dto.DeviceInfoDTO,
+	activeRole dto.UnifiedRoleDto,
+) (*dto.SelectRoleResponseDto, error) {
+	deviceID, _ := uuid.Parse(deviceInfo.DeviceID)
+
+	// Get/increment user version
+	userVersionKey := constants.KeyUserVersion(user.ID.String())
+	userVersion := int64(1)
+	userVerStr, err := s.redisClient.Get(ctx, userVersionKey).Result()
+	if err == nil {
+		userVersion, _ = strconv.ParseInt(userVerStr, 10, 64)
+	} else if err == redis.Nil {
+		_ = s.redisClient.Set(ctx, userVersionKey, userVersion, 0).Err()
+	}
+
+	// Determine active org for JWT
+	var activeOrgID *uuid.UUID
+	if activeRole.Type == "organization" && activeRole.OrganizationID != nil {
+		parsed, _ := uuid.Parse(*activeRole.OrganizationID)
+		activeOrgID = &parsed
+	}
+
+	// Generate tokens - use RoleName for JWT (for backward compatibility with middleware)
+	accessToken, refreshToken, err := utils.GenerateTokens(s.cfg, user.ID, deviceID, activeRole.RoleName, activeOrgID, userVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	// Save refresh token
+	refreshKey := constants.KeyRefresh(user.ID.String())
+	if err := s.redisClient.HSet(ctx, refreshKey, deviceID.String(), refreshToken).Err(); err != nil {
+		return nil, err
+	}
+	s.redisClient.Expire(ctx, refreshKey, s.cfg.JWTRefreshExpiration)
+
+	// Save session info
+	type deviceSession struct {
+		DeviceID   uuid.UUID `json:"device_id"`
+		DeviceName string    `json:"device_name"`
+		UserAgent  string    `json:"user_agent"`
+		LoggedInAt string    `json:"logged_in_at"`
+	}
+	sess := deviceSession{
+		DeviceID:   deviceID,
+		DeviceName: deviceInfo.DeviceName,
+		UserAgent:  deviceInfo.UserAgent,
+		LoggedInAt: time.Now().Format(time.RFC3339),
+	}
+	sessBytes, _ := json.Marshal(sess)
+	sessionKey := constants.KeySession(user.ID.String())
+	_ = s.redisClient.HSet(ctx, sessionKey, deviceID.String(), sessBytes).Err()
+	s.redisClient.Expire(ctx, sessionKey, s.cfg.JWTRefreshExpiration)
+
+	// Build response
+	var dobStr *string
+	if user.DateOfBirth != nil {
+		formatted := user.DateOfBirth.Format("2006-01-02")
+		dobStr = &formatted
+	}
+
+	return &dto.SelectRoleResponseDto{
+		Completed:    true,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		User: dto.UserResponseDto{
+			ID:          user.ID,
+			Username:    user.UserName,
+			Email:       user.Email,
+			FullName:    user.FullName,
+			Phone:       user.Phone,
+			AvatarUrl:   user.AvatarURL,
+			DateOfBirth: dobStr,
+			Bio:         user.Bio,
+			IsActive:    user.IsActive,
+			CreatedAt:   user.CreatedAt.Format(time.RFC3339),
+		},
+		ActiveRole: activeRole,
+		CurrentDevice: &dto.DeviceSessionDto{
+			DeviceID:   deviceID.String(),
+			DeviceName: deviceInfo.DeviceName,
+			UserAgent:  deviceInfo.UserAgent,
+			LoggedInAt: sess.LoggedInAt,
+			IsCurrent:  true,
+		},
+	}, nil
+}
+
+// ========== PROFILE MANAGEMENT ==========
+
+// protectedRoles are roles that cannot be self-assigned via API
+var protectedRoles = map[string]bool{
+	"SYSTEM_ADMIN": true,
+}
+
+// GetSystemRoleOptions returns available system roles for creating profiles (excludes protected roles)
+func (s *AuthService) GetSystemRoleOptions(ctx context.Context) ([]dto.SystemRoleOptionDto, error) {
+	roles, _, err := s.systemRoleRepo.GetAllSystemRoles(ctx, 1, 100, "", "active")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system roles: %w", err)
+	}
+
+	result := make([]dto.SystemRoleOptionDto, 0, len(roles))
+	for _, role := range roles {
+		if protectedRoles[role.Name] {
+			continue
+		}
+		var desc *string
+		if role.Description.Valid {
+			desc = &role.Description.String
+		}
+		result = append(result, dto.SystemRoleOptionDto{
+			ID:          role.ID.String(),
+			Name:        role.Name,
+			Description: desc,
+		})
+	}
+	return result, nil
+}
+
+// GetMyProfiles returns all profiles (UserSystemRoles) of a user
+func (s *AuthService) GetMyProfiles(ctx context.Context, userID uuid.UUID) ([]dto.ProfileDto, error) {
+	userRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user profiles: %w", err)
+	}
+
+	result := make([]dto.ProfileDto, 0, len(userRoles))
+	for _, ur := range userRoles {
+		if ur.SystemRole == nil {
+			continue
+		}
+		var desc *string
+		if ur.SystemRole.Description.Valid {
+			desc = &ur.SystemRole.Description.String
+		}
+		result = append(result, dto.ProfileDto{
+			ID:           ur.ID.String(),
+			SystemRoleID: ur.SystemRoleID.String(),
+			RoleName:     ur.SystemRole.Name,
+			Description:  desc,
+			Status:       ur.Status,
+			CreatedAt:    ur.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	return result, nil
+}
+
+// CreateProfile creates a new profile for user with given system role
+func (s *AuthService) CreateProfile(ctx context.Context, userID uuid.UUID, req dto.CreateProfileRequestDto) (*dto.ProfileDto, error) {
 	systemRoleID, err := uuid.Parse(req.SystemRoleID)
 	if err != nil {
-		return nil, errors.New("invalid system_role_id format")
+		return nil, errors.New("invalid system_role_id")
 	}
 
-	// 2. Kiểm tra system role có tồn tại và active không
-	roles, err := s.systemRoleRepo.GetSystemRoleByIDs(ctx, []uuid.UUID{systemRoleID})
+	// Check if system role exists
+	systemRole, err := s.systemRoleRepo.GetSystemRoleByID(ctx, systemRoleID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to validate system role: %w", err)
+		return nil, fmt.Errorf("failed to get system role: %w", err)
 	}
-	if len(roles) == 0 {
+	if systemRole == nil {
 		return nil, errors.New("system role not found")
 	}
-	if roles[0].Status != "active" {
-		return nil, errors.New("system role is not active")
+
+	// Block protected roles from being self-assigned
+	if protectedRoles[systemRole.Name] {
+		return nil, errors.New("this role cannot be self-assigned")
 	}
 
-	// 3. Kiểm tra user đã có role này chưa
-	existingRole, err := s.userSystemRoleRepo.FindByUserAndSystemRole(ctx, userID, systemRoleID)
+	// Check if user already has this profile
+	existing, err := s.userSystemRoleRepo.FindByUserAndSystemRole(ctx, userID, systemRoleID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check existing role: %w", err)
+		return nil, fmt.Errorf("failed to check existing profile: %w", err)
 	}
-	if existingRole != nil {
-		return nil, errors.New("user already has this system role")
+	if existing != nil {
+		return nil, errors.New("you already have this profile")
 	}
 
-	// 4. Tạo UserSystemRole mới
-	newUserSystemRole := &model.UserSystemRole{
+	// Create new profile
+	userSystemRole := &model.UserSystemRole{
 		UserID:       userID,
 		SystemRoleID: systemRoleID,
+		Status:       "active",
 		GrantedAt:    time.Now(),
-		GrantedBy:    nil,
-		Status:       model.UserSystemRoleStatusActive,
 	}
-	if err := s.userSystemRoleRepo.Create(ctx, newUserSystemRole); err != nil {
-		return nil, fmt.Errorf("failed to create user system role: %w", err)
+	if err := s.userSystemRoleRepo.Create(ctx, userSystemRole); err != nil {
+		return nil, fmt.Errorf("failed to create profile: %w", err)
 	}
 
-	// 5. Build profile mới
-	newProfile := dto.ProfileDto{
-		ID:          newUserSystemRole.ID,
-		Type:        "system",
-		DisplayName: roles[0].Name,
-		RoleName:    roles[0].Name,
+	var desc *string
+	if systemRole.Description.Valid {
+		desc = &systemRole.Description.String
 	}
-
-	// 6. Lấy danh sách tất cả profiles
-	profiles, err := s.GetProfiles(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get profiles: %w", err)
-	}
-
-	return &dto.AddSystemProfileResponseDto{
-		Profile:  newProfile,
-		Profiles: profiles,
+	return &dto.ProfileDto{
+		ID:           userSystemRole.ID.String(),
+		SystemRoleID: systemRoleID.String(),
+		RoleName:     systemRole.Name,
+		Description:  desc,
+		Status:       userSystemRole.Status,
+		CreatedAt:    userSystemRole.CreatedAt.Format(time.RFC3339),
 	}, nil
+}
+
+// DeleteProfile removes a profile from user
+func (s *AuthService) DeleteProfile(ctx context.Context, userID uuid.UUID, profileID uuid.UUID) error {
+	// Check if profile exists and belongs to user
+	profile, err := s.userSystemRoleRepo.FindByID(ctx, profileID)
+	if err != nil {
+		return fmt.Errorf("failed to find profile: %w", err)
+	}
+	if profile == nil {
+		return errors.New("profile not found")
+	}
+	if profile.UserID != userID {
+		return errors.New("profile does not belong to you")
+	}
+
+	// Check if user has at least 2 profiles (can't delete last one)
+	profiles, err := s.userSystemRoleRepo.FindByUserID(ctx, userID, "active")
+	if err != nil {
+		return fmt.Errorf("failed to count profiles: %w", err)
+	}
+	if len(profiles) <= 1 {
+		return errors.New("cannot delete your last profile")
+	}
+
+	// Soft delete
+	if err := s.userSystemRoleRepo.Delete(ctx, profileID); err != nil {
+		return fmt.Errorf("failed to delete profile: %w", err)
+	}
+
+	// Security: Increment user_version to invalidate existing tokens
+	// Forces user to re-login with updated profiles
+	userVersionKey := constants.KeyUserVersion(userID.String())
+	s.redisClient.Incr(ctx, userVersionKey)
+
+	return nil
 }

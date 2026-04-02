@@ -8,7 +8,10 @@
     { "key": "token", "value": "" },
     { "key": "course_id", "value": "" },
     { "key": "section_id", "value": "" },
-    { "key": "lesson_id", "value": "" }
+    { "key": "lesson_id", "value": "" },
+    { "key": "content_id", "value": "" },
+    { "key": "exercise_id", "value": "" },
+    { "key": "class_id", "value": "" }
   ],
   "auth": {
     "type": "bearer",
@@ -31,10 +34,12 @@
                 { "key": "page", "value": "1" },
                 { "key": "page_size", "value": "10" },
                 { "key": "category_id", "value": "", "disabled": true },
+                { "key": "instructor_id", "value": "", "disabled": true },
                 { "key": "level", "value": "", "disabled": true },
                 { "key": "status", "value": "", "disabled": true },
                 { "key": "keyword", "value": "", "disabled": true },
                 { "key": "is_free", "value": "", "disabled": true },
+                { "key": "is_featured", "value": "", "disabled": true },
                 { "key": "min_price", "value": "", "disabled": true },
                 { "key": "max_price", "value": "", "disabled": true }
               ]
@@ -57,7 +62,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"instructor_id\": \"<user_uuid>\",\n  \"category_id\": null,\n  \"title\": \"Go Programming\",\n  \"short_description\": \"Learn Go from scratch\",\n  \"description\": \"Full Go course\",\n  \"thumbnail_url\": null,\n  \"preview_video_url\": null,\n  \"level\": \"beginner\",\n  \"language\": \"vi\",\n  \"price\": 0,\n  \"requirements\": [\"Basic programming\"],\n  \"objectives\": [\"Learn Go basics\"],\n  \"target_audience\": [\"Beginners\"],\n  \"is_free\": true,\n  \"tag_ids\": []\n}"
+              "raw": "{\n  \"instructor_id\": \"<user_uuid>\",\n  \"category_id\": null,\n  \"title\": \"Go Programming\",\n  \"short_description\": \"Learn Go from scratch\",\n  \"description\": \"Full Go course\",\n  \"thumbnail_url\": null,\n  \"preview_video_url\": null,\n  \"level\": \"beginner\",\n  \"language\": \"vi\",\n  \"price\": 0,\n  \"discount_price\": null,\n  \"discount_expires_at\": null,\n  \"requirements\": [\"Basic programming\"],\n  \"objectives\": [\"Learn Go basics\"],\n  \"target_audience\": [\"Beginners\"],\n  \"is_free\": true,\n  \"tag_ids\": []\n}"
             }
           }
         },
@@ -69,7 +74,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"title\": \"Go Programming - Updated\",\n  \"level\": \"intermediate\",\n  \"status\": \"published\"\n}"
+              "raw": "{\n  \"title\": \"Go Programming - Updated\",\n  \"level\": \"intermediate\",\n  \"status\": \"published\",\n  \"discount_price\": 199000,\n  \"is_featured\": true\n}"
             }
           }
         },
@@ -86,6 +91,20 @@
       "name": "Sections",
       "item": [
         {
+          "name": "Get All Sections",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/courses/{{course_id}}/sections"
+          }
+        },
+        {
+          "name": "Get Section By ID",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}"
+          }
+        },
+        {
           "name": "Create Section",
           "request": {
             "method": "POST",
@@ -95,13 +114,6 @@
               "mode": "raw",
               "raw": "{\n  \"title\": \"Introduction\",\n  \"description\": \"Getting started\"\n}"
             }
-          }
-        },
-        {
-          "name": "Get All Sections",
-          "request": {
-            "method": "GET",
-            "url": "{{base_url}}/courses/{{course_id}}/sections"
           }
         },
         {
@@ -141,29 +153,36 @@
       "name": "Lessons",
       "item": [
         {
-          "name": "Create Lesson",
+          "name": "Get All Lessons (by Section)",
           "request": {
-            "method": "POST",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"title\": \"What is Go?\",\n  \"description\": \"Introduction to Go language\",\n  \"content_type\": \"video\",\n  \"duration_minutes\": 15,\n  \"is_preview\": true,\n  \"is_mandatory\": true\n}"
-            }
+            "method": "GET",
+            "url": "{{base_url}}/sections/{{section_id}}/lessons"
           }
         },
         {
-          "name": "Get All Lessons",
+          "name": "Get Lesson By ID",
           "request": {
             "method": "GET",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons"
+            "url": "{{base_url}}/lessons/{{lesson_id}}"
+          }
+        },
+        {
+          "name": "Create Lesson",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/sections/{{section_id}}/lessons",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"What is Go?\",\n  \"description\": \"Introduction to Go language\",\n  \"duration_minutes\": 15,\n  \"is_preview\": true,\n  \"is_mandatory\": true\n}"
+            }
           }
         },
         {
           "name": "Update Lesson",
           "request": {
             "method": "PUT",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}",
+            "url": "{{base_url}}/lessons/{{lesson_id}}",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
@@ -175,7 +194,7 @@
           "name": "Reorder Lessons",
           "request": {
             "method": "PUT",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/reorder",
+            "url": "{{base_url}}/sections/{{section_id}}/lessons/reorder",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
@@ -187,10 +206,152 @@
           "name": "Delete Lesson",
           "request": {
             "method": "DELETE",
-            "url": "{{base_url}}/courses/{{course_id}}/sections/{{section_id}}/lessons/{{lesson_id}}"
+            "url": "{{base_url}}/lessons/{{lesson_id}}"
           }
         }
       ]
-    }
+    },
+    {
+      "name": "Contents (Video/Livestream/Exercise)",
+      "item": [
+        {
+          "name": "Get Contents",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/lessons/{{lesson_id}}/contents"
+          }
+        },
+        {
+          "name": "Create Content (Video)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/lessons/{{lesson_id}}/contents",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"video\",\n  \"title\": \"Introduction Video\",\n  \"video_url\": \"https://example.com/video.mp4\",\n  \"duration\": 900,\n  \"is_mandatory\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Create Content (Livestream)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/lessons/{{lesson_id}}/contents",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"livestream\",\n  \"title\": \"Live Session\",\n  \"is_mandatory\": false\n}"
+            }
+          }
+        },
+        {
+          "name": "Create Content (Exercise)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/lessons/{{lesson_id}}/contents",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"exercise\",\n  \"title\": \"Practice Exercise\",\n  \"exercise_id\": \"<exercise_uuid>\",\n  \"is_mandatory\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Reorder Contents",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/lessons/{{lesson_id}}/contents/reorder",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"id\": \"<content_uuid_1>\", \"display_order\": 0 },\n    { \"id\": \"<content_uuid_2>\", \"display_order\": 1 },\n    { \"id\": \"<content_uuid_3>\", \"display_order\": 2 }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Update Content",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/lessons/{{lesson_id}}/contents/{{content_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Content Title\",\n  \"duration\": 1200,\n  \"is_mandatory\": false\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Content",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/lessons/{{lesson_id}}/contents/{{content_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Class-Content Schedule",
+      "item": [
+        {
+          "name": "Assign Class to Content",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/lesson-contents/{{content_id}}/classes",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"class_id\": \"<class_uuid>\",\n  \"open_date\": \"2026-04-10T00:00:00Z\",\n  \"due_date\": \"2026-04-17T23:59:59Z\",\n  \"scheduled_at\": \"2026-04-10T09:00:00Z\",\n  \"end_at\": \"2026-04-10T11:00:00Z\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Bulk Assign Classes to Content",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/lesson-contents/{{content_id}}/classes/bulk",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"class_ids\": [],\n  \"open_date\": \"2026-04-10T00:00:00Z\",\n  \"due_date\": \"2026-04-17T23:59:59Z\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Classes for Content",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/lesson-contents/{{content_id}}/classes?page=1&page_size=20",
+              "host": ["{{base_url}}"],
+              "path": ["lesson-contents", "{{content_id}}", "classes"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Class-Content Schedule",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/lesson-contents/{{content_id}}/classes/{{class_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"open_date\": \"2026-04-15T00:00:00Z\",\n  \"due_date\": \"2026-04-22T23:59:59Z\",\n  \"scheduled_at\": \"2026-04-15T14:00:00Z\",\n  \"end_at\": \"2026-04-15T16:00:00Z\",\n  \"status\": \"scheduled\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Remove Class from Content",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/lesson-contents/{{content_id}}/classes/{{class_id}}"
+          }
+        }
+      ]
+    },
   ]
 }

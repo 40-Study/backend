@@ -12,19 +12,26 @@ import (
 )
 
 type AuthHandlerInterface interface {
+	// Auth
 	Login(c *fiber.Ctx) error
-	SwitchProfile(c *fiber.Ctx) error
-	GetProfiles(c *fiber.Ctx) error
-	AddSystemProfile(c *fiber.Ctx) error
+	SelectRole(c *fiber.Ctx) error
 	RequestRegister(c *fiber.Ctx) error
 	Register(c *fiber.Ctx) error
 	RefreshToken(c *fiber.Ctx) error
 	RequestPasswordReset(c *fiber.Ctx) error
 	ResetPassword(c *fiber.Ctx) error
+	// Role management
+	GetMyRoles(c *fiber.Ctx) error
+	SwitchRole(c *fiber.Ctx) error
+	// Profile management
+	GetSystemRoleOptions(c *fiber.Ctx) error
+	GetMyProfiles(c *fiber.Ctx) error
+	CreateProfile(c *fiber.Ctx) error
+	DeleteProfile(c *fiber.Ctx) error
+	// User info
 	GetMe(c *fiber.Ctx) error
-	GetMyProfile(c *fiber.Ctx) error
-	GetMySystemRoles(c *fiber.Ctx) error
 	UpdateMe(c *fiber.Ctx) error
+	// Session
 	GetAllDevices(c *fiber.Ctx) error
 	LogoutOneDevice(c *fiber.Ctx) error
 	LogoutAll(c *fiber.Ctx) error
@@ -144,79 +151,12 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		})
 	}
 
-	h.setAuthCookies(c, response.AccessToken, response.RefreshToken)
+	if response.Completed {
+		h.setAuthCookies(c, response.AccessToken, response.RefreshToken)
+	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Login successful",
-		"data":    response,
-	})
-}
-
-func (h *AuthHandler) GetProfiles(c *fiber.Ctx) error {
-	userID, ok := c.Locals("user_id").(uuid.UUID)
-	if !ok || userID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"message": "Unauthorized",
-		})
-	}
-
-	profiles, err := h.authService.GetProfiles(c.Context(), userID)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Get profiles failed",
-			"error":   err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Get profiles successful",
-		"data":    profiles,
-	})
-}
-
-// AddSystemProfile handles POST /auth/profiles/system
-// Thêm system profile mới cho user đã đăng nhập
-// @Summary Add system profile
-// @Tags Auth
-// @Accept json
-// @Produce json
-// @Param request body dto.AddSystemProfileRequestDto true "System role to add"
-// @Success 201 {object} dto.AddSystemProfileResponseDto
-// @Failure 400 {object} map[string]interface{}
-// @Router /auth/profiles/system [post]
-func (h *AuthHandler) AddSystemProfile(c *fiber.Ctx) error {
-	userID, ok := c.Locals("user_id").(uuid.UUID)
-	if !ok || userID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"message": "Unauthorized",
-		})
-	}
-
-	var req dto.AddSystemProfileRequestDto
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
-	}
-
-	if errors := utils.ValidateStruct(req); len(errors) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
-	}
-
-	response, err := h.authService.AddSystemProfile(c.Context(), userID, req)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Add profile failed",
-			"error":   err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message": "Profile added successfully",
 		"data":    response,
 	})
 }
@@ -238,51 +178,6 @@ func (h *AuthHandler) setAuthCookies(c *fiber.Ctx, accessToken, refreshToken str
 		HTTPOnly: true,
 		Secure:   secure,
 		SameSite: "Lax",
-	})
-}
-
-func (h *AuthHandler) SwitchProfile(c *fiber.Ctx) error {
-	userID, ok := c.Locals("user_id").(uuid.UUID)
-	if !ok || userID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"message": "Unauthorized",
-		})
-	}
-	deviceID, ok := c.Locals("device_id").(uuid.UUID)
-	if !ok || deviceID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"message": "Unauthorized",
-		})
-	}
-
-	var req dto.SwitchProfileRequestDto
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
-	}
-
-	if errors := utils.ValidateStruct(req); len(errors) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
-	}
-
-	response, err := h.authService.SwitchProfile(c.Context(), userID, deviceID, req)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Switch profile failed",
-			"error":   err.Error(),
-		})
-	}
-
-	h.setAuthCookies(c, response.AccessToken, response.RefreshToken)
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Profile switched successfully",
-		"data":    response,
 	})
 }
 
@@ -390,7 +285,6 @@ func (h *AuthHandler) LogoutAll(c *fiber.Ctx) error {
 }
 
 func (h *AuthHandler) RefreshToken(c *fiber.Ctx) error {
-	// Try to get refresh token from: 1) Cookie, 2) Request body
 	old_rfToken := c.Cookies("rfToken")
 
 	// If not in cookie, try request body
@@ -461,64 +355,6 @@ func (h *AuthHandler) GetMe(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Get user info successfully",
 		"data":    user,
-	})
-}
-
-// GetMyProfile handles GET /auth/me/profile
-// Returns full profile with user info, system roles, organizations, active context
-func (h *AuthHandler) GetMyProfile(c *fiber.Ctx) error {
-	userID, ok := c.Locals("user_id").(uuid.UUID)
-	if !ok || userID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"message": "Unauthorized",
-		})
-	}
-
-	activeRole, _ := c.Locals("role").(string)
-
-	var activeOrgID *uuid.UUID
-	if orgIDVal := c.Locals("org_id"); orgIDVal != nil {
-		if orgID, ok := orgIDVal.(uuid.UUID); ok && orgID != uuid.Nil {
-			activeOrgID = &orgID
-		}
-	}
-
-	profile, err := h.authService.GetMyProfile(c.Context(), userID, activeRole, activeOrgID)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to get profile",
-			"error":   err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Success",
-		"data":    profile,
-	})
-}
-
-// GetMySystemRoles handles GET /auth/me/system-roles
-func (h *AuthHandler) GetMySystemRoles(c *fiber.Ctx) error {
-	userID, ok := c.Locals("user_id").(uuid.UUID)
-	if !ok || userID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"message": "Unauthorized",
-		})
-	}
-
-	roles, err := h.authService.GetMySystemRoles(c.Context(), userID)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to get system roles",
-			"error":   err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Success",
-		"data": fiber.Map{
-			"system_roles": roles,
-		},
 	})
 }
 
@@ -667,5 +503,228 @@ func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {
 	}
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Password reset successfully",
+	})
+}
+
+// ========== UNIFIED ROLE SELECTION (NEW FLOW) ==========
+
+// GetMyRoles handles GET /auth/my-roles
+// Returns unified list of system roles and organization roles
+func (h *AuthHandler) GetMyRoles(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	response, err := h.authService.GetMyRoles(c.Context(), userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to get roles",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Success",
+		"data":    response,
+	})
+}
+
+// SelectRole handles POST /auth/select-role
+// Selects a role during login flow (using session_token)
+func (h *AuthHandler) SelectRole(c *fiber.Ctx) error {
+	var req dto.SelectRoleRequestDto
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid request body",
+			"error":   err.Error(),
+		})
+	}
+
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
+	response, err := h.authService.SelectRole(c.Context(), req)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Select role failed",
+			"error":   err.Error(),
+		})
+	}
+
+	h.setAuthCookies(c, response.AccessToken, response.RefreshToken)
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Role selected successfully",
+		"data":    response,
+	})
+}
+
+// SwitchRole handles POST /auth/switch-role
+// Switches role while already logged in
+func (h *AuthHandler) SwitchRole(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	deviceID, ok := c.Locals("device_id").(uuid.UUID)
+	if !ok || deviceID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	var req dto.SwitchRoleRequestDto
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid request body",
+			"error":   err.Error(),
+		})
+	}
+
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
+	response, err := h.authService.SwitchRole(c.Context(), userID, deviceID, req)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Switch role failed",
+			"error":   err.Error(),
+		})
+	}
+
+	h.setAuthCookies(c, response.AccessToken, response.RefreshToken)
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Role switched successfully",
+		"data":    response,
+	})
+}
+
+// ========== PROFILE MANAGEMENT ==========
+
+// GetSystemRoleOptions handles GET /auth/system-roles
+// Returns all available system roles for creating profiles (public)
+func (h *AuthHandler) GetSystemRoleOptions(c *fiber.Ctx) error {
+	roles, err := h.authService.GetSystemRoleOptions(c.Context())
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to get system roles",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Success",
+		"data": fiber.Map{
+			"system_roles": roles,
+		},
+	})
+}
+
+// GetMyProfiles handles GET /auth/me/profiles
+// Returns all profiles of current user
+func (h *AuthHandler) GetMyProfiles(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	profiles, err := h.authService.GetMyProfiles(c.Context(), userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to get profiles",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Success",
+		"data": fiber.Map{
+			"profiles": profiles,
+		},
+	})
+}
+
+// CreateProfile handles POST /auth/me/profiles
+// Creates a new profile with a system role
+func (h *AuthHandler) CreateProfile(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	var req dto.CreateProfileRequestDto
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid request body",
+			"error":   err.Error(),
+		})
+	}
+
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
+	profile, err := h.authService.CreateProfile(c.Context(), userID, req)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Failed to create profile",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"message": "Profile created successfully",
+		"data":    profile,
+	})
+}
+
+// DeleteProfile handles DELETE /auth/me/profiles/:id
+// Deletes a profile
+func (h *AuthHandler) DeleteProfile(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	profileIDStr := c.Params("id")
+	profileID, err := uuid.Parse(profileIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid profile ID",
+		})
+	}
+
+	if err := h.authService.DeleteProfile(c.Context(), userID, profileID); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Failed to delete profile",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Profile deleted successfully",
 	})
 }

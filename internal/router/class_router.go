@@ -12,7 +12,6 @@ func SetupClassRoutes(
 	api fiber.Router,
 	cfg *config.Config,
 	classHandler *handler.ClassHandler,
-	classScheduleHandler *handler.ClassScheduleHandler,
 	attendanceHandler *handler.AttendanceHandler,
 	redis *redis.Client,
 ) {
@@ -34,15 +33,6 @@ func SetupClassRoutes(
 		classes.Post("/:id/students", classHandler.EnrollStudentToClass)
 		classes.Delete("/:id/students/:studentId", classHandler.RemoveStudentFromClass)
 		classes.Get("/:id/students", classHandler.GetStudentsByClass)
-
-		// Schedules
-		schedules := classes.Group("/:classId/schedules")
-		{
-			schedules.Post("/", classScheduleHandler.CreateClassSchedule)
-			schedules.Get("/", classScheduleHandler.GetAllClassSchedules)
-			schedules.Put("/:id", classScheduleHandler.UpdateClassSchedule)
-			schedules.Delete("/:id", classScheduleHandler.DeleteClassSchedule)
-		}
 
 		// Attendances
 		attendances := classes.Group("/:classId/attendances")

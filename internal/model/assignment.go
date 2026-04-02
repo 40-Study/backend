@@ -15,20 +15,30 @@ const (
 	DifficultyHard   AssignmentDifficulty = "hard"
 )
 
+// Assignment - Bài tập trong buổi livestream (Live Assignment)
+// Giáo viên giao real-time, thời gian ngắn, recap sau buổi học
+// Khác với CourseExercise (bài tập khóa học - không giới hạn thời gian, block tiến trình)
 type Assignment struct {
 	BaseModel
-	SessionID   uuid.UUID            `gorm:"type:uuid;not null;index" json:"session_id"`
+	SessionID uuid.UUID `gorm:"type:uuid;not null;index" json:"session_id"`
+
 	Title       string               `gorm:"type:varchar(255);not null" json:"title"`
 	Description string               `gorm:"type:text;not null" json:"description"`
 	Difficulty  AssignmentDifficulty `gorm:"type:varchar(20);default:'medium'" json:"difficulty"`
 	Language    pq.StringArray       `gorm:"type:text[];not null" json:"language"`
 	StarterCode string               `gorm:"type:text" json:"starter_code"`
-	TimeLimit   int                  `gorm:"default:2" json:"time_limit"`
-	MemoryLimit int                  `gorm:"default:256" json:"memory_limit"`
-	IsPublished bool                 `gorm:"default:false;index" json:"is_published"`
-	PublishedAt *time.Time           `gorm:"type:timestamp" json:"published_at,omitempty"`
-	StartTime   *time.Time           `gorm:"type:timestamp" json:"start_time,omitempty"`
-	EndTime     *time.Time           `gorm:"type:timestamp" json:"end_time,omitempty"`
+	TimeLimit   int                  `gorm:"default:2" json:"time_limit"`   // seconds per test case
+	MemoryLimit int                  `gorm:"default:256" json:"memory_limit"` // MB
+
+	// Live assignment specific
+	DurationMins int  `gorm:"default:15" json:"duration_minutes"` // Thời gian làm bài trong live
+	IsPublished  bool `gorm:"default:false;index" json:"is_published"`
+	PublishedAt  *time.Time `gorm:"type:timestamp" json:"published_at,omitempty"`
+	StartTime    *time.Time `gorm:"type:timestamp" json:"start_time,omitempty"` // Hẹn giờ publish
+	EndTime      *time.Time `gorm:"type:timestamp" json:"end_time,omitempty"`   // Deadline
+
+	// Recap - hiển thị sau buổi live
+	ShowInRecap bool `gorm:"default:true" json:"show_in_recap"`
 
 	Session     *LivestreamSession `gorm:"foreignKey:SessionID" json:"-"`
 	TestCases   []TestCase         `gorm:"foreignKey:AssignmentID;constraint:OnDelete:CASCADE" json:"test_cases,omitempty"`

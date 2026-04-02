@@ -33,9 +33,11 @@ func SetupCategoryRoutes(
 	tags := api.Group("/tags")
 	{
 		tags.Get("/", tagHandler.GetAllTags)
+		tags.Get("/:id", tagHandler.GetTagByID)
 
 		// Protected routes - require authentication
 		tags.Post("/", auth, tagHandler.CreateTag)
+		tags.Put("/:id", auth, tagHandler.UpdateTag)
 		tags.Delete("/:id", auth, tagHandler.DeleteTag)
 	}
 }

@@ -16,17 +16,15 @@ func NewLessonContentHandler(service service.LessonContentServiceInterface) *Les
 	return &LessonContentHandler{service: service}
 }
 
-// Video handlers
-
-func (h *LessonContentHandler) CreateVideo(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
+func (h *LessonContentHandler) CreateContent(c *fiber.Ctx) error {
+	lessonID, err := uuid.Parse(c.Params("lesson_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid lesson ID", "error": err.Error(),
 		})
 	}
 
-	var req dto.CreateLessonVideoDTO
+	var req dto.CreateLessonContentDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid request body", "error": err.Error(),
@@ -40,278 +38,127 @@ func (h *LessonContentHandler) CreateVideo(c *fiber.Ctx) error {
 		})
 	}
 
-	video, err := h.service.CreateVideo(c.Context(), lessonID, req)
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	content, err := h.service.CreateContent(c.Context(), lessonID, userID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to create video", "error": err.Error(),
+			"message": "Failed to create content", "error": err.Error(),
 		})
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message": "Video created successfully", "data": video,
+		"message": "Content created successfully", "data": content,
 	})
 }
 
-func (h *LessonContentHandler) GetVideo(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
+func (h *LessonContentHandler) GetContent(c *fiber.Ctx) error {
+	lessonID, err := uuid.Parse(c.Params("lesson_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid lesson ID", "error": err.Error(),
 		})
 	}
 
-	video, err := h.service.GetVideo(c.Context(), lessonID)
-	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Video not found", "error": err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Video retrieved successfully", "data": video,
-	})
-}
-
-func (h *LessonContentHandler) UpdateVideo(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid lesson ID", "error": err.Error(),
-		})
-	}
-
-	var req dto.UpdateLessonVideoDTO
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body", "error": err.Error(),
-		})
-	}
-
-	if errors := utils.ValidateStruct(req); len(errors) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
-	}
-
-	video, err := h.service.UpdateVideo(c.Context(), lessonID, req)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to update video", "error": err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Video updated successfully", "data": video,
-	})
-}
-
-func (h *LessonContentHandler) DeleteVideo(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid lesson ID", "error": err.Error(),
-		})
-	}
-
-	if err := h.service.DeleteVideo(c.Context(), lessonID); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to delete video", "error": err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Video deleted successfully",
-	})
-}
-
-// Article handlers
-
-func (h *LessonContentHandler) CreateArticle(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid lesson ID", "error": err.Error(),
-		})
-	}
-
-	var req dto.CreateLessonArticleDTO
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body", "error": err.Error(),
-		})
-	}
-
-	if errors := utils.ValidateStruct(req); len(errors) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
-	}
-
-	article, err := h.service.CreateArticle(c.Context(), lessonID, req)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to create article", "error": err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message": "Article created successfully", "data": article,
-	})
-}
-
-func (h *LessonContentHandler) GetArticle(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid lesson ID", "error": err.Error(),
-		})
-	}
-
-	article, err := h.service.GetArticle(c.Context(), lessonID)
-	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Article not found", "error": err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Article retrieved successfully", "data": article,
-	})
-}
-
-func (h *LessonContentHandler) UpdateArticle(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid lesson ID", "error": err.Error(),
-		})
-	}
-
-	var req dto.UpdateLessonArticleDTO
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body", "error": err.Error(),
-		})
-	}
-
-	if errors := utils.ValidateStruct(req); len(errors) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
-	}
-
-	article, err := h.service.UpdateArticle(c.Context(), lessonID, req)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to update article", "error": err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Article updated successfully", "data": article,
-	})
-}
-
-func (h *LessonContentHandler) DeleteArticle(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid lesson ID", "error": err.Error(),
-		})
-	}
-
-	if err := h.service.DeleteArticle(c.Context(), lessonID); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to delete article", "error": err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Article deleted successfully",
-	})
-}
-
-// Attachment handlers
-
-func (h *LessonContentHandler) CreateAttachment(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid lesson ID", "error": err.Error(),
-		})
-	}
-
-	var req dto.CreateLessonAttachmentDTO
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body", "error": err.Error(),
-		})
-	}
-
-	if errors := utils.ValidateStruct(req); len(errors) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
-	}
-
-	attachment, err := h.service.CreateAttachment(c.Context(), lessonID, req)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to create attachment", "error": err.Error(),
-		})
-	}
-
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message": "Attachment created successfully", "data": attachment,
-	})
-}
-
-func (h *LessonContentHandler) GetAttachments(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid lesson ID", "error": err.Error(),
-		})
-	}
-
-	attachments, err := h.service.GetAttachments(c.Context(), lessonID)
+	contents, err := h.service.GetContentsByLessonID(c.Context(), lessonID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to retrieve attachments", "error": err.Error(),
+			"message": "Failed to retrieve contents", "error": err.Error(),
 		})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Attachments retrieved successfully", "data": attachments,
+		"message": "Contents retrieved successfully", "data": contents,
 	})
 }
 
-func (h *LessonContentHandler) DeleteAttachment(c *fiber.Ctx) error {
-	lessonID, err := uuid.Parse(c.Params("lessonId"))
+func (h *LessonContentHandler) UpdateContent(c *fiber.Ctx) error {
+	contentID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid content ID", "error": err.Error(),
+		})
+	}
+
+	var req dto.UpdateLessonContentDTO
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid request body", "error": err.Error(),
+		})
+	}
+
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
+	content, err := h.service.UpdateContent(c.Context(), contentID, req)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Failed to update content", "error": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Content updated successfully", "data": content,
+	})
+}
+
+func (h *LessonContentHandler) ReorderContents(c *fiber.Ctx) error {
+	lessonID, err := uuid.Parse(c.Params("lesson_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid lesson ID", "error": err.Error(),
 		})
 	}
 
-	attachmentID, err := uuid.Parse(c.Params("id"))
-	if err != nil {
+	var req dto.ReorderDTO
+	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid attachment ID", "error": err.Error(),
+			"message": "Invalid request body", "error": err.Error(),
 		})
 	}
 
-	if err := h.service.DeleteAttachment(c.Context(), lessonID, attachmentID); err != nil {
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to delete attachment", "error": err.Error(),
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
+	if err := h.service.ReorderContents(c.Context(), lessonID, req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Failed to reorder contents", "error": err.Error(),
 		})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Attachment deleted successfully",
+		"message": "Contents reordered successfully",
+	})
+}
+
+func (h *LessonContentHandler) DeleteContent(c *fiber.Ctx) error {
+	contentID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid content ID", "error": err.Error(),
+		})
+	}
+
+	if err := h.service.DeleteContent(c.Context(), contentID); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Failed to delete content", "error": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Content deleted successfully",
 	})
 }

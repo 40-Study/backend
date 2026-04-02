@@ -17,8 +17,18 @@ type LessonRepositoryInterface interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	GetMaxDisplayOrder(ctx context.Context, sectionID uuid.UUID) (int, error)
 	BelongsToSection(ctx context.Context, lessonID, sectionID uuid.UUID) (bool, error)
+	CountByIDsAndSection(ctx context.Context, ids []uuid.UUID, sectionID uuid.UUID) (int64, error)
 	Exists(ctx context.Context, id uuid.UUID) (bool, error)
 	Reorder(ctx context.Context, items []ReorderItem) error
+
+	// LessonContent
+	CreateContent(ctx context.Context, content *model.LessonContent) error
+	GetContentByID(ctx context.Context, id uuid.UUID) (*model.LessonContent, error)
+	GetContentsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]model.LessonContent, error)
+	UpdateContent(ctx context.Context, content *model.LessonContent) error
+	DeleteContent(ctx context.Context, id uuid.UUID) error
+	ReorderContents(ctx context.Context, items []ReorderItem) error
+	CountContentsByIDsAndLesson(ctx context.Context, ids []uuid.UUID, lessonID uuid.UUID) (int64, error)
 }
 
 type LessonRepository struct {
@@ -87,6 +97,15 @@ func (r *LessonRepository) BelongsToSection(ctx context.Context, lessonID, secti
 	return count > 0, err
 }
 
+func (r *LessonRepository) CountByIDsAndSection(ctx context.Context, ids []uuid.UUID, sectionID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&model.Lesson{}).
+		Where("id IN ? AND section_id = ?", ids, sectionID).
+		Count(&count).Error
+	return count, err
+}
+
 func (r *LessonRepository) Exists(ctx context.Context, id uuid.UUID) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.Lesson{}).Where("id = ?", id).Count(&count).Error
@@ -104,4 +123,61 @@ func (r *LessonRepository) Reorder(ctx context.Context, items []ReorderItem) err
 		}
 		return nil
 	})
+}
+
+// LessonContent methods
+
+func (r *LessonRepository) CreateContent(ctx context.Context, content *model.LessonContent) error {
+	return r.db.WithContext(ctx).Create(content).Error
+}
+
+func (r *LessonRepository) GetContentByID(ctx context.Context, id uuid.UUID) (*model.LessonContent, error) {
+	var content model.LessonContent
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&content).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &content, nil
+}
+
+func (r *LessonRepository) GetContentsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]model.LessonContent, error) {
+	var contents []model.LessonContent
+	err := r.db.WithContext(ctx).
+		Where("lesson_id = ?", lessonID).
+		Order("display_order ASC").
+		Find(&contents).Error
+	return contents, err
+}
+
+func (r *LessonRepository) UpdateContent(ctx context.Context, content *model.LessonContent) error {
+	return r.db.WithContext(ctx).Save(content).Error
+}
+
+func (r *LessonRepository) DeleteContent(ctx context.Context, id uuid.UUID) error {
+	return r.db.WithContext(ctx).Unscoped().Delete(&model.LessonContent{}, "id = ?", id).Error
+}
+
+func (r *LessonRepository) ReorderContents(ctx context.Context, items []ReorderItem) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, item := range items {
+			if err := tx.Model(&model.LessonContent{}).
+				Where("id = ?", item.ID).
+				Update("display_order", item.DisplayOrder).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r *LessonRepository) CountContentsByIDsAndLesson(ctx context.Context, ids []uuid.UUID, lessonID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&model.LessonContent{}).
+		Where("id IN ? AND lesson_id = ?", ids, lessonID).
+		Count(&count).Error
+	return count, err
 }
