@@ -69,20 +69,48 @@ type MyRankResponse struct {
 // ============================================================
 
 type UserStatsDTO struct {
-	TotalPoints      int `json:"total_points"`
-	Level            int `json:"level"`
-	LevelProgress    int `json:"level_progress"`
-	CurrentStreak    int `json:"current_streak"`
-	LongestStreak    int `json:"longest_streak"`
-	TotalCheckins    int `json:"total_checkins"`
-	AchievementCount int `json:"achievement_count"`
+	TotalPoints          int `json:"total_points"`
+	Level                int `json:"level"`
+	LevelProgress        int `json:"level_progress"`
+	CurrentStreak        int `json:"current_streak"`
+	LongestStreak        int `json:"longest_streak"`
+	TotalCheckins        int `json:"total_checkins"`
+	AchievementCount     int `json:"achievement_count"`
+	CoursesCompleted     int `json:"courses_completed"`
+	LessonsCompleted     int `json:"lessons_completed"`
+	TotalStudyTimeMinutes int `json:"total_study_time_minutes"`
+}
+
+type PublicProfileAchievementDTO struct {
+	ID       uuid.UUID  `json:"id"`
+	Name     string     `json:"name"`
+	IconURL  *string    `json:"icon_url,omitempty"`
+	BadgeURL *string    `json:"badge_url,omitempty"`
+	Category string     `json:"category"`
+	EarnedAt time.Time  `json:"earned_at"`
+}
+
+type PublicProfileActivityDTO struct {
+	Date  string `json:"date"`
+	Count int    `json:"count"`
+}
+
+type PublicProfileCompletedCourseDTO struct {
+	ID           uuid.UUID `json:"id"`
+	Title        string    `json:"title"`
+	ThumbnailURL *string   `json:"thumbnail_url,omitempty"`
+	CompletedAt  time.Time `json:"completed_at"`
 }
 
 type PublicProfileResponse struct {
-	UserID    uuid.UUID    `json:"user_id"`
-	UserName  string       `json:"user_name"`
-	FullName  *string      `json:"full_name,omitempty"`
-	AvatarURL *string      `json:"avatar_url,omitempty"`
-	Bio       *string      `json:"bio,omitempty"`
-	Stats     UserStatsDTO `json:"stats"`
+	UserID               uuid.UUID                         `json:"user_id"`
+	UserName             string                            `json:"user_name"`
+	FullName             *string                           `json:"full_name,omitempty"`
+	AvatarURL            *string                           `json:"avatar_url,omitempty"`
+	Bio                  *string                           `json:"bio,omitempty"`
+	JoinedAt             time.Time                         `json:"joined_at"`
+	Stats                UserStatsDTO                      `json:"stats"`
+	FeaturedAchievements []PublicProfileAchievementDTO     `json:"featured_achievements"`
+	Activity             []PublicProfileActivityDTO        `json:"activity"`
+	CompletedCourses     []PublicProfileCompletedCourseDTO `json:"completed_courses"`
 }

@@ -209,44 +209,87 @@ func NewUserStatsRepository(db *gorm.DB) *UserStatsRepository {
 }
 
 type PublicProfileRow struct {
-	UserID    uuid.UUID `json:"user_id"`
-	UserName  string    `json:"user_name"`
-	FullName  *string   `json:"full_name"`
-	AvatarURL *string   `json:"avatar_url"`
-	Bio       *string   `json:"bio"`
-	// stats
-	TotalPoints    int `json:"total_points"`
-	Level          int `json:"level"`
-	LevelProgress  int `json:"level_progress"`
-	CurrentStreak  int `json:"current_streak"`
-	LongestStreak  int `json:"longest_streak"`
-	TotalCheckins  int `json:"total_checkins"`
-	AchievementCount int `json:"achievement_count"`
+	UserID                uuid.UUID `json:"user_id"`
+	UserName              string    `json:"user_name"`
+	FullName              *string   `json:"full_name"`
+	AvatarURL             *string   `json:"avatar_url"`
+	Bio                   *string   `json:"bio"`
+	JoinedAt              time.Time `json:"joined_at"`
+	TotalPoints           int       `json:"total_points"`
+	Level                 int       `json:"level"`
+	LevelProgress         int       `json:"level_progress"`
+	CurrentStreak         int       `json:"current_streak"`
+	LongestStreak         int       `json:"longest_streak"`
+	TotalCheckins         int       `json:"total_checkins"`
+	AchievementCount      int       `json:"achievement_count"`
+	CoursesCompleted      int       `json:"courses_completed"`
+	LessonsCompleted      int       `json:"lessons_completed"`
+	TotalStudyTimeMinutes int       `json:"total_study_time_minutes"`
+}
+
+type PublicProfileAchievementRow struct {
+	ID       uuid.UUID `json:"id"`
+	Name     string    `json:"name"`
+	IconURL  *string   `json:"icon_url"`
+	BadgeURL *string   `json:"badge_url"`
+	Category string    `json:"category"`
+	EarnedAt time.Time `json:"earned_at"`
+}
+
+type PublicProfileActivityRow struct {
+	Date  time.Time `json:"date"`
+	Count int       `json:"count"`
+}
+
+type PublicProfileCompletedCourseRow struct {
+	ID           uuid.UUID `json:"id"`
+	Title        string    `json:"title"`
+	ThumbnailURL *string   `json:"thumbnail_url"`
+	CompletedAt  time.Time `json:"completed_at"`
 }
 
 func (r *UserStatsRepository) GetPublicProfile(ctx context.Context, userID uuid.UUID) (*PublicProfileRow, error) {
 	var row PublicProfileRow
 	sql := `
 		SELECT
-			u.id                              AS user_id,
+			u.id AS user_id,
 			u.user_name,
 			u.full_name,
 			u.avatar_url,
 			u.bio,
-			COALESCE(up.total_points, 0)      AS total_points,
-			COALESCE(up.level, 1)             AS level,
-			COALESCE(up.level_progress, 0)    AS level_progress,
-			COALESCE(us.current_streak, 0)    AS current_streak,
-			COALESCE(us.longest_streak, 0)    AS longest_streak,
-			COALESCE(us.total_checkins, 0)    AS total_checkins,
-			COUNT(ua.id)                      AS achievement_count
+			u.created_at AS joined_at,
+			COALESCE(up.total_points, 0) AS total_points,
+			COALESCE(up.level, 1) AS level,
+			COALESCE(up.level_progress, 0) AS level_progress,
+			COALESCE(us.current_streak, 0) AS current_streak,
+			COALESCE(us.longest_streak, 0) AS longest_streak,
+			COALESCE(us.total_checkins, 0) AS total_checkins,
+			COALESCE(achievement_stats.achievement_count, 0) AS achievement_count,
+			COALESCE(enrollment_stats.courses_completed, 0) AS courses_completed,
+			COALESCE(lesson_stats.lessons_completed, 0) AS lessons_completed,
+			COALESCE(lesson_stats.total_study_time_minutes, 0) AS total_study_time_minutes
 		FROM users u
-		LEFT JOIN user_points  up ON up.user_id = u.id
+		LEFT JOIN user_points up ON up.user_id = u.id
 		LEFT JOIN user_streaks us ON us.user_id = u.id
-		LEFT JOIN user_achievements ua ON ua.user_id = u.id
-		WHERE u.id = ? AND u.is_active = true
-		GROUP BY u.id, up.total_points, up.level, up.level_progress,
-		         us.current_streak, us.longest_streak, us.total_checkins`
+		LEFT JOIN (
+			SELECT ua.user_id, COUNT(*) AS achievement_count
+			FROM user_achievements ua
+			GROUP BY ua.user_id
+		) achievement_stats ON achievement_stats.user_id = u.id
+		LEFT JOIN (
+			SELECT e.user_id, COUNT(*) AS courses_completed
+			FROM enrollments e
+			WHERE e.completed_at IS NOT NULL
+			GROUP BY e.user_id
+		) enrollment_stats ON enrollment_stats.user_id = u.id
+		LEFT JOIN (
+			SELECT lp.user_id,
+				COUNT(*) FILTER (WHERE lp.status = 'completed') AS lessons_completed,
+				COALESCE(FLOOR(SUM(lp.video_watched_seconds) / 60.0), 0)::int AS total_study_time_minutes
+			FROM lesson_progress lp
+			GROUP BY lp.user_id
+		) lesson_stats ON lesson_stats.user_id = u.id
+		WHERE u.id = ? AND u.is_active = true`
 	err := r.db.WithContext(ctx).Raw(sql, userID).Scan(&row).Error
 	if err != nil {
 		return nil, err
@@ -255,6 +298,60 @@ func (r *UserStatsRepository) GetPublicProfile(ctx context.Context, userID uuid.
 		return nil, nil
 	}
 	return &row, nil
+}
+
+func (r *UserStatsRepository) GetPublicProfileAchievements(ctx context.Context, userID uuid.UUID, limit int) ([]PublicProfileAchievementRow, error) {
+	var rows []PublicProfileAchievementRow
+	sql := `
+		SELECT
+			a.id,
+			a.name,
+			a.icon_url,
+			a.badge_url,
+			a.category,
+			ua.earned_at
+		FROM user_achievements ua
+		JOIN achievements a ON a.id = ua.achievement_id
+		WHERE ua.user_id = ?
+		ORDER BY ua.earned_at DESC
+		LIMIT ?`
+	err := r.db.WithContext(ctx).Raw(sql, userID, limit).Scan(&rows).Error
+	return rows, err
+}
+
+func (r *UserStatsRepository) GetPublicProfileActivity(ctx context.Context, userID uuid.UUID, days int) ([]PublicProfileActivityRow, error) {
+	var rows []PublicProfileActivityRow
+	sql := `
+		SELECT
+			DATE(lp.completed_at) AS date,
+			COUNT(*) AS count
+		FROM lesson_progress lp
+		WHERE lp.user_id = ?
+			AND lp.status = 'completed'
+			AND lp.completed_at IS NOT NULL
+			AND lp.completed_at >= NOW() - (? * INTERVAL '1 day')
+		GROUP BY DATE(lp.completed_at)
+		ORDER BY DATE(lp.completed_at) ASC`
+	err := r.db.WithContext(ctx).Raw(sql, userID, days).Scan(&rows).Error
+	return rows, err
+}
+
+func (r *UserStatsRepository) GetPublicProfileCompletedCourses(ctx context.Context, userID uuid.UUID, limit int) ([]PublicProfileCompletedCourseRow, error) {
+	var rows []PublicProfileCompletedCourseRow
+	sql := `
+		SELECT
+			c.id,
+			c.title,
+			c.thumbnail_url,
+			e.completed_at
+		FROM enrollments e
+		JOIN courses c ON c.id = e.course_id
+		WHERE e.user_id = ?
+			AND e.completed_at IS NOT NULL
+		ORDER BY e.completed_at DESC
+		LIMIT ?`
+	err := r.db.WithContext(ctx).Raw(sql, userID, limit).Scan(&rows).Error
+	return rows, err
 }
 
 // ============================================================
