@@ -13,6 +13,7 @@ type ParentStudentRepositoryInterface interface {
 	GetChildrenByParentID(ctx context.Context, parentID uuid.UUID, page, pageSize int) ([]model.ParentStudentRelation, int64, error)
 	// GetParentsByStudentID lấy danh sách phụ huynh của học sinh
 	GetParentsByStudentID(ctx context.Context, studentID uuid.UUID) ([]model.ParentStudentRelation, error)
+	GetPrimaryParentByStudentID(ctx context.Context, studentID uuid.UUID) (*model.ParentStudentRelation, error)
 	// CreateRelation tạo quan hệ phụ huynh - học sinh mới
 	CreateRelation(ctx context.Context, relation *model.ParentStudentRelation) error
 	// UpdateStatus cập nhật trạng thái quan hệ
@@ -72,6 +73,19 @@ func (r *ParentStudentRepository) GetParentsByStudentID(ctx context.Context, stu
 		Order("created_at DESC").
 		Find(&relations).Error
 	return relations, err
+}
+
+func (r *ParentStudentRepository) GetPrimaryParentByStudentID(ctx context.Context, studentID uuid.UUID) (*model.ParentStudentRelation, error) {
+	var relation model.ParentStudentRelation
+	err := r.db.WithContext(ctx).
+		Preload("Parent").
+		Where("student_user_id = ? AND status = ?", studentID, model.ParentStudentStatusActive).
+		Order("created_at ASC").
+		First(&relation).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return &relation, err
 }
 
 // CreateRelation tạo quan hệ phụ huynh - học sinh mới

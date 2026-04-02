@@ -13,15 +13,17 @@ import (
 type TeacherServiceInterface interface {
 	GetAllTeachers(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.TeacherListResponseDTO, error)
 	GetTeacherByID(ctx context.Context, id uuid.UUID) (*dto.TeacherResponseDTO, error)
+	GetMyStudents(ctx context.Context, teacherID uuid.UUID, page, pageSize int) (*dto.TeacherStudentListResponseDTO, error)
 	DeleteTeacher(ctx context.Context, id uuid.UUID, hardDelete bool) error
 }
 
 type TeacherService struct {
-	repo repository.TeacherRepositoryInterface
+	repo         repository.TeacherRepositoryInterface
+	classService ClassServiceInterface
 }
 
-func NewTeacherService(repo repository.TeacherRepositoryInterface) *TeacherService {
-	return &TeacherService{repo: repo}
+func NewTeacherService(repo repository.TeacherRepositoryInterface, classService ClassServiceInterface) TeacherServiceInterface {
+	return &TeacherService{repo: repo, classService: classService}
 }
 
 func (s *TeacherService) GetAllTeachers(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.TeacherListResponseDTO, error) {
@@ -60,6 +62,10 @@ func (s *TeacherService) GetTeacherByID(ctx context.Context, id uuid.UUID) (*dto
 	}
 
 	return toTeacherResponseDTO(teacher), nil
+}
+
+func (s *TeacherService) GetMyStudents(ctx context.Context, teacherID uuid.UUID, page, pageSize int) (*dto.TeacherStudentListResponseDTO, error) {
+	return s.classService.GetTeacherStudents(ctx, teacherID, page, pageSize)
 }
 
 func (s *TeacherService) DeleteTeacher(ctx context.Context, id uuid.UUID, hardDelete bool) error {

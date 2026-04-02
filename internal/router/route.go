@@ -44,6 +44,9 @@ func SetupAllRoutes(
 	analyticsHandler *handler.AnalyticsHandler,
 	orderHandler *handler.OrderHandler,
 	voucherHandler *handler.VoucherHandler,
+	achievementHandler *handler.AchievementHandler,
+	leaderboardHandler *handler.LeaderboardHandler,
+	userStatsHandler *handler.UserStatsHandler,
 	walletHandler *handler.WalletHandler,
 	redis *redis.Client,
 	minio *minio.Client,
@@ -67,8 +70,9 @@ func SetupAllRoutes(
 	SetupPermissionRoutes(api, cfg, permissionHandler, redis)
 	SetupOrganizationRoutes(api, organizationHandler)
 	SetupProfileRoutes(api, cfg, profileHandler, redis)
-	SetupTeacherRoutes(api, teacherHandler)
+	SetupTeacherRoutes(api, cfg, teacherHandler, redis)
 	SetupTeacherProfileRoutes(api, teacherProfileHandler)
+	SetupClassRoutes(api, cfg, classHandler, attendanceHandler, redis)
 	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis)
 	SetupCartRoutes(api, cfg, cartHandler, redis)
 	SetupCourseRoutes(api, cfg, courseHandler, sectionHandler, lessonHandler, lessonContentHandler, classHandler, classLessonContentHandler, attendanceHandler, redis)
@@ -88,6 +92,10 @@ func SetupAllRoutes(
 	SetupOrderRoutes(api, cfg, orderHandler, redis)
 	SetupVoucherRoutes(api, voucherHandler)
 
+	// Gamification routes
+	SetupAchievementRoutes(api, cfg, achievementHandler, redis)
+	SetupLeaderboardRoutes(api, cfg, leaderboardHandler, redis)
+	SetupUserStatsRoutes(api, userStatsHandler)
 	// Wallet routes
 	SetupWalletRoutes(api, cfg, walletHandler, redis)
 }

@@ -10,6 +10,7 @@ import (
 type ClassHandlerInterface interface {
 	CreateClass(c *fiber.Ctx) error
 	GetAllClasses(c *fiber.Ctx) error
+	GetMyClasses(c *fiber.Ctx) error
 	GetClassByID(c *fiber.Ctx) error
 	UpdateClass(c *fiber.Ctx) error
 	DeleteClass(c *fiber.Ctx) error
@@ -126,6 +127,30 @@ func (h *ClassHandler) GetClassesByCourseID(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Classes retrieved successfully",
 		"data":    classes,
+	})
+}
+
+func (h *ClassHandler) GetMyClasses(c *fiber.Ctx) error {
+	teacherID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || teacherID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	classes, err := h.service.GetMyClasses(c.Context(), teacherID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to retrieve classes",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Classes retrieved successfully",
+		"data": fiber.Map{
+			"classes": classes,
+		},
 	})
 }
 

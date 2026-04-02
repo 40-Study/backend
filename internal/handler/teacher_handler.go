@@ -9,6 +9,7 @@ import (
 type TeacherHandlerInterface interface {
 	GetAllTeachers(c *fiber.Ctx) error
 	GetTeacher(c *fiber.Ctx) error
+	GetMyStudents(c *fiber.Ctx) error
 	DeleteTeacher(c *fiber.Ctx) error
 }
 
@@ -61,6 +62,36 @@ func (h *TeacherHandler) GetAllTeachers(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Teachers retrieved successfully",
 		"data":    teachers,
+	})
+}
+
+func (h *TeacherHandler) GetMyStudents(c *fiber.Ctx) error {
+	teacherID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || teacherID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	page := c.QueryInt("page", 1)
+	pageSize := c.QueryInt("page_size", 20)
+
+	students, err := h.service.GetMyStudents(c.Context(), teacherID, page, pageSize)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to retrieve students",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Students retrieved successfully",
+		"data": fiber.Map{
+			"students":  students.Students,
+			"total":     students.Total,
+			"page":      students.Page,
+			"page_size": students.PageSize,
+		},
 	})
 }
 

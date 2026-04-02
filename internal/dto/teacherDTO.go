@@ -27,3 +27,28 @@ type TeacherListResponseDTO struct {
 	Page     int                  `json:"page"`
 	PageSize int                  `json:"page_size"`
 }
+
+type TeacherStudentDTO struct {
+	ID          uuid.UUID  `json:"id"`
+	Name        string     `json:"name"`
+	Email       string     `json:"email"`
+	Avatar      *string    `json:"avatar,omitempty"`
+	StudentID   *string    `json:"student_id,omitempty"`
+	ParentName  *string    `json:"parent_name,omitempty"`
+	ParentPhone *string    `json:"parent_phone,omitempty"`
+	ClassID     uuid.UUID  `json:"class_id"`
+	ClassName   string     `json:"class_name"`
+	CourseID    *uuid.UUID `json:"course_id,omitempty"`
+	CourseName  *string    `json:"course_name,omitempty"`
+	Status      string     `json:"status"`
+	Progress    *float64   `json:"progress,omitempty"`
+	LastActive  *time.Time `json:"last_active,omitempty"`
+	EnrolledAt  time.Time  `json:"enrolled_at"`
+}
+
+type TeacherStudentListResponseDTO struct {
+	Students []TeacherStudentDTO `json:"students"`
+	Total    int64               `json:"total"`
+	Page     int                 `json:"page"`
+	PageSize int                 `json:"page_size"`
+}

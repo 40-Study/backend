@@ -113,6 +113,10 @@ func New() (*App, error) {
 		handlers.Order,
 		handlers.Voucher,
 
+		// ===== Gamification =====
+		handlers.Achievement,
+		handlers.Leaderboard,
+		handlers.UserStats,
 		// ===== Wallet =====
 		handlers.Wallet,
 
