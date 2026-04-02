@@ -151,6 +151,9 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		repos.Assignment,
 	)
 
+	classSvc := service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student, repos.ParentStudent)
+	teacherSvc := service.NewTeacherService(repos.Teacher, classSvc)
+
 	// ================= Return Services =================
 	return &Services{
 		// ===== Auth =====
@@ -191,14 +194,14 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			repos.UserOrganizationRole,
 		),
 
-		// ===== Teacher =====
-		Teacher:        service.NewTeacherService(repos.Teacher),
-		TeacherProfile: service.NewTeacherProfileService(repos.TeacherProfile),
-
 		// ===== Class =====
-		Class:         service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student),
+		Class:         classSvc,
 		ClassSchedule: service.NewClassScheduleService(repos.ClassSchedule, repos.Class),
 		Attendance:    service.NewAttendanceService(repos.Attendance),
+
+		// ===== Teacher =====
+		Teacher:        teacherSvc,
+		TeacherProfile: service.NewTeacherProfileService(repos.TeacherProfile),
 
 		// ===== Course Management =====
 		Category:      service.NewCategoryService(repos.Category),
