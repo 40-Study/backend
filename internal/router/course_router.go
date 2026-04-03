@@ -27,6 +27,7 @@ func SetupCourseRoutes(
 	{
 		// Public routes
 		courses.Get("/", courseHandler.GetAllCourses)
+		courses.Get("/slug/:slug", courseHandler.GetCourseBySlug)
 		courses.Get("/:id", courseHandler.GetCourseByID)
 
 		// Protected routes - require authentication
