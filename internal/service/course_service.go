@@ -58,11 +58,18 @@ func (s *CourseService) CreateCourse(ctx context.Context, req dto.CreateCourseDT
 		language = "vi"
 	}
 
+	slug, err := utils.GenerateUniqueSlug(req.Title, func(slug string) (bool, error) {
+		return s.courseRepo.SlugExists(ctx, slug)
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	course := &model.Course{
 		InstructorID:      req.InstructorID,
 		CategoryID:        req.CategoryID,
 		Title:             req.Title,
-		Slug:              utils.GenerateSlug(req.Title),
+		Slug:              slug,
 		ShortDescription:  req.ShortDescription,
 		Description:       req.Description,
 		ThumbnailURL:      req.ThumbnailURL,
@@ -234,7 +241,17 @@ func (s *CourseService) UpdateCourse(ctx context.Context, id uuid.UUID, req dto.
 
 	if req.Title != nil {
 		course.Title = *req.Title
-		course.Slug = utils.GenerateSlug(*req.Title)
+		newSlug, err := utils.GenerateUniqueSlug(*req.Title, func(slug string) (bool, error) {
+			// Allow the current course to keep its own slug
+			if slug == course.Slug {
+				return false, nil
+			}
+			return s.courseRepo.SlugExists(ctx, slug)
+		})
+		if err != nil {
+			return nil, err
+		}
+		course.Slug = newSlug
 	}
 	if req.ShortDescription != nil {
 		course.ShortDescription = req.ShortDescription

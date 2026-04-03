@@ -20,6 +20,7 @@ type CourseRepositoryInterface interface {
 	Update(ctx context.Context, course *model.Course) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	ReplaceTags(ctx context.Context, course *model.Course, tags []model.Tag) error
+	SlugExists(ctx context.Context, slug string) (bool, error)
 }
 
 type CourseFilterDBParams struct {
@@ -174,6 +175,13 @@ func (r *CourseRepository) Update(ctx context.Context, course *model.Course) err
 
 func (r *CourseRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).Delete(&model.Course{}, "id = ?", id).Error
+}
+
+// SlugExists checks if a course with the given slug already exists
+func (r *CourseRepository) SlugExists(ctx context.Context, slug string) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Course{}).Where("slug = ?", slug).Count(&count).Error
+	return count > 0, err
 }
 
 func (r *CourseRepository) ReplaceTags(ctx context.Context, course *model.Course, tags []model.Tag) error {
