@@ -16,6 +16,7 @@ type CourseRepositoryInterface interface {
 	GetAll(ctx context.Context, params CourseFilterDBParams) ([]model.Course, int64, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Course, error)
 	GetDetailByID(ctx context.Context, id uuid.UUID) (*model.Course, error)
+	GetDetailBySlug(ctx context.Context, slug string) (*model.Course, error)
 	Update(ctx context.Context, course *model.Course) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	ReplaceTags(ctx context.Context, course *model.Course, tags []model.Tag) error
@@ -134,6 +135,29 @@ func (r *CourseRepository) GetDetailByID(ctx context.Context, id uuid.UUID) (*mo
 			return db.Order("display_order ASC")
 		}).
 		Where("id = ?", id).
+		First(&course).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &course, nil
+}
+
+// GetDetailBySlug retrieves a course with all relations by its URL slug
+func (r *CourseRepository) GetDetailBySlug(ctx context.Context, slug string) (*model.Course, error) {
+	var course model.Course
+	err := r.db.WithContext(ctx).
+		Preload("Category").
+		Preload("Tags").
+		Preload("Sections", func(db *gorm.DB) *gorm.DB {
+			return db.Order("display_order ASC")
+		}).
+		Preload("Sections.Lessons", func(db *gorm.DB) *gorm.DB {
+			return db.Order("display_order ASC")
+		}).
+		Where("slug = ?", slug).
 		First(&course).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

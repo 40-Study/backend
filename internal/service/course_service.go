@@ -15,6 +15,7 @@ type CourseServiceInterface interface {
 	CreateCourse(ctx context.Context, req dto.CreateCourseDTO) (*dto.CourseResponseDTO, error)
 	GetAllCourses(ctx context.Context, params dto.CourseFilterParams) (*dto.CourseListResponseDTO, error)
 	GetCourseByID(ctx context.Context, id uuid.UUID) (*dto.CourseDetailDTO, error)
+	GetCourseBySlug(ctx context.Context, slug string) (*dto.CourseDetailDTO, error)
 	UpdateCourse(ctx context.Context, id uuid.UUID, req dto.UpdateCourseDTO) (*dto.CourseResponseDTO, error)
 	DeleteCourse(ctx context.Context, id uuid.UUID) error
 }
@@ -162,6 +163,42 @@ func (s *CourseService) GetCourseByID(ctx context.Context, id uuid.UUID) (*dto.C
 		sections[i] = dto.SectionResponseDTO{
 			ID:           sec.ID,
 			CourseID:     sec.CourseID, 
+			Title:        sec.Title,
+			Description:  sec.Description,
+			DisplayOrder: sec.DisplayOrder,
+			Lessons:      lessons,
+			CreatedAt:    sec.CreatedAt,
+			UpdatedAt:    sec.UpdatedAt,
+		}
+	}
+	detail.Sections = sections
+
+	return detail, nil
+}
+
+// GetCourseBySlug retrieves course detail by its URL slug
+func (s *CourseService) GetCourseBySlug(ctx context.Context, slug string) (*dto.CourseDetailDTO, error) {
+	course, err := s.courseRepo.GetDetailBySlug(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	if course == nil {
+		return nil, errors.New("course not found")
+	}
+
+	detail := &dto.CourseDetailDTO{
+		CourseResponseDTO: *s.toCourseResponseDTO(course),
+	}
+
+	sections := make([]dto.SectionResponseDTO, len(course.Sections))
+	for i, sec := range course.Sections {
+		lessons := make([]dto.LessonResponseDTO, len(sec.Lessons))
+		for j, les := range sec.Lessons {
+			lessons[j] = s.toLessonResponseDTO(&les, nil)
+		}
+		sections[i] = dto.SectionResponseDTO{
+			ID:           sec.ID,
+			CourseID:     sec.CourseID,
 			Title:        sec.Title,
 			Description:  sec.Description,
 			DisplayOrder: sec.DisplayOrder,
