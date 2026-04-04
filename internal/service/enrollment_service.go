@@ -97,7 +97,11 @@ func (s *EnrollmentService) GetMyEnrollments(ctx context.Context, userID uuid.UU
 	for i := range enrollments {
 		d := s.toEnrollmentResponseDTO(&enrollments[i])
 		d.CourseTitle = enrollments[i].Course.Title
+		d.CourseSlug = enrollments[i].Course.Slug
 		d.CourseThumbnail = enrollments[i].Course.ThumbnailURL
+		if enrollments[i].Course.Category != nil {
+			d.CourseCategory = enrollments[i].Course.Category.Name
+		}
 		result[i] = *d
 	}
 
