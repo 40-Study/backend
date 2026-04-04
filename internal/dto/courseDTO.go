@@ -77,10 +77,18 @@ type CourseResponseDTO struct {
 	PublishedAt       *time.Time       `json:"published_at,omitempty"`
 	IsFeatured        bool             `json:"is_featured"`
 	IsFree            bool             `json:"is_free"`
+	Instructor        *CourseInstructorDTO `json:"instructor,omitempty"`
 	Category          *CategoryResponseDTO `json:"category,omitempty"`
 	Tags              []TagResponseDTO   `json:"tags,omitempty"`
 	CreatedAt         time.Time        `json:"created_at"`
 	UpdatedAt         time.Time        `json:"updated_at"`
+}
+
+type CourseInstructorDTO struct {
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	AvatarURL *string   `json:"avatar,omitempty"`
+	Bio       *string   `json:"bio,omitempty"`
 }
 
 type CourseDetailDTO struct {

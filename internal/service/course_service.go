@@ -360,6 +360,19 @@ func (s *CourseService) toCourseResponseDTO(course *model.Course) *dto.CourseRes
 		UpdatedAt:         course.UpdatedAt,
 	}
 
+	if course.Instructor.ID != uuid.Nil {
+		name := course.Instructor.UserName
+		if course.Instructor.FullName != nil && *course.Instructor.FullName != "" {
+			name = *course.Instructor.FullName
+		}
+		resp.Instructor = &dto.CourseInstructorDTO{
+			ID:        course.Instructor.ID,
+			Name:      name,
+			AvatarURL: course.Instructor.AvatarURL,
+			Bio:       course.Instructor.Bio,
+		}
+	}
+
 	if course.Category != nil {
 		resp.Category = &dto.CategoryResponseDTO{
 			ID:           course.Category.ID,

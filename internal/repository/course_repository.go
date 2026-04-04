@@ -97,6 +97,7 @@ func (r *CourseRepository) GetAll(ctx context.Context, params CourseFilterDBPara
 	}
 
 	if err := utils.ApplyPagination(query, params.Page, params.PageSize).
+		Preload("Instructor").
 		Preload("Category").
 		Preload("Tags").
 		Order("courses.created_at DESC").
