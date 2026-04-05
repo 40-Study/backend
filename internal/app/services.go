@@ -74,6 +74,9 @@ type Services struct {
 
 	// ===== OAuth =====
 	OAuth *service.OAuthService
+
+	// ===== Discussion Forum =====
+	Discussion *service.DiscussionService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
@@ -305,6 +308,9 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		UserStats:   service.NewUserStatsService(repos.UserStats),
 		// ===== Wallet =====
 		Wallet: service.NewWalletService(repos.Wallet),
+
+		// ===== Discussion Forum =====
+		Discussion: service.NewDiscussionService(repos.Discussion),
 	}
 }
 

@@ -64,6 +64,9 @@ type Handlers struct {
 
 	// ===== OAuth =====
 	OAuth *handler.OAuthHandler
+
+	// ===== Discussion Forum =====
+	Discussion *handler.DiscussionHandler
 }
 
 func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *config.Config) *Handlers {
@@ -125,5 +128,8 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *con
 
 		// ===== OAuth =====
 		OAuth: handler.NewOAuthHandler(services.OAuth, cfg),
+
+		// ===== Discussion Forum =====
+		Discussion: handler.NewDiscussionHandler(services.Discussion),
 	}
 }

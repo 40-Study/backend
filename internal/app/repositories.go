@@ -71,6 +71,9 @@ type Repositories struct {
 
 	// ===== OAuth =====
 	OAuthProvider *repository.OAuthProviderRepository
+
+	// ===== Discussion Forum =====
+	Discussion *repository.DiscussionRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -139,5 +142,8 @@ func InitRepositories(db *gorm.DB) *Repositories {
 
 		// ===== OAuth =====
 		OAuthProvider: repository.NewOAuthProviderRepository(db),
+
+		// ===== Discussion Forum =====
+		Discussion: repository.NewDiscussionRepository(db),
 	}
 }

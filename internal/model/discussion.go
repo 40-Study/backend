@@ -9,18 +9,22 @@ import (
 type Discussion struct {
 	BaseModel
 	UserID             uuid.UUID  `gorm:"type:uuid;not null;index" json:"user_id"`
-	LessonID           uuid.UUID  `gorm:"type:uuid;not null;index" json:"lesson_id"`
+	LessonID           *uuid.UUID `gorm:"type:uuid;index" json:"lesson_id,omitempty"`
 	ParentID           *uuid.UUID `gorm:"type:uuid;index" json:"parent_id,omitempty"`
 	Content            string     `gorm:"type:text;not null" json:"content"`
+	Title              *string    `gorm:"type:varchar(255)" json:"title,omitempty"`
+	Category           *string    `gorm:"type:varchar(100)" json:"category,omitempty"`
+	Slug               *string    `gorm:"type:varchar(300);uniqueIndex" json:"slug,omitempty"`
 	VideoTimestampSecs *int       `gorm:"column:video_timestamp_seconds" json:"video_timestamp_seconds,omitempty"`
 	UpvoteCount        int        `gorm:"default:0" json:"upvote_count"`
+	ReplyCount         int        `gorm:"default:0" json:"reply_count"`
 	IsPinned           bool       `gorm:"default:false" json:"is_pinned"`
 	IsInstructorAnswer bool       `gorm:"default:false" json:"is_instructor_answer"`
 	IsHidden           bool       `gorm:"default:false" json:"is_hidden"`
 
 	// Relationships
 	User    User             `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
-	Lesson  Lesson           `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
+	Lesson  *Lesson          `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
 	Parent  *Discussion      `gorm:"foreignKey:ParentID;constraint:OnDelete:CASCADE" json:"-"`
 	Replies []Discussion     `gorm:"foreignKey:ParentID" json:"-"`
 	Votes   []DiscussionVote `gorm:"foreignKey:DiscussionID;constraint:OnDelete:CASCADE" json:"-"`
