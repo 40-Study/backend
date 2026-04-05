@@ -44,6 +44,8 @@ type AuthServiceInterface interface {
 	Logout(ctx context.Context, userId, deviceId uuid.UUID) error
 	LogoutAllDevice(ctx context.Context, userId uuid.UUID) error
 	ChangePassword(ctx context.Context, userID uuid.UUID, req dto.ChangePasswordRequestDto) error
+	// OAuth
+	LoginWithOAuth(ctx context.Context, user *model.User, deviceInfo dto.DeviceInfoDTO) (*dto.LoginResponseDto, error)
 }
 
 type AuthService struct {
@@ -211,13 +213,11 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		return nil, fmt.Errorf("failed to get pending registration: %w", err)
 	}
 
-	// ===== 3. Unmarshal pending data =====
 	var pending PendingRegistration
 	if err := json.Unmarshal([]byte(pendingData), &pending); err != nil {
 		return nil, fmt.Errorf("failed to parse pending registration: %w", err)
 	}
 
-	// ===== 4. Check OTP attempts (max 5) =====
 	const maxOTPAttempts = 5
 	if pending.Attempts >= maxOTPAttempts {
 		// Delete pending registration to force user to request new OTP
@@ -225,9 +225,7 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		return nil, errors.New("too many failed attempts, please request a new OTP")
 	}
 
-	// ===== 5. Verify OTP using constant-time comparison =====
 	if !utils.VerifyOTP(req.OTP, pending.OTPHash, req.Email) {
-		// Increment attempts and save back
 		pending.Attempts++
 		pendingBytes, _ := json.Marshal(pending)
 		ttl, _ := s.redisClient.TTL(ctx, pendingKey).Result()
@@ -238,13 +236,11 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		return nil, fmt.Errorf("invalid OTP, %d attempts remaining", remaining)
 	}
 
-	// Prepare FullName pointer
 	var fullName *string
 	if pending.FullName != "" {
 		fullName = &pending.FullName
 	}
 
-	// ===== 7. Create user in database =====
 	user := &model.User{
 		Email:        pending.Email,
 		PasswordHash: pending.PasswordHash,
@@ -258,7 +254,6 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	// Assign the selected system role to user
 	roleID, _ := uuid.Parse(pending.RoleID)
 	now := time.Now()
 	_ = s.userSystemRoleRepo.Create(ctx, &model.UserSystemRole{
@@ -280,7 +275,6 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 	}, nil
 }
 
-// PendingLogin stores login data temporarily in Redis while user selects a profile/org
 type PendingLogin struct {
 	UserID       string              `json:"user_id"`
 	DeviceInfo   dto.DeviceInfoDTO   `json:"device_info"`
@@ -513,7 +507,7 @@ func (s *AuthService) completeLogin(
 			RoleName:    activeRole.Name,
 			DisplayName: activeRole.Name,
 		},
-		ActiveOrg:   activeOrg,
+		ActiveOrg: activeOrg,
 		CurrentDevice: &dto.DeviceSessionDto{
 			DeviceID:   deviceID.String(),
 			DeviceName: deviceInfo.DeviceName,
@@ -1618,7 +1612,7 @@ func (s *AuthService) SwitchRole(ctx context.Context, userID uuid.UUID, deviceID
 	return s.completeLoginUnified(ctx, user, deviceInfo, activeRole)
 }
 
-// completeLoginUnified generates JWT tokens for unified role selection
+// hàm này tương tự completeLogin cũ nhưng dùng UnifiedRoleDto để hỗ trợ cả system role và org role, giúp code sạch hơn
 func (s *AuthService) completeLoginUnified(
 	ctx context.Context,
 	user *model.User,
@@ -1637,7 +1631,6 @@ func (s *AuthService) completeLoginUnified(
 		_ = s.redisClient.Set(ctx, userVersionKey, userVersion, 0).Err()
 	}
 
-	// Determine active org for JWT
 	var activeOrgID *uuid.UUID
 	if activeRole.Type == "organization" && activeRole.OrganizationID != nil {
 		parsed, _ := uuid.Parse(*activeRole.OrganizationID)
@@ -1858,4 +1851,63 @@ func (s *AuthService) DeleteProfile(ctx context.Context, userID uuid.UUID, profi
 	s.redisClient.Incr(ctx, userVersionKey)
 
 	return nil
+}
+
+// Thêm hàm này để login vào ngày sau khi OAuth thành công, trước khi chọn role (nếu có nhiều role)
+// Vẫn đủ các case:
+// - 1 role: login thẳng, trả token + role info
+// - >1 role: trả session_token tạm, FE gọi select-role để hoàn tất login
+// - 0 role: lỗi, không cho login
+func (s *AuthService) LoginWithOAuth(ctx context.Context, user *model.User, deviceInfo dto.DeviceInfoDTO) (*dto.LoginResponseDto, error) {
+	if !user.IsActive {
+		return nil, errors.New("account is deactivated")
+	}
+
+	unifiedRoles, err := s.buildUnifiedRoles(ctx, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build unified roles: %w", err)
+	}
+
+	// case: 0 role - trả về lỗi
+	if len(unifiedRoles) == 0 {
+		return nil, errors.New("user has no active role assigned")
+	}
+	// case: >1 role - trả về session_token tạm, FE gọi select-role để hoàn tất login
+	if len(unifiedRoles) > 1 {
+		sessionToken := uuid.New().String()
+		pending := PendingLogin{
+			UserID:     user.ID.String(),
+			DeviceInfo: deviceInfo,
+			CreatedAt:  time.Now().Format(time.RFC3339),
+		}
+		pendingBytes, err := json.Marshal(pending)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal pending login: %w", err)
+		}
+		pendingKey := constants.KeyPendingLogin(sessionToken)
+		if err := s.redisClient.Set(ctx, pendingKey, pendingBytes, 5*time.Minute).Err(); err != nil {
+			return nil, fmt.Errorf("failed to save pending login: %w", err)
+		}
+		return &dto.LoginResponseDto{
+			Completed:    true,
+			SessionToken: sessionToken,
+			Roles:        unifiedRoles,
+		}, nil
+	}
+	// case: 1 role - login thẳng, trả token + role info
+	singleRole := unifiedRoles[0]
+	result, err := s.completeLoginUnified(ctx, user, deviceInfo, singleRole)
+	if err != nil {
+		return nil, err
+	}
+
+	return &dto.LoginResponseDto{
+		Completed:     true,
+		Roles:         unifiedRoles,
+		AccessToken:   result.AccessToken,
+		RefreshToken:  result.RefreshToken,
+		User:          &result.User,
+		ActiveRole:    &singleRole,
+		CurrentDevice: result.CurrentDevice,
+	}, nil
 }

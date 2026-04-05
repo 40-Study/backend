@@ -13,6 +13,7 @@ func SetupAllRoutes(
 	app *fiber.App,
 	cfg *config.Config,
 	authHandler *handler.AuthHandler,
+	oauthHandler *handler.OAuthHandler,
 	roleHandler *handler.RoleHandler,
 	systemRoleHandler *handler.SystemRoleHandler,
 	userSystemRoleHandler *handler.UserSystemRoleHandler,
@@ -62,7 +63,7 @@ func SetupAllRoutes(
 		})
 	})
 
-	SetupAuthRoutes(api, cfg, authHandler, redis)
+	SetupAuthRoutes(api, cfg, authHandler, oauthHandler, redis)
 	SetupOrgRoleRoutes(api, cfg, roleHandler, redis)
 	SetupSystemRoleRoutes(api, cfg, systemRoleHandler, redis)
 	SetupUserSystemRoleRoutes(api, cfg, userSystemRoleHandler, redis)

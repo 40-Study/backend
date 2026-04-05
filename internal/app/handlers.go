@@ -1,6 +1,7 @@
 package app
 
 import (
+	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/storage"
 )
@@ -60,9 +61,12 @@ type Handlers struct {
 	UserStats   *handler.UserStatsHandler
 	// ===== Wallet =====
 	Wallet *handler.WalletHandler
+
+	// ===== OAuth =====
+	OAuth *handler.OAuthHandler
 }
 
-func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handlers {
+func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *config.Config) *Handlers {
 	return &Handlers{
 		// ===== Auth & Role =====
 		Auth:                 handler.NewAuthHandler(services.Auth),
@@ -118,5 +122,8 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient) *Handler
 		UserStats:   handler.NewUserStatsHandler(services.UserStats),
 		// ===== Wallet =====
 		Wallet: handler.NewWalletHandler(services.Wallet),
+
+		// ===== OAuth =====
+		OAuth: handler.NewOAuthHandler(services.OAuth, cfg),
 	}
 }

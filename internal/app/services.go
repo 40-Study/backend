@@ -2,10 +2,13 @@ package app
 
 import (
 	"log"
+	"net/http"
+	"time"
 
 	"study.com/v1/internal/config"
 	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/service"
+	"study.com/v1/internal/thirdparty/oauth"
 )
 
 type Services struct {
@@ -68,13 +71,14 @@ type Services struct {
 	UserStats   *service.UserStatsService
 	// ===== Wallet =====
 	Wallet *service.WalletService
+
+	// ===== OAuth =====
+	OAuth *service.OAuthService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
-	// Initialize transaction service (gRPC)
 	transactionSvc := initTransactionService(resources.Config)
 
-	// ================= Video Queue Setup =================
 	var videoQueue *rabbitmq_queue.VideoQueueSetup
 	if resources.RabbitMQ != nil {
 		videoQueue = rabbitmq_queue.NewVideoQueueSetup(resources.RabbitMQ)
@@ -105,6 +109,7 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 			log.Printf("Warning: Failed to create video processing service: %v", err)
 		}
 	}
+	httpClient := &http.Client{Timeout: 10 * time.Second}
 
 	// ================= Initialize LiveKit Service =================
 	livekitSvc := service.NewLivekitService(resources.Config)
@@ -157,18 +162,55 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 	classSvc := service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student, repos.ParentStudent)
 	teacherSvc := service.NewTeacherService(repos.Teacher, classSvc)
 
+	// ================= Auth (created early because OAuth depends on it) =================
+	authSvc := service.NewAuthService(
+		resources.Config,
+		repos.User,
+		repos.Role,
+		repos.UserOrganizationRole,
+		repos.UserSystemRole,
+		repos.SystemRole,
+		resources.Redis,
+	)
+
+	// ================= OAuth Providers =================
+	// Chỉ đăng ký provider nào có config (client ID không rỗng)
+	// Thêm provider mới: chỉ cần tạo file trong thirdparty/oauth/ và đăng ký ở đây
+	oauthProviders := make(map[string]oauth.OAuthProvider)
+	if resources.Config.GitHub.ClientID != "" {
+		oauthProviders["github"] = oauth.NewGitHubProvider(&resources.Config.GitHub, httpClient)
+	}
+	if resources.Config.Google.ClientID != "" {
+		oauthProviders["google"] = oauth.NewGoogleProvider(&oauth.GoogleOAuthConfig{
+			ClientID:     resources.Config.Google.ClientID,
+			ClientSecret: resources.Config.Google.ClientSecret,
+			RedirectURL:  resources.Config.Google.RedirectURL,
+		}, httpClient)
+	}
+	if resources.Config.Facebook.ClientID != "" {
+		oauthProviders["facebook"] = oauth.NewFacebookProvider(&oauth.FacebookOAuthConfig{
+			ClientID:     resources.Config.Facebook.ClientID,
+			ClientSecret: resources.Config.Facebook.ClientSecret,
+			RedirectURL:  resources.Config.Facebook.RedirectURL,
+		}, httpClient)
+	}
+
+	oauthSvc := service.NewOAuthService(
+		resources.Config,
+		resources.Redis,
+		repos.User,
+		repos.OAuthProvider,
+		repos.UserSystemRole,
+		repos.SystemRole,
+		authSvc,
+		oauthProviders,
+	)
+
 	// ================= Return Services =================
 	return &Services{
 		// ===== Auth =====
-		Auth: service.NewAuthService(
-			resources.Config,
-			repos.User,
-			repos.Role,
-			repos.UserOrganizationRole,
-			repos.UserSystemRole,
-			repos.SystemRole,
-			resources.Redis,
-		),
+		Auth:  authSvc,
+		OAuth: oauthSvc,
 
 		// ===== Role =====
 		Role:       service.NewRoleService(repos.Role, repos.Permission),

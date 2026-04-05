@@ -100,7 +100,6 @@ type LoginResponseDto struct {
 	Completed    bool   `json:"completed"`
 	SessionToken string `json:"session_token,omitempty"`
 
-	// Unified roles list (gộp SystemRole + OrganizationRole)
 	// Hiển thị: "Giáo viên tự do", "Kế toán - Trường PTIT", etc.
 	Roles                []UnifiedRoleDto `json:"roles,omitempty"`
 	RequiresOrgSelection bool             `json:"requires_org_selection,omitempty"`
@@ -111,8 +110,8 @@ type LoginResponseDto struct {
 	RefreshToken  string            `json:"refresh_token,omitempty"`
 	User          *UserResponseDto  `json:"user,omitempty"`
 	ActiveRole    *UnifiedRoleDto   `json:"active_role,omitempty"` // Changed to UnifiedRoleDto
-	EntryContext  *EntryContext     `json:"entry_context,omitempty"`
-	CurrentDevice *DeviceSessionDto `json:"current_device,omitempty"`
+	EntryContext  *EntryContext     `json:"entry_context,omitempty"` // Gợi ý FE nên vào đâu sau login
+	CurrentDevice *DeviceSessionDto `json:"current_device,omitempty"` // Thông tin thiết bị đang login, để FE hiển thị và quản lý phiên đăng nhập
 }
 
 // SelectProfileRequestDto - Chọn role sau khi login
@@ -126,7 +125,7 @@ type SwitchProfileResponseDto struct {
 	AccessToken   string           `json:"access_token"`
 	RefreshToken  string           `json:"refresh_token"`
 	ActiveProfile ProfileDto       `json:"active_profile"`
-	CurrentDevice DeviceSessionDto `json:"current_device,omitempty"`
+	CurrentDevice DeviceSessionDto `json:"current_device,omitempty"` // Thông tin thiết bị đang login, để FE hiển thị và quản lý phiên đăng nhập
 }
 
 // SelectOrgRequestDto - Chọn org sau khi đã chọn role.
