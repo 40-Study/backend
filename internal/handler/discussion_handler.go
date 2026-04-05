@@ -54,7 +54,7 @@ func (h *DiscussionHandler) ListPosts(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	return c.JSON(result)
+	return c.JSON(fiber.Map{"data": result})
 }
 
 // GetPostBySlug GET /api/discussions/:slug
