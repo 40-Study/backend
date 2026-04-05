@@ -44,3 +44,4 @@ CLAUDE.md
 # Postman
 .postman/
 postman/
+docs/client_secret_*.json 

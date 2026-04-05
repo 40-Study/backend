@@ -46,7 +46,7 @@ func New() (*App, error) {
 	}
 	asynq_queue.RegisterTasks(resources.Queue, notifier, repos.Class, repos.Enrollment, resources.Redis, livestreamStarter)
 	go resources.Queue.Start()
-	handlers := InitHandlers(services, resources.MinioWrapper)
+	handlers := InitHandlers(services, resources.MinioWrapper, resources.Config)
 
 	fiberApp := fiber.New()
 
@@ -67,6 +67,7 @@ func New() (*App, error) {
 
 		// ===== Auth & Role =====
 		handlers.Auth,
+		handlers.OAuth,
 		handlers.Role,
 		handlers.SystemRole,
 		handlers.UserSystemRole,

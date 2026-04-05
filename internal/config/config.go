@@ -8,6 +8,28 @@ import (
 	"github.com/spf13/viper"
 )
 
+type GithubOAuthConfig struct {
+	ClientID     string `mapstructure:"GITHUB_CLIENT_ID"`     // Github client ID lấy từ trang developer của Github
+	ClientSecret string `mapstructure:"GITHUB_CLIENT_SECRET"` // Github client secret lấy từ trang developer của Github
+	RedirectURL  string `mapstructure:"GITHUB_REDIRECT_URL"`  // URL mà Github sẽ redirect về sau khi user authorize, phải trùng với URL đã đăng ký trên trang developer của Github
+	Endpoint     struct {
+		AuthURL  string `mapstructure:"GITHUB_AUTH_URL"`  // URL của endpoint authorize của Github
+		TokenURL string `mapstructure:"GITHUB_TOKEN_URL"` // URL của endpoint token của Github
+	} `mapstructure:"GITHUB_ENDPOINT"`
+	Scopes []string `mapstructure:"GITHUB_SCOPES"` // Các scope cần thiết để lấy thông tin user từ Github, ví dụ: "user:email" để lấy email của user
+}
+
+type GoogleOAuthConfig struct {
+	ClientID     string `mapstructure:"GOOGLE_CLIENT_ID"`
+	ClientSecret string `mapstructure:"GOOGLE_CLIENT_SECRET"`
+	RedirectURL  string `mapstructure:"GOOGLE_REDIRECT_URL"`
+}
+
+type FacebookOAuthConfig struct {
+	ClientID     string `mapstructure:"FACEBOOK_CLIENT_ID"`     // Facebook App ID
+	ClientSecret string `mapstructure:"FACEBOOK_CLIENT_SECRET"` // Facebook App Secret
+	RedirectURL  string `mapstructure:"FACEBOOK_REDIRECT_URL"`
+}
 type Config struct {
 	Environment string `mapstructure:"ENVIRONMENT"`
 	Port        string `mapstructure:"PORT"`
@@ -68,6 +90,14 @@ type Config struct {
 	// Transaction Service (MBBank gRPC)
 	TransactionServiceHost string `mapstructure:"TRANSACTION_SERVICE_HOST"`
 	TransactionServicePort string `mapstructure:"TRANSACTION_SERVICE_PORT"`
+
+	// OAuth Providers
+	GitHub   GithubOAuthConfig
+	Google   GoogleOAuthConfig
+	Facebook FacebookOAuthConfig
+
+	// Frontend URL for OAuth redirect
+	FrontendURL string `mapstructure:"FRONTEND_URL"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -90,6 +120,15 @@ func LoadConfig() (*Config, error) {
 	// Transaction Service
 	viper.SetDefault("TRANSACTION_SERVICE_HOST", "localhost")
 	viper.SetDefault("TRANSACTION_SERVICE_PORT", "50051")
+
+	// GITHUB
+	viper.SetDefault("GITHUB_CLIENT_ID", "")
+	viper.SetDefault("GITHUB_CLIENT_SECRET", "")
+	viper.SetDefault("GITHUB_REDIRECT_URL", "")
+	viper.SetDefault("GITHUB_AUTH_URL", "https://github.com/login/oauth/authorize")
+	viper.SetDefault("GITHUB_TOKEN_URL", "https://github.com/login/oauth/access_token")
+	viper.SetDefault("GITHUB_SCOPES", []string{"user:email"})
+	viper.SetDefault("FRONTEND_URL", "http://localhost:3000")
 
 	viper.AutomaticEnv()
 
@@ -153,6 +192,29 @@ func LoadConfig() (*Config, error) {
 	refreshDays := viper.GetInt("JWT_REFRESH_EXPIRATION_DAYS")
 	config.JWTAccessExpiration = time.Duration(accessMinutes) * time.Minute
 	config.JWTRefreshExpiration = time.Duration(refreshDays) * 24 * time.Hour
+
+	// Viper unmarshal không tự map flat env vars vào nested struct
+	// nên phải load thủ công cho OAuth providers
+	config.GitHub = GithubOAuthConfig{
+		ClientID:     viper.GetString("GITHUB_CLIENT_ID"),
+		ClientSecret: viper.GetString("GITHUB_CLIENT_SECRET"),
+		RedirectURL:  viper.GetString("GITHUB_REDIRECT_URL"),
+		Scopes:       viper.GetStringSlice("GITHUB_SCOPES"),
+	}
+	config.GitHub.Endpoint.AuthURL = viper.GetString("GITHUB_AUTH_URL")
+	config.GitHub.Endpoint.TokenURL = viper.GetString("GITHUB_TOKEN_URL")
+
+	config.Google = GoogleOAuthConfig{
+		ClientID:     viper.GetString("GOOGLE_CLIENT_ID"),
+		ClientSecret: viper.GetString("GOOGLE_CLIENT_SECRET"),
+		RedirectURL:  viper.GetString("GOOGLE_REDIRECT_URL"),
+	}
+
+	config.Facebook = FacebookOAuthConfig{
+		ClientID:     viper.GetString("FACEBOOK_CLIENT_ID"),
+		ClientSecret: viper.GetString("FACEBOOK_CLIENT_SECRET"),
+		RedirectURL:  viper.GetString("FACEBOOK_REDIRECT_URL"),
+	}
 
 	return config, nil
 }

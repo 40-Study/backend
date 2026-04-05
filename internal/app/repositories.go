@@ -68,6 +68,9 @@ type Repositories struct {
 	UserStats   *repository.UserStatsRepository
 	// ===== Wallet =====
 	Wallet *repository.WalletRepository
+
+	// ===== OAuth =====
+	OAuthProvider *repository.OAuthProviderRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -133,5 +136,8 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		UserStats:   repository.NewUserStatsRepository(db),
 		// ===== Wallet =====
 		Wallet: repository.NewWalletRepository(db),
+
+		// ===== OAuth =====
+		OAuthProvider: repository.NewOAuthProviderRepository(db),
 	}
 }

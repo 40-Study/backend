@@ -8,12 +8,22 @@ import (
 	"study.com/v1/internal/middleware"
 )
 
-func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.AuthHandler, redis *redis.Client) {
+func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.AuthHandler, oauthHandler *handler.OAuthHandler, redis *redis.Client) {
 	auth := api.Group("/auth")
 
 	// Rate limiters for security-sensitive endpoints
 	authRateLimiter := middleware.AuthRateLimiter(redis)
 	otpRateLimiter := middleware.OTPRateLimiter(redis)
+
+	// ===== OAuth routes (public, không cần auth) =====
+	// GET /auth/oauth/github          → redirect tới GitHub
+	// GET /auth/oauth/github/callback  → GitHub redirect về đây
+	// GET /auth/oauth/google          → redirect tới Google
+	// GET /auth/oauth/google/callback  → Google redirect về đây
+	// GET /auth/oauth/facebook        → redirect tới Facebook
+	// GET /auth/oauth/facebook/callback → Facebook redirect về đây
+	auth.Get("/oauth/:provider", oauthHandler.RedirectToProvider)
+	auth.Get("/oauth/:provider/callback", oauthHandler.ProviderCallback)
 
 	// Public routes with rate limiting
 	auth.Post("/register/request", otpRateLimiter, authHandler.RequestRegister)
