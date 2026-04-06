@@ -12,7 +12,8 @@ const (
 	PrefixLoginAttempts = "login_attempts"
 	PrefixLoginLocked   = "login_locked"
 	PrefixRegisterOTP   = "register:otp"
-	PrefixPasswordReset = "password_reset:otp"
+	PrefixPasswordReset  = "password_reset:otp"
+	PrefixChangeEmailOTP = "change_email_otp"
 )
 
 // Key builders
@@ -50,4 +51,8 @@ func KeyRegisterOTP(email string) string {
 
 func KeyPasswordReset(userID string) string {
 	return fmt.Sprintf("%s:%s", PrefixPasswordReset, userID)
+}
+
+func KeyChangeEmailOTP(userID string) string {
+	return fmt.Sprintf("%s:%s", PrefixChangeEmailOTP, userID)
 }

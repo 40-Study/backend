@@ -6,17 +6,18 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/service"
 )
 
 type OAuthHandler struct {
-	oauthService *service.OAuthService
+	oauthService service.OAuthServiceInterface
 	cfg          *config.Config
 }
 
-func NewOAuthHandler(oauthService *service.OAuthService, cfg *config.Config) *OAuthHandler {
+func NewOAuthHandler(oauthService service.OAuthServiceInterface, cfg *config.Config) *OAuthHandler {
 	return &OAuthHandler{
 		oauthService: oauthService,
 		cfg:          cfg,
@@ -102,4 +103,57 @@ func (h *OAuthHandler) ProviderCallback(c *fiber.Ctx) error {
 
 	// Fallback — không nên xảy ra
 	return c.Redirect(h.cfg.FrontendURL+"/login?error=unexpected_oauth_result", fiber.StatusTemporaryRedirect)
+}
+
+// ListLinkedAccounts xử lý GET /auth/linked-accounts
+// Trả về danh sách các OAuth provider đã liên kết với user hiện tại
+func (h *OAuthHandler) ListLinkedAccounts(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "unauthorized",
+		})
+	}
+
+	accounts, err := h.oauthService.ListLinkedAccounts(c.Context(), userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to fetch linked accounts",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Linked accounts fetched successfully",
+		"data":    accounts,
+	})
+}
+
+// DisconnectProvider xử lý DELETE /auth/linked-accounts/:provider
+// Ngắt liên kết OAuth provider khỏi tài khoản user
+func (h *OAuthHandler) DisconnectProvider(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "unauthorized",
+		})
+	}
+
+	providerName := c.Params("provider")
+	if providerName == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "provider is required",
+		})
+	}
+
+	if err := h.oauthService.DisconnectProvider(c.Context(), userID, providerName); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Failed to disconnect provider",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Provider disconnected successfully",
+	})
 }

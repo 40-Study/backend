@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,8 @@ type NotificationRepositoryInterface interface {
 	Create(notification *model.Notification) error
 	CreateBatch(notifications []model.Notification) error
 	Delete(id, userID uuid.UUID) error
+	GetSettingsByUserID(userID uuid.UUID) (*model.NotificationSettings, error)
+	UpsertSettings(settings *model.NotificationSettings) error
 }
 
 type NotificationRepository struct {
@@ -73,4 +76,20 @@ func (r *NotificationRepository) CreateBatch(notifications []model.Notification)
 
 func (r *NotificationRepository) Delete(id, userID uuid.UUID) error {
 	return r.db.Where("id = ? AND user_id = ?", id, userID).Delete(&model.Notification{}).Error
+}
+
+func (r *NotificationRepository) GetSettingsByUserID(userID uuid.UUID) (*model.NotificationSettings, error) {
+	var settings model.NotificationSettings
+	err := r.db.Where("user_id = ?", userID).First(&settings).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &settings, nil
+}
+
+func (r *NotificationRepository) UpsertSettings(settings *model.NotificationSettings) error {
+	return r.db.Save(settings).Error
 }

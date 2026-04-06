@@ -77,6 +77,9 @@ type Repositories struct {
 
 	// ===== Notification =====
 	Notification *repository.NotificationRepository
+
+	// ===== User Preference =====
+	UserPreference *repository.UserPreferenceRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -151,5 +154,8 @@ func InitRepositories(db *gorm.DB) *Repositories {
 
 		// ===== Notification =====
 		Notification: repository.NewNotificationRepository(db),
+
+		// ===== User Preference =====
+		UserPreference: repository.NewUserPreferenceRepository(db),
 	}
 }

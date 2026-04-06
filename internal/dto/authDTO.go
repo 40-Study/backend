@@ -303,3 +303,20 @@ type CreateProfileRequestDto struct {
 	SystemRoleID string `json:"system_role_id" validate:"required,uuid" example:"550e8400-e29b-41d4-a716-446655440000"`
 }
 
+// RequestChangeEmailDto - Step 1: request email change (verify password + send OTP)
+type RequestChangeEmailDto struct {
+	NewEmail string `json:"new_email" validate:"required,email"`
+	Password string `json:"password" validate:"required"`
+}
+
+// ChangeEmailDto - Step 2: confirm email change with OTP
+type ChangeEmailDto struct {
+	NewEmail string `json:"new_email" validate:"required,email"`
+	OTP      string `json:"otp" validate:"required,len=6"`
+}
+
+// DeleteAccountDto - Soft-delete account (verify password first)
+type DeleteAccountDto struct {
+	Password string `json:"password" validate:"required"`
+}
+

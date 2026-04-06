@@ -56,4 +56,13 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	auth.Post("/logout", authHandler.LogoutOneDevice)
 	auth.Post("/logout-all", authHandler.LogoutAll)
 	auth.Put("/change-password", authHandler.ChangePassword)
+
+	// Account security
+	auth.Post("/change-email/request", authHandler.RequestChangeEmail)
+	auth.Post("/change-email", authHandler.ChangeEmail)
+	auth.Delete("/me", authHandler.DeleteAccount)
+
+	// Linked OAuth accounts
+	auth.Get("/linked-accounts", oauthHandler.ListLinkedAccounts)
+	auth.Delete("/linked-accounts/:provider", oauthHandler.DisconnectProvider)
 }

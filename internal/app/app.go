@@ -127,6 +127,9 @@ func New() (*App, error) {
 		// ===== Notification =====
 		handlers.Notification,
 
+		// ===== User Preference =====
+		handlers.UserPreference,
+
 		resources.Redis,
 		resources.MinioClient,
 		resources.Queue,

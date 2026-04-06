@@ -100,6 +100,41 @@ func (h *NotificationHandler) DeleteNotification(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "Deleted"})
 }
 
+// GetSettings GET /api/notifications/settings
+func (h *NotificationHandler) GetSettings(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	result, err := h.svc.GetSettings(userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"data": result})
+}
+
+// UpdateSettings PUT /api/notifications/settings
+func (h *NotificationHandler) UpdateSettings(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	var req dto.UpdateNotificationSettingsDTO
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	result, err := h.svc.UpdateSettings(userID, req)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"data": result})
+}
+
 // SendNotification POST /api/notifications/send
 func (h *NotificationHandler) SendNotification(c *fiber.Ctx) error {
 	userID, ok := c.Locals("user_id").(uuid.UUID)

@@ -15,6 +15,8 @@ type NotificationServiceInterface interface {
 	MarkAllAsRead(userID uuid.UUID) error
 	SendNotification(req dto.CreateNotificationDTO) error
 	DeleteNotification(id, userID uuid.UUID) error
+	GetSettings(userID uuid.UUID) (*dto.NotificationSettingsResponseDTO, error)
+	UpdateSettings(userID uuid.UUID, req dto.UpdateNotificationSettingsDTO) (*dto.NotificationSettingsResponseDTO, error)
 }
 
 type NotificationService struct {
@@ -105,6 +107,91 @@ func (s *NotificationService) SendNotification(req dto.CreateNotificationDTO) er
 
 func (s *NotificationService) DeleteNotification(id, userID uuid.UUID) error {
 	return s.repo.Delete(id, userID)
+}
+
+func (s *NotificationService) GetSettings(userID uuid.UUID) (*dto.NotificationSettingsResponseDTO, error) {
+	settings, err := s.repo.GetSettingsByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+	if settings == nil {
+		settings = &model.NotificationSettings{
+			UserID:               userID,
+			EmailCourseUpdates:   true,
+			EmailPromotions:      true,
+			EmailRecommendations: true,
+			PushCourseUpdates:    true,
+			PushQuizReminders:    true,
+			PushPromotions:       false,
+			PushAchievements:     true,
+			PushStreakReminders:  true,
+		}
+		if err := s.repo.UpsertSettings(settings); err != nil {
+			return nil, err
+		}
+	}
+	return mapSettingsToDTO(settings), nil
+}
+
+func (s *NotificationService) UpdateSettings(userID uuid.UUID, req dto.UpdateNotificationSettingsDTO) (*dto.NotificationSettingsResponseDTO, error) {
+	settings, err := s.repo.GetSettingsByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+	if settings == nil {
+		settings = &model.NotificationSettings{
+			UserID:               userID,
+			EmailCourseUpdates:   true,
+			EmailPromotions:      true,
+			EmailRecommendations: true,
+			PushCourseUpdates:    true,
+			PushQuizReminders:    true,
+			PushPromotions:       false,
+			PushAchievements:     true,
+			PushStreakReminders:  true,
+		}
+	}
+	if req.EmailCourseUpdates != nil {
+		settings.EmailCourseUpdates = *req.EmailCourseUpdates
+	}
+	if req.EmailPromotions != nil {
+		settings.EmailPromotions = *req.EmailPromotions
+	}
+	if req.EmailRecommendations != nil {
+		settings.EmailRecommendations = *req.EmailRecommendations
+	}
+	if req.PushCourseUpdates != nil {
+		settings.PushCourseUpdates = *req.PushCourseUpdates
+	}
+	if req.PushQuizReminders != nil {
+		settings.PushQuizReminders = *req.PushQuizReminders
+	}
+	if req.PushPromotions != nil {
+		settings.PushPromotions = *req.PushPromotions
+	}
+	if req.PushAchievements != nil {
+		settings.PushAchievements = *req.PushAchievements
+	}
+	if req.PushStreakReminders != nil {
+		settings.PushStreakReminders = *req.PushStreakReminders
+	}
+	if err := s.repo.UpsertSettings(settings); err != nil {
+		return nil, err
+	}
+	return mapSettingsToDTO(settings), nil
+}
+
+func mapSettingsToDTO(s *model.NotificationSettings) *dto.NotificationSettingsResponseDTO {
+	return &dto.NotificationSettingsResponseDTO{
+		EmailCourseUpdates:   s.EmailCourseUpdates,
+		EmailPromotions:      s.EmailPromotions,
+		EmailRecommendations: s.EmailRecommendations,
+		PushCourseUpdates:    s.PushCourseUpdates,
+		PushQuizReminders:    s.PushQuizReminders,
+		PushPromotions:       s.PushPromotions,
+		PushAchievements:     s.PushAchievements,
+		PushStreakReminders:  s.PushStreakReminders,
+	}
 }
 
 func mapNotificationToDTO(n model.Notification) dto.NotificationResponseDTO {

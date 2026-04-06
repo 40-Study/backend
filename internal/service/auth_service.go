@@ -46,6 +46,10 @@ type AuthServiceInterface interface {
 	ChangePassword(ctx context.Context, userID uuid.UUID, req dto.ChangePasswordRequestDto) error
 	// OAuth
 	LoginWithOAuth(ctx context.Context, user *model.User, deviceInfo dto.DeviceInfoDTO) (*dto.LoginResponseDto, error)
+	// Account security
+	RequestChangeEmail(ctx context.Context, userID uuid.UUID, req dto.RequestChangeEmailDto) error
+	ChangeEmail(ctx context.Context, userID uuid.UUID, req dto.ChangeEmailDto) error
+	DeleteAccount(ctx context.Context, userID uuid.UUID, req dto.DeleteAccountDto) error
 }
 
 type AuthService struct {

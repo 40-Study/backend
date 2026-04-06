@@ -14,6 +14,8 @@ func SetupNotificationRoutes(api fiber.Router, cfg *config.Config, h *handler.No
 
 	notifications.Get("/", h.ListNotifications)
 	notifications.Get("/unread-count", h.GetUnreadCount)
+	notifications.Get("/settings", h.GetSettings)
+	notifications.Put("/settings", h.UpdateSettings)
 	notifications.Patch("/read-all", h.MarkAllAsRead)
 	notifications.Patch("/:id/read", h.MarkAsRead)
 	notifications.Delete("/:id", h.DeleteNotification)

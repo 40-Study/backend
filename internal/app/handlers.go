@@ -70,6 +70,9 @@ type Handlers struct {
 
 	// ===== Notification =====
 	Notification *handler.NotificationHandler
+
+	// ===== User Preference =====
+	UserPreference *handler.UserPreferenceHandler
 }
 
 func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *config.Config) *Handlers {
@@ -137,5 +140,8 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *con
 
 		// ===== Notification =====
 		Notification: handler.NewNotificationHandler(services.Notification),
+
+		// ===== User Preference =====
+		UserPreference: handler.NewUserPreferenceHandler(services.UserPreference),
 	}
 }

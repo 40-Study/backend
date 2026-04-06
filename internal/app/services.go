@@ -81,6 +81,9 @@ type Services struct {
 
 	// ===== Notification =====
 	Notification *service.NotificationService
+
+	// ===== User Preference =====
+	UserPreference *service.UserPreferenceService
 }
 
 func InitServices(resources *Resources, repos *Repositories, notifier *socket.Notifier) *Services {
@@ -318,6 +321,9 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 
 		// ===== Notification =====
 		Notification: service.NewNotificationService(repos.Notification, notifier),
+
+		// ===== User Preference =====
+		UserPreference: service.NewUserPreferenceService(repos.UserPreference),
 	}
 }
 
