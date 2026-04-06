@@ -74,6 +74,9 @@ type Repositories struct {
 
 	// ===== Discussion Forum =====
 	Discussion *repository.DiscussionRepository
+
+	// ===== Notification =====
+	Notification *repository.NotificationRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -145,5 +148,8 @@ func InitRepositories(db *gorm.DB) *Repositories {
 
 		// ===== Discussion Forum =====
 		Discussion: repository.NewDiscussionRepository(db),
+
+		// ===== Notification =====
+		Notification: repository.NewNotificationRepository(db),
 	}
 }

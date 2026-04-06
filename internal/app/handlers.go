@@ -67,6 +67,9 @@ type Handlers struct {
 
 	// ===== Discussion Forum =====
 	Discussion *handler.DiscussionHandler
+
+	// ===== Notification =====
+	Notification *handler.NotificationHandler
 }
 
 func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *config.Config) *Handlers {
@@ -131,5 +134,8 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *con
 
 		// ===== Discussion Forum =====
 		Discussion: handler.NewDiscussionHandler(services.Discussion),
+
+		// ===== Notification =====
+		Notification: handler.NewNotificationHandler(services.Notification),
 	}
 }
