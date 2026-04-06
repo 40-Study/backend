@@ -25,16 +25,17 @@ type LoginRequestDto struct {
 }
 
 type UserResponseDto struct {
-	ID          uuid.UUID `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
-	Username    string    `json:"username" example:"student123"`
-	Email       string    `json:"email" example:"student@example.com"`
-	FullName    *string   `json:"full_name,omitempty" example:"Nguyen Van A"`
-	Phone       *string   `json:"phone,omitempty" example:"+84901234567"`
-	AvatarUrl   *string   `json:"avatar_url,omitempty" example:"https://example.com/avatar.jpg"`
-	DateOfBirth *string   `json:"date_of_birth,omitempty" example:"2005-01-01"`
-	Bio         *string   `json:"bio,omitempty" example:"Sinh viên PTIT"`
-	IsActive    bool      `json:"is_active" example:"true"`
-	CreatedAt   string    `json:"created_at" example:"2023-01-01T00:00:00Z"`
+	ID                uuid.UUID `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Username          string    `json:"username" example:"student123"`
+	Email             string    `json:"email" example:"student@example.com"`
+	FullName          *string   `json:"full_name,omitempty" example:"Nguyen Van A"`
+	Phone             *string   `json:"phone,omitempty" example:"+84901234567"`
+	AvatarUrl         *string   `json:"avatar_url,omitempty" example:"https://example.com/avatar.jpg"`
+	DateOfBirth       *string   `json:"date_of_birth,omitempty" example:"2005-01-01"`
+	Bio               *string   `json:"bio,omitempty" example:"Sinh viên PTIT"`
+	IsActive          bool      `json:"is_active" example:"true"`
+	CreatedAt         string    `json:"created_at" example:"2023-01-01T00:00:00Z"`
+	PasswordChangedAt *string   `json:"password_changed_at,omitempty" example:"2026-04-06T10:00:00Z"`
 }
 
 type DeviceSessionDto struct {

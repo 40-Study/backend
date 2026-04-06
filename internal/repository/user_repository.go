@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -94,10 +95,14 @@ func (r *UserRepository) UpdateUserProfile(ctx context.Context, userID uuid.UUID
 }
 
 func (r *UserRepository) UpdatePasswordHash(ctx context.Context, userID uuid.UUID, newPasswordHash string) error {
+	now := time.Now()
 	result := r.db.WithContext(ctx).
 		Model(&model.User{}).
 		Where("id = ?", userID).
-		Update("password_hash", newPasswordHash)
+		Updates(map[string]interface{}{
+			"password_hash":       newPasswordHash,
+			"password_changed_at": &now,
+		})
 
 	if result.Error != nil {
 		return result.Error
