@@ -307,7 +307,7 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		Leaderboard: service.NewLeaderboardService(repos.Leaderboard),
 		UserStats:   service.NewUserStatsService(repos.UserStats),
 		// ===== Wallet =====
-		Wallet: service.NewWalletService(repos.Wallet),
+		Wallet: service.NewWalletService(repos.Wallet, repos.TeacherProfile),
 
 		// ===== Discussion Forum =====
 		Discussion: service.NewDiscussionService(repos.Discussion),

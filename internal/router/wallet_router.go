@@ -17,6 +17,14 @@ func SetupWalletRoutes(
 	authMiddleware := middleware.AuthMiddleware(cfg, redis)
 
 	wallet := api.Group("/wallet")
+
+	// Student (buyer) endpoints
 	wallet.Get("/me", authMiddleware, walletHandler.GetWallet)
 	wallet.Get("/transactions", authMiddleware, walletHandler.GetTransactions)
+
+	// Teacher (instructor) endpoints
+	teacher := wallet.Group("/teacher")
+	teacher.Get("/me", authMiddleware, walletHandler.GetTeacherWallet)
+	teacher.Get("/transactions", authMiddleware, walletHandler.GetTeacherTransactions)
+	teacher.Put("/bank-info", authMiddleware, walletHandler.UpdateBankInfo)
 }
