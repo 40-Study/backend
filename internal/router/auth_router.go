@@ -58,8 +58,6 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	auth.Put("/change-password", authHandler.ChangePassword)
 
 	// Account security
-	auth.Post("/change-email/request", authHandler.RequestChangeEmail)
-	auth.Post("/change-email", authHandler.ChangeEmail)
 	auth.Delete("/me", authHandler.DeleteAccount)
 
 	// Linked OAuth accounts
