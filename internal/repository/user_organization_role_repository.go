@@ -262,6 +262,7 @@ func (r *UserOrganizationRoleRepository) FindByUserAndOrganization(ctx context.C
 func (r *UserOrganizationRoleRepository) FindByUserRoleAndOrg(ctx context.Context, userID, roleID, organizationID uuid.UUID) (*model.UserOrganizationRole, error) {
 	var userOrgRole model.UserOrganizationRole
 	err := r.db.WithContext(ctx).
+		Preload("Role").Preload("Organization").
 		Where("user_id = ? AND role_id = ? AND organization_id = ?", userID, roleID, organizationID).
 		First(&userOrgRole).Error
 	if err != nil {

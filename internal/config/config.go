@@ -97,7 +97,8 @@ type Config struct {
 	Facebook FacebookOAuthConfig
 
 	// Frontend URL for OAuth redirect
-	FrontendURL string `mapstructure:"FRONTEND_URL"`
+	FrontendURL                string `mapstructure:"FRONTEND_URL"`
+	ParentInvitationDailyLimit int    `mapstructure:"PARENT_INVITATION_DAILY_LIMIT"` // Số lần gửi lời mời phụ huynh tối đa trong 24 giờ của mỗi học sinh
 }
 
 func LoadConfig() (*Config, error) {

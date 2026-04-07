@@ -22,6 +22,8 @@ type ParticipantRepositoryInterface interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	CountBySession(ctx context.Context, sessionID uuid.UUID) (int64, error)
 	CountActiveBySession(ctx context.Context, sessionID uuid.UUID) (int64, error)
+	FindActiveByParentAndStudent(ctx context.Context, parentID, studentID uuid.UUID) (*model.ParentStudentRelation, error) // tự động hết hạn lời mời cũ (status chuyển sang "expired")
+	CountActiveByStudentID(ctx context.Context, studentID uuid.UUID) (int64, error)
 }
 
 type ParticipantRepository struct {
@@ -127,6 +129,30 @@ func (r *ParticipantRepository) CountActiveBySession(ctx context.Context, sessio
 	err := r.db.WithContext(ctx).
 		Model(&model.Participant{}).
 		Where("session_id = ? AND is_active = ?", sessionID, true).
+		Count(&count).Error
+	return count, err
+}
+
+func (r *ParticipantRepository) FindActiveByParentAndStudent(ctx context.Context, parentID, studentID uuid.UUID) (*model.ParentStudentRelation, error) {
+	var relation model.ParentStudentRelation
+	err := r.db.WithContext(ctx).
+		Where("parent_user_id = ? AND student_user_id = ? AND status = ?", parentID, studentID, model.ParentStudentRelationStatusActive).
+		First(&relation).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &relation, nil
+}
+
+func (r *ParticipantRepository) CountActiveByStudentID(ctx context.Context, studentID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&model.ParentStudentRelation{}).
+		Where("student_user_id = ? AND status = ?", studentID, model.ParentStudentRelationStatusActive).
 		Count(&count).Error
 	return count, err
 }

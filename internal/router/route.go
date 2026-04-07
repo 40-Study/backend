@@ -49,6 +49,7 @@ func SetupAllRoutes(
 	leaderboardHandler *handler.LeaderboardHandler,
 	userStatsHandler *handler.UserStatsHandler,
 	walletHandler *handler.WalletHandler,
+	parentInvitationHandler *handler.ParentInvitationHandler,
 	discussionHandler *handler.DiscussionHandler,
 	notificationHandler *handler.NotificationHandler,
 	userPreferenceHandler *handler.UserPreferenceHandler,
@@ -103,6 +104,8 @@ func SetupAllRoutes(
 	// Wallet routes
 	SetupWalletRoutes(api, cfg, walletHandler, redis)
 
+	// Parent Invitation routes
+	SetupParentInvitationRoutes(api, cfg, parentInvitationHandler, redis)
 	// Discussion forum routes
 	SetupDiscussionRoutes(api, cfg, discussionHandler, redis)
 

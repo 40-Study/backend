@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -70,38 +69,48 @@ func (h *OAuthHandler) ProviderCallback(c *fiber.Ctx) error {
 
 	// Nếu login thành công (completed = true, có tokens)
 	if result.Completed && result.AccessToken != "" {
-		// Set cookies giống auth_handler.go
-		secure := os.Getenv("ENVIRONMENT") == "production"
+		// Set cookies — dùng chung logic với auth_handler
 		c.Cookie(&fiber.Cookie{
 			Name:     "accessToken",
 			Value:    result.AccessToken,
+			Path:     "/",
 			Expires:  time.Now().Add(h.cfg.JWTAccessExpiration),
 			HTTPOnly: true,
-			Secure:   secure,
 			SameSite: "Lax",
 		})
 		c.Cookie(&fiber.Cookie{
 			Name:     "rfToken",
 			Value:    result.RefreshToken,
+			Path:     "/",
 			Expires:  time.Now().Add(h.cfg.JWTRefreshExpiration),
 			HTTPOnly: true,
-			Secure:   secure,
 			SameSite: "Lax",
 		})
 
-		// Redirect về frontend — login xong
-		return c.Redirect(h.cfg.FrontendURL+"/?oauth=success", fiber.StatusTemporaryRedirect)
+		// Redirect về frontend với access_token — FE lưu vào store
+		return c.Redirect(
+			h.cfg.FrontendURL+"/oauth/callback?status=success&access_token="+url.QueryEscape(result.AccessToken),
+			fiber.StatusTemporaryRedirect,
+		)
+	}
+
+	// User mới chưa có role → redirect sang chọn role đăng ký
+	if result.NeedsRoleRegistration && result.SessionToken != "" {
+		return c.Redirect(
+			h.cfg.FrontendURL+"/oauth/callback?status=needs_role&session_token="+url.QueryEscape(result.SessionToken),
+			fiber.StatusTemporaryRedirect,
+		)
 	}
 
 	// Nếu cần chọn role (multi-role user) → redirect về trang chọn role
 	if result.SessionToken != "" {
 		return c.Redirect(
-			h.cfg.FrontendURL+"/select-role?session_token="+url.QueryEscape(result.SessionToken),
+			h.cfg.FrontendURL+"/oauth/callback?status=select_role&session_token="+url.QueryEscape(result.SessionToken),
 			fiber.StatusTemporaryRedirect,
 		)
 	}
 
-	// Fallback — không nên xảy ra
+	// Fallback — không nên xảy ra, nếu có lỗi thì redirect về frontend với error
 	return c.Redirect(h.cfg.FrontendURL+"/login?error=unexpected_oauth_result", fiber.StatusTemporaryRedirect)
 }
 

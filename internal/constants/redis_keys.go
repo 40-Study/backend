@@ -1,6 +1,10 @@
 package constants
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/google/uuid"
+)
 
 // Redis key prefixes for auth
 const (
@@ -12,10 +16,15 @@ const (
 	PrefixLoginAttempts = "login_attempts"
 	PrefixLoginLocked   = "login_locked"
 	PrefixRegisterOTP   = "register:otp"
-	PrefixPasswordReset  = "password_reset:otp"
+	PrefixPasswordReset = "password_reset:otp"
+    PrefixParentInviteRateLimit = "parent_invite:rate" // key lưu số lần gửi lời mời phụ huynh trong 24 giờ của mỗi học sinh, format: parent_invite:rate:{studentID}
+
 )
 
-// Key builders
+func KeyParentInviteRateLimit(studentID uuid.UUID) string {
+    return fmt.Sprintf("%s:%s", PrefixParentInviteRateLimit, studentID)
+}
+
 func KeyUserVersion(userID string) string {
 	return fmt.Sprintf("%s:%s", PrefixUserVersion, userID)
 }

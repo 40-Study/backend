@@ -58,8 +58,7 @@ func GenerateSlug(s string) string {
 	return result
 }
 
-// SlugExistsFunc checks if a slug already exists in the database.
-// Used by GenerateUniqueSlug to avoid duplicate slugs.
+
 type SlugExistsFunc func(slug string) (bool, error)
 
 // GenerateUniqueSlug creates a slug and appends -2, -3, etc. if it already exists.

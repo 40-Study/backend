@@ -121,6 +121,8 @@ func New() (*App, error) {
 		// ===== Wallet =====
 		handlers.Wallet,
 
+		// ===== Parent Invitation =====
+		handlers.ParentInvitation,
 		// ===== Discussion Forum =====
 		handlers.Discussion,
 

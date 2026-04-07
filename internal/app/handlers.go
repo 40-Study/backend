@@ -73,6 +73,9 @@ type Handlers struct {
 
 	// ===== User Preference =====
 	UserPreference *handler.UserPreferenceHandler
+
+	// ===== Parent Invitation =====
+	ParentInvitation *handler.ParentInvitationHandler
 }
 
 func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *config.Config) *Handlers {
@@ -143,5 +146,8 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *con
 
 		// ===== User Preference =====
 		UserPreference: handler.NewUserPreferenceHandler(services.UserPreference),
+
+		// ===== Parent Invitation =====
+		ParentInvitation: handler.NewParentInvitationHandler(services.ParentInvitation),
 	}
 }
