@@ -19,6 +19,7 @@ type VideoUploadHandlerInterface interface {
 	AbortUpload(c *fiber.Ctx) error
 	GetIncompleteUploads(c *fiber.Ctx) error
 	GetProcessingQueue(c *fiber.Ctx) error
+	ReprocessVideo(c *fiber.Ctx) error
 }
 
 // VideoUploadHandler - Handler xử lý các API endpoints cho video upload
@@ -387,5 +388,37 @@ func (h *VideoUploadHandler) GetProcessingQueue(c *fiber.Ctx) error {
 	return c.Status(200).JSON(fiber.Map{
 		"success": true,
 		"data":    processingJobs,
+	})
+}
+
+// ReprocessVideo handles POST /api/videos/upload/:upload_id/reprocess
+func (h *VideoUploadHandler) ReprocessVideo(c *fiber.Ctx) error {
+	uploadID := c.Params("upload_id")
+	if uploadID == "" {
+		return c.Status(400).JSON(fiber.Map{
+			"success": false,
+			"error":   "Upload ID is required",
+		})
+	}
+
+	uploadIDUUID, err := uuid.Parse(uploadID)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"success": false,
+			"error":   "Invalid upload ID format",
+		})
+	}
+
+	if err := h.videoUploadService.ReprocessVideo(c.Context(), uploadIDUUID); err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"success": false,
+			"error":   "Failed to reprocess video",
+			"details": err.Error(),
+		})
+	}
+
+	return c.Status(200).JSON(fiber.Map{
+		"success": true,
+		"message": "Video queued for reprocessing",
 	})
 }

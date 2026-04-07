@@ -170,6 +170,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
     ports:
       - "9000:9000" # API Port
       - "9090:9001"
@@ -194,6 +195,8 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    volumes:
+      - ./minio/cors.json:/cors.json:ro
     entrypoint: >
       /bin/sh -c "
       echo 'Waiting for MinIO to be ready...';
@@ -205,6 +208,10 @@ services:
       /usr/bin/mc mb myminio/study-avatars --ignore-existing;
       /usr/bin/mc mb myminio/study-documents --ignore-existing;
       /usr/bin/mc mb myminio/study-assignments --ignore-existing;
+      echo 'Setting bucket policies...';
+      /usr/bin/mc anonymous set download myminio/study-media;
+      /usr/bin/mc anonymous set download myminio/study-avatars;
+      /usr/bin/mc anonymous set download myminio/study-documents;
       echo 'MinIO setup completed successfully!';
       exit 0;
       "

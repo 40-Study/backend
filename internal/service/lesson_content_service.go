@@ -21,14 +21,17 @@ type LessonContentServiceInterface interface {
 }
 
 type LessonContentService struct {
-	lessonRepo repository.LessonRepositoryInterface
+	lessonRepo    repository.LessonRepositoryInterface
+	uploadService UploadServiceInterface
 }
 
 func NewLessonContentService(
 	lessonRepo repository.LessonRepositoryInterface,
+	uploadService UploadServiceInterface,
 ) *LessonContentService {
 	return &LessonContentService{
-		lessonRepo: lessonRepo,
+		lessonRepo:    lessonRepo,
+		uploadService: uploadService,
 	}
 }
 
@@ -152,6 +155,12 @@ func (s *LessonContentService) DeleteContent(ctx context.Context, contentID uuid
 	}
 	if content == nil {
 		return errors.New("content not found")
+	}
+
+	// Delete video from MinIO if exists
+	if content.VideoURL != nil && *content.VideoURL != "" && s.uploadService != nil {
+		// Ignore error - don't fail delete if MinIO cleanup fails
+		_ = s.uploadService.DeleteByURL(ctx, *content.VideoURL)
 	}
 
 	return s.lessonRepo.DeleteContent(ctx, contentID)

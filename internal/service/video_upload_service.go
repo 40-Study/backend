@@ -40,6 +40,9 @@ type VideoUploadServiceInterface interface {
 	// Dọn dẹp
 	CleanupExpiredUploads(ctx context.Context) error                        // Dọn upload đã hết hạn
 	CleanupIncompleteUploads(ctx context.Context, olderThanHours int) error // Dọn upload chưa hoàn thành lâu
+
+	// Reprocess
+	ReprocessVideo(ctx context.Context, uploadID uuid.UUID) error // Re-enqueue video for processing
 }
 
 type VideoUploadService struct {
@@ -728,4 +731,25 @@ func (s *VideoUploadService) GetProcessingQueue(ctx context.Context, userID uuid
 		return nil, fmt.Errorf("failed to find processing uploads: %w", err)
 	}
 	return uploads, nil
+}
+
+// ReprocessVideo re-enqueues a completed upload for HLS processing
+func (s *VideoUploadService) ReprocessVideo(ctx context.Context, uploadID uuid.UUID) error {
+	upload, err := s.uploadRepo.GetUploadByID(ctx, uploadID)
+	if err != nil {
+		return fmt.Errorf("failed to find upload: %w", err)
+	}
+	if upload == nil {
+		return fmt.Errorf("upload not found")
+	}
+
+	// Only allow reprocessing of uploaded/failed/processing videos
+	if upload.Status != model.VideoUploadStatusUploaded &&
+		upload.Status != model.VideoUploadStatusFailed &&
+		upload.Status != model.VideoUploadStatusProcessing {
+		return fmt.Errorf("upload status must be uploaded, failed, or processing to reprocess (current: %s)", upload.Status)
+	}
+
+	// Re-enqueue for processing
+	return s.enqueueProcessingTask(ctx, upload, "")
 }

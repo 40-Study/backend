@@ -27,6 +27,15 @@ func (h *CourseHandler) CreateCourse(c *fiber.Ctx) error {
 		})
 	}
 
+	// Override instructor_id with authenticated user's ID (don't trust client)
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	req.InstructorID = userID
+
 	if errors := utils.ValidateStruct(req); len(errors) > 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Validation failed",
