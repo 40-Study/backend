@@ -1,13 +1,18 @@
 package handler
 
 import (
+	"io"
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"study.com/v1/internal/storage"
 )
+
+// Rate limit: 10 MB/s for video streaming
+const streamRateLimitBytesPerSec = 10 * 1024 * 1024
 
 type HLSHandler struct {
 	minioClient *storage.MinioClient
@@ -59,7 +64,7 @@ func (h *HLSHandler) GetPlaylist(c *fiber.Ctx) error {
 	return c.Redirect(url, http.StatusFound)
 }
 
-// GetSegment phục vụ từng .ts segment
+// GetSegment phục vụ từng .ts segment với rate limiting
 // Route: GET /hls/:upload_id/:quality/:segment
 // :quality là "v0"/"v1"/"v2", :segment là "seg_00001.ts"
 // Object key: videos/{upload_id}/{quality}/{segment}
@@ -87,11 +92,51 @@ func (h *HLSHandler) GetSegment(c *fiber.Ctx) error {
 	}
 
 	objectKey := path.Join("videos", uploadID, quality, segment)
-	url, err := h.minioClient.GetPresignedDownloadURLSimple(objectKey, 3600)
+
+	// Stream with rate limiting instead of redirect
+	reader, err := h.minioClient.GetObject(c.Context(), "videos", objectKey)
 	if err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate segment URL"})
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to get segment"})
 	}
-	return c.Redirect(url, http.StatusFound)
+	defer reader.Close()
+
+	c.Set("Content-Type", "video/mp2t")
+	c.Set("Cache-Control", "public, max-age=31536000") // Cache 1 year
+
+	// Rate-limited streaming
+	return streamWithRateLimit(c, reader, streamRateLimitBytesPerSec)
+}
+
+// streamWithRateLimit streams data with bandwidth throttling
+func streamWithRateLimit(c *fiber.Ctx, reader io.Reader, bytesPerSec int) error {
+	buf := make([]byte, 64*1024) // 64KB chunks
+	bytesSent := 0
+	startTime := time.Now()
+
+	for {
+		n, err := reader.Read(buf)
+		if n > 0 {
+			// Write chunk
+			if _, writeErr := c.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+			bytesSent += n
+
+			// Throttle: calculate how long we should have taken
+			elapsed := time.Since(startTime).Seconds()
+			expectedTime := float64(bytesSent) / float64(bytesPerSec)
+			if sleepTime := expectedTime - elapsed; sleepTime > 0 {
+				time.Sleep(time.Duration(sleepTime * float64(time.Second)))
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetVideoInfo trả về thông tin về các HLS stream có sẵn cho video
