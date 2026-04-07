@@ -8,6 +8,7 @@ import (
 	"study.com/v1/internal/config"
 	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/service"
+	"study.com/v1/internal/socket"
 	"study.com/v1/internal/thirdparty/oauth"
 )
 
@@ -77,9 +78,17 @@ type Services struct {
 
 	// ===== Parent Invitation =====
 	ParentInvitation *service.ParentInvitationService
+	// ===== Discussion Forum =====
+	Discussion *service.DiscussionService
+
+	// ===== Notification =====
+	Notification *service.NotificationService
+
+	// ===== User Preference =====
+	UserPreference *service.UserPreferenceService
 }
 
-func InitServices(resources *Resources, repos *Repositories) *Services {
+func InitServices(resources *Resources, repos *Repositories, notifier *socket.Notifier) *Services {
 	transactionSvc := initTransactionService(resources.Config)
 
 	var videoQueue *rabbitmq_queue.VideoQueueSetup
@@ -324,7 +333,16 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		Leaderboard: service.NewLeaderboardService(repos.Leaderboard),
 		UserStats:   service.NewUserStatsService(repos.UserStats),
 		// ===== Wallet =====
-		Wallet: service.NewWalletService(repos.Wallet),
+		Wallet: service.NewWalletService(repos.Wallet, repos.TeacherProfile),
+
+		// ===== Discussion Forum =====
+		Discussion: service.NewDiscussionService(repos.Discussion),
+
+		// ===== Notification =====
+		Notification: service.NewNotificationService(repos.Notification, notifier),
+
+		// ===== User Preference =====
+		UserPreference: service.NewUserPreferenceService(repos.UserPreference),
 	}
 }
 

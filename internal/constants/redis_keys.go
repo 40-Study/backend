@@ -60,3 +60,4 @@ func KeyRegisterOTP(email string) string {
 func KeyPasswordReset(userID string) string {
 	return fmt.Sprintf("%s:%s", PrefixPasswordReset, userID)
 }
+

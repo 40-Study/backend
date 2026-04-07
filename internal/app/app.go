@@ -37,7 +37,7 @@ func New() (*App, error) {
 		log.Printf("Warning: seeder failed: %v", err)
 	}
 
-	services := InitServices(resources, repos)
+	services := InitServices(resources, repos, notifier)
 
 	// Register tasks sau khi có services để có thể inject livestream starter
 	livestreamStarter := func(ctx context.Context, sessionID uuid.UUID) error {
@@ -123,6 +123,14 @@ func New() (*App, error) {
 
 		// ===== Parent Invitation =====
 		handlers.ParentInvitation,
+		// ===== Discussion Forum =====
+		handlers.Discussion,
+
+		// ===== Notification =====
+		handlers.Notification,
+
+		// ===== User Preference =====
+		handlers.UserPreference,
 
 		resources.Redis,
 		resources.MinioClient,

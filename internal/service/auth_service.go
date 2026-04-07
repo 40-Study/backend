@@ -46,6 +46,8 @@ type AuthServiceInterface interface {
 	ChangePassword(ctx context.Context, userID uuid.UUID, req dto.ChangePasswordRequestDto) error
 	// OAuth
 	LoginWithOAuth(ctx context.Context, user *model.User, deviceInfo dto.DeviceInfoDTO) (*dto.LoginResponseDto, error)
+	// Account security
+	DeleteAccount(ctx context.Context, userID uuid.UUID, req dto.DeleteAccountDto) error
 }
 
 type AuthService struct {
@@ -59,6 +61,15 @@ type AuthService struct {
 	redisClient        *redis.Client
 
 	parentInvitationSvc ParentInvitationServiceInterface
+}
+
+// formatTimePtr formats a *time.Time to *string (RFC3339), returns nil if input is nil.
+func formatTimePtr(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	s := t.Format(time.RFC3339)
+	return &s
 }
 
 func NewAuthService(
@@ -501,14 +512,15 @@ func (s *AuthService) completeLogin(
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		User: dto.UserResponseDto{
-			ID:          user.ID,
-			Username:    user.UserName,
-			Email:       user.Email,
-			Phone:       user.Phone,
-			AvatarUrl:   user.AvatarURL,
-			DateOfBirth: dob,
-			IsActive:    user.IsActive,
-			CreatedAt:   user.CreatedAt.Format(time.RFC3339),
+			ID:                user.ID,
+			Username:          user.UserName,
+			Email:             user.Email,
+			Phone:             user.Phone,
+			AvatarUrl:         user.AvatarURL,
+			DateOfBirth:       dob,
+			IsActive:          user.IsActive,
+			CreatedAt:         user.CreatedAt.Format(time.RFC3339),
+			PasswordChangedAt: formatTimePtr(user.PasswordChangedAt),
 		},
 		ActiveRole: dto.UnifiedRoleDto{
 			ID:          activeRole.ID,
@@ -978,16 +990,17 @@ func (s *AuthService) GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserRes
 	}
 
 	userResponse := &dto.UserResponseDto{
-		ID:          user.ID,
-		Username:    user.UserName,
-		Email:       user.Email,
-		FullName:    user.FullName,
-		Phone:       user.Phone,
-		AvatarUrl:   user.AvatarURL,
-		DateOfBirth: dob,
-		Bio:         user.Bio,
-		IsActive:    user.IsActive,
-		CreatedAt:   user.CreatedAt.Format(time.RFC3339),
+		ID:                user.ID,
+		Username:          user.UserName,
+		Email:             user.Email,
+		FullName:          user.FullName,
+		Phone:             user.Phone,
+		AvatarUrl:         user.AvatarURL,
+		DateOfBirth:       dob,
+		Bio:               user.Bio,
+		IsActive:          user.IsActive,
+		CreatedAt:         user.CreatedAt.Format(time.RFC3339),
+		PasswordChangedAt: formatTimePtr(user.PasswordChangedAt),
 	}
 
 	// ===== 4. Cache response in Redis (if available) =====
@@ -1715,16 +1728,17 @@ func (s *AuthService) completeLoginUnified(
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		User: dto.UserResponseDto{
-			ID:          user.ID,
-			Username:    user.UserName,
-			Email:       user.Email,
-			FullName:    user.FullName,
-			Phone:       user.Phone,
-			AvatarUrl:   user.AvatarURL,
-			DateOfBirth: dobStr,
-			Bio:         user.Bio,
-			IsActive:    user.IsActive,
-			CreatedAt:   user.CreatedAt.Format(time.RFC3339),
+			ID:                user.ID,
+			Username:          user.UserName,
+			Email:             user.Email,
+			FullName:          user.FullName,
+			Phone:             user.Phone,
+			AvatarUrl:         user.AvatarURL,
+			DateOfBirth:       dobStr,
+			Bio:               user.Bio,
+			IsActive:          user.IsActive,
+			CreatedAt:         user.CreatedAt.Format(time.RFC3339),
+			PasswordChangedAt: formatTimePtr(user.PasswordChangedAt),
 		},
 		ActiveRole: activeRole,
 		CurrentDevice: &dto.DeviceSessionDto{

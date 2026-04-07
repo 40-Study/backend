@@ -16,7 +16,9 @@ type EnrollmentResponseDTO struct {
 	CompletedAt     *string         `json:"completed_at,omitempty"`
 	LastAccessedAt  *string         `json:"last_accessed_at,omitempty"`
 	CourseTitle     string          `json:"course_title,omitempty"`
+	CourseSlug      string          `json:"course_slug,omitempty"`
 	CourseThumbnail *string         `json:"course_thumbnail,omitempty"`
+	CourseCategory  string          `json:"course_category,omitempty"`
 }
 
 type EnrollmentDetailDTO struct {

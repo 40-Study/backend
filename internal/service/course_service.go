@@ -15,6 +15,7 @@ type CourseServiceInterface interface {
 	CreateCourse(ctx context.Context, req dto.CreateCourseDTO) (*dto.CourseResponseDTO, error)
 	GetAllCourses(ctx context.Context, params dto.CourseFilterParams) (*dto.CourseListResponseDTO, error)
 	GetCourseByID(ctx context.Context, id uuid.UUID) (*dto.CourseDetailDTO, error)
+	GetCourseBySlug(ctx context.Context, slug string) (*dto.CourseDetailDTO, error)
 	UpdateCourse(ctx context.Context, id uuid.UUID, req dto.UpdateCourseDTO) (*dto.CourseResponseDTO, error)
 	DeleteCourse(ctx context.Context, id uuid.UUID) error
 }
@@ -57,11 +58,18 @@ func (s *CourseService) CreateCourse(ctx context.Context, req dto.CreateCourseDT
 		language = "vi"
 	}
 
+	slug, err := utils.GenerateUniqueSlug(req.Title, func(slug string) (bool, error) {
+		return s.courseRepo.SlugExists(ctx, slug)
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	course := &model.Course{
 		InstructorID:      req.InstructorID,
 		CategoryID:        req.CategoryID,
 		Title:             req.Title,
-		Slug:              utils.GenerateSlug(req.Title),
+		Slug:              slug,
 		ShortDescription:  req.ShortDescription,
 		Description:       req.Description,
 		ThumbnailURL:      req.ThumbnailURL,
@@ -175,6 +183,42 @@ func (s *CourseService) GetCourseByID(ctx context.Context, id uuid.UUID) (*dto.C
 	return detail, nil
 }
 
+// GetCourseBySlug retrieves course detail by its URL slug
+func (s *CourseService) GetCourseBySlug(ctx context.Context, slug string) (*dto.CourseDetailDTO, error) {
+	course, err := s.courseRepo.GetDetailBySlug(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	if course == nil {
+		return nil, errors.New("course not found")
+	}
+
+	detail := &dto.CourseDetailDTO{
+		CourseResponseDTO: *s.toCourseResponseDTO(course),
+	}
+
+	sections := make([]dto.SectionResponseDTO, len(course.Sections))
+	for i, sec := range course.Sections {
+		lessons := make([]dto.LessonResponseDTO, len(sec.Lessons))
+		for j, les := range sec.Lessons {
+			lessons[j] = s.toLessonResponseDTO(&les, nil)
+		}
+		sections[i] = dto.SectionResponseDTO{
+			ID:           sec.ID,
+			CourseID:     sec.CourseID,
+			Title:        sec.Title,
+			Description:  sec.Description,
+			DisplayOrder: sec.DisplayOrder,
+			Lessons:      lessons,
+			CreatedAt:    sec.CreatedAt,
+			UpdatedAt:    sec.UpdatedAt,
+		}
+	}
+	detail.Sections = sections
+
+	return detail, nil
+}
+
 func (s *CourseService) UpdateCourse(ctx context.Context, id uuid.UUID, req dto.UpdateCourseDTO) (*dto.CourseResponseDTO, error) {
 	course, err := s.courseRepo.GetByID(ctx, id)
 	if err != nil {
@@ -197,7 +241,17 @@ func (s *CourseService) UpdateCourse(ctx context.Context, id uuid.UUID, req dto.
 
 	if req.Title != nil {
 		course.Title = *req.Title
-		course.Slug = utils.GenerateSlug(*req.Title)
+		newSlug, err := utils.GenerateUniqueSlug(*req.Title, func(slug string) (bool, error) {
+			// Allow the current course to keep its own slug
+			if slug == course.Slug {
+				return false, nil
+			}
+			return s.courseRepo.SlugExists(ctx, slug)
+		})
+		if err != nil {
+			return nil, err
+		}
+		course.Slug = newSlug
 	}
 	if req.ShortDescription != nil {
 		course.ShortDescription = req.ShortDescription
@@ -304,6 +358,19 @@ func (s *CourseService) toCourseResponseDTO(course *model.Course) *dto.CourseRes
 		IsFree:            course.IsFree,
 		CreatedAt:         course.CreatedAt,
 		UpdatedAt:         course.UpdatedAt,
+	}
+
+	if course.Instructor.ID != uuid.Nil {
+		name := course.Instructor.UserName
+		if course.Instructor.FullName != nil && *course.Instructor.FullName != "" {
+			name = *course.Instructor.FullName
+		}
+		resp.Instructor = &dto.CourseInstructorDTO{
+			ID:        course.Instructor.ID,
+			Name:      name,
+			AvatarURL: course.Instructor.AvatarURL,
+			Bio:       course.Instructor.Bio,
+		}
 	}
 
 	if course.Category != nil {

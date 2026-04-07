@@ -74,6 +74,14 @@ type Repositories struct {
 
 	// ===== Parent Invitation =====
 	ParentInvitation repository.ParentInvitationRepositoryInterface
+	// ===== Discussion Forum =====
+	Discussion *repository.DiscussionRepository
+
+	// ===== Notification =====
+	Notification *repository.NotificationRepository
+
+	// ===== User Preference =====
+	UserPreference *repository.UserPreferenceRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -145,5 +153,13 @@ func InitRepositories(db *gorm.DB) *Repositories {
 
 		// ===== Parent Invitation =====
 		ParentInvitation: repository.NewParentInvitationRepository(db),
+		// ===== Discussion Forum =====
+		Discussion: repository.NewDiscussionRepository(db),
+
+		// ===== Notification =====
+		Notification: repository.NewNotificationRepository(db),
+
+		// ===== User Preference =====
+		UserPreference: repository.NewUserPreferenceRepository(db),
 	}
 }

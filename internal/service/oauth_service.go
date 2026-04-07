@@ -39,6 +39,10 @@ type OAuthServiceInterface interface {
 	GetAuthURL(ctx context.Context, providerName string, deviceInfo *dto.DeviceInfoDTO) (string, error)
 	// HandleCallback xử lý callback từ provider sau khi user authorize
 	HandleCallback(ctx context.Context, providerName, code, state string) (*dto.LoginResponseDto, error)
+	// ListLinkedAccounts trả về danh sách provider đã liên kết với user
+	ListLinkedAccounts(ctx context.Context, userID uuid.UUID) ([]dto.LinkedAccountDTO, error)
+	// DisconnectProvider ngắt liên kết một provider khỏi user
+	DisconnectProvider(ctx context.Context, userID uuid.UUID, providerName string) error
 }
 
 func NewOAuthService(
@@ -307,4 +311,51 @@ func (s *OAuthService) createOAuthUser(ctx context.Context, providerName string,
 	}
 
 	return user, nil
+}
+
+// ListLinkedAccounts trả về danh sách các OAuth provider đã liên kết với user
+func (s *OAuthService) ListLinkedAccounts(ctx context.Context, userID uuid.UUID) ([]dto.LinkedAccountDTO, error) {
+	providers, err := s.oauthRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("find linked accounts: %w", err)
+	}
+
+	result := make([]dto.LinkedAccountDTO, 0, len(providers))
+	for _, p := range providers {
+		result = append(result, dto.LinkedAccountDTO{
+			Provider:    p.Provider,
+			Email:       p.Email,
+			ConnectedAt: p.CreatedAt,
+		})
+	}
+	return result, nil
+}
+
+// DisconnectProvider ngắt liên kết một OAuth provider khỏi tài khoản user
+// Chỉ cho phép nếu user còn ít nhất một phương thức xác thực khác (password hoặc provider khác)
+func (s *OAuthService) DisconnectProvider(ctx context.Context, userID uuid.UUID, providerName string) error {
+	// Lấy user để kiểm tra có password không
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("find user: %w", err)
+	}
+	if user == nil {
+		return errors.New("user not found")
+	}
+
+	// Lấy danh sách provider đã liên kết
+	providers, err := s.oauthRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("find linked accounts: %w", err)
+	}
+
+	// Kiểm tra user có password thực sự không (không phải placeholder OAuth)
+	hasPassword := user.PasswordHash != "" && user.PasswordHash != "$oauth$no-password" && !strings.HasPrefix(user.PasswordHash, "$oauth$")
+
+	// Cho phép disconnect nếu còn ít nhất 1 provider khác hoặc có password
+	if !hasPassword && len(providers) <= 1 {
+		return errors.New("cannot disconnect last authentication method")
+	}
+
+	return s.oauthRepo.DeleteByUserIDAndProvider(ctx, userID, providerName)
 }

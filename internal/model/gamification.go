@@ -282,6 +282,9 @@ type UserPreference struct {
 	ReminderTime          *string   `gorm:"type:varchar(5)" json:"reminder_time,omitempty"` // "09:00"
 	Timezone              string    `gorm:"type:varchar(50);default:'Asia/Ho_Chi_Minh'" json:"timezone"`
 	Language              string    `gorm:"type:varchar(10);default:'vi'" json:"language"`
+	ProfileVisibility     string    `gorm:"type:varchar(20);default:'public'" json:"profile_visibility"`
+	ActivityStatus        string    `gorm:"type:varchar(20);default:'everyone'" json:"activity_status"`
+	LeaderboardDisplay    string    `gorm:"type:varchar(20);default:'name'" json:"leaderboard_display"`
 
 	// Relationships
 	User User `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`

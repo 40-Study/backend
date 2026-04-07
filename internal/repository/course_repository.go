@@ -16,9 +16,11 @@ type CourseRepositoryInterface interface {
 	GetAll(ctx context.Context, params CourseFilterDBParams) ([]model.Course, int64, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Course, error)
 	GetDetailByID(ctx context.Context, id uuid.UUID) (*model.Course, error)
+	GetDetailBySlug(ctx context.Context, slug string) (*model.Course, error)
 	Update(ctx context.Context, course *model.Course) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	ReplaceTags(ctx context.Context, course *model.Course, tags []model.Tag) error
+	SlugExists(ctx context.Context, slug string) (bool, error)
 }
 
 type CourseFilterDBParams struct {
@@ -95,6 +97,7 @@ func (r *CourseRepository) GetAll(ctx context.Context, params CourseFilterDBPara
 	}
 
 	if err := utils.ApplyPagination(query, params.Page, params.PageSize).
+		Preload("Instructor").
 		Preload("Category").
 		Preload("Tags").
 		Order("courses.created_at DESC").
@@ -144,12 +147,42 @@ func (r *CourseRepository) GetDetailByID(ctx context.Context, id uuid.UUID) (*mo
 	return &course, nil
 }
 
+// GetDetailBySlug retrieves a course with all relations by its URL slug
+func (r *CourseRepository) GetDetailBySlug(ctx context.Context, slug string) (*model.Course, error) {
+	var course model.Course
+	err := r.db.WithContext(ctx).
+		Preload("Category").
+		Preload("Tags").
+		Preload("Sections", func(db *gorm.DB) *gorm.DB {
+			return db.Order("display_order ASC")
+		}).
+		Preload("Sections.Lessons", func(db *gorm.DB) *gorm.DB {
+			return db.Order("display_order ASC")
+		}).
+		Where("slug = ?", slug).
+		First(&course).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &course, nil
+}
+
 func (r *CourseRepository) Update(ctx context.Context, course *model.Course) error {
 	return r.db.WithContext(ctx).Save(course).Error
 }
 
 func (r *CourseRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).Delete(&model.Course{}, "id = ?", id).Error
+}
+
+// SlugExists checks if a course with the given slug already exists
+func (r *CourseRepository) SlugExists(ctx context.Context, slug string) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Course{}).Where("slug = ?", slug).Count(&count).Error
+	return count > 0, err
 }
 
 func (r *CourseRepository) ReplaceTags(ctx context.Context, course *model.Course, tags []model.Tag) error {

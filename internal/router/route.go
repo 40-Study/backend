@@ -50,6 +50,9 @@ func SetupAllRoutes(
 	userStatsHandler *handler.UserStatsHandler,
 	walletHandler *handler.WalletHandler,
 	parentInvitationHandler *handler.ParentInvitationHandler,
+	discussionHandler *handler.DiscussionHandler,
+	notificationHandler *handler.NotificationHandler,
+	userPreferenceHandler *handler.UserPreferenceHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 	aq *asynq_queue.Queue,
@@ -103,4 +106,12 @@ func SetupAllRoutes(
 
 	// Parent Invitation routes
 	SetupParentInvitationRoutes(api, cfg, parentInvitationHandler, redis)
+	// Discussion forum routes
+	SetupDiscussionRoutes(api, cfg, discussionHandler, redis)
+
+	// Notification routes
+	SetupNotificationRoutes(api, cfg, notificationHandler, redis)
+
+	// User Preference routes
+	SetupUserPreferenceRoutes(api, cfg, userPreferenceHandler, redis)
 }

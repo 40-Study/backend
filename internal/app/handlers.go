@@ -65,6 +65,15 @@ type Handlers struct {
 	// ===== OAuth =====
 	OAuth *handler.OAuthHandler
 
+	// ===== Discussion Forum =====
+	Discussion *handler.DiscussionHandler
+
+	// ===== Notification =====
+	Notification *handler.NotificationHandler
+
+	// ===== User Preference =====
+	UserPreference *handler.UserPreferenceHandler
+
 	// ===== Parent Invitation =====
 	ParentInvitation *handler.ParentInvitationHandler
 }
@@ -128,6 +137,15 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *con
 
 		// ===== OAuth =====
 		OAuth: handler.NewOAuthHandler(services.OAuth, cfg),
+
+		// ===== Discussion Forum =====
+		Discussion: handler.NewDiscussionHandler(services.Discussion),
+
+		// ===== Notification =====
+		Notification: handler.NewNotificationHandler(services.Notification),
+
+		// ===== User Preference =====
+		UserPreference: handler.NewUserPreferenceHandler(services.UserPreference),
 
 		// ===== Parent Invitation =====
 		ParentInvitation: handler.NewParentInvitationHandler(services.ParentInvitation),

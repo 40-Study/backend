@@ -120,6 +120,29 @@ func (h *CourseHandler) GetCourseByID(c *fiber.Ctx) error {
 	})
 }
 
+// GetCourseBySlug handles GET /courses/slug/:slug
+func (h *CourseHandler) GetCourseBySlug(c *fiber.Ctx) error {
+	slug := c.Params("slug")
+	if slug == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Slug is required",
+		})
+	}
+
+	course, err := h.service.GetCourseBySlug(c.Context(), slug)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"message": "Course not found",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Course retrieved successfully",
+		"data":    course,
+	})
+}
+
 func (h *CourseHandler) UpdateCourse(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
