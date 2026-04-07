@@ -151,7 +151,7 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		})
 	}
 
-	if response.Completed {
+	if response.Completed && response.AccessToken != "" {
 		h.setAuthCookies(c, response.AccessToken, response.RefreshToken)
 	}
 
@@ -166,6 +166,7 @@ func (h *AuthHandler) setAuthCookies(c *fiber.Ctx, accessToken, refreshToken str
 	c.Cookie(&fiber.Cookie{
 		Name:     "accessToken",
 		Value:    accessToken,
+		Path:     "/",
 		Expires:  time.Now().Add(15 * time.Minute),
 		HTTPOnly: true,
 		Secure:   secure,
@@ -174,6 +175,7 @@ func (h *AuthHandler) setAuthCookies(c *fiber.Ctx, accessToken, refreshToken str
 	c.Cookie(&fiber.Cookie{
 		Name:     "rfToken",
 		Value:    refreshToken,
+		Path:     "/",
 		Expires:  time.Now().Add(24 * time.Hour),
 		HTTPOnly: true,
 		Secure:   secure,

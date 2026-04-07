@@ -32,12 +32,12 @@ type Repositories struct {
 	Student *repository.StudentRepository
 
 	// ===== Course Management =====
-	Category      *repository.CategoryRepository
-	Tag           *repository.TagRepository
-	CartItem      *repository.CartItemRepository
-	Section       *repository.SectionRepository
-	Lesson        *repository.LessonRepository
-	Enrollment    *repository.EnrollmentRepository
+	Category   *repository.CategoryRepository
+	Tag        *repository.TagRepository
+	CartItem   *repository.CartItemRepository
+	Section    *repository.SectionRepository
+	Lesson     *repository.LessonRepository
+	Enrollment *repository.EnrollmentRepository
 
 	// ===== Video =====
 	VideoUpload *repository.VideoUploadRepository
@@ -71,6 +71,9 @@ type Repositories struct {
 
 	// ===== OAuth =====
 	OAuthProvider *repository.OAuthProviderRepository
+
+	// ===== Parent Invitation =====
+	ParentInvitation repository.ParentInvitationRepositoryInterface
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -101,12 +104,12 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		Student: repository.NewStudentRepository(db),
 
 		// ===== Course Management =====
-		Category:      repository.NewCategoryRepository(db),
-		Tag:           repository.NewTagRepository(db),
-		CartItem:      repository.NewCartItemRepository(db),
-		Section:       repository.NewSectionRepository(db),
-		Lesson:        repository.NewLessonRepository(db),
-		Enrollment:    repository.NewEnrollmentRepository(db),
+		Category:   repository.NewCategoryRepository(db),
+		Tag:        repository.NewTagRepository(db),
+		CartItem:   repository.NewCartItemRepository(db),
+		Section:    repository.NewSectionRepository(db),
+		Lesson:     repository.NewLessonRepository(db),
+		Enrollment: repository.NewEnrollmentRepository(db),
 
 		// ===== Video =====
 		VideoUpload: repository.NewVideoUploadRepository(db),
@@ -139,5 +142,8 @@ func InitRepositories(db *gorm.DB) *Repositories {
 
 		// ===== OAuth =====
 		OAuthProvider: repository.NewOAuthProviderRepository(db),
+
+		// ===== Parent Invitation =====
+		ParentInvitation: repository.NewParentInvitationRepository(db),
 	}
 }

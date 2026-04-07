@@ -34,3 +34,18 @@ func VerifyOTP(inputOTP, storedHash, email string) bool {
 	inputHash := HashOTP(inputOTP, email)
 	return subtle.ConstantTimeCompare([]byte(inputHash), []byte(storedHash)) == 1
 }
+
+func HashToken(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
+}
+
+func GenerateSecureToken() (string, string, error) {
+	b := make([]byte, 32) 
+	if _, err := rand.Read(b); err != nil {
+		return "", "", err
+	}
+	token := hex.EncodeToString(b) // gửi qua email
+	// token là mã gửi qua email, hashToken là giá trị lưu trong DB để so sánh khi người dùng nhập token
+	return token, HashToken(token), nil
+}

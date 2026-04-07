@@ -74,6 +74,9 @@ type Services struct {
 
 	// ===== OAuth =====
 	OAuth *service.OAuthService
+
+	// ===== Parent Invitation =====
+	ParentInvitation *service.ParentInvitationService
 }
 
 func InitServices(resources *Resources, repos *Repositories) *Services {
@@ -170,6 +173,7 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		repos.UserOrganizationRole,
 		repos.UserSystemRole,
 		repos.SystemRole,
+		repos.UserSystemRole, // userRoleRepo - dùng cho OAuth flow (tạo role sau khi chọn)
 		resources.Redis,
 	)
 
@@ -195,6 +199,18 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		}, httpClient)
 	}
 
+	// ================= Parent Invitation Service =================
+	parentInvitationSvc := service.NewParentInvitationService(
+		resources.Config,
+		resources.Redis,
+		repos.ParentInvitation,
+		repos.ParentStudent,
+		repos.User,
+	)
+
+	// Inject vào AuthService và OAuthService để gọi LinkInvitationToNewUser khi register
+	authSvc.SetParentInvitationService(parentInvitationSvc)
+
 	oauthSvc := service.NewOAuthService(
 		resources.Config,
 		resources.Redis,
@@ -205,12 +221,16 @@ func InitServices(resources *Resources, repos *Repositories) *Services {
 		authSvc,
 		oauthProviders,
 	)
+	oauthSvc.SetParentInvitationService(parentInvitationSvc)
 
 	// ================= Return Services =================
 	return &Services{
 		// ===== Auth =====
 		Auth:  authSvc,
 		OAuth: oauthSvc,
+
+		// ===== Parent Invitation =====
+		ParentInvitation: parentInvitationSvc,
 
 		// ===== Role =====
 		Role:       service.NewRoleService(repos.Role, repos.Permission),

@@ -12,11 +12,13 @@ import (
 
 func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		var accessToken string
-
-		// Fallback to Cookie
+		// Ưu tiên cookie, fallback Authorization header
+		accessToken := c.Cookies("accessToken")
 		if accessToken == "" {
-			accessToken = c.Cookies("accessToken")
+			authHeader := c.Get("Authorization")
+			if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+				accessToken = authHeader[7:]
+			}
 		}
 
 		if accessToken == "" {

@@ -120,3 +120,15 @@ func toSnakeCase(str string) string {
 	}
 	return strings.ToLower(result.String())
 }
+
+func NormalizeEmail(email string) string {
+	return strings.TrimSpace(strings.ToLower(email))
+}
+
+func NormalizePhone(phone string) string {
+	return strings.TrimSpace(phone)
+}
+
+func NompareEmails(email1, email2 string) bool {
+	return strings.EqualFold(NormalizeEmail(email1), NormalizeEmail(email2))
+}

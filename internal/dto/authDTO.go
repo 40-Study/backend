@@ -103,7 +103,10 @@ type LoginResponseDto struct {
 	// Hiển thị: "Giáo viên tự do", "Kế toán - Trường PTIT", etc.
 	Roles                []UnifiedRoleDto `json:"roles,omitempty"`
 	RequiresOrgSelection bool             `json:"requires_org_selection,omitempty"`
-	Organizations        []OrgContextDto `json:"organizations,omitempty"`
+	Organizations        []OrgContextDto  `json:"organizations,omitempty"`
+
+	// OAuth: user mới chưa có role nào, cần chọn role để đăng ký
+	NeedsRoleRegistration bool `json:"needs_role_registration,omitempty"`
 
 	// Chỉ có khi Completed = true
 	AccessToken   string            `json:"access_token,omitempty"`
@@ -182,15 +185,14 @@ type ChangePasswordRequestDto struct {
 
 
 // RegisterRequestDto - Request body for POST /auth/register/request
-// Gửi thông tin đăng ký và nhận OTP qua email. Chỉ chọn 1 system role.
-// Sau này có thể thêm role qua profile management hoặc được tổ chức mời.
+// Gửi thông tin đăng ký và nhận OTP qua email.
+// Role được chọn sau khi đăng ký, ở bước SelectRole.
 type RegisterRequestDto struct {
 	Email           string `json:"email" validate:"required,email,max=255" example:"student@example.com"`
 	Password        string `json:"password" validate:"required,min=8,max=72" example:"SecurePass123!"`
 	ConfirmPassword string `json:"confirm_password" validate:"required,eqfield=Password" example:"SecurePass123!"`
 	UserName        string `json:"user_name" validate:"required,min=3,max=100" example:"student123"`
 	FullName        string `json:"full_name,omitempty" validate:"omitempty,min=2,max=255" example:"Nguyen Van A"`
-	RoleID          string `json:"role_id" validate:"required,uuid" example:"550e8400-e29b-41d4-a716-446655440000"`
 }
 
 // RegisterResponseDto - Response for successful registration
@@ -199,7 +201,6 @@ type RegisterResponseDto struct {
 	Email    string  `json:"email" example:"student@example.com"`
 	UserName string  `json:"user_name" example:"student123"`
 	FullName *string `json:"full_name,omitempty" example:"Nguyen Van A"`
-	RoleID   string  `json:"role_id"`
 }
 
 // VerifyOtpRequestDto - Request body for POST /auth/register
@@ -239,12 +240,12 @@ type MyProfileResponseDto struct {
 // UnifiedRoleDto - Một role có thể là SystemRole hoặc OrganizationRole
 // Frontend hiển thị list này để user chọn 1 cái
 type UnifiedRoleDto struct {
-	ID               string  `json:"id"`                          // UserSystemRole.ID hoặc UserOrganizationRole.ID
+	ID               string  `json:"id"`                          // Luôn là role definition ID: SystemRole.ID (system) hoặc Role.ID (organization)
 	Type             string  `json:"type"`                        // "system" hoặc "organization"
-	RoleName         string  `json:"role_name"`                   // Tên role: "Giáo viên tự do", "Kế toán", etc.
-	OrganizationID   *string `json:"organization_id,omitempty"`   // Chỉ có nếu type="organization"
-	OrganizationName *string `json:"organization_name,omitempty"` // Chỉ có nếu type="organization"
-	DisplayName      string  `json:"display_name"`                // "Giáo viên tự do" hoặc "Kế toán - Trường PTIT"
+	RoleName         string  `json:"role_name"`                   // Tên role: "STUDENT", "ACCOUNTANT", etc.
+	OrganizationID   *string `json:"organization_id,omitempty"`   // Organization.ID — chỉ có nếu type="organization"
+	OrganizationName *string `json:"organization_name,omitempty"` // Tên tổ chức — chỉ có nếu type="organization"
+	DisplayName      string  `json:"display_name"`                // "Học sinh" hoặc "Kế toán - Trường PTIT"
 }
 
 // GetMyRolesResponseDto - Response cho GET /auth/my-roles
@@ -253,11 +254,13 @@ type GetMyRolesResponseDto struct {
 }
 
 // SelectRoleRequestDto - Request cho POST /auth/select-role
-// Gộp SelectProfile + SelectOrg thành 1 bước
+// role_id luôn là role definition ID (SystemRole.ID hoặc Role.ID)
+// organization_id bắt buộc khi role_type="organization"
 type SelectRoleRequestDto struct {
-	SessionToken string `json:"session_token" validate:"required"`
-	RoleID       string `json:"role_id" validate:"required,uuid"` // UserSystemRole.ID hoặc UserOrganizationRole.ID
-	RoleType     string `json:"role_type" validate:"required,oneof=system organization"`
+	SessionToken   string `json:"session_token" validate:"required"`
+	RoleID         string `json:"role_id" validate:"required,uuid"`
+	RoleType       string `json:"role_type" validate:"required,oneof=system organization"`
+	OrganizationID string `json:"organization_id,omitempty" validate:"required_if=RoleType organization,omitempty,uuid"`
 }
 
 // SelectRoleResponseDto - Response sau khi chọn role xong
@@ -276,9 +279,11 @@ type SelectRoleResponseDto struct {
 }
 
 // SwitchRoleRequestDto - Đổi role khi đã đăng nhập
+// role_id luôn là role definition ID, organization_id bắt buộc khi role_type="organization"
 type SwitchRoleRequestDto struct {
-	RoleID   string `json:"role_id" validate:"required,uuid"`
-	RoleType string `json:"role_type" validate:"required,oneof=system organization"`
+	RoleID         string `json:"role_id" validate:"required,uuid"`
+	RoleType       string `json:"role_type" validate:"required,oneof=system organization"`
+	OrganizationID string `json:"organization_id,omitempty" validate:"required_if=RoleType organization,omitempty,uuid"`
 }
 
 // SwitchOrgRequestDto - Đổi org khi đã đăng nhập (giữ nguyên role)

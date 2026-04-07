@@ -121,6 +121,9 @@ func New() (*App, error) {
 		// ===== Wallet =====
 		handlers.Wallet,
 
+		// ===== Parent Invitation =====
+		handlers.ParentInvitation,
+
 		resources.Redis,
 		resources.MinioClient,
 		resources.Queue,

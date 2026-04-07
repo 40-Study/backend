@@ -26,6 +26,7 @@ type OAuthService struct {
 	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface
 	systemRoleRepo     repository.SystemRoleRepositoryInterface
 	authService        *AuthService
+	parentInvitationSvc ParentInvitationServiceInterface
 
 	// Map provider name → provider implementation
 	// Thay vì hardcode từng provider, dùng map để lookup
@@ -60,6 +61,10 @@ func NewOAuthService(
 		authService:        authService,
 		providers:          providers,
 	}
+}
+
+func (s *OAuthService) SetParentInvitationService(svc ParentInvitationServiceInterface) {
+	s.parentInvitationSvc = svc
 }
 
 // GetAuthURL tạo URL redirect tới provider + lưu state vào Redis chống CSRF
@@ -281,25 +286,8 @@ func (s *OAuthService) createOAuthUser(ctx context.Context, providerName string,
 		}
 	}
 
-	// Gán role mặc định STUDENT cho user mới
-	// Tìm system role "STUDENT" trong database (đã seed sẵn)
-	studentRole, err := s.systemRoleRepo.GetSystemRoleByName(ctx, "STUDENT")
-	if err != nil {
-		return nil, fmt.Errorf("find student role: %w", err)
-	}
-	if studentRole == nil {
-		return nil, errors.New("default STUDENT system role not found in database")
-	}
-
-	// Tạo bản ghi UserSystemRole để gán role cho user
-	if err := s.userSystemRoleRepo.Create(ctx, &model.UserSystemRole{
-		UserID:       user.ID,
-		SystemRoleID: studentRole.ID,
-		GrantedAt:    time.Now(),
-		Status:       model.UserSystemRoleStatusActive,
-	}); err != nil {
-		return nil, fmt.Errorf("assign student role: %w", err)
-	}
+	// KHÔNG gán role mặc định — sau OAuth callback, FE sẽ redirect sang chọn role
+	// User chọn role (STUDENT/TEACHER/PARENT) → gọi CreateProfile để tạo
 
 	// Tạo bản ghi UserOAuthProvider để lưu liên kết giữa user mới và provider account
 	// Sau này khi user login lại sẽ tìm qua bảng này (Case A ở trên)
@@ -311,6 +299,11 @@ func (s *OAuthService) createOAuthUser(ctx context.Context, providerName string,
 		AvatarURL:      userInfo.AvatarURL,
 	}); err != nil {
 		return nil, fmt.Errorf("create oauth provider link: %w", err)
+	}
+
+	// Link pending parent invitations to the newly created user
+	if s.parentInvitationSvc != nil && userInfo.Email != nil {
+		_ = s.parentInvitationSvc.LinkInvitationToNewUser(ctx, *userInfo.Email, user.ID)
 	}
 
 	return user, nil

@@ -36,6 +36,7 @@ type UserSystemRoleRepositoryInterface interface {
 
 	// Transaction
 	AssignRolesWithTx(ctx context.Context, toReactivate []*model.UserSystemRole, toCreate []model.UserSystemRole) error
+	GetDefaultSystemRoleID(ctx context.Context) (uuid.UUID, error)
 }
 
 type UserSystemRoleRepository struct {
@@ -263,4 +264,13 @@ func (r *UserSystemRoleRepository) AssignRolesWithTx(ctx context.Context, toReac
 
 		return nil
 	})
+}
+
+func (r *UserSystemRoleRepository) GetDefaultSystemRoleID(ctx context.Context) (uuid.UUID, error) {
+	var systemRole model.SystemRole
+	err := r.db.WithContext(ctx).Where("name = ?", "student").First(&systemRole).Error
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return systemRole.ID, nil
 }

@@ -49,6 +49,7 @@ func SetupAllRoutes(
 	leaderboardHandler *handler.LeaderboardHandler,
 	userStatsHandler *handler.UserStatsHandler,
 	walletHandler *handler.WalletHandler,
+	parentInvitationHandler *handler.ParentInvitationHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 	aq *asynq_queue.Queue,
@@ -99,4 +100,7 @@ func SetupAllRoutes(
 	SetupUserStatsRoutes(api, userStatsHandler)
 	// Wallet routes
 	SetupWalletRoutes(api, cfg, walletHandler, redis)
+
+	// Parent Invitation routes
+	SetupParentInvitationRoutes(api, cfg, parentInvitationHandler, redis)
 }

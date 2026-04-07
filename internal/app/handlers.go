@@ -64,6 +64,9 @@ type Handlers struct {
 
 	// ===== OAuth =====
 	OAuth *handler.OAuthHandler
+
+	// ===== Parent Invitation =====
+	ParentInvitation *handler.ParentInvitationHandler
 }
 
 func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *config.Config) *Handlers {
@@ -125,5 +128,8 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *con
 
 		// ===== OAuth =====
 		OAuth: handler.NewOAuthHandler(services.OAuth, cfg),
+
+		// ===== Parent Invitation =====
+		ParentInvitation: handler.NewParentInvitationHandler(services.ParentInvitation),
 	}
 }

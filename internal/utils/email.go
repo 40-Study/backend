@@ -253,3 +253,17 @@ func ChangePasswordNotify(cfg *config.Config, to string) error {
 
 	return SendEmail(cfg, []string{to}, subject, body)
 }
+
+func SendInvitationEmail(cfg *config.Config, to string, studentName string, relationship string, token string) error {
+	frontendURL := cfg.FrontendURL
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000"
+	}
+	invitationLink := fmt.Sprintf("%s/accept-invitation?token=%s", frontendURL, token)
+	subject := fmt.Sprintf("%s đã mời bạn làm %s trên 40Study", studentName, relationship)
+	body := fmt.Sprintf(
+		"Chào bạn,<br><br>%s đã mời bạn làm %s trên 40Study. Vui lòng click vào link sau để chấp nhận lời mời:<br><a href=\"%s\">%s</a><br><br>Link này sẽ hết hạn sau 7 ngày.<br><br>Trân trọng,<br>Đội ngũ 40Study",
+		studentName, relationship, invitationLink, invitationLink,
+	)
+	return SendEmail(cfg, []string{to}, subject, body)
+}

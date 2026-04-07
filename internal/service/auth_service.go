@@ -55,7 +55,10 @@ type AuthService struct {
 	userOrgRoleRepo    repository.UserOrganizationRoleRepositoryInterface
 	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface
 	systemRoleRepo     repository.SystemRoleRepositoryInterface
+	userRoleRepo       repository.UserSystemRoleRepositoryInterface
 	redisClient        *redis.Client
+
+	parentInvitationSvc ParentInvitationServiceInterface
 }
 
 func NewAuthService(
@@ -65,6 +68,7 @@ func NewAuthService(
 	userOrgRoleRepo repository.UserOrganizationRoleRepositoryInterface,
 	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface,
 	systemRoleRepo repository.SystemRoleRepositoryInterface,
+	userRoleRepo       repository.UserSystemRoleRepositoryInterface,
 	redisClient *redis.Client,
 ) *AuthService {
 	return &AuthService{
@@ -74,8 +78,13 @@ func NewAuthService(
 		userOrgRoleRepo:    userOrgRoleRepo,
 		userSystemRoleRepo: userSystemRoleRepo,
 		systemRoleRepo:     systemRoleRepo,
+		userRoleRepo:       userRoleRepo,
 		redisClient:        redisClient,
 	}
+}
+
+func (s *AuthService) SetParentInvitationService(svc ParentInvitationServiceInterface) {
+	s.parentInvitationSvc = svc
 }
 
 // ==================== LOGIN ATTEMPT TRACKING ====================
@@ -124,29 +133,12 @@ type PendingRegistration struct {
 	PasswordHash string `json:"password_hash"`
 	UserName     string `json:"user_name"`
 	FullName     string `json:"full_name,omitempty"`
-	RoleID       string `json:"role_id"`
 	OTPHash      string `json:"otp_hash"` // Hashed OTP, not plaintext
 	Attempts     int    `json:"attempts"` // OTP verification attempts
 	CreatedAt    string `json:"created_at"`
 }
 
 func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterRequestDto) error {
-	// Validate system role
-	roleID, err := uuid.Parse(req.RoleID)
-	if err != nil {
-		return fmt.Errorf("invalid role_id: %s", req.RoleID)
-	}
-	roles, err := s.systemRoleRepo.GetSystemRoleByIDs(ctx, []uuid.UUID{roleID})
-	if err != nil {
-		return fmt.Errorf("failed to validate system role: %w", err)
-	}
-	if len(roles) != 1 {
-		return errors.New("role ID is invalid")
-	}
-	if roles[0].Status != "active" {
-		return errors.New("system role is not active: " + roles[0].Name)
-	}
-
 	existingUser, err := s.userRepo.FindUserByEmail(ctx, req.Email)
 	if err != nil {
 		return fmt.Errorf("failed to check email: %w", err)
@@ -173,7 +165,6 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 		PasswordHash: passwordHash,
 		UserName:     req.UserName,
 		FullName:     req.FullName,
-		RoleID:       req.RoleID,
 		OTPHash:      otpHash,
 		Attempts:     0,
 		CreatedAt:    time.Now().Format(time.RFC3339),
@@ -254,24 +245,21 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	roleID, _ := uuid.Parse(pending.RoleID)
-	now := time.Now()
-	_ = s.userSystemRoleRepo.Create(ctx, &model.UserSystemRole{
-		UserID:       user.ID,
-		SystemRoleID: roleID,
-		GrantedAt:    now,
-		GrantedBy:    nil,
-		Status:       model.UserSystemRoleStatusActive,
-	})
+	// Không gán role ở đây — role được tạo khi user gọi SelectRole lần đầu
+	// Register/OAuth chỉ tạo user info, tách biệt với việc chọn role/profile
 
 	_ = s.redisClient.Del(ctx, pendingKey).Err()
+
+	// Link pending parent invitations to the newly created user
+	if s.parentInvitationSvc != nil {
+		_ = s.parentInvitationSvc.LinkInvitationToNewUser(ctx, user.Email, user.ID)
+	}
 
 	return &dto.RegisterResponseDto{
 		ID:       user.ID.String(),
 		Email:    user.Email,
 		UserName: user.UserName,
 		FullName: fullName,
-		RoleID:   pending.RoleID,
 	}, nil
 }
 
@@ -365,8 +353,29 @@ func (s *AuthService) Login(
 		}, nil
 	}
 
+	// User chưa có role nào → trả session_token + flag để FE redirect chọn role
 	if len(unifiedRoles) == 0 {
-		return nil, errors.New("user has no active role assigned")
+		sessionToken := uuid.New().String()
+		pending := PendingLogin{
+			UserID:      user.ID.String(),
+			DeviceInfo:  req.DeviceInfo,
+			SystemRoles: systemRoleDtos,
+			CreatedAt:   time.Now().Format(time.RFC3339),
+		}
+		pendingBytes, _ := json.Marshal(pending)
+		pendingKey := constants.KeyPendingLogin(sessionToken)
+		_ = s.redisClient.Set(ctx, pendingKey, pendingBytes, 10*time.Minute).Err()
+
+		return &dto.LoginResponseDto{
+			Completed:             false,
+			SessionToken:          sessionToken,
+			NeedsRoleRegistration: true,
+			User: &dto.UserResponseDto{
+				ID:       user.ID,
+				Email:    user.Email,
+				Username: user.UserName,
+			},
+		}, nil
 	}
 
 	singleRole := unifiedRoles[0]
@@ -1404,7 +1413,7 @@ func (s *AuthService) buildUnifiedRoles(ctx context.Context, userID uuid.UUID) (
 			continue
 		}
 		roles = append(roles, dto.UnifiedRoleDto{
-			ID:          sr.ID.String(),
+			ID:          sr.SystemRoleID.String(), // SystemRole.ID — SelectRole luôn nhận SystemRole.ID
 			Type:        "system",
 			RoleName:    sr.SystemRole.Name,
 			DisplayName: sr.SystemRole.Name, // e.g., "Giáo viên tự do"
@@ -1423,7 +1432,7 @@ func (s *AuthService) buildUnifiedRoles(ctx context.Context, userID uuid.UUID) (
 		orgID := or.OrganizationID.String()
 		orgName := or.Organization.Name
 		roles = append(roles, dto.UnifiedRoleDto{
-			ID:               or.ID.String(),
+			ID:               or.RoleID.String(), // Role.ID (role definition) — không phải UserOrgRole.ID
 			Type:             "organization",
 			RoleName:         or.Role.Name,
 			OrganizationID:   &orgID,
@@ -1463,55 +1472,77 @@ func (s *AuthService) SelectRole(ctx context.Context, req dto.SelectRoleRequestD
 		return nil, errors.New("user not found")
 	}
 
-	// 2. Validate role ownership and build active role
+	// 2. Validate role và build active role
+	//    role_id luôn là SystemRole.ID — backend tự tìm/tạo UserSystemRole
 	var activeRole dto.UnifiedRoleDto
 	if req.RoleType == "system" {
-		// Validate system role
-		userSystemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+		// Validate system role tồn tại
+		systemRole, err := s.systemRoleRepo.GetSystemRoleByID(ctx, roleID)
+		if err != nil || systemRole == nil {
+			return nil, errors.New("invalid system role")
+		}
+
+		// Tìm UserSystemRole đã có cho user + system role này
+		existing, err := s.userSystemRoleRepo.FindByUserAndSystemRole(ctx, userID, roleID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load system roles: %w", err)
+			return nil, fmt.Errorf("failed to check existing role: %w", err)
 		}
-		found := false
-		for _, sr := range userSystemRoles {
-			if sr.ID == roleID && sr.SystemRole != nil {
-				activeRole = dto.UnifiedRoleDto{
-					ID:          sr.ID.String(),
-					Type:        "system",
-					RoleName:    sr.SystemRole.Name,
-					DisplayName: sr.SystemRole.Name,
-				}
-				found = true
-				break
+
+		if existing != nil {
+			// Đã có → dùng lại
+			activeRole = dto.UnifiedRoleDto{
+				ID:          existing.ID.String(),
+				Type:        "system",
+				RoleName:    systemRole.Name,
+				DisplayName: systemRole.Name,
 			}
-		}
-		if !found {
-			return nil, errors.New("user does not have this system role")
+		} else {
+			// Chưa có → tạo mới
+			newUserRole := &model.UserSystemRole{
+				UserID:       userID,
+				SystemRoleID: roleID,
+				GrantedAt:    time.Now(),
+				Status:       model.UserSystemRoleStatusActive,
+			}
+			if err := s.userSystemRoleRepo.Create(ctx, newUserRole); err != nil {
+				return nil, fmt.Errorf("failed to assign role: %w", err)
+			}
+
+			activeRole = dto.UnifiedRoleDto{
+				ID:          newUserRole.ID.String(),
+				Type:        "system",
+				RoleName:    systemRole.Name,
+				DisplayName: systemRole.Name,
+			}
 		}
 	} else if req.RoleType == "organization" {
-		// Validate organization role
-		orgRoles, err := s.userOrgRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+		// Validate: role_id = Role.ID, organization_id = Organization.ID
+		if req.OrganizationID == "" {
+			return nil, errors.New("organization_id is required for organization role")
+		}
+		orgID, err := uuid.Parse(req.OrganizationID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load organization roles: %w", err)
+			return nil, errors.New("invalid organization_id format")
 		}
-		found := false
-		for _, or := range orgRoles {
-			if or.ID == roleID && or.Role != nil && or.Organization != nil {
-				orgID := or.OrganizationID.String()
-				orgName := or.Organization.Name
-				activeRole = dto.UnifiedRoleDto{
-					ID:               or.ID.String(),
-					Type:             "organization",
-					RoleName:         or.Role.Name,
-					OrganizationID:   &orgID,
-					OrganizationName: &orgName,
-					DisplayName:      fmt.Sprintf("%s - %s", or.Role.Name, or.Organization.Name),
-				}
-				found = true
-				break
-			}
+
+		// Tìm UserOrgRole bằng (user, role, org)
+		existing, err := s.userOrgRoleRepo.FindByUserRoleAndOrg(ctx, userID, roleID, orgID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check organization role: %w", err)
 		}
-		if !found {
+		if existing == nil || existing.Role == nil || existing.Organization == nil {
 			return nil, errors.New("user does not have this organization role")
+		}
+
+		orgIDStr := existing.OrganizationID.String()
+		orgName := existing.Organization.Name
+		activeRole = dto.UnifiedRoleDto{
+			ID:               existing.RoleID.String(), // Role.ID (role definition)
+			Type:             "organization",
+			RoleName:         existing.Role.Name,
+			OrganizationID:   &orgIDStr,
+			OrganizationName: &orgName,
+			DisplayName:      fmt.Sprintf("%s - %s", existing.Role.Name, existing.Organization.Name),
 		}
 	} else {
 		return nil, errors.New("invalid role_type: must be 'system' or 'organization'")
@@ -1542,52 +1573,56 @@ func (s *AuthService) SwitchRole(ctx context.Context, userID uuid.UUID, deviceID
 	}
 
 	// 1. Validate role ownership and build active role
+	//    role_id luôn là SystemRole.ID (type=system) hoặc UserOrgRole.ID (type=organization)
 	var activeRole dto.UnifiedRoleDto
 	if req.RoleType == "system" {
-		userSystemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+		// Validate system role tồn tại
+		systemRole, err := s.systemRoleRepo.GetSystemRoleByID(ctx, roleID)
+		if err != nil || systemRole == nil {
+			return nil, errors.New("invalid system role")
+		}
+
+		// Check user đã có role này chưa
+		existing, err := s.userSystemRoleRepo.FindByUserAndSystemRole(ctx, userID, roleID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load system roles: %w", err)
+			return nil, fmt.Errorf("failed to check system role: %w", err)
 		}
-		found := false
-		for _, sr := range userSystemRoles {
-			if sr.ID == roleID && sr.SystemRole != nil {
-				activeRole = dto.UnifiedRoleDto{
-					ID:          sr.ID.String(),
-					Type:        "system",
-					RoleName:    sr.SystemRole.Name,
-					DisplayName: sr.SystemRole.Name,
-				}
-				found = true
-				break
-			}
-		}
-		if !found {
+		if existing == nil {
 			return nil, errors.New("user does not have this system role")
 		}
+
+		activeRole = dto.UnifiedRoleDto{
+			ID:          systemRole.ID.String(),
+			Type:        "system",
+			RoleName:    systemRole.Name,
+			DisplayName: systemRole.Name,
+		}
 	} else if req.RoleType == "organization" {
-		orgRoles, err := s.userOrgRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
+		if req.OrganizationID == "" {
+			return nil, errors.New("organization_id is required for organization role")
+		}
+		orgID, err := uuid.Parse(req.OrganizationID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load organization roles: %w", err)
+			return nil, errors.New("invalid organization_id format")
 		}
-		found := false
-		for _, or := range orgRoles {
-			if or.ID == roleID && or.Role != nil && or.Organization != nil {
-				orgID := or.OrganizationID.String()
-				orgName := or.Organization.Name
-				activeRole = dto.UnifiedRoleDto{
-					ID:               or.ID.String(),
-					Type:             "organization",
-					RoleName:         or.Role.Name,
-					OrganizationID:   &orgID,
-					OrganizationName: &orgName,
-					DisplayName:      fmt.Sprintf("%s - %s", or.Role.Name, or.Organization.Name),
-				}
-				found = true
-				break
-			}
+
+		existing, err := s.userOrgRoleRepo.FindByUserRoleAndOrg(ctx, userID, roleID, orgID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check organization role: %w", err)
 		}
-		if !found {
+		if existing == nil || existing.Role == nil || existing.Organization == nil {
 			return nil, errors.New("user does not have this organization role")
+		}
+
+		orgIDStr := existing.OrganizationID.String()
+		orgName := existing.Organization.Name
+		activeRole = dto.UnifiedRoleDto{
+			ID:               existing.RoleID.String(),
+			Type:             "organization",
+			RoleName:         existing.Role.Name,
+			OrganizationID:   &orgIDStr,
+			OrganizationName: &orgName,
+			DisplayName:      fmt.Sprintf("%s - %s", existing.Role.Name, existing.Organization.Name),
 		}
 	} else {
 		return nil, errors.New("invalid role_type: must be 'system' or 'organization'")
@@ -1857,7 +1892,7 @@ func (s *AuthService) DeleteProfile(ctx context.Context, userID uuid.UUID, profi
 // Vẫn đủ các case:
 // - 1 role: login thẳng, trả token + role info
 // - >1 role: trả session_token tạm, FE gọi select-role để hoàn tất login
-// - 0 role: lỗi, không cho login
+// - 0 role: lỗi, không cho login, tạo thêm role học sinh cho user rồi mới login được (tránh trường hợp user có tài khoản nhưng không có role nào, dẫn đến không thể login)
 func (s *AuthService) LoginWithOAuth(ctx context.Context, user *model.User, deviceInfo dto.DeviceInfoDTO) (*dto.LoginResponseDto, error) {
 	if !user.IsActive {
 		return nil, errors.New("account is deactivated")
@@ -1868,11 +1903,34 @@ func (s *AuthService) LoginWithOAuth(ctx context.Context, user *model.User, devi
 		return nil, fmt.Errorf("failed to build unified roles: %w", err)
 	}
 
-	// case: 0 role - trả về lỗi
+	// case: 0 role → user mới qua OAuth chưa chọn role, trả về session_token + flag để FE redirect sang chọn role đăng ký
 	if len(unifiedRoles) == 0 {
-		return nil, errors.New("user has no active role assigned")
+		sessionToken := uuid.New().String()
+		pending := PendingLogin{
+			UserID:     user.ID.String(),
+			DeviceInfo: deviceInfo,
+			CreatedAt:  time.Now().Format(time.RFC3339),
+		}
+		pendingBytes, err := json.Marshal(pending)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal pending login: %w", err)
+		}
+		pendingKey := constants.KeyPendingLogin(sessionToken)
+		if err := s.redisClient.Set(ctx, pendingKey, pendingBytes, 10*time.Minute).Err(); err != nil {
+			return nil, fmt.Errorf("failed to save pending login: %w", err)
+		}
+		return &dto.LoginResponseDto{
+			Completed:             false,
+			SessionToken:          sessionToken,
+			NeedsRoleRegistration: true,
+			User: &dto.UserResponseDto{
+				ID:       user.ID,
+				Email:    user.Email,
+				Username: user.UserName,
+			},
+		}, nil
 	}
-	// case: >1 role - trả về session_token tạm, FE gọi select-role để hoàn tất login
+
 	if len(unifiedRoles) > 1 {
 		sessionToken := uuid.New().String()
 		pending := PendingLogin{
@@ -1894,7 +1952,6 @@ func (s *AuthService) LoginWithOAuth(ctx context.Context, user *model.User, devi
 			Roles:        unifiedRoles,
 		}, nil
 	}
-	// case: 1 role - login thẳng, trả token + role info
 	singleRole := unifiedRoles[0]
 	result, err := s.completeLoginUnified(ctx, user, deviceInfo, singleRole)
 	if err != nil {
