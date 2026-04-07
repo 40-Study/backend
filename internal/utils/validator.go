@@ -110,11 +110,20 @@ func getErrorMessage(err validator.FieldError) string {
 }
 
 // toSnakeCase converts a string from PascalCase/camelCase to snake_case
+// Handles consecutive uppercase (e.g., "InstructorID" -> "instructor_id", "HTTPServer" -> "http_server")
 func toSnakeCase(str string) string {
 	var result strings.Builder
-	for i, r := range str {
+	runes := []rune(str)
+	for i, r := range runes {
 		if i > 0 && r >= 'A' && r <= 'Z' {
-			result.WriteRune('_')
+			// Add underscore only if:
+			// - Previous char is lowercase, OR
+			// - Next char exists and is lowercase (handles "HTTPServer" -> "http_server")
+			prevLower := runes[i-1] >= 'a' && runes[i-1] <= 'z'
+			nextLower := i+1 < len(runes) && runes[i+1] >= 'a' && runes[i+1] <= 'z'
+			if prevLower || nextLower {
+				result.WriteRune('_')
+			}
 		}
 		result.WriteRune(r)
 	}

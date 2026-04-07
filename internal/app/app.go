@@ -46,6 +46,21 @@ func New() (*App, error) {
 	}
 	asynq_queue.RegisterTasks(resources.Queue, notifier, repos.Class, repos.Enrollment, resources.Redis, livestreamStarter)
 	go resources.Queue.Start()
+
+	// Start video processing worker if available
+	if services.VideoProcessing != nil {
+		go func() {
+			if err := services.VideoProcessing.StartWorker(context.Background()); err != nil {
+				log.Printf("Warning: Failed to start video processing worker: %v", err)
+			}
+		}()
+		go func() {
+			if err := services.VideoProcessing.StartCleanupScheduler(context.Background()); err != nil {
+				log.Printf("Warning: Failed to start video cleanup scheduler: %v", err)
+			}
+		}()
+	}
+
 	handlers := InitHandlers(services, resources.MinioWrapper, resources.Config)
 
 	fiberApp := fiber.New()

@@ -95,7 +95,7 @@ func SetupAllRoutes(
 
 	// Order & Payment routes
 	SetupOrderRoutes(api, cfg, orderHandler, redis)
-	SetupVoucherRoutes(api, voucherHandler)
+	SetupVoucherRoutes(api, cfg, voucherHandler, redis)
 
 	// Gamification routes
 	SetupAchievementRoutes(api, cfg, achievementHandler, redis)

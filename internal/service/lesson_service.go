@@ -20,17 +20,20 @@ type LessonServiceInterface interface {
 }
 
 type LessonService struct {
-	lessonRepo     repository.LessonRepositoryInterface
-	sectionRepo    repository.SectionRepositoryInterface
+	lessonRepo    repository.LessonRepositoryInterface
+	sectionRepo   repository.SectionRepositoryInterface
+	uploadService UploadServiceInterface
 }
 
 func NewLessonService(
 	lessonRepo repository.LessonRepositoryInterface,
 	sectionRepo repository.SectionRepositoryInterface,
+	uploadService UploadServiceInterface,
 ) *LessonService {
 	return &LessonService{
-		lessonRepo:  lessonRepo,
-		sectionRepo: sectionRepo,
+		lessonRepo:    lessonRepo,
+		sectionRepo:   sectionRepo,
+		uploadService: uploadService,
 	}
 }
 
@@ -165,6 +168,16 @@ func (s *LessonService) DeleteLesson(ctx context.Context, lessonID uuid.UUID) er
 	}
 	if lesson == nil {
 		return errors.New("lesson not found")
+	}
+
+	// Delete all content videos from MinIO before deleting lesson
+	if s.uploadService != nil {
+		contents, _ := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
+		for _, content := range contents {
+			if content.VideoURL != nil && *content.VideoURL != "" {
+				_ = s.uploadService.DeleteByURL(ctx, *content.VideoURL)
+			}
+		}
 	}
 
 	return s.lessonRepo.Delete(ctx, lessonID)

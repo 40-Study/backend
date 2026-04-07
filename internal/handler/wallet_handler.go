@@ -135,8 +135,8 @@ func (h *WalletHandler) UpdateBankInfo(c *fiber.Ctx) error {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 func parseUserID(c *fiber.Ctx) (uuid.UUID, error) {
-	userIDStr := c.Locals("user_id")
-	if userIDStr == nil {
+	raw := c.Locals("user_id")
+	if raw == nil {
 		c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
 			"message": "Unauthorized",
@@ -144,16 +144,26 @@ func parseUserID(c *fiber.Ctx) (uuid.UUID, error) {
 		return uuid.Nil, fiber.ErrUnauthorized
 	}
 
-	userID, err := uuid.Parse(userIDStr.(string))
-	if err != nil {
+	switch v := raw.(type) {
+	case uuid.UUID:
+		return v, nil
+	case string:
+		parsed, err := uuid.Parse(v)
+		if err != nil {
+			c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"code":    "ERR_INVALID_USER",
+				"message": "Invalid user ID",
+			})
+			return uuid.Nil, fiber.ErrBadRequest
+		}
+		return parsed, nil
+	default:
 		c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"code":    "ERR_INVALID_USER",
-			"message": "Invalid user ID",
+			"message": "Invalid user ID type",
 		})
 		return uuid.Nil, fiber.ErrBadRequest
 	}
-
-	return userID, nil
 }
 
 func parsePagination(c *fiber.Ctx) (int, int) {

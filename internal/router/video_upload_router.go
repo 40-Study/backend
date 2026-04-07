@@ -53,6 +53,9 @@ func SetupVideoUploadRoutes(api fiber.Router, videoHandler *handler.VideoUploadH
 	// DELETE /api/videos/upload/:upload_id - Hủy upload
 	uploadGroup.Delete("/:upload_id", videoHandler.AbortUpload)
 
+	// POST /api/videos/upload/:upload_id/reprocess - Re-enqueue video for processing
+	uploadGroup.Post("/:upload_id/reprocess", videoHandler.ReprocessVideo)
+
 	processingGroup := videoGroup.Group("/processing")
 
 	processingGroup.Get("/queue", videoHandler.GetProcessingQueue)
