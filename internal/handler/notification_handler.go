@@ -45,7 +45,7 @@ func (h *NotificationHandler) GetUnreadCount(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	return c.JSON(fiber.Map{"unread_count": count})
+	return c.JSON(fiber.Map{"message": "success", "data": fiber.Map{"unread_count": count}})
 }
 
 // MarkAsRead PATCH /api/notifications/:id/read
