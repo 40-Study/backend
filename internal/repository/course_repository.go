@@ -130,6 +130,7 @@ func (r *CourseRepository) GetDetailByID(ctx context.Context, id uuid.UUID) (*mo
 	err := r.db.WithContext(ctx).
 		Preload("Category").
 		Preload("Tags").
+		Preload("Instructor").
 		Preload("Sections", func(db *gorm.DB) *gorm.DB {
 			return db.Order("display_order ASC")
 		}).
@@ -153,6 +154,7 @@ func (r *CourseRepository) GetDetailBySlug(ctx context.Context, slug string) (*m
 	err := r.db.WithContext(ctx).
 		Preload("Category").
 		Preload("Tags").
+		Preload("Instructor").
 		Preload("Sections", func(db *gorm.DB) *gorm.DB {
 			return db.Order("display_order ASC")
 		}).

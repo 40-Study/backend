@@ -46,9 +46,13 @@ func NewAssignmentService(
 }
 
 func (s *AssignmentService) Create(ctx context.Context, req dto.CreateAssignmentDTO) (*model.Assignment, error) {
-	sessionID, err := uuid.Parse(req.SessionID)
-	if err != nil {
-		return nil, errors.New("invalid session_id")
+	var sessionID *uuid.UUID
+	if req.SessionID != "" {
+		parsed, err := uuid.Parse(req.SessionID)
+		if err != nil {
+			return nil, errors.New("invalid session_id")
+		}
+		sessionID = &parsed
 	}
 
 	difficulty := model.DifficultyMedium
@@ -69,15 +73,37 @@ func (s *AssignmentService) Create(ctx context.Context, req dto.CreateAssignment
 		memoryLimit = 256
 	}
 
+	// Parse ClassID if provided
+	var classID *uuid.UUID
+	if req.ClassID != "" {
+		parsed, err := uuid.Parse(req.ClassID)
+		if err != nil {
+			return nil, errors.New("invalid class_id")
+		}
+		classID = &parsed
+	}
+
+	// Default type
+	assignmentType := req.Type
+	if assignmentType == "" {
+		assignmentType = "live_coding"
+	}
+
 	assignment := &model.Assignment{
-		SessionID:   sessionID,
-		Title:       req.Title,
-		Description: req.Description,
-		Difficulty:  difficulty,
-		Language:    req.Language,
-		StarterCode: req.StarterCode,
-		TimeLimit:   timeLimit,
-		MemoryLimit: memoryLimit,
+		SessionID:           sessionID,
+		ClassID:             classID,
+		Type:                assignmentType,
+		Title:               req.Title,
+		Description:         req.Description,
+		Difficulty:          difficulty,
+		Language:            req.Language,
+		StarterCode:         req.StarterCode,
+		TimeLimit:           timeLimit,
+		MemoryLimit:         memoryLimit,
+		AllowLateSubmission: req.AllowLateSubmission,
+		LatePenaltyPercent:  req.LatePenaltyPercent,
+		MaxLateDays:         req.MaxLateDays,
+		GracePeriodMinutes:  req.GracePeriodMinutes,
 	}
 
 	if req.StartTime != nil {
@@ -320,22 +346,28 @@ func (s *AssignmentService) toResponseDTO(a model.Assignment) dto.AssignmentResp
 	}
 
 	return dto.AssignmentResponseDTO{
-		ID:           a.ID,
-		SessionID:    a.SessionID,
-		Title:        a.Title,
-		Description:  a.Description,
-		Difficulty:   string(a.Difficulty),
-		Language:     []string(a.Language),
-		StarterCode:  a.StarterCode,
-		TimeLimit:    a.TimeLimit,
-		MemoryLimit:  a.MemoryLimit,
-		DurationMins: a.DurationMins,
-		IsPublished:  a.IsPublished,
-		PublishedAt:  publishedAt,
-		StartTime:    startTime,
-		EndTime:      endTime,
-		ShowInRecap:  a.ShowInRecap,
-		CreatedAt:    a.CreatedAt.Format(time.RFC3339),
+		ID:                  a.ID,
+		SessionID:           a.SessionID,
+		ClassID:             a.ClassID,
+		Type:                a.Type,
+		Title:               a.Title,
+		Description:         a.Description,
+		Difficulty:          string(a.Difficulty),
+		Language:            []string(a.Language),
+		StarterCode:         a.StarterCode,
+		TimeLimit:           a.TimeLimit,
+		MemoryLimit:         a.MemoryLimit,
+		DurationMins:        a.DurationMins,
+		IsPublished:         a.IsPublished,
+		PublishedAt:         publishedAt,
+		StartTime:           startTime,
+		EndTime:             endTime,
+		ShowInRecap:         a.ShowInRecap,
+		AllowLateSubmission: a.AllowLateSubmission,
+		LatePenaltyPercent:  a.LatePenaltyPercent,
+		MaxLateDays:         a.MaxLateDays,
+		GracePeriodMinutes:  a.GracePeriodMinutes,
+		CreatedAt:           a.CreatedAt.Format(time.RFC3339),
 	}
 }
 

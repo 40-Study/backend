@@ -21,6 +21,8 @@ func SetupEnrollmentRoutes(
 	{
 		courses.Post("/:courseId/enroll", auth, enrollmentHandler.Enroll)
 		courses.Delete("/:courseId/enroll", auth, enrollmentHandler.Unenroll)
+		courses.Get("/:courseId/enrollments", auth, enrollmentHandler.GetCourseEnrollments)
+		courses.Get("/:courseId/enrollments/debug", auth, enrollmentHandler.DebugCourseEnrollments)
 	}
 
 	// My enrollments

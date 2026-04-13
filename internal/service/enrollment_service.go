@@ -18,6 +18,8 @@ type EnrollmentServiceInterface interface {
 	GetMyEnrollments(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.EnrollmentListResponseDTO, error)
 	GetEnrollmentDetail(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*dto.EnrollmentDetailDTO, error)
 	UpdateLessonProgress(ctx context.Context, userID, lessonID uuid.UUID, req dto.UpdateLessonProgressDTO) (*dto.LessonProgressResponseDTO, error)
+	GetCourseEnrollments(ctx context.Context, courseID uuid.UUID, page, pageSize int) (*dto.CourseEnrollmentListDTO, error)
+	DebugGetCourseEnrollments(ctx context.Context, courseID uuid.UUID) ([]dto.DebugEnrollmentDTO, error)
 }
 
 type EnrollmentService struct {
@@ -275,4 +277,74 @@ func (s *EnrollmentService) toLessonProgressResponseDTO(lp *model.LessonProgress
 		resp.CompletedAt = &formatted
 	}
 	return resp
+}
+
+// GetCourseEnrollments returns all enrollments for a course (instructor view)
+func (s *EnrollmentService) GetCourseEnrollments(ctx context.Context, courseID uuid.UUID, page, pageSize int) (*dto.CourseEnrollmentListDTO, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	enrollments, total, err := s.enrollmentRepo.GetByCourseID(ctx, courseID, page, pageSize)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]dto.CourseEnrollmentItemDTO, len(enrollments))
+	for i, e := range enrollments {
+		items[i] = dto.CourseEnrollmentItemDTO{
+			ID:              e.ID,
+			UserID:          e.UserID,
+			EnrolledAt:      e.EnrolledAt.Format("2006-01-02T15:04:05Z"),
+			ProgressPercent: e.ProgressPercent,
+		}
+		if e.User.Email != "" {
+			items[i].UserEmail = e.User.Email
+		}
+		if e.User.FullName != nil {
+			items[i].UserName = *e.User.FullName
+		}
+		if e.CompletedAt != nil {
+			formatted := e.CompletedAt.Format("2006-01-02T15:04:05Z")
+			items[i].CompletedAt = &formatted
+		}
+	}
+
+	return &dto.CourseEnrollmentListDTO{
+		Enrollments: items,
+		Total:       total,
+		Page:        page,
+		PageSize:    pageSize,
+	}, nil
+}
+
+// DebugGetCourseEnrollments returns all enrollments including soft-deleted (for debugging)
+func (s *EnrollmentService) DebugGetCourseEnrollments(ctx context.Context, courseID uuid.UUID) ([]dto.DebugEnrollmentDTO, error) {
+	enrollments, err := s.enrollmentRepo.GetByCourseIDIncludeDeleted(ctx, courseID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]dto.DebugEnrollmentDTO, len(enrollments))
+	for i, e := range enrollments {
+		result[i] = dto.DebugEnrollmentDTO{
+			ID:         e.ID,
+			UserID:     e.UserID,
+			CourseID:   e.CourseID,
+			EnrolledAt: e.EnrolledAt.Format("2006-01-02T15:04:05Z"),
+			IsDeleted:  e.DeletedAt.Valid,
+		}
+		if e.User.Email != "" {
+			result[i].UserEmail = e.User.Email
+		}
+		if e.DeletedAt.Valid {
+			formatted := e.DeletedAt.Time.Format("2006-01-02T15:04:05Z")
+			result[i].DeletedAt = &formatted
+		}
+	}
+
+	return result, nil
 }

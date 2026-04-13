@@ -103,5 +103,17 @@ func AllModels() []interface{} {
 		&StudentClass{},
 		&ClassLessonContent{},
 		&Attendance{},
+
+		// Schedule & Sessions
+		&ClassSchedule{},
+		&ClassSession{},
+		&SessionAttendance{},
+		&ReminderSetting{},
+		&ExtensionRequest{},
+
+		// Grades
+		&GradeColumn{},
+		&Grade{},
+		&FinalGrade{},
 	}
 }

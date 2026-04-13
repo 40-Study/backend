@@ -43,6 +43,9 @@ type VideoUploadServiceInterface interface {
 
 	// Reprocess
 	ReprocessVideo(ctx context.Context, uploadID uuid.UUID) error // Re-enqueue video for processing
+
+	// Delete
+	DeleteUpload(ctx context.Context, uploadID uuid.UUID) error // Xóa upload và tất cả files liên quan (original, HLS, thumbnail)
 }
 
 type VideoUploadService struct {
@@ -752,4 +755,33 @@ func (s *VideoUploadService) ReprocessVideo(ctx context.Context, uploadID uuid.U
 
 	// Re-enqueue for processing
 	return s.enqueueProcessingTask(ctx, upload, "")
+}
+
+// DeleteUpload xóa upload và tất cả files liên quan trong MinIO
+func (s *VideoUploadService) DeleteUpload(ctx context.Context, uploadID uuid.UUID) error {
+	upload, err := s.uploadRepo.GetUploadByID(ctx, uploadID)
+	if err != nil {
+		return fmt.Errorf("failed to find upload: %w", err)
+	}
+	if upload == nil {
+		return nil // Already deleted or never existed
+	}
+
+	bucket := upload.Bucket
+
+	// 1. Delete original video file
+	if upload.ObjectKey != "" {
+		_ = s.storage.DeleteObject(ctx, bucket, upload.ObjectKey)
+	}
+
+	// 2. Delete HLS folder (videos/{uploadId}/)
+	hlsPrefix := fmt.Sprintf("videos/%s/", uploadID.String())
+	_ = s.storage.DeleteObjectsWithPrefix(ctx, bucket, hlsPrefix)
+
+	// 3. Delete thumbnail
+	thumbnailPrefix := fmt.Sprintf("thumbnails/lesson_content/%s", uploadID.String())
+	_ = s.storage.DeleteObjectsWithPrefix(ctx, bucket, thumbnailPrefix)
+
+	// 4. Delete video_uploads record (this also deletes parts via CASCADE or repo logic)
+	return s.uploadRepo.DeleteUpload(ctx, uploadID)
 }

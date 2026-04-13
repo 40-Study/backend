@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"study.com/v1/internal/config"
 	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/storage"
@@ -14,10 +15,11 @@ import (
 // MinioClientAdapter adapts MinioClient to VideoStorageInterface
 type MinioClientAdapter struct {
 	storage *storage.MinioClient
+	config  *config.Config
 }
 
-func NewMinioClientAdapter(storage *storage.MinioClient) *MinioClientAdapter {
-	return &MinioClientAdapter{storage: storage}
+func NewMinioClientAdapter(storage *storage.MinioClient, config *config.Config) *MinioClientAdapter {
+	return &MinioClientAdapter{storage: storage, config: config}
 }
 
 func (a *MinioClientAdapter) GetObject(ctx context.Context, bucket, objectKey string) (io.ReadCloser, error) {
@@ -56,6 +58,7 @@ func NewVideoProcessingService(
 	storage *storage.MinioClient,
 	uploadService VideoUploadServiceInterface,
 	rabbitMQService *rabbitmq_queue.RabbitMQService,
+	cfg *config.Config,
 ) (*VideoProcessingService, error) {
 	// Initialize queue setup reusing existing RabbitMQ connection
 	queueSetup := rabbitmq_queue.NewVideoQueueSetup(rabbitMQService)
@@ -67,16 +70,22 @@ func NewVideoProcessingService(
 	}
 
 	// Create storage adapter for video processor
-	storageAdapter := &MinioClientAdapter{storage: storage}
+	storageAdapter := &MinioClientAdapter{storage: storage, config: cfg}
+
+	// Lấy temp dir từ config, mặc định là /tmp/video-processing
+	tempDir := cfg.TempDir
+	if tempDir == "" {
+		tempDir = "/tmp/video-processing"
+	}
 
 	// Initialize video processor
 	processor := rabbitmq_queue.NewVideoProcessor(
-		uploadRepo,              // Interface type
-		storageAdapter,          // Adapter for storage interface
-		"ffmpeg",                // ffmpeg path
-		"/tmp/video-processing", // temp directory for processing
-		false,                   // clamav disabled for now
-		3,                       // max retries
+		uploadRepo,     // Interface type
+		storageAdapter, // Adapter for storage interface
+		"ffmpeg",       // ffmpeg path
+		tempDir,        // temp directory for processing
+		false,          // clamav disabled for now
+		3,              // max retries
 	)
 
 	return &VideoProcessingService{

@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"os"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -161,25 +161,52 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	})
 }
 
+func isSecureRequest(c *fiber.Ctx) bool {
+	forwardedProto := strings.ToLower(c.Get("X-Forwarded-Proto"))
+	if forwardedProto == "https" {
+		return true
+	}
+	return strings.EqualFold(c.Protocol(), "https")
+}
+
+func getCookieDomain(c *fiber.Ctx) string {
+	host := strings.ToLower(c.Hostname())
+	if strings.HasSuffix(host, "fortex.ai.vn") {
+		return ".fortex.ai.vn"
+	}
+	return ""
+}
+
+func getCookieSameSite(c *fiber.Ctx) string {
+	if getCookieDomain(c) != "" && isSecureRequest(c) {
+		return "None"
+	}
+	return "Lax"
+}
+
 func (h *AuthHandler) setAuthCookies(c *fiber.Ctx, accessToken, refreshToken string) {
-	secure := os.Getenv("ENVIRONMENT") == "production"
+	secure := isSecureRequest(c)
+	domain := getCookieDomain(c)
+	sameSite := getCookieSameSite(c)
 	c.Cookie(&fiber.Cookie{
 		Name:     "accessToken",
 		Value:    accessToken,
 		Path:     "/",
+		Domain:   domain,
 		Expires:  time.Now().Add(15 * time.Minute),
 		HTTPOnly: true,
 		Secure:   secure,
-		SameSite: "Lax",
+		SameSite: sameSite,
 	})
 	c.Cookie(&fiber.Cookie{
 		Name:     "rfToken",
 		Value:    refreshToken,
 		Path:     "/",
+		Domain:   domain,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HTTPOnly: true,
 		Secure:   secure,
-		SameSite: "Lax",
+		SameSite: sameSite,
 	})
 }
 
@@ -222,19 +249,22 @@ func (h *AuthHandler) LogoutOneDevice(c *fiber.Ctx) error {
 	c.Cookie(&fiber.Cookie{
 		Name:     "accessToken",
 		Value:    "",
+		Path:     "/",
+		Domain:   getCookieDomain(c),
 		Expires:  time.Now().Add(-1 * time.Hour),
 		HTTPOnly: true,
-		// Secure:   true, // lên https
-		SameSite: "Lax", // same site là khi user đăng nhập từ một trình duyệt, thì khi user
-		// đăng nhập từ trình duyệt khác, thì cookie sẽ không được gửi đi
+		Secure:   isSecureRequest(c),
+		SameSite: getCookieSameSite(c),
 	})
 	c.Cookie(&fiber.Cookie{
 		Name:     "rfToken",
 		Value:    "",
+		Path:     "/",
+		Domain:   getCookieDomain(c),
 		Expires:  time.Now().Add(-1 * time.Hour),
 		HTTPOnly: true,
-		// Secure:   true,
-		SameSite: "Lax",
+		Secure:   isSecureRequest(c),
+		SameSite: getCookieSameSite(c),
 	})
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Logout successfully",
@@ -267,18 +297,22 @@ func (h *AuthHandler) LogoutAll(c *fiber.Ctx) error {
 	c.Cookie(&fiber.Cookie{
 		Name:     "accessToken",
 		Value:    "",
+		Path:     "/",
+		Domain:   getCookieDomain(c),
 		Expires:  time.Now().Add(-1 * time.Hour),
 		HTTPOnly: true,
-		Secure:   true,
-		SameSite: "Lax",
+		Secure:   isSecureRequest(c),
+		SameSite: getCookieSameSite(c),
 	})
 	c.Cookie(&fiber.Cookie{
 		Name:     "rfToken",
 		Value:    "",
+		Path:     "/",
+		Domain:   getCookieDomain(c),
 		Expires:  time.Now().Add(-1 * time.Hour),
 		HTTPOnly: true,
-		Secure:   true,
-		SameSite: "Lax",
+		Secure:   isSecureRequest(c),
+		SameSite: getCookieSameSite(c),
 	})
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -315,18 +349,22 @@ func (h *AuthHandler) RefreshToken(c *fiber.Ctx) error {
 	c.Cookie(&fiber.Cookie{
 		Name:     "accessToken",
 		Value:    response.AccessToken,
+		Path:     "/",
+		Domain:   getCookieDomain(c),
 		Expires:  time.Now().Add(15 * time.Minute),
 		HTTPOnly: true,
-		Secure:   true,
-		SameSite: "Lax",
+		Secure:   isSecureRequest(c),
+		SameSite: getCookieSameSite(c),
 	})
 	c.Cookie(&fiber.Cookie{
 		Name:     "rfToken",
 		Value:    response.RefreshToken,
+		Path:     "/",
+		Domain:   getCookieDomain(c),
 		Expires:  time.Now().Add(24 * time.Hour),
 		HTTPOnly: true,
-		Secure:   true,
-		SameSite: "Lax",
+		Secure:   isSecureRequest(c),
+		SameSite: getCookieSameSite(c),
 	})
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Refresh token successfully",

@@ -3,7 +3,9 @@ package dto
 import "github.com/google/uuid"
 
 type CreateAssignmentDTO struct {
-	SessionID   string   `json:"session_id" validate:"required,uuid"`
+	SessionID   string   `json:"session_id" validate:"omitempty,uuid"` // nullable for homework
+	ClassID     string   `json:"class_id" validate:"omitempty,uuid"`   // for homework
+	Type        string   `json:"type" validate:"omitempty,oneof=live_coding homework project"`
 	Title       string   `json:"title" validate:"required,min=3,max=255"`
 	Description string   `json:"description" validate:"required"`
 	Difficulty  string   `json:"difficulty" validate:"required,oneof=easy medium hard"`
@@ -13,6 +15,11 @@ type CreateAssignmentDTO struct {
 	MemoryLimit int      `json:"memory_limit"`
 	StartTime   *string  `json:"start_time"`
 	EndTime     *string  `json:"end_time"`
+	// Late submission settings
+	AllowLateSubmission bool `json:"allow_late_submission"`
+	LatePenaltyPercent  int  `json:"late_penalty_percent"`
+	MaxLateDays         int  `json:"max_late_days"`
+	GracePeriodMinutes  int  `json:"grace_period_minutes"`
 }
 
 type UpdateAssignmentDTO struct {
@@ -28,22 +35,29 @@ type UpdateAssignmentDTO struct {
 }
 
 type AssignmentResponseDTO struct {
-	ID           uuid.UUID `json:"id"`
-	SessionID    uuid.UUID `json:"session_id"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	Difficulty   string    `json:"difficulty"`
-	Language     []string  `json:"language"`
-	StarterCode  string    `json:"starter_code"`
-	TimeLimit    int       `json:"time_limit"`
-	MemoryLimit  int       `json:"memory_limit"`
-	DurationMins int       `json:"duration_minutes"`
-	IsPublished  bool      `json:"is_published"`
-	PublishedAt  *string   `json:"published_at,omitempty"`
-	StartTime    *string   `json:"start_time,omitempty"`
-	EndTime      *string   `json:"end_time,omitempty"`
-	ShowInRecap  bool      `json:"show_in_recap"`
-	CreatedAt    string    `json:"created_at"`
+	ID           uuid.UUID  `json:"id"`
+	SessionID    *uuid.UUID `json:"session_id,omitempty"`
+	ClassID      *uuid.UUID `json:"class_id,omitempty"`
+	Type         string     `json:"type"`
+	Title        string     `json:"title"`
+	Description  string     `json:"description"`
+	Difficulty   string     `json:"difficulty"`
+	Language     []string   `json:"language"`
+	StarterCode  string     `json:"starter_code"`
+	TimeLimit    int        `json:"time_limit"`
+	MemoryLimit  int        `json:"memory_limit"`
+	DurationMins int        `json:"duration_minutes"`
+	IsPublished  bool       `json:"is_published"`
+	PublishedAt  *string    `json:"published_at,omitempty"`
+	StartTime    *string    `json:"start_time,omitempty"`
+	EndTime      *string    `json:"end_time,omitempty"`
+	ShowInRecap  bool       `json:"show_in_recap"`
+	// Late submission settings
+	AllowLateSubmission bool `json:"allow_late_submission"`
+	LatePenaltyPercent  int  `json:"late_penalty_percent"`
+	MaxLateDays         int  `json:"max_late_days"`
+	GracePeriodMinutes  int  `json:"grace_period_minutes"`
+	CreatedAt           string `json:"created_at"`
 }
 
 type AssignmentListDTO struct {

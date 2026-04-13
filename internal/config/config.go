@@ -3,6 +3,8 @@ package config
 import (
 	"flag"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -46,11 +48,12 @@ type Config struct {
 	RedisPassword string `mapstructure:"REDIS_PASSWORD"`
 	RedisDB       int    `mapstructure:"REDIS_DB"`
 
-	MinioHost      string `mapstructure:"MINIO_HOST"`
-	MinioPort      string `mapstructure:"MINIO_PORT"`
-	MinioAccessKey string `mapstructure:"MINIO_ACCESS_KEY"`
-	MinioSecretKey string `mapstructure:"MINIO_SECRET_KEY"`
-	MinioUseSSL    bool   `mapstructure:"MINIO_USE_SSL"`
+	MinioHost           string `mapstructure:"MINIO_HOST"`
+	MinioPort           string `mapstructure:"MINIO_PORT"`
+	MinioAccessKey      string `mapstructure:"MINIO_ACCESS_KEY"`
+	MinioSecretKey      string `mapstructure:"MINIO_SECRET_KEY"`
+	MinioUseSSL         bool   `mapstructure:"MINIO_USE_SSL"`
+	MinioPublicEndpoint string `mapstructure:"MINIO_PUBLIC_ENDPOINT"` // Public URL for presigned URLs (e.g., https://cdn.fortex.ai.vn)
 
 	// Minio Buckets
 	MinioBucketImages string `mapstructure:"MINIO_BUCKET_IMAGES"`
@@ -99,12 +102,24 @@ type Config struct {
 	// Frontend URL for OAuth redirect
 	FrontendURL                string `mapstructure:"FRONTEND_URL"`
 	ParentInvitationDailyLimit int    `mapstructure:"PARENT_INVITATION_DAILY_LIMIT"` // Số lần gửi lời mời phụ huynh tối đa trong 24 giờ của mỗi học sinh
+	TempDir                    string `mapstructure:"TEMP_DIR"`                      // Thư mục tạm để xử lý video, nên đặt ở ổ đĩa có dung lượng lớn và tốc độ cao (ví dụ: D:\temp\video-processing)
 }
 
 func LoadConfig() (*Config, error) {
 	var env string
-	flag.StringVar(&env, "env", "dev", "Environment (dev, test, prod)")
+	defaultEnv := strings.ToLower(strings.TrimSpace(os.Getenv("ENVIRONMENT")))
+	if defaultEnv == "" {
+		defaultEnv = "dev"
+	}
+	if defaultEnv == "production" {
+		defaultEnv = "prod"
+	}
+	flag.StringVar(&env, "env", defaultEnv, "Environment (dev, test, prod)")
 	flag.Parse()
+	env = strings.ToLower(strings.TrimSpace(env))
+	if env == "production" {
+		env = "prod"
+	}
 
 	config := &Config{}
 	viper.Set("ENVIRONMENT", env)
@@ -133,23 +148,25 @@ func LoadConfig() (*Config, error) {
 
 	viper.AutomaticEnv()
 
-	// If running in dev or test, try to load .env file
-	if env == "dev" || env == "test" {
-		viper.SetConfigName(".env")
-		viper.SetConfigType("env")
-		viper.AddConfigPath(".")
-		viper.AddConfigPath("../")
-		viper.AddConfigPath("../../")
+	// Load appropriate .env file based on environment
+	var configFile string
+	if env == "prod" {
+		configFile = ".env.prod"
+	} else {
+		configFile = ".env"
+	}
 
-		if err := viper.ReadInConfig(); err != nil {
-			// It's okay if config file doesn't exist, we might rely on env vars
-			if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-				return nil, fmt.Errorf("error reading config file: %w", err)
-			}
-			fmt.Println("No .env file found, relying on environment variables")
-		} else {
-			fmt.Println("Loaded configuration from .env file")
+	viper.SetConfigType("env")
+	viper.SetConfigFile(configFile)
+
+	if err := viper.ReadInConfig(); err != nil {
+		// It's okay if config file doesn't exist, we might rely on env vars
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("error reading config file: %w", err)
 		}
+		fmt.Printf("No %s file found, relying on environment variables\n", configFile)
+	} else {
+		fmt.Printf("Loaded configuration from %s file\n", configFile)
 	}
 	if env == "test" || env == "dev" {
 		// If standard DB_HOST is not set, try TEST_DB_HOST

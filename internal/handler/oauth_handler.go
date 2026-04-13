@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -10,6 +11,29 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/service"
 )
+
+func isSecureRequestOAuth(c *fiber.Ctx) bool {
+	forwardedProto := strings.ToLower(c.Get("X-Forwarded-Proto"))
+	if forwardedProto == "https" {
+		return true
+	}
+	return strings.EqualFold(c.Protocol(), "https")
+}
+
+func getCookieDomainOAuth(c *fiber.Ctx) string {
+	host := strings.ToLower(c.Hostname())
+	if strings.HasSuffix(host, "fortex.ai.vn") {
+		return ".fortex.ai.vn"
+	}
+	return ""
+}
+
+func getCookieSameSiteOAuth(c *fiber.Ctx) string {
+	if getCookieDomainOAuth(c) != "" && isSecureRequestOAuth(c) {
+		return "None"
+	}
+	return "Lax"
+}
 
 type OAuthHandler struct {
 	oauthService service.OAuthServiceInterface
@@ -69,22 +93,30 @@ func (h *OAuthHandler) ProviderCallback(c *fiber.Ctx) error {
 
 	// Nếu login thành công (completed = true, có tokens)
 	if result.Completed && result.AccessToken != "" {
+		secure := isSecureRequestOAuth(c)
+		domain := getCookieDomainOAuth(c)
+		sameSite := getCookieSameSiteOAuth(c)
+
 		// Set cookies — dùng chung logic với auth_handler
 		c.Cookie(&fiber.Cookie{
 			Name:     "accessToken",
 			Value:    result.AccessToken,
 			Path:     "/",
+			Domain:   domain,
 			Expires:  time.Now().Add(h.cfg.JWTAccessExpiration),
 			HTTPOnly: true,
-			SameSite: "Lax",
+			Secure:   secure,
+			SameSite: sameSite,
 		})
 		c.Cookie(&fiber.Cookie{
 			Name:     "rfToken",
 			Value:    result.RefreshToken,
 			Path:     "/",
+			Domain:   domain,
 			Expires:  time.Now().Add(h.cfg.JWTRefreshExpiration),
 			HTTPOnly: true,
-			SameSite: "Lax",
+			Secure:   secure,
+			SameSite: sameSite,
 		})
 
 		// Redirect về frontend với access_token — FE lưu vào store

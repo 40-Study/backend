@@ -116,6 +116,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 			resources.MinioWrapper,
 			uploadSvc,
 			resources.RabbitMQ,
+			resources.Config,
 		)
 		if err != nil {
 			log.Printf("Warning: Failed to create video processing service: %v", err)
@@ -285,7 +286,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag),
 		Section:       service.NewSectionService(repos.Section, repos.Course),
 		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, service.NewUploadService(resources.MinioClient, resources.Config)),
-		LessonContent: service.NewLessonContentService(repos.Lesson, service.NewUploadService(resources.MinioClient, resources.Config)),
+		LessonContent: service.NewLessonContentService(repos.Lesson, service.NewUploadService(resources.MinioClient, resources.Config), uploadSvc),
 		Enrollment:    service.NewEnrollmentService(repos.Enrollment, repos.Course, repos.Lesson),
 
 		// ===== Upload & Video =====

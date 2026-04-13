@@ -71,6 +71,9 @@ func SetupHLSRoutes(api fiber.Router, hlsHandler *handler.HLSHandler) {
 	// Get master playlist
 	hlsGroup.Get("/:upload_id/master.m3u8", hlsHandler.GetMasterPlaylist)
 
+	// Stream original video (fallback when HLS not ready)
+	hlsGroup.Get("/:upload_id/video.mp4", hlsHandler.StreamOriginalVideo)
+
 	// Get quality-specific playlist (e.g., /api/hls/{id}/v0/index.m3u8)
 	hlsGroup.Get("/:upload_id/:quality/index.m3u8", hlsHandler.GetPlaylist)
 

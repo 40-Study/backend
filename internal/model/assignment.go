@@ -20,7 +20,7 @@ const (
 // Khác với CourseExercise (bài tập khóa học - không giới hạn thời gian, block tiến trình)
 type Assignment struct {
 	BaseModel
-	SessionID uuid.UUID `gorm:"type:uuid;not null;index" json:"session_id"`
+	SessionID *uuid.UUID `gorm:"type:uuid;index" json:"session_id,omitempty"` // Nullable for homework
 
 	Title       string               `gorm:"type:varchar(255);not null" json:"title"`
 	Description string               `gorm:"type:text;not null" json:"description"`
@@ -31,18 +31,30 @@ type Assignment struct {
 	MemoryLimit int                  `gorm:"default:256" json:"memory_limit"` // MB
 
 	// Live assignment specific
-	DurationMins int  `gorm:"default:15" json:"duration_minutes"` // Thời gian làm bài trong live
-	IsPublished  bool `gorm:"default:false;index" json:"is_published"`
+	DurationMins int        `gorm:"default:15" json:"duration_minutes"` // Thoi gian lam bai trong live
+	IsPublished  bool       `gorm:"default:false;index" json:"is_published"`
 	PublishedAt  *time.Time `gorm:"type:timestamp" json:"published_at,omitempty"`
-	StartTime    *time.Time `gorm:"type:timestamp" json:"start_time,omitempty"` // Hẹn giờ publish
+	StartTime    *time.Time `gorm:"type:timestamp" json:"start_time,omitempty"` // Hen gio publish
 	EndTime      *time.Time `gorm:"type:timestamp" json:"end_time,omitempty"`   // Deadline
 
-	// Recap - hiển thị sau buổi live
+	// Late submission settings
+	AllowLateSubmission  bool `gorm:"default:false" json:"allow_late_submission"`
+	LatePenaltyPercent   int  `gorm:"default:10" json:"late_penalty_percent"`    // VD: 10 = -10% per day
+	MaxLateDays          int  `gorm:"default:3" json:"max_late_days"`
+	GracePeriodMinutes   int  `gorm:"default:15" json:"grace_period_minutes"`    // 15 phut khong tinh muon
+
+	// Recap - hien thi sau buoi live
 	ShowInRecap bool `gorm:"default:true" json:"show_in_recap"`
 
-	Session     *LivestreamSession `gorm:"foreignKey:SessionID" json:"-"`
-	TestCases   []TestCase         `gorm:"foreignKey:AssignmentID;constraint:OnDelete:CASCADE" json:"test_cases,omitempty"`
-	Submissions []Submission       `gorm:"foreignKey:AssignmentID;constraint:OnDelete:CASCADE" json:"submissions,omitempty"`
+	// Class-based homework (session_id nullable for homework)
+	ClassID *uuid.UUID `gorm:"type:uuid;index" json:"class_id,omitempty"`
+	Type    string     `gorm:"type:varchar(20);default:'live_coding';check:type IN ('live_coding','homework','project')" json:"type"`
+
+	Session           *LivestreamSession `gorm:"foreignKey:SessionID" json:"-"`
+	Class             *Class             `gorm:"foreignKey:ClassID" json:"-"`
+	TestCases         []TestCase         `gorm:"foreignKey:AssignmentID;constraint:OnDelete:CASCADE" json:"test_cases,omitempty"`
+	Submissions       []Submission       `gorm:"foreignKey:AssignmentID;constraint:OnDelete:CASCADE" json:"submissions,omitempty"`
+	ExtensionRequests []ExtensionRequest `gorm:"foreignKey:AssignmentID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 func (Assignment) TableName() string {

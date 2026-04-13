@@ -17,6 +17,8 @@ type EnrollmentRepositoryInterface interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Enrollment, error)
 	GetDetailByID(ctx context.Context, id uuid.UUID) (*model.Enrollment, error)
 	GetByUserID(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]model.Enrollment, int64, error)
+	GetByCourseID(ctx context.Context, courseID uuid.UUID, page, pageSize int) ([]model.Enrollment, int64, error)
+	GetByCourseIDIncludeDeleted(ctx context.Context, courseID uuid.UUID) ([]model.Enrollment, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	Update(ctx context.Context, enrollment *model.Enrollment) error
 
@@ -146,6 +148,38 @@ func (r *EnrollmentRepository) GetEnrolledUserIDsByCourseID(ctx context.Context,
 		Where("course_id = ?", courseID).
 		Pluck("user_id", &userIDs).Error
 	return userIDs, err
+}
+
+// GetByCourseID returns all enrollments for a course (for instructor view)
+func (r *EnrollmentRepository) GetByCourseID(ctx context.Context, courseID uuid.UUID, page, pageSize int) ([]model.Enrollment, int64, error) {
+	var enrollments []model.Enrollment
+	var total int64
+
+	query := r.db.WithContext(ctx).Model(&model.Enrollment{}).Where("course_id = ?", courseID)
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := utils.ApplyPagination(query, page, pageSize).
+		Preload("User").
+		Order("enrolled_at DESC").
+		Find(&enrollments).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return enrollments, total, nil
+}
+
+// GetByCourseIDIncludeDeleted returns all enrollments including soft-deleted (for debugging)
+func (r *EnrollmentRepository) GetByCourseIDIncludeDeleted(ctx context.Context, courseID uuid.UUID) ([]model.Enrollment, error) {
+	var enrollments []model.Enrollment
+	err := r.db.WithContext(ctx).
+		Unscoped(). // Include soft-deleted records
+		Where("course_id = ?", courseID).
+		Preload("User").
+		Find(&enrollments).Error
+	return enrollments, err
 }
 
 // LessonProgress

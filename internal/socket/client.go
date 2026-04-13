@@ -4,12 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"net"
 	"sync"
 	"time"
 
-	"github.com/gobwas/ws"
-	"github.com/gobwas/ws/wsutil"
+	"github.com/gofiber/contrib/websocket"
 	"github.com/google/uuid"
 )
 
@@ -19,28 +17,27 @@ var (
 )
 
 const (
-	writeWait      = 10 * time.Second
-	pongWait       = 60 * time.Second
-	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 4096
+	writeWait  = 10 * time.Second
+	pongWait   = 60 * time.Second
+	pingPeriod = (pongWait * 9) / 10
 )
 
 // Client represents a WebSocket client connection
 type Client struct {
-	ID         uuid.UUID          // unique per connection (1 user có thể nhiều Client)
-	UserID     uuid.UUID          // từ JWT, identify user
-	Conn       net.Conn           // raw tcp connection, không phải WebSocket connection vì đã hijack
-	Hub        *Hub               // reference ngượck để gửi message đến hub
-	Send       chan []byte        // channel để gửi message đến client
-	authorizer ChannelAuthorizer  // kiểm tra quyền subscribe channel
-	mu         sync.Mutex         // bảo vệ concurrent writes đến connection
-	closed     bool               // đánh dấu connection đã đóng
-	channels   map[string]bool    // kênh mà client đã subscribe
-	channelMu  sync.RWMutex       // bảo vệ concurrent access đến channels map
+	ID         uuid.UUID
+	UserID     uuid.UUID
+	Conn       *websocket.Conn
+	Hub        *Hub
+	Send       chan []byte
+	authorizer ChannelAuthorizer
+	mu         sync.Mutex
+	closed     bool
+	channels   map[string]bool
+	channelMu  sync.RWMutex
 }
 
 // NewClient creates a new WebSocket client
-func NewClient(userID uuid.UUID, conn net.Conn, hub *Hub, authorizer ChannelAuthorizer) *Client {
+func NewClient(userID uuid.UUID, conn *websocket.Conn, hub *Hub, authorizer ChannelAuthorizer) *Client {
 	return &Client{
 		ID:         uuid.New(),
 		UserID:     userID,
@@ -52,56 +49,34 @@ func NewClient(userID uuid.UUID, conn net.Conn, hub *Hub, authorizer ChannelAuth
 	}
 }
 
-// ReadPump là hàm chạy trong goroutine riêng để liên tục đọc message từ client và xử lý chúng
+// ReadPump reads messages from the WebSocket connection
 func (c *Client) ReadPump() {
 	defer func() {
 		c.Hub.Unregister <- c
 		c.Close()
 	}()
 
-	// set deadline ban đầu - nếu không nhận được gì trong 60s thì đóng connection
-	_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.Conn.SetPongHandler(func(string) error {
+		c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
 
-	// vòng lặp vô hạn để liên tục đọc message từ client
 	for {
-		msg, op, err := wsutil.ReadClientData(c.Conn)
-		// msg : payload của message, có thể là text hoặc binary
-		// op : loại message (text, binary, ping, pong, close)
-		// err : lỗi nếu có (bao gồm timeout từ deadline)
+		_, msg, err := c.Conn.ReadMessage()
 		if err != nil {
-			if !c.isClosed() {
-				log.Printf("WebSocket read error for user %s: %v", c.UserID, err)
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("[WS] Read error for user %s: %v", c.UserID, err)
 			}
 			break
 		}
-		// close connection nếu client gửi frame close hoặc có lỗi đọc
-		if op == ws.OpClose {
-			break
-		}
-		// xử lý ping/pong để giữ kết nối sống
-		if op == ws.OpPing {
-			c.mu.Lock()
-			_ = wsutil.WriteServerMessage(c.Conn, ws.OpPong, msg)
-			c.mu.Unlock()
-			// reset deadline khi nhận ping từ client
-			_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
-			continue
-		}
-		// nhận pong từ client (response cho ping của server) - reset deadline
-		if op == ws.OpPong {
-			_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
-			continue
-		}
-		// chỉ xử lý message text, bỏ qua binary hoặc control frames khác
-		if op == ws.OpText {
-			// reset deadline khi nhận message hợp lệ
-			_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
-			c.handleMessage(msg)
-		}
+
+		c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+		c.handleMessage(msg)
 	}
 }
 
-// WritePump là hàm chạy trong goroutine riêng để liên tục gửi message đến client từ channel Send
+// WritePump writes messages to the WebSocket connection
 func (c *Client) WritePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
@@ -112,35 +87,27 @@ func (c *Client) WritePump() {
 	for {
 		select {
 		case message, ok := <-c.Send:
+			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
-				c.writeControl(ws.OpClose, nil)
+				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
-			c.mu.Lock()
-			err := c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err != nil {
-				c.mu.Unlock()
-				return
-			}
-
-			err = wsutil.WriteServerText(c.Conn, message)
-			c.mu.Unlock()
-
-			if err != nil {
-				log.Printf("WebSocket write error for user %s: %v", c.UserID, err)
+			if err := c.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				log.Printf("[WS] Write error for user %s: %v", c.UserID, err)
 				return
 			}
 
 		case <-ticker.C:
-			if err := c.writeControl(ws.OpPing, nil); err != nil {
+			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
 		}
 	}
 }
 
-// handleMessage xử lý message nhận được từ client
+// handleMessage processes incoming messages from client
 func (c *Client) handleMessage(data []byte) {
 	var msg IncomingMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
@@ -165,7 +132,6 @@ func (c *Client) handleMessage(data []byte) {
 		}
 
 	default:
-		// Forward to hub for broadcast or further processing
 		c.Hub.HandleClientMessage(c, msg)
 	}
 }
@@ -187,7 +153,7 @@ func (c *Client) SendMessage(msg Message) error {
 
 // SendError sends an error message to the client
 func (c *Client) SendError(code, message string) {
-	_ = c.SendMessage(Message{
+	c.SendMessage(Message{
 		Event: EventError,
 		Payload: ErrorPayload{
 			Code:    code,
@@ -196,18 +162,12 @@ func (c *Client) SendError(code, message string) {
 	})
 }
 
-// Subscribe adds the client to a channel after checking authorization
+// Subscribe adds the client to a channel
 func (c *Client) Subscribe(channel string) {
 	if c.authorizer != nil {
 		allowed, err := c.authorizer.CanSubscribe(c.UserID, channel)
-		if err != nil {
-			log.Printf("Channel auth error: user=%s, channel=%s, err=%v", c.UserID, channel, err)
-			c.SendError("subscribe_error", "Failed to check channel permission")
-			return
-		}
-		if !allowed {
-			log.Printf("Channel auth denied: user=%s, channel=%s", c.UserID, channel)
-			c.SendError("subscribe_denied", "You don't have permission to subscribe to this channel")
+		if err != nil || !allowed {
+			c.SendError("subscribe_denied", "Permission denied for channel: "+channel)
 			return
 		}
 	}
@@ -215,7 +175,9 @@ func (c *Client) Subscribe(channel string) {
 	c.channelMu.Lock()
 	c.channels[channel] = true
 	c.channelMu.Unlock()
+
 	c.Hub.SubscribeToChannel(c, channel)
+	log.Printf("[WS] User %s subscribed to channel: %s", c.UserID, channel)
 }
 
 // Unsubscribe removes the client from a channel
@@ -223,6 +185,7 @@ func (c *Client) Unsubscribe(channel string) {
 	c.channelMu.Lock()
 	delete(c.channels, channel)
 	c.channelMu.Unlock()
+
 	c.Hub.UnsubscribeFromChannel(c, channel)
 }
 
@@ -231,19 +194,6 @@ func (c *Client) IsSubscribed(channel string) bool {
 	c.channelMu.RLock()
 	defer c.channelMu.RUnlock()
 	return c.channels[channel]
-}
-
-// writeControl writes a control frame
-func (c *Client) writeControl(op ws.OpCode, data []byte) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return ErrConnectionClosed
-	}
-
-	_ = c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
-	return wsutil.WriteServerMessage(c.Conn, op, data)
 }
 
 // Close closes the client connection
@@ -257,11 +207,11 @@ func (c *Client) Close() {
 
 	c.closed = true
 	close(c.Send)
-	_ = c.Conn.Close()
+	c.Conn.Close()
 }
 
-// isClosed checks if the connection is closed
-func (c *Client) isClosed() bool {
+// IsClosed checks if the connection is closed
+func (c *Client) IsClosed() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.closed

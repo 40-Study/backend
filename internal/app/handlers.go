@@ -78,7 +78,7 @@ type Handlers struct {
 	ParentInvitation *handler.ParentInvitationHandler
 }
 
-func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *config.Config) *Handlers {
+func InitHandlers(services *Services, repos *Repositories, minioClient *storage.MinioClient, cfg *config.Config) *Handlers {
 	return &Handlers{
 		// ===== Auth & Role =====
 		Auth:                 handler.NewAuthHandler(services.Auth),
@@ -114,7 +114,7 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *con
 		// ===== Upload & Video =====
 		Upload:      handler.NewUploadHandler(services.Upload),
 		VideoUpload: handler.NewVideoUploadHandler(services.VideoUpload),
-		HLS:         handler.NewHLSHandler(minioClient),
+		HLS:         handler.NewHLSHandler(minioClient, repos.VideoUpload),
 
 		// ===== Livestream Learning Platform =====
 		Livestream: handler.NewLivestreamHandler(services.Livestream),

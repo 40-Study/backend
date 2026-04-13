@@ -9,10 +9,27 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/google/uuid"
 	"study.com/v1/internal/database/seeds"
+	"study.com/v1/internal/middleware"
 	asynq_queue "study.com/v1/internal/queue/asynq"
 	"study.com/v1/internal/router"
 	"study.com/v1/internal/socket"
 )
+
+// defaultAuthorizer allows all authenticated users to subscribe to their own channels
+type defaultAuthorizer struct{}
+
+func (a *defaultAuthorizer) CanSubscribe(userID uuid.UUID, channel string) (bool, error) {
+	// Allow users to subscribe to their personal notification channel
+	// Format: "user:{userID}"
+	if channel == fmt.Sprintf("user:%s", userID.String()) {
+		return true, nil
+	}
+	// Allow subscribing to general notifications
+	if channel == "notifications" {
+		return true, nil
+	}
+	return false, nil
+}
 
 type App struct {
 	Resources *Resources
@@ -30,6 +47,7 @@ func New() (*App, error) {
 	hub := socket.NewHub()
 	go hub.Run()
 	notifier := socket.NewNotifier(hub)
+	socketHandler := socket.NewHandler(hub, &defaultAuthorizer{})
 	repos := InitRepositories(resources.DB)
 
 	seeder := seeds.NewSeeder(resources.DB)
@@ -61,7 +79,7 @@ func New() (*App, error) {
 		}()
 	}
 
-	handlers := InitHandlers(services, resources.MinioWrapper, resources.Config)
+	handlers := InitHandlers(services, repos, resources.MinioWrapper, resources.Config)
 
 	fiberApp := fiber.New()
 
@@ -75,6 +93,10 @@ func New() (*App, error) {
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
 		AllowCredentials: true,
 	}))
+
+	// Setup WebSocket route with auth middleware
+	auth := middleware.AuthMiddleware(resources.Config, resources.Redis)
+	fiberApp.Get("/api/ws", auth, socketHandler.HandleWebSocket)
 
 	router.SetupAllRoutes(
 		fiberApp,
