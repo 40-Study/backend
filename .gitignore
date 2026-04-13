@@ -45,3 +45,4 @@ CLAUDE.md
 .postman/
 postman/
 docs/client_secret_*.json 
+.env.prod
