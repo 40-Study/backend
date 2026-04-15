@@ -9,10 +9,28 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/google/uuid"
 	"study.com/v1/internal/database/seeds"
+	"study.com/v1/internal/middleware"
 	asynq_queue "study.com/v1/internal/queue/asynq"
+	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/router"
 	"study.com/v1/internal/socket"
 )
+
+// defaultAuthorizer allows all authenticated users to subscribe to their own channels
+type defaultAuthorizer struct{}
+
+func (a *defaultAuthorizer) CanSubscribe(userID uuid.UUID, channel string) (bool, error) {
+	// Allow users to subscribe to their personal notification channel
+	// Format: "user:{userID}"
+	if channel == fmt.Sprintf("user:%s", userID.String()) {
+		return true, nil
+	}
+	// Allow subscribing to general notifications
+	if channel == "notifications" {
+		return true, nil
+	}
+	return false, nil
+}
 
 type App struct {
 	Resources *Resources
@@ -30,6 +48,7 @@ func New() (*App, error) {
 	hub := socket.NewHub()
 	go hub.Run()
 	notifier := socket.NewNotifier(hub)
+	socketHandler := socket.NewHandler(hub, &defaultAuthorizer{})
 	repos := InitRepositories(resources.DB)
 
 	seeder := seeds.NewSeeder(resources.DB)
@@ -47,6 +66,35 @@ func New() (*App, error) {
 	asynq_queue.RegisterTasks(resources.Queue, notifier, repos.Class, repos.Enrollment, resources.Redis, livestreamStarter)
 	go resources.Queue.Start()
 
+	// Inject RabbitMQ vào ParentInvitationService + setup queue + start worker
+	if resources.RabbitMQ != nil {
+		services.ParentInvitation.SetRabbitMQ(resources.RabbitMQ)
+		if err := rabbitmq_queue.SetupInvitationQueues(resources.RabbitMQ); err != nil {
+			log.Printf("Warning: Failed to setup invitation queues: %v", err)
+		} else {
+			invitationWorker := rabbitmq_queue.NewInvitationWorker(resources.RabbitMQ, resources.Config, services.Notification)
+			go func() {
+				if err := invitationWorker.Start(context.Background()); err != nil {
+					log.Printf("Warning: Failed to start invitation worker: %v", err)
+				}
+			}()
+		}
+	}
+
+	// Setup exercise submission queue (RabbitMQ)
+	if services.Exercise != nil {
+		if err := services.Exercise.SetupExerciseQueues(); err != nil {
+			log.Printf("Warning: Failed to setup exercise queues: %v", err)
+		}
+	}
+
+	// Setup certificate generation queue (RabbitMQ)
+	if services.Certificate != nil {
+		if err := services.Certificate.SetupCertificateQueues(); err != nil {
+			log.Printf("Warning: Failed to setup certificate queues: %v", err)
+		}
+	}
+
 	// Start video processing worker if available
 	if services.VideoProcessing != nil {
 		go func() {
@@ -61,7 +109,7 @@ func New() (*App, error) {
 		}()
 	}
 
-	handlers := InitHandlers(services, resources.MinioWrapper, resources.Config)
+	handlers := InitHandlers(services, repos, resources.MinioWrapper, resources.Config)
 
 	fiberApp := fiber.New()
 
@@ -75,6 +123,10 @@ func New() (*App, error) {
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
 		AllowCredentials: true,
 	}))
+
+	// Setup WebSocket route with auth middleware
+	auth := middleware.AuthMiddleware(resources.Config, resources.Redis)
+	fiberApp.Get("/api/ws", auth, socketHandler.HandleWebSocket)
 
 	router.SetupAllRoutes(
 		fiberApp,
@@ -138,6 +190,8 @@ func New() (*App, error) {
 
 		// ===== Parent Invitation =====
 		handlers.ParentInvitation,
+		// ===== Parent Dashboard =====
+		handlers.ParentDashboard,
 		// ===== Discussion Forum =====
 		handlers.Discussion,
 
@@ -146,6 +200,27 @@ func New() (*App, error) {
 
 		// ===== User Preference =====
 		handlers.UserPreference,
+
+		// ===== Schedule (Asynq) =====
+		handlers.Schedule,
+
+		// ===== Quiz =====
+		handlers.Quiz,
+
+		// ===== Grade =====
+		handlers.Grade,
+
+		// ===== Exercise (RabbitMQ) =====
+		handlers.Exercise,
+
+		// ===== Review =====
+		handlers.Review,
+
+		// ===== Certificate (RabbitMQ) =====
+		handlers.Certificate,
+
+		// ===== Report =====
+		handlers.Report,
 
 		resources.Redis,
 		resources.MinioClient,

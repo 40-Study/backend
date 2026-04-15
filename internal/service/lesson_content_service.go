@@ -3,12 +3,12 @@ package service
 import (
 	"context"
 	"errors"
+	"regexp"
 
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
-
 )
 
 type LessonContentServiceInterface interface {
@@ -21,17 +21,20 @@ type LessonContentServiceInterface interface {
 }
 
 type LessonContentService struct {
-	lessonRepo    repository.LessonRepositoryInterface
-	uploadService UploadServiceInterface
+	lessonRepo         repository.LessonRepositoryInterface
+	uploadService      UploadServiceInterface
+	videoUploadService VideoUploadServiceInterface
 }
 
 func NewLessonContentService(
 	lessonRepo repository.LessonRepositoryInterface,
 	uploadService UploadServiceInterface,
+	videoUploadService VideoUploadServiceInterface,
 ) *LessonContentService {
 	return &LessonContentService{
-		lessonRepo:    lessonRepo,
-		uploadService: uploadService,
+		lessonRepo:         lessonRepo,
+		uploadService:      uploadService,
+		videoUploadService: videoUploadService,
 	}
 }
 
@@ -157,9 +160,20 @@ func (s *LessonContentService) DeleteContent(ctx context.Context, contentID uuid
 		return errors.New("content not found")
 	}
 
-	// Delete video from MinIO if exists
+	// Delete video upload and all associated files (original, HLS, thumbnail)
+	if s.videoUploadService != nil && content.VideoURL != nil && *content.VideoURL != "" {
+		// Try to extract upload_id from HLS URL pattern: /api/hls/{uploadId}/
+		hlsPattern := regexp.MustCompile(`/hls/([a-f0-9-]{36})/`)
+		if matches := hlsPattern.FindStringSubmatch(*content.VideoURL); len(matches) > 1 {
+			if uploadID, err := uuid.Parse(matches[1]); err == nil {
+				// Delete video upload (this deletes original video, HLS folder, thumbnail from MinIO)
+				_ = s.videoUploadService.DeleteUpload(ctx, uploadID)
+			}
+		}
+	}
+
+	// Fallback: Delete video from MinIO by URL if exists (for legacy uploads)
 	if content.VideoURL != nil && *content.VideoURL != "" && s.uploadService != nil {
-		// Ignore error - don't fail delete if MinIO cleanup fails
 		_ = s.uploadService.DeleteByURL(ctx, *content.VideoURL)
 	}
 

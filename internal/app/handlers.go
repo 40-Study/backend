@@ -76,9 +76,33 @@ type Handlers struct {
 
 	// ===== Parent Invitation =====
 	ParentInvitation *handler.ParentInvitationHandler
+
+	// ===== Parent Dashboard =====
+	ParentDashboard *handler.ParentDashboardHandler
+
+	// ===== Schedule =====
+	Schedule *handler.ScheduleHandler
+
+	// ===== Quiz =====
+	Quiz *handler.QuizHandler
+
+	// ===== Grade =====
+	Grade *handler.GradeHandler
+
+	// ===== Exercise =====
+	Exercise *handler.ExerciseHandler
+
+	// ===== Review =====
+	Review *handler.ReviewHandler
+
+	// ===== Certificate =====
+	Certificate *handler.CertificateHandler
+
+	// ===== Report =====
+	Report *handler.ReportHandler
 }
 
-func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *config.Config) *Handlers {
+func InitHandlers(services *Services, repos *Repositories, minioClient *storage.MinioClient, cfg *config.Config) *Handlers {
 	return &Handlers{
 		// ===== Auth & Role =====
 		Auth:                 handler.NewAuthHandler(services.Auth),
@@ -114,7 +138,7 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *con
 		// ===== Upload & Video =====
 		Upload:      handler.NewUploadHandler(services.Upload),
 		VideoUpload: handler.NewVideoUploadHandler(services.VideoUpload),
-		HLS:         handler.NewHLSHandler(minioClient),
+		HLS:         handler.NewHLSHandler(minioClient, repos.VideoUpload),
 
 		// ===== Livestream Learning Platform =====
 		Livestream: handler.NewLivestreamHandler(services.Livestream),
@@ -149,5 +173,29 @@ func InitHandlers(services *Services, minioClient *storage.MinioClient, cfg *con
 
 		// ===== Parent Invitation =====
 		ParentInvitation: handler.NewParentInvitationHandler(services.ParentInvitation),
+
+		// ===== Parent Dashboard =====
+		ParentDashboard: handler.NewParentDashboardHandler(services.ParentDashboard),
+
+		// ===== Schedule =====
+		Schedule: handler.NewScheduleHandler(services.Schedule),
+
+		// ===== Quiz =====
+		Quiz: handler.NewQuizHandler(services.Quiz),
+
+		// ===== Grade =====
+		Grade: handler.NewGradeHandler(services.Grade),
+
+		// ===== Exercise =====
+		Exercise: handler.NewExerciseHandler(services.Exercise),
+
+		// ===== Review =====
+		Review: handler.NewReviewHandler(services.Review),
+
+		// ===== Certificate =====
+		Certificate: handler.NewCertificateHandler(services.Certificate),
+
+		// ===== Report =====
+		Report: handler.NewReportHandler(services.Report),
 	}
 }

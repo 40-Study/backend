@@ -190,8 +190,27 @@ func (m *MinioClient) GetPresignedUploadURL(ctx context.Context, bucket, objectK
 		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
 
-	// Return the URL as string
-	return presignedURL.String(), nil
+	// Replace internal endpoint with public endpoint if configured
+	return m.replaceWithPublicEndpoint(presignedURL.String()), nil
+}
+
+// replaceWithPublicEndpoint thay thế internal MinIO endpoint bằng public endpoint
+// Ví dụ: http://localhost:9000/... -> https://cdn.fortex.ai.vn/...
+func (m *MinioClient) replaceWithPublicEndpoint(presignedURL string) string {
+	if m.cfg.MinioPublicEndpoint == "" {
+		return presignedURL
+	}
+
+	// Build internal endpoint
+	internalEndpoint := m.cfg.MinioHost + ":" + m.cfg.MinioPort
+	if m.cfg.MinioUseSSL {
+		internalEndpoint = "https://" + internalEndpoint
+	} else {
+		internalEndpoint = "http://" + internalEndpoint
+	}
+
+	// Replace internal with public endpoint
+	return strings.Replace(presignedURL, internalEndpoint, m.cfg.MinioPublicEndpoint, 1)
 }
 
 // CompleteMultipartUpload hoàn tất quá trình multipart upload
@@ -309,8 +328,8 @@ func (m *MinioClient) GetPresignedDownloadURL(ctx context.Context, bucket, objec
 	if err != nil {
 		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
-	// Trả về URL string để client dùng cho download
-	return presignedURL.String(), nil
+	// Replace internal endpoint with public endpoint if configured
+	return m.replaceWithPublicEndpoint(presignedURL.String()), nil
 }
 
 // GetPresignedURL là wrapper function đơn giản hóa việc tạo presigned download URL
@@ -597,4 +616,28 @@ func (m *MinioClient) ValidateContentType(contentType string) bool {
 		}
 	}
 	return false
+}
+
+// DeleteObject xóa một object từ bucket
+func (m *MinioClient) DeleteObject(ctx context.Context, bucket, objectKey string) error {
+	return m.client.RemoveObject(ctx, bucket, objectKey, minio.RemoveObjectOptions{})
+}
+
+// DeleteObjectsWithPrefix xóa tất cả objects có prefix (dùng để xóa folder)
+func (m *MinioClient) DeleteObjectsWithPrefix(ctx context.Context, bucket, prefix string) error {
+	objectsCh := m.client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	})
+
+	for object := range objectsCh {
+		if object.Err != nil {
+			return object.Err
+		}
+		err := m.client.RemoveObject(ctx, bucket, object.Key, minio.RemoveObjectOptions{})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

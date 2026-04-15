@@ -1,0 +1,124 @@
+{
+  "info": {
+    "name": "Reports (Báo cáo vi phạm)",
+    "description": "Hệ thống báo cáo nội dung vi phạm (spam, inappropriate, copyright, harassment). Admin review và xử lý.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:5000/api" },
+    { "key": "token", "value": "" },
+    { "key": "report_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Create Report (Course)",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/reports",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reported_type\": \"course\",\n  \"reported_id\": \"<course_uuid>\",\n  \"reason\": \"copyright\",\n  \"description\": \"Nội dung sao chép từ khóa học khác\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Create Report (Review)",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/reports",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reported_type\": \"review\",\n  \"reported_id\": \"<review_uuid>\",\n  \"reason\": \"spam\",\n  \"description\": \"Đánh giá spam, không liên quan đến khóa học\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Create Report (User)",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/reports",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reported_type\": \"user\",\n  \"reported_id\": \"<user_uuid>\",\n  \"reason\": \"harassment\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get My Reports",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/reports/my?page=1&page_size=10",
+          "host": ["{{base_url}}"],
+          "path": ["reports", "my"],
+          "query": [
+            { "key": "page", "value": "1" },
+            { "key": "page_size", "value": "10" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "List All Reports (Admin)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/reports?status=pending&page=1&page_size=20",
+          "host": ["{{base_url}}"],
+          "path": ["reports"],
+          "query": [
+            { "key": "status", "value": "pending" },
+            { "key": "reported_type", "value": "", "disabled": true },
+            { "key": "page", "value": "1" },
+            { "key": "page_size", "value": "20" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Report by ID",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/reports/{{report_id}}"
+      }
+    },
+    {
+      "name": "Update Report Status (Admin - Resolve)",
+      "request": {
+        "method": "PUT",
+        "url": "{{base_url}}/reports/{{report_id}}/status",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"resolved\",\n  \"admin_notes\": \"Đã xóa nội dung vi phạm\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Update Report Status (Admin - Dismiss)",
+      "request": {
+        "method": "PUT",
+        "url": "{{base_url}}/reports/{{report_id}}/status",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"dismissed\",\n  \"admin_notes\": \"Không phát hiện vi phạm\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete Report",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/reports/{{report_id}}"
+      }
+    }
+  ]
+}

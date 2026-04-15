@@ -52,3 +52,34 @@ type LessonProgressResponseDTO struct {
 	CompletedAt      *string         `json:"completed_at,omitempty"`
 	LastAccessedAt   string          `json:"last_accessed_at"`
 }
+
+// Course Enrollments (Instructor view)
+
+type CourseEnrollmentItemDTO struct {
+	ID              uuid.UUID       `json:"id"`
+	UserID          uuid.UUID       `json:"user_id"`
+	UserEmail       string          `json:"user_email"`
+	UserName        string          `json:"user_name"`
+	EnrolledAt      string          `json:"enrolled_at"`
+	ProgressPercent decimal.Decimal `json:"progress_percentage"`
+	CompletedAt     *string         `json:"completed_at,omitempty"`
+}
+
+type CourseEnrollmentListDTO struct {
+	Enrollments []CourseEnrollmentItemDTO `json:"enrollments"`
+	Total       int64                     `json:"total"`
+	Page        int                       `json:"page"`
+	PageSize    int                       `json:"page_size"`
+}
+
+// Debug DTO (includes soft-deleted)
+
+type DebugEnrollmentDTO struct {
+	ID         uuid.UUID `json:"id"`
+	UserID     uuid.UUID `json:"user_id"`
+	UserEmail  string    `json:"user_email"`
+	CourseID   uuid.UUID `json:"course_id"`
+	EnrolledAt string    `json:"enrolled_at"`
+	IsDeleted  bool      `json:"is_deleted"`
+	DeletedAt  *string   `json:"deleted_at,omitempty"`
+}

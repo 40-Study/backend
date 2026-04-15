@@ -23,6 +23,7 @@ const (
 	TaskPaymentPending           string = "payment_pending"
 	TaskDailyCheckin             string = "daily_checkin"
 	TaskStreakWarning            string = "streak_warning"
+	TaskClassSessionReminder    string = "class_session_reminder"
 )
 
 // ===================== Payloads =====================

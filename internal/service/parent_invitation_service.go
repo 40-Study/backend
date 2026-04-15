@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
 	"strconv"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"study.com/v1/internal/constants"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
+	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/utils"
 )
@@ -27,11 +29,13 @@ type ParentInvitationServiceInterface interface {
 }
 
 type ParentInvitationService struct {
-	cfg               *config.Config
-	redisClient       *redis.Client
-	invitationRepo    repository.ParentInvitationRepositoryInterface
-	parentStudentRepo repository.ParentStudentRepositoryInterface
-	userRepo          repository.UserRepositoryInterface
+	cfg                *config.Config
+	redisClient        *redis.Client
+	invitationRepo     repository.ParentInvitationRepositoryInterface
+	parentStudentRepo  repository.ParentStudentRepositoryInterface
+	userRepo           repository.UserRepositoryInterface
+	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface
+	rabbitMQ           *rabbitmq_queue.RabbitMQService
 }
 
 func NewParentInvitationService(
@@ -40,14 +44,21 @@ func NewParentInvitationService(
 	invitationRepo repository.ParentInvitationRepositoryInterface,
 	parentStudentRepo repository.ParentStudentRepositoryInterface,
 	userRepo repository.UserRepositoryInterface,
+	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface,
 ) *ParentInvitationService {
 	return &ParentInvitationService{
-		cfg:               cfg,
-		redisClient:       redisClient,
-		invitationRepo:    invitationRepo,
-		parentStudentRepo: parentStudentRepo,
-		userRepo:          userRepo,
+		cfg:                cfg,
+		redisClient:        redisClient,
+		invitationRepo:     invitationRepo,
+		parentStudentRepo:  parentStudentRepo,
+		userRepo:           userRepo,
+		userSystemRoleRepo: userSystemRoleRepo,
 	}
+}
+
+// SetRabbitMQ inject RabbitMQ service sau khi khởi tạo (tránh circular dep)
+func (s *ParentInvitationService) SetRabbitMQ(rabbitMQ *rabbitmq_queue.RabbitMQService) {
+	s.rabbitMQ = rabbitMQ
 }
 
 func (s *ParentInvitationService) InviteParent(
@@ -79,23 +90,30 @@ func (s *ParentInvitationService) InviteParent(
 	if err != nil {
 		return nil, err
 	}
-	// Check xem học sinh có gửi tới chính mình không
+	// Cho phép tự mời chính mình nếu account có role PARENT
+	// (1 người vừa là student vừa là parent trên cùng hệ thống)
 	if student.Email == req.Email {
-		return &dto.InviteParentResponseDto{
-			Status:       "error",
-			Message:      "Bạn không thể tự mời bản thân làm phụ huynh",
-			ParentExists: false,
-		}, nil
+		hasParentRole := false
+		roles, _ := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, studentUserID, "active")
+		for _, r := range roles {
+			if r.SystemRole.Name == "PARENT" {
+				hasParentRole = true
+				break
+			}
+		}
+		if !hasParentRole {
+			return &dto.InviteParentResponseDto{
+				Status:       "error",
+				Message:      "Bạn không thể tự mời bản thân làm phụ huynh",
+				ParentExists: false,
+			}, nil
+		}
 	}
 
 	// Tìm invitation xem đã gửi chưa
 	invitation, err := s.invitationRepo.FindPendingByStudentAndEmail(ctx, studentUserID, req.Email)
 	if err != nil {
-		return &dto.InviteParentResponseDto{
-			Status:       "error",
-			Message:      "Đã có lời mời đang chờ hoặc đã gửi tới email này. Vui lòng kiểm tra lại.",
-			ParentExists: false,
-		}, err
+		return nil, err
 	}
 	if invitation != nil {
 		return &dto.InviteParentResponseDto{
@@ -158,8 +176,26 @@ func (s *ParentInvitationService) InviteParent(
 		}
 	}
 
-	//! sau này sẽ đẩy vào queue để xử lý async, hiện tại tạm thời xử lý sync
-	go utils.SendInvitationEmail(s.cfg, req.Email, student.UserName, req.Relationship, token)
+	// Đẩy vào RabbitMQ queue → worker sẽ gửi email + bắn notification
+	if s.rabbitMQ != nil {
+		msg := rabbitmq_queue.InvitationSendMessage{
+			InvitationID: newInvitation.ID,
+			StudentID:    studentUserID,
+			StudentName:  student.UserName,
+			InviteeEmail: req.Email,
+			Relationship: req.Relationship,
+			Token:        token,
+			Message:      req.Message,
+			CreatedAt:    time.Now(),
+		}
+		if err := s.rabbitMQ.PublishMessage(ctx, rabbitmq_queue.InvitationExchange, rabbitmq_queue.InvitationSendKey, msg); err != nil {
+			log.Printf("[ParentInvitation] Failed to publish to queue, fallback to sync: %v", err)
+			go utils.SendInvitationEmail(s.cfg, req.Email, student.UserName, req.Relationship, token)
+		}
+	} else {
+		// Fallback: không có RabbitMQ → gửi sync như cũ
+		go utils.SendInvitationEmail(s.cfg, req.Email, student.UserName, req.Relationship, token)
+	}
 
 	return &dto.InviteParentResponseDto{
 		Status:       "success",
@@ -212,28 +248,21 @@ func (s *ParentInvitationService) RespondToInvitation(
 		return errors.New("lời mời này không dành cho bạn")
 	}
 
-	// Nếu accept thì tạo quan hệ phụ huynh - học sinh
-	// Nếu reject thì chỉ update trạng thái lời mời
+	// Frontend gửi "accept" / "reject", map sang status tương ứng
 	// case reject
-	if action == model.ParentInvitationStatusRejected {
+	if action == "reject" {
 		now := time.Now()
 		if err := s.invitationRepo.UpdateStatus(ctx, invitation.ID, model.ParentInvitationStatusRejected, &now); err != nil {
 			return err
 		}
-		// gửi notification cho học sinh và gửi email để sau làm
+		// Đẩy event vào queue → worker gửi noti cho student
+		s.publishInvitationEvent(ctx, invitation.ID, invitation.StudentUserID, invitation.InviteeEmail, parentUserID, "rejected")
 		return nil
 	}
 
-	if action == model.ParentInvitationStatusRevoked {
-		now := time.Now()
-		if err := s.invitationRepo.UpdateStatus(ctx, invitation.ID, model.ParentInvitationStatusRevoked, &now); err != nil {
-			return err
-		}
-		return nil
-	}
 	// case accept
-	if action != model.ParentInvitationStatusAccepted {
-		return errors.New("hành động không hợp lệ")
+	if action != "accept" {
+		return errors.New("hành động không hợp lệ, chỉ chấp nhận 'accept' hoặc 'reject'")
 	}
 	// tạo quan hệ học sinh phụ huynh
 	now := time.Now()
@@ -241,6 +270,7 @@ func (s *ParentInvitationService) RespondToInvitation(
 		ParentUserID:       parentUserID,
 		StudentUserID:      invitation.StudentUserID,
 		Relationship:       invitation.Relationship,
+		Status:             model.ParentStudentStatusActive,
 		CanViewProgress:    true,
 		CanViewGrades:      true,
 		CanViewAttendance:  true,
@@ -258,9 +288,39 @@ func (s *ParentInvitationService) RespondToInvitation(
 		return err
 	}
 
-	// gửi notification cho học sinh và gửi email để sau làm
+	// Đẩy event vào queue → worker gửi noti cho student
+	s.publishInvitationEvent(ctx, invitation.ID, invitation.StudentUserID, invitation.InviteeEmail, parentUserID, "accepted")
 
 	return nil
+}
+
+// publishInvitationEvent đẩy event accept/reject vào RabbitMQ
+func (s *ParentInvitationService) publishInvitationEvent(ctx context.Context, invitationID, studentID uuid.UUID, parentEmail string, parentUserID uuid.UUID, action string) {
+	if s.rabbitMQ == nil {
+		return
+	}
+
+	parentName := parentEmail
+	parent, err := s.userRepo.FindUserByID(ctx, parentUserID)
+	if err == nil && parent != nil {
+		if parent.FullName != nil {
+			parentName = *parent.FullName
+		} else {
+			parentName = parent.UserName
+		}
+	}
+
+	msg := rabbitmq_queue.InvitationEventMessage{
+		InvitationID: invitationID,
+		StudentID:    studentID,
+		ParentName:   parentName,
+		ParentEmail:  parentEmail,
+		Action:       action,
+		CreatedAt:    time.Now(),
+	}
+	if err := s.rabbitMQ.PublishMessage(ctx, rabbitmq_queue.InvitationExchange, rabbitmq_queue.InvitationEventKey, msg); err != nil {
+		log.Printf("[ParentInvitation] Failed to publish event: %v", err)
+	}
 }
 
 // tìm lời mời đang chờ theo ID học sinh

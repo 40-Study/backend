@@ -162,6 +162,51 @@ func (h *EnrollmentHandler) UpdateLessonProgress(c *fiber.Ctx) error {
 	})
 }
 
+// GetCourseEnrollments returns enrollments for a course (instructor view)
+func (h *EnrollmentHandler) GetCourseEnrollments(c *fiber.Ctx) error {
+	courseID, err := uuid.Parse(c.Params("courseId"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid course ID", "error": err.Error(),
+		})
+	}
+
+	page := c.QueryInt("page", 1)
+	pageSize := c.QueryInt("page_size", 20)
+
+	enrollments, err := h.service.GetCourseEnrollments(c.Context(), courseID, page, pageSize)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to retrieve enrollments", "error": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Enrollments retrieved successfully", "data": enrollments,
+	})
+}
+
+// DebugCourseEnrollments returns all enrollments including soft-deleted (for debugging)
+func (h *EnrollmentHandler) DebugCourseEnrollments(c *fiber.Ctx) error {
+	courseID, err := uuid.Parse(c.Params("courseId"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid course ID", "error": err.Error(),
+		})
+	}
+
+	enrollments, err := h.service.DebugGetCourseEnrollments(c.Context(), courseID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to retrieve enrollments", "error": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Debug enrollments retrieved", "data": enrollments,
+	})
+}
+
 func extractUserID(c *fiber.Ctx) (uuid.UUID, error) {
 	if userID, ok := c.Locals("user_id").(uuid.UUID); ok {
 		return userID, nil

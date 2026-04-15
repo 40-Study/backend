@@ -1,0 +1,63 @@
+{
+  "info": {
+    "name": "Certificates (Chứng chỉ)",
+    "description": "Cấp chứng chỉ khi hoàn thành khóa học, xác thực chứng chỉ (public). PDF generation qua RabbitMQ worker.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:5000/api" },
+    { "key": "token", "value": "" },
+    { "key": "certificate_id", "value": "" },
+    { "key": "certificate_number", "value": "" },
+    { "key": "course_id", "value": "" },
+    { "key": "enrollment_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Issue Certificate",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/certificates",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"course_id\": \"{{course_id}}\",\n  \"enrollment_id\": \"{{enrollment_id}}\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get My Certificates",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/certificates?page=1&page_size=10",
+          "host": ["{{base_url}}"],
+          "path": ["certificates"],
+          "query": [
+            { "key": "page", "value": "1" },
+            { "key": "page_size", "value": "10" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Certificate by ID",
+      "request": {
+        "method": "GET",
+        "url": "{{base_url}}/certificates/{{certificate_id}}"
+      }
+    },
+    {
+      "name": "Verify Certificate (Public)",
+      "request": {
+        "method": "GET",
+        "auth": { "type": "noauth" },
+        "url": "{{base_url}}/certificates/verify/{{certificate_number}}"
+      }
+    }
+  ]
+}

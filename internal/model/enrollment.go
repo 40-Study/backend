@@ -40,6 +40,11 @@ type LessonProgress struct {
 	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
 	LastAccessedAt   time.Time       `gorm:"default:CURRENT_TIMESTAMP" json:"last_accessed_at"`
 
+	// Enhanced time tracking
+	TimeSpentSeconds    int `gorm:"default:0;column:time_spent_seconds" json:"time_spent_seconds"`       // Tong thoi gian hoc
+	LastPositionSeconds int `gorm:"default:0;column:last_position_seconds" json:"last_position_seconds"` // Vi tri video cuoi
+	ViewsCount          int `gorm:"default:0" json:"views_count"`                                        // So lan xem
+
 	// Relationships
 	User       User       `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
 	Lesson     Lesson     `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`

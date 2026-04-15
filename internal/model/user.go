@@ -14,10 +14,11 @@ type User struct {
 	ParentEmail  *string    `gorm:"type:varchar(255);column:parent_email" json:"parent_email,omitempty"`
 	DateOfBirth  *time.Time `gorm:"type:date;column:date_of_birth" json:"date_of_birth,omitempty"`
 	Bio          *string    `gorm:"type:text" json:"bio,omitempty"`
-	IsVerified   bool       `gorm:"default:false;column:is_verified" json:"is_verified"`
-	IsActive     bool       `gorm:"default:true;index;column:is_active" json:"is_active"`
+	IsVerified        bool       `gorm:"default:false;column:is_verified" json:"is_verified"`
+	IsActive          bool       `gorm:"default:true;index;column:is_active" json:"is_active"`
 	LastLoginAt       *time.Time `gorm:"column:last_login_at" json:"last_login_at,omitempty"`
 	PasswordChangedAt *time.Time `gorm:"column:password_changed_at" json:"password_changed_at,omitempty"`
+	Timezone          *string    `gorm:"type:varchar(50);default:'Asia/Ho_Chi_Minh'" json:"timezone,omitempty"` // IANA timezone
 
 	// Many-to-many relationship with roles
 	UserOrganizationRoles []UserOrganizationRole `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`

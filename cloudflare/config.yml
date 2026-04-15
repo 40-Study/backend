@@ -1,0 +1,24 @@
+tunnel: a11c1b4d-3496-4934-b4a8-758e4d173160
+credentials-file: C:\Users\toanx\.cloudflared\a11c1b4d-3496-4934-b4a8-758e4d173160.json
+
+# All traffic goes through Nginx for bandwidth control (10MB/s limit)
+ingress:
+  - hostname: fortex.ai.vn
+    service: http://localhost:80
+
+  - hostname: api.fortex.ai.vn
+    service: http://localhost:80
+
+  - hostname: livekit.fortex.ai.vn
+    service: http://localhost:80
+
+  - hostname: cdn.fortex.ai.vn
+    service: http://localhost:80
+
+  - hostname: minio.fortex.ai.vn
+    service: http://localhost:80
+
+  - hostname: mq.fortex.ai.vn
+    service: http://localhost:80
+
+  - service: http_status:404

@@ -140,13 +140,15 @@ func (s *AuthService) clearFailedLogin(ctx context.Context, email string) {
 // TTL: 5 minutes
 // Security: OTP is stored as hash (SHA256 with email salt) to prevent plaintext exposure
 type PendingRegistration struct {
-	Email        string `json:"email"`
-	PasswordHash string `json:"password_hash"`
-	UserName     string `json:"user_name"`
-	FullName     string `json:"full_name,omitempty"`
-	OTPHash      string `json:"otp_hash"` // Hashed OTP, not plaintext
-	Attempts     int    `json:"attempts"` // OTP verification attempts
-	CreatedAt    string `json:"created_at"`
+	Email          string `json:"email"`
+	PasswordHash   string `json:"password_hash"`
+	UserName       string `json:"user_name"`
+	FullName       string `json:"full_name,omitempty"`
+	OTPHash        string `json:"otp_hash"`    // Hashed OTP, not plaintext
+	Attempts       int    `json:"attempts"`    // OTP verification attempts
+	CreatedAt      string `json:"created_at"`
+	IsReactivation bool   `json:"is_reactivation,omitempty"` // True if reactivating a deleted account
+	ExistingUserID string `json:"existing_user_id,omitempty"` // UUID of existing user to reactivate
 }
 
 func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterRequestDto) error {
@@ -154,8 +156,17 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 	if err != nil {
 		return fmt.Errorf("failed to check email: %w", err)
 	}
+
+	// Check if email is already registered by an active user
+	var isReactivation bool
+	var existingUserID string
 	if existingUser != nil {
-		return errors.New("email already registered")
+		if existingUser.IsActive {
+			return errors.New("email already registered")
+		}
+		// User đã xóa tài khoản → cho phép tái kích hoạt
+		isReactivation = true
+		existingUserID = existingUser.ID.String()
 	}
 
 	// ===== 5. Hash password =====
@@ -172,13 +183,15 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 	otpHash := utils.HashOTP(otp, req.Email)
 
 	pendingData := PendingRegistration{
-		Email:        req.Email,
-		PasswordHash: passwordHash,
-		UserName:     req.UserName,
-		FullName:     req.FullName,
-		OTPHash:      otpHash,
-		Attempts:     0,
-		CreatedAt:    time.Now().Format(time.RFC3339),
+		Email:          req.Email,
+		PasswordHash:   passwordHash,
+		UserName:       req.UserName,
+		FullName:       req.FullName,
+		OTPHash:        otpHash,
+		Attempts:       0,
+		CreatedAt:      time.Now().Format(time.RFC3339),
+		IsReactivation: isReactivation,
+		ExistingUserID: existingUserID,
 	}
 
 	// ===== 8. Save to Redis with TTL (5 minutes) =====
@@ -243,17 +256,47 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 		fullName = &pending.FullName
 	}
 
-	user := &model.User{
-		Email:        pending.Email,
-		PasswordHash: pending.PasswordHash,
-		UserName:     pending.UserName,
-		FullName:     fullName,
-		IsVerified:   true,
-		IsActive:     true,
-	}
+	var user *model.User
 
-	if err := s.userRepo.CreateUser(ctx, user); err != nil {
-		return nil, fmt.Errorf("failed to create user: %w", err)
+	if pending.IsReactivation && pending.ExistingUserID != "" {
+		// Tái kích hoạt tài khoản đã xóa
+		existingID, err := uuid.Parse(pending.ExistingUserID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid existing user ID: %w", err)
+		}
+
+		user, err = s.userRepo.FindUserByID(ctx, existingID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find existing user: %w", err)
+		}
+		if user == nil {
+			return nil, errors.New("existing user not found")
+		}
+
+		// Update user info với data mới
+		user.PasswordHash = pending.PasswordHash
+		user.UserName = pending.UserName
+		user.FullName = fullName
+		user.IsVerified = true
+		user.IsActive = true
+
+		if err := s.userRepo.UpdateUser(ctx, user); err != nil {
+			return nil, fmt.Errorf("failed to reactivate user: %w", err)
+		}
+	} else {
+		// Tạo user mới
+		user = &model.User{
+			Email:        pending.Email,
+			PasswordHash: pending.PasswordHash,
+			UserName:     pending.UserName,
+			FullName:     fullName,
+			IsVerified:   true,
+			IsActive:     true,
+		}
+
+		if err := s.userRepo.CreateUser(ctx, user); err != nil {
+			return nil, fmt.Errorf("failed to create user: %w", err)
+		}
 	}
 
 	// Không gán role ở đây — role được tạo khi user gọi SelectRole lần đầu

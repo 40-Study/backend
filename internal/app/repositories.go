@@ -82,6 +82,27 @@ type Repositories struct {
 
 	// ===== User Preference =====
 	UserPreference *repository.UserPreferenceRepository
+
+	// ===== Schedule =====
+	Schedule *repository.ScheduleRepository
+
+	// ===== Quiz =====
+	Quiz *repository.QuizRepository
+
+	// ===== Grade =====
+	Grade *repository.GradeRepository
+
+	// ===== Exercise =====
+	Exercise *repository.ExerciseRepository
+
+	// ===== Review =====
+	Review *repository.ReviewRepository
+
+	// ===== Certificate =====
+	Certificate *repository.CertificateRepository
+
+	// ===== Report =====
+	Report *repository.ReportRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -161,5 +182,26 @@ func InitRepositories(db *gorm.DB) *Repositories {
 
 		// ===== User Preference =====
 		UserPreference: repository.NewUserPreferenceRepository(db),
+
+		// ===== Schedule =====
+		Schedule: repository.NewScheduleRepository(db),
+
+		// ===== Quiz =====
+		Quiz: repository.NewQuizRepository(db),
+
+		// ===== Grade =====
+		Grade: repository.NewGradeRepository(db),
+
+		// ===== Exercise =====
+		Exercise: repository.NewExerciseRepository(db),
+
+		// ===== Review =====
+		Review: repository.NewReviewRepository(db),
+
+		// ===== Certificate =====
+		Certificate: repository.NewCertificateRepository(db),
+
+		// ===== Report =====
+		Report: repository.NewReportRepository(db),
 	}
 }

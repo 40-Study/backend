@@ -1,17 +1,18 @@
 {
   "info": {
     "name": "Quizzes (Câu hỏi kiểm tra)",
-    "description": "Quiz có thể thuộc về Lesson, Course, hoặc LivestreamSession. Hỗ trợ trigger_type: manual, scheduled, ai_triggered, video_checkpoint.",
+    "description": "Quiz có thể thuộc về Lesson, Course, hoặc LivestreamSession. Hỗ trợ trigger_type: manual, scheduled, ai_triggered, video_checkpoint. Redis cache cho quiz detail.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "base_url", "value": "http://localhost:3000/api" },
+    { "key": "base_url", "value": "http://localhost:5000/api" },
     { "key": "token", "value": "" },
     { "key": "quiz_id", "value": "" },
     { "key": "lesson_id", "value": "" },
     { "key": "course_id", "value": "" },
     { "key": "session_id", "value": "" },
-    { "key": "question_id", "value": "" }
+    { "key": "question_id", "value": "" },
+    { "key": "attempt_id", "value": "" }
   ],
   "auth": {
     "type": "bearer",
@@ -19,156 +20,285 @@
   },
   "item": [
     {
-      "name": "Create Quiz (Manual - Live)",
-      "request": {
-        "method": "POST",
-        "url": "{{base_url}}/quizzes",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"title\": \"Pop Quiz - Variables\",\n  \"description\": \"Quick check on variable concepts\",\n  \"time_limit_minutes\": 5,\n  \"pass_percentage\": 70,\n  \"trigger_type\": \"manual\",\n  \"shuffle_questions\": true,\n  \"shuffle_answers\": true,\n  \"show_correct_answers\": true\n}"
+      "name": "Quiz CRUD",
+      "item": [
+        {
+          "name": "Create Quiz (Manual - Live)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/quizzes",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"title\": \"Pop Quiz - Variables\",\n  \"description\": \"Quick check on variable concepts\",\n  \"time_limit_minutes\": 5,\n  \"pass_percentage\": 70,\n  \"trigger_type\": \"manual\",\n  \"shuffle_questions\": true,\n  \"shuffle_answers\": true,\n  \"show_correct_answers\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Create Quiz (Scheduled)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/quizzes",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lesson_id\": \"{{lesson_id}}\",\n  \"title\": \"End of Lesson Quiz\",\n  \"description\": \"Review what you learned\",\n  \"time_limit_minutes\": 10,\n  \"pass_percentage\": 80,\n  \"trigger_type\": \"scheduled\",\n  \"scheduled_at\": \"2026-04-20T10:00:00Z\",\n  \"max_attempts\": 3\n}"
+            }
+          }
+        },
+        {
+          "name": "Create Quiz (Video Checkpoint)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/quizzes",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lesson_id\": \"{{lesson_id}}\",\n  \"title\": \"Comprehension Check\",\n  \"time_limit_minutes\": 3,\n  \"pass_percentage\": 100,\n  \"trigger_type\": \"video_checkpoint\",\n  \"video_timestamp\": 300\n}"
+            }
+          }
+        },
+        {
+          "name": "Get All Quizzes",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/quizzes?page=1&page_size=10",
+              "host": ["{{base_url}}"],
+              "path": ["quizzes"],
+              "query": [
+                { "key": "lesson_id", "value": "", "disabled": true },
+                { "key": "course_id", "value": "", "disabled": true },
+                { "key": "session_id", "value": "", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "10" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Quiz By ID (with Questions)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}"
+          }
+        },
+        {
+          "name": "Update Quiz",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Quiz Title\",\n  \"time_limit_minutes\": 15,\n  \"pass_percentage\": 75\n}"
+            }
+          }
+        },
+        {
+          "name": "Duplicate Quiz",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/duplicate"
+          }
+        },
+        {
+          "name": "Delete Quiz",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}"
+          }
         }
-      }
+      ]
     },
     {
-      "name": "Create Quiz (Scheduled)",
-      "request": {
-        "method": "POST",
-        "url": "{{base_url}}/quizzes",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"lesson_id\": \"{{lesson_id}}\",\n  \"title\": \"End of Lesson Quiz\",\n  \"description\": \"Review what you learned\",\n  \"time_limit_minutes\": 10,\n  \"pass_percentage\": 80,\n  \"trigger_type\": \"scheduled\",\n  \"scheduled_at\": \"2026-04-01T10:00:00Z\",\n  \"max_attempts\": 3\n}"
+      "name": "Questions",
+      "item": [
+        {
+          "name": "Add Question (Single Choice)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/questions",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_text\": \"What is a variable?\",\n  \"question_type\": \"single_choice\",\n  \"explanation\": \"A variable is a named storage location in memory.\",\n  \"points\": 1,\n  \"display_order\": 1,\n  \"answers\": [\n    { \"answer_text\": \"A named storage location\", \"is_correct\": true, \"display_order\": 1 },\n    { \"answer_text\": \"A function\", \"is_correct\": false, \"display_order\": 2 },\n    { \"answer_text\": \"A loop\", \"is_correct\": false, \"display_order\": 3 },\n    { \"answer_text\": \"A class\", \"is_correct\": false, \"display_order\": 4 }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Add Question (Multiple Choice)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/questions",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_text\": \"Which are primitive types in Go?\",\n  \"question_type\": \"multiple_choice\",\n  \"points\": 2,\n  \"display_order\": 2,\n  \"answers\": [\n    { \"answer_text\": \"int\", \"is_correct\": true, \"display_order\": 1 },\n    { \"answer_text\": \"string\", \"is_correct\": true, \"display_order\": 2 },\n    { \"answer_text\": \"slice\", \"is_correct\": false, \"display_order\": 3 },\n    { \"answer_text\": \"bool\", \"is_correct\": true, \"display_order\": 4 }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Add Question (True/False)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/questions",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_text\": \"Go is a compiled language?\",\n  \"question_type\": \"true_false\",\n  \"points\": 1,\n  \"display_order\": 3,\n  \"answers\": [\n    { \"answer_text\": \"True\", \"is_correct\": true, \"display_order\": 1 },\n    { \"answer_text\": \"False\", \"is_correct\": false, \"display_order\": 2 }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Bulk Create Questions",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/questions/bulk",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"questions\": [\n    {\n      \"question_text\": \"What is 2+2?\",\n      \"question_type\": \"single_choice\",\n      \"points\": 1,\n      \"display_order\": 1,\n      \"answers\": [\n        { \"answer_text\": \"3\", \"is_correct\": false, \"display_order\": 1 },\n        { \"answer_text\": \"4\", \"is_correct\": true, \"display_order\": 2 }\n      ]\n    },\n    {\n      \"question_text\": \"Is the sky blue?\",\n      \"question_type\": \"true_false\",\n      \"points\": 1,\n      \"display_order\": 2,\n      \"answers\": [\n        { \"answer_text\": \"True\", \"is_correct\": true, \"display_order\": 1 },\n        { \"answer_text\": \"False\", \"is_correct\": false, \"display_order\": 2 }\n      ]\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Questions by Quiz",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/questions"
+          }
+        },
+        {
+          "name": "Update Question",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/questions/{{question_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_text\": \"Updated question text\",\n  \"points\": 2\n}"
+            }
+          }
+        },
+        {
+          "name": "Reorder Questions",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/questions/reorder",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_ids\": [\"<question_uuid_3>\", \"<question_uuid_1>\", \"<question_uuid_2>\"]\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Question",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/questions/{{question_id}}"
+          }
         }
-      }
+      ]
     },
     {
-      "name": "Create Quiz (Video Checkpoint)",
-      "request": {
-        "method": "POST",
-        "url": "{{base_url}}/quizzes",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"lesson_id\": \"{{lesson_id}}\",\n  \"title\": \"Comprehension Check\",\n  \"description\": \"Make sure you understand before continuing\",\n  \"time_limit_minutes\": 3,\n  \"pass_percentage\": 100,\n  \"trigger_type\": \"video_checkpoint\",\n  \"video_timestamp\": 300,\n  \"max_attempts\": null\n}"
+      "name": "Quiz Attempts (Làm quiz)",
+      "item": [
+        {
+          "name": "Start Quiz",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/start"
+          }
+        },
+        {
+          "name": "Save Answer (Auto-save)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/attempts/{{attempt_id}}/save-answer",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_id\": \"<question_uuid>\",\n  \"selected_answer_ids\": [\"<answer_uuid>\"]\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Attempt Progress",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/attempts/{{attempt_id}}/progress"
+          }
+        },
+        {
+          "name": "Submit Quiz",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/submit",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answers\": [\n    { \"question_id\": \"<question_uuid_1>\", \"selected_answer_ids\": [\"<answer_uuid>\"] },\n    { \"question_id\": \"<question_uuid_2>\", \"selected_answer_ids\": [\"<answer_uuid_a>\", \"<answer_uuid_b>\"] },\n    { \"question_id\": \"<question_uuid_3>\", \"text_answer\": \"My answer\" }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Get My Attempts",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/attempts"
+          }
+        },
+        {
+          "name": "Get Attempt Detail",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/attempts/{{attempt_id}}"
+          }
+        },
+        {
+          "name": "Get Quiz Results (Teacher)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/results"
+          }
+        },
+        {
+          "name": "Get Quiz Statistics",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/quizzes/{{quiz_id}}/statistics"
+          }
         }
-      }
+      ]
     },
     {
-      "name": "Create Quiz (AI Triggered)",
-      "request": {
-        "method": "POST",
-        "url": "{{base_url}}/quizzes",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"lesson_id\": \"{{lesson_id}}\",\n  \"title\": \"Focus Check\",\n  \"description\": \"Quick quiz to ensure engagement\",\n  \"time_limit_minutes\": 2,\n  \"pass_percentage\": 50,\n  \"trigger_type\": \"ai_triggered\",\n  \"is_ai_generated\": true\n}"
+      "name": "My Quizzes",
+      "item": [
+        {
+          "name": "Get My Created Quizzes",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/me/quizzes?page=1&page_size=10",
+              "host": ["{{base_url}}"],
+              "path": ["me", "quizzes"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "10" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get My Quiz History",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/me/quiz-history"
+          }
         }
-      }
-    },
-    {
-      "name": "Get Quiz By ID",
-      "request": {
-        "method": "GET",
-        "url": "{{base_url}}/quizzes/{{quiz_id}}"
-      }
-    },
-    {
-      "name": "Get Quizzes by Lesson",
-      "request": {
-        "method": "GET",
-        "url": "{{base_url}}/lessons/{{lesson_id}}/quizzes"
-      }
-    },
-    {
-      "name": "Get Quizzes by Session (Live)",
-      "request": {
-        "method": "GET",
-        "url": "{{base_url}}/sessions/{{session_id}}/quizzes"
-      }
-    },
-    {
-      "name": "Update Quiz",
-      "request": {
-        "method": "PUT",
-        "url": "{{base_url}}/quizzes/{{quiz_id}}",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"title\": \"Updated Quiz Title\",\n  \"time_limit_minutes\": 15,\n  \"pass_percentage\": 75\n}"
-        }
-      }
-    },
-    {
-      "name": "Delete Quiz",
-      "request": {
-        "method": "DELETE",
-        "url": "{{base_url}}/quizzes/{{quiz_id}}"
-      }
-    },
-    {
-      "name": "Trigger Quiz (Manual - Live)",
-      "request": {
-        "method": "POST",
-        "url": "{{base_url}}/quizzes/{{quiz_id}}/trigger",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"session_id\": \"{{session_id}}\"\n}"
-        }
-      }
-    },
-    {
-      "name": "Add Question",
-      "request": {
-        "method": "POST",
-        "url": "{{base_url}}/quizzes/{{quiz_id}}/questions",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"question_text\": \"What is a variable?\",\n  \"question_type\": \"single_choice\",\n  \"explanation\": \"A variable is a named storage location in memory.\",\n  \"points\": 1,\n  \"display_order\": 1,\n  \"answers\": [\n    { \"answer_text\": \"A named storage location\", \"is_correct\": true, \"display_order\": 1 },\n    { \"answer_text\": \"A function\", \"is_correct\": false, \"display_order\": 2 },\n    { \"answer_text\": \"A loop\", \"is_correct\": false, \"display_order\": 3 },\n    { \"answer_text\": \"A class\", \"is_correct\": false, \"display_order\": 4 }\n  ]\n}"
-        }
-      }
-    },
-    {
-      "name": "Get Questions",
-      "request": {
-        "method": "GET",
-        "url": "{{base_url}}/quizzes/{{quiz_id}}/questions"
-      }
-    },
-    {
-      "name": "Delete Question",
-      "request": {
-        "method": "DELETE",
-        "url": "{{base_url}}/quizzes/{{quiz_id}}/questions/{{question_id}}"
-      }
-    },
-    {
-      "name": "Start Quiz Attempt",
-      "request": {
-        "method": "POST",
-        "url": "{{base_url}}/quizzes/{{quiz_id}}/attempts"
-      }
-    },
-    {
-      "name": "Submit Quiz Attempt",
-      "request": {
-        "method": "POST",
-        "url": "{{base_url}}/quizzes/{{quiz_id}}/attempts/{{attempt_id}}/submit",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"answers\": [\n    { \"question_id\": \"<question_uuid>\", \"selected_answer_ids\": [\"<answer_uuid>\"] }\n  ]\n}"
-        }
-      }
-    },
-    {
-      "name": "Get My Attempts",
-      "request": {
-        "method": "GET",
-        "url": "{{base_url}}/quizzes/{{quiz_id}}/attempts"
-      }
+      ]
     }
   ]
 }

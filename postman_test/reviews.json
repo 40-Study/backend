@@ -1,0 +1,85 @@
+{
+  "info": {
+    "name": "Reviews (Đánh giá khóa học)",
+    "description": "Đánh giá khóa học 1-5 sao, reaction (helpful/not_helpful). Redis cache cho rating trung bình.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:5000/api" },
+    { "key": "token", "value": "" },
+    { "key": "course_id", "value": "" },
+    { "key": "review_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Create Review",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/courses/{{course_id}}/reviews",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"rating\": 5,\n  \"comment\": \"Khóa học rất hay, giảng viên nhiệt tình!\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Course Reviews (Public)",
+      "request": {
+        "method": "GET",
+        "auth": { "type": "noauth" },
+        "url": {
+          "raw": "{{base_url}}/courses/{{course_id}}/reviews?page=1&page_size=10",
+          "host": ["{{base_url}}"],
+          "path": ["courses", "{{course_id}}", "reviews"],
+          "query": [
+            { "key": "page", "value": "1" },
+            { "key": "page_size", "value": "10" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Update Review",
+      "request": {
+        "method": "PUT",
+        "url": "{{base_url}}/reviews/{{review_id}}",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"rating\": 4,\n  \"comment\": \"Cập nhật: nội dung tốt nhưng bài tập hơi ít\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Delete Review",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/reviews/{{review_id}}"
+      }
+    },
+    {
+      "name": "React to Review (Helpful)",
+      "request": {
+        "method": "POST",
+        "url": "{{base_url}}/reviews/{{review_id}}/reaction",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reaction_type\": \"helpful\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Remove Reaction",
+      "request": {
+        "method": "DELETE",
+        "url": "{{base_url}}/reviews/{{review_id}}/reaction"
+      }
+    }
+  ]
+}

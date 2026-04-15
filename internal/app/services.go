@@ -78,6 +78,8 @@ type Services struct {
 
 	// ===== Parent Invitation =====
 	ParentInvitation *service.ParentInvitationService
+	// ===== Parent Dashboard =====
+	ParentDashboard *service.ParentDashboardService
 	// ===== Discussion Forum =====
 	Discussion *service.DiscussionService
 
@@ -86,6 +88,27 @@ type Services struct {
 
 	// ===== User Preference =====
 	UserPreference *service.UserPreferenceService
+
+	// ===== Schedule =====
+	Schedule *service.ScheduleService
+
+	// ===== Quiz =====
+	Quiz *service.QuizService
+
+	// ===== Grade =====
+	Grade *service.GradeService
+
+	// ===== Exercise =====
+	Exercise *service.ExerciseService
+
+	// ===== Review =====
+	Review *service.ReviewService
+
+	// ===== Certificate =====
+	Certificate *service.CertificateService
+
+	// ===== Report =====
+	Report *service.ReportService
 }
 
 func InitServices(resources *Resources, repos *Repositories, notifier *socket.Notifier) *Services {
@@ -116,6 +139,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 			resources.MinioWrapper,
 			uploadSvc,
 			resources.RabbitMQ,
+			resources.Config,
 		)
 		if err != nil {
 			log.Printf("Warning: Failed to create video processing service: %v", err)
@@ -215,6 +239,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		repos.ParentInvitation,
 		repos.ParentStudent,
 		repos.User,
+		repos.UserSystemRole,
 	)
 
 	// Inject vào AuthService và OAuthService để gọi LinkInvitationToNewUser khi register
@@ -240,6 +265,17 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 
 		// ===== Parent Invitation =====
 		ParentInvitation: parentInvitationSvc,
+
+		// ===== Parent Dashboard =====
+		ParentDashboard: service.NewParentDashboardService(
+			repos.ParentStudent,
+			repos.User,
+			repos.Enrollment,
+			repos.Grade,
+			repos.Schedule,
+			repos.Submission,
+			repos.UserStats,
+		),
 
 		// ===== Role =====
 		Role:       service.NewRoleService(repos.Role, repos.Permission),
@@ -285,7 +321,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag),
 		Section:       service.NewSectionService(repos.Section, repos.Course),
 		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, service.NewUploadService(resources.MinioClient, resources.Config)),
-		LessonContent: service.NewLessonContentService(repos.Lesson, service.NewUploadService(resources.MinioClient, resources.Config)),
+		LessonContent: service.NewLessonContentService(repos.Lesson, service.NewUploadService(resources.MinioClient, resources.Config), uploadSvc),
 		Enrollment:    service.NewEnrollmentService(repos.Enrollment, repos.Course, repos.Lesson),
 
 		// ===== Upload & Video =====
@@ -343,6 +379,27 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 
 		// ===== User Preference =====
 		UserPreference: service.NewUserPreferenceService(repos.UserPreference),
+
+		// ===== Schedule (Asynq for reminders + Redis cache) =====
+		Schedule: service.NewScheduleService(repos.Schedule, resources.Redis, resources.Queue),
+
+		// ===== Quiz (Redis cache) =====
+		Quiz: service.NewQuizService(repos.Quiz, resources.Redis),
+
+		// ===== Grade (Redis cache) =====
+		Grade: service.NewGradeService(repos.Grade, resources.Redis),
+
+		// ===== Exercise (RabbitMQ for code execution + Redis cache) =====
+		Exercise: service.NewExerciseService(repos.Exercise, resources.Redis, resources.RabbitMQ),
+
+		// ===== Review (Redis cache for ratings) =====
+		Review: service.NewReviewService(repos.Review, resources.Redis),
+
+		// ===== Certificate (RabbitMQ for PDF generation) =====
+		Certificate: service.NewCertificateService(repos.Certificate, resources.Redis, resources.RabbitMQ),
+
+		// ===== Report =====
+		Report: service.NewReportService(repos.Report),
 	}
 }
 
