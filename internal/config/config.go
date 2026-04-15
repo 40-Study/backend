@@ -125,7 +125,7 @@ func LoadConfig() (*Config, error) {
 	viper.Set("ENVIRONMENT", env)
 
 	// Set default values
-	viper.SetDefault("PORT", "3000")
+	viper.SetDefault("PORT", "5000")
 	viper.SetDefault("HOST", "localhost")
 	viper.SetDefault("REDIS_DB", 0)
 	viper.SetDefault("MINIO_USE_SSL", false)

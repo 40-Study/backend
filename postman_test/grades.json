@@ -1,0 +1,220 @@
+{
+  "info": {
+    "name": "Grades (Quản lý điểm)",
+    "description": "Quản lý cột điểm, nhập điểm, tính điểm tổng kết (weighted average, GPA, letter grade). Redis cache cho grade book.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:5000/api" },
+    { "key": "token", "value": "" },
+    { "key": "class_id", "value": "" },
+    { "key": "column_id", "value": "" },
+    { "key": "grade_id", "value": "" },
+    { "key": "student_id", "value": "" },
+    { "key": "final_grade_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Grade Columns (Cấu trúc cột điểm)",
+      "item": [
+        {
+          "name": "Create Grade Column",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/classes/{{class_id}}/grade-columns",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Giữa kỳ\",\n  \"grade_type\": \"midterm\",\n  \"weight\": 0.3,\n  \"max_score\": 10,\n  \"display_order\": 1,\n  \"is_required\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Create Grade Column - Final",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/classes/{{class_id}}/grade-columns",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Cuối kỳ\",\n  \"grade_type\": \"final\",\n  \"weight\": 0.5,\n  \"max_score\": 10,\n  \"display_order\": 2,\n  \"is_required\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Create Grade Column - Attendance",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/classes/{{class_id}}/grade-columns",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Chuyên cần\",\n  \"grade_type\": \"attendance\",\n  \"weight\": 0.2,\n  \"max_score\": 10,\n  \"display_order\": 3\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Grade Columns",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/classes/{{class_id}}/grade-columns"
+          }
+        },
+        {
+          "name": "Update Grade Column",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/classes/{{class_id}}/grade-columns/{{column_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"weight\": 0.35,\n  \"max_score\": 10\n}"
+            }
+          }
+        },
+        {
+          "name": "Reorder Grade Columns",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/classes/{{class_id}}/grade-columns/reorder",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"column_ids\": [\"<column_uuid_1>\", \"<column_uuid_2>\", \"<column_uuid_3>\"]\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Grade Column",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/classes/{{class_id}}/grade-columns/{{column_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Grades (Nhập điểm)",
+      "item": [
+        {
+          "name": "Create Grade",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/classes/{{class_id}}/grades",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"student_id\": \"<student_uuid>\",\n  \"grade_type\": \"midterm\",\n  \"title\": \"Bài thi giữa kỳ\",\n  \"score\": 8.5,\n  \"max_score\": 10,\n  \"weight\": 0.3,\n  \"feedback\": \"Làm tốt phần lý thuyết\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Bulk Create Grades",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/classes/{{class_id}}/grades/bulk",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"grades\": [\n    { \"student_id\": \"<student_uuid_1>\", \"grade_type\": \"midterm\", \"title\": \"Giữa kỳ\", \"score\": 8.5, \"max_score\": 10, \"weight\": 0.3 },\n    { \"student_id\": \"<student_uuid_2>\", \"grade_type\": \"midterm\", \"title\": \"Giữa kỳ\", \"score\": 7.0, \"max_score\": 10, \"weight\": 0.3 },\n    { \"student_id\": \"<student_uuid_3>\", \"grade_type\": \"midterm\", \"title\": \"Giữa kỳ\", \"score\": 9.0, \"max_score\": 10, \"weight\": 0.3 }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Grade Book (Class)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/classes/{{class_id}}/grades"
+          }
+        },
+        {
+          "name": "Get Student Grades",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/classes/{{class_id}}/grades/student/{{student_id}}"
+          }
+        },
+        {
+          "name": "Update Grade",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/grades/{{grade_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"score\": 9.0,\n  \"feedback\": \"Chấm lại, cộng thêm 0.5 điểm\",\n  \"is_final\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Grade",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/grades/{{grade_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Final Grades (Điểm tổng kết)",
+      "item": [
+        {
+          "name": "Calculate Final Grades",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/classes/{{class_id}}/final-grades/calculate"
+          }
+        },
+        {
+          "name": "Get Final Grades",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/classes/{{class_id}}/final-grades"
+          }
+        },
+        {
+          "name": "Update Final Grade",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/classes/{{class_id}}/final-grades/{{final_grade_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"letter_grade\": \"A\",\n  \"gpa\": 3.7,\n  \"notes\": \"Điều chỉnh do có điểm cộng hoạt động\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Finalize Final Grades (Chốt điểm)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/classes/{{class_id}}/final-grades/finalize"
+          }
+        }
+      ]
+    },
+    {
+      "name": "My Grades (Điểm của tôi)",
+      "item": [
+        {
+          "name": "Get All My Grades",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/me/grades"
+          }
+        },
+        {
+          "name": "Get My Grades in Class",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/me/grades/class/{{class_id}}"
+          }
+        }
+      ]
+    }
+  ]
+}

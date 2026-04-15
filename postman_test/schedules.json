@@ -1,0 +1,266 @@
+{
+  "info": {
+    "name": "Schedules & Sessions (Lịch học & Buổi học)",
+    "description": "Quản lý lịch học định kỳ, buổi học cụ thể, điểm danh theo buổi, thời khóa biểu cá nhân, cài đặt nhắc nhở (Asynq).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:5000/api" },
+    { "key": "token", "value": "" },
+    { "key": "class_id", "value": "" },
+    { "key": "schedule_id", "value": "" },
+    { "key": "session_id", "value": "" },
+    { "key": "attendance_id", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Class Schedules (Lịch định kỳ)",
+      "item": [
+        {
+          "name": "Create Schedule",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/classes/{{class_id}}/schedules",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"day_of_week\": 1,\n  \"start_time\": \"14:00:00\",\n  \"end_time\": \"15:30:00\",\n  \"room\": \"A301\",\n  \"effective_from\": \"2026-04-01\",\n  \"effective_until\": \"2026-06-30\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Schedules by Class",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/classes/{{class_id}}/schedules"
+          }
+        },
+        {
+          "name": "Get Schedule by ID",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/classes/{{class_id}}/schedules/{{schedule_id}}"
+          }
+        },
+        {
+          "name": "Update Schedule",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/classes/{{class_id}}/schedules/{{schedule_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"start_time\": \"15:00:00\",\n  \"end_time\": \"16:30:00\",\n  \"room\": \"B202\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Schedule",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/classes/{{class_id}}/schedules/{{schedule_id}}"
+          }
+        },
+        {
+          "name": "Get Class Timetable",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/classes/{{class_id}}/timetable"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Class Sessions (Buổi học)",
+      "item": [
+        {
+          "name": "Create Ad-hoc Session",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/classes/{{class_id}}/sessions",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2026-04-20\",\n  \"start_time\": \"09:00:00\",\n  \"end_time\": \"10:30:00\",\n  \"topic\": \"Ôn tập giữa kỳ\",\n  \"notes\": \"Mang laptop\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Generate Sessions from Schedule",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/classes/{{class_id}}/sessions/generate",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"start_date\": \"2026-04-01\",\n  \"end_date\": \"2026-06-30\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Sessions by Class",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/classes/{{class_id}}/sessions?page=1&page_size=20",
+              "host": ["{{base_url}}"],
+              "path": ["classes", "{{class_id}}", "sessions"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Session by ID",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/classes/{{class_id}}/sessions/{{session_id}}"
+          }
+        },
+        {
+          "name": "Update Session",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/classes/{{class_id}}/sessions/{{session_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic\": \"Chương 5: OOP\",\n  \"status\": \"in_progress\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Cancel Session",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/classes/{{class_id}}/sessions/{{session_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cancel_reason\": \"Giáo viên bận họp\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Session Attendance (Điểm danh)",
+      "item": [
+        {
+          "name": "Get Session Attendances",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/sessions/{{session_id}}/attendances"
+          }
+        },
+        {
+          "name": "Mark Attendance",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/sessions/{{session_id}}/attendances",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"student_id\": \"<student_uuid>\",\n  \"status\": \"present\",\n  \"note\": \"Đến đúng giờ\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Bulk Mark Attendance",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/sessions/{{session_id}}/attendances/bulk",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"attendances\": [\n    { \"student_id\": \"<student_uuid_1>\", \"status\": \"present\" },\n    { \"student_id\": \"<student_uuid_2>\", \"status\": \"late\", \"note\": \"Đến muộn 10 phút\" },\n    { \"student_id\": \"<student_uuid_3>\", \"status\": \"absent\" }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Update Attendance",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/sessions/{{session_id}}/attendances/{{attendance_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"excused\",\n  \"note\": \"Có phép nghỉ\",\n  \"late_minutes\": 0\n}"
+            }
+          }
+        },
+        {
+          "name": "Student Check-in",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/sessions/{{session_id}}/check-in"
+          }
+        },
+        {
+          "name": "Student Check-out",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/sessions/{{session_id}}/check-out"
+          }
+        }
+      ]
+    },
+    {
+      "name": "My Timetable & Attendance",
+      "item": [
+        {
+          "name": "Get My Timetable",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/me/timetable"
+          }
+        },
+        {
+          "name": "Get My Attendance History",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/me/attendances?page=1&page_size=20",
+              "host": ["{{base_url}}"],
+              "path": ["me", "attendances"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "20" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reminder Settings (Nhắc nhở)",
+      "item": [
+        {
+          "name": "Get Reminder Settings",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/reminders/settings"
+          }
+        },
+        {
+          "name": "Update Reminder Setting",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/reminders/settings",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_type\": \"class\",\n  \"remind_before_minutes\": [30, 15, 5],\n  \"channels\": [\"push\", \"email\"],\n  \"is_enabled\": true\n}"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

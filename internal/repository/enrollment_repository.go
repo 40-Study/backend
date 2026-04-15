@@ -104,6 +104,7 @@ func (r *EnrollmentRepository) GetByUserID(ctx context.Context, userID uuid.UUID
 	if err := utils.ApplyPagination(query, page, pageSize).
 		Preload("Course").
 		Preload("Course.Category").
+		Preload("Course.Instructor").
 		Order("enrolled_at DESC").
 		Find(&enrollments).Error; err != nil {
 		return nil, 0, err

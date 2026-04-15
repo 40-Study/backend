@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,6 +39,9 @@ func (r *ParentInvitationRepository) FindByID(ctx context.Context, id uuid.UUID)
 	var invitation model.ParentInvitation
 	err := r.db.WithContext(ctx).First(&invitation, "id = ?", id).Error
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &invitation, nil
@@ -46,7 +50,13 @@ func (r *ParentInvitationRepository) FindByID(ctx context.Context, id uuid.UUID)
 func (r *ParentInvitationRepository) FindByTokenHash(ctx context.Context, tokenHash string) (*model.ParentInvitation, error) {
 	var invitation model.ParentInvitation
 	err := r.db.WithContext(ctx).Preload("Student").First(&invitation, "token_hash = ?", tokenHash).Error
-	return &invitation, err
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &invitation, nil
 }
 
 func (r *ParentInvitationRepository) FindPendingByStudentAndEmail(ctx context.Context, studentID uuid.UUID, email string) (*model.ParentInvitation, error) {
@@ -55,7 +65,13 @@ func (r *ParentInvitationRepository) FindPendingByStudentAndEmail(ctx context.Co
 	// invited : đã gửi lời mời, chưa biết người nhận đã xem hay chưa
 	// pending : người nhận đã xem lời mời nhưng chưa phản hồi (chấp nhận hay từ chối)
 	err := r.db.WithContext(ctx).Where("student_user_id = ? AND invitee_email = ? AND status IN ?", studentID, email, []string{model.ParentInvitationStatusInvited, model.ParentInvitationStatusPending}).First(&invitation).Error
-	return &invitation, err
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil // Chưa có lời mời nào → bình thường
+		}
+		return nil, err
+	}
+	return &invitation, nil
 }
 
 func (r *ParentInvitationRepository) FindPendingByInviteeUserID(ctx context.Context, userID uuid.UUID) ([]model.ParentInvitation, error) {

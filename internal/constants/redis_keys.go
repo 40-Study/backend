@@ -19,6 +19,26 @@ const (
 	PrefixPasswordReset = "password_reset:otp"
     PrefixParentInviteRateLimit = "parent_invite:rate" // key lưu số lần gửi lời mời phụ huynh trong 24 giờ của mỗi học sinh, format: parent_invite:rate:{studentID}
 
+	// Schedule & Timetable
+	PrefixScheduleCache  = "schedules:class"
+	PrefixSessionCache   = "sessions:class"
+	PrefixTimetableCache = "timetable:user"
+
+	// Quiz
+	PrefixQuizCache    = "quiz"
+	PrefixAttemptCache = "quiz_attempt"
+
+	// Grade
+	PrefixGradeBookCache = "gradebook:class"
+
+	// Exercise
+	PrefixExerciseCache = "exercise"
+
+	// Review
+	PrefixReviewRating = "course_rating"
+
+	// Certificate
+	PrefixCertVerify = "cert_verify"
 )
 
 func KeyParentInviteRateLimit(studentID uuid.UUID) string {

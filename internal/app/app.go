@@ -11,6 +11,7 @@ import (
 	"study.com/v1/internal/database/seeds"
 	"study.com/v1/internal/middleware"
 	asynq_queue "study.com/v1/internal/queue/asynq"
+	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/router"
 	"study.com/v1/internal/socket"
 )
@@ -64,6 +65,35 @@ func New() (*App, error) {
 	}
 	asynq_queue.RegisterTasks(resources.Queue, notifier, repos.Class, repos.Enrollment, resources.Redis, livestreamStarter)
 	go resources.Queue.Start()
+
+	// Inject RabbitMQ vào ParentInvitationService + setup queue + start worker
+	if resources.RabbitMQ != nil {
+		services.ParentInvitation.SetRabbitMQ(resources.RabbitMQ)
+		if err := rabbitmq_queue.SetupInvitationQueues(resources.RabbitMQ); err != nil {
+			log.Printf("Warning: Failed to setup invitation queues: %v", err)
+		} else {
+			invitationWorker := rabbitmq_queue.NewInvitationWorker(resources.RabbitMQ, resources.Config, services.Notification)
+			go func() {
+				if err := invitationWorker.Start(context.Background()); err != nil {
+					log.Printf("Warning: Failed to start invitation worker: %v", err)
+				}
+			}()
+		}
+	}
+
+	// Setup exercise submission queue (RabbitMQ)
+	if services.Exercise != nil {
+		if err := services.Exercise.SetupExerciseQueues(); err != nil {
+			log.Printf("Warning: Failed to setup exercise queues: %v", err)
+		}
+	}
+
+	// Setup certificate generation queue (RabbitMQ)
+	if services.Certificate != nil {
+		if err := services.Certificate.SetupCertificateQueues(); err != nil {
+			log.Printf("Warning: Failed to setup certificate queues: %v", err)
+		}
+	}
 
 	// Start video processing worker if available
 	if services.VideoProcessing != nil {
@@ -160,6 +190,8 @@ func New() (*App, error) {
 
 		// ===== Parent Invitation =====
 		handlers.ParentInvitation,
+		// ===== Parent Dashboard =====
+		handlers.ParentDashboard,
 		// ===== Discussion Forum =====
 		handlers.Discussion,
 
@@ -168,6 +200,27 @@ func New() (*App, error) {
 
 		// ===== User Preference =====
 		handlers.UserPreference,
+
+		// ===== Schedule (Asynq) =====
+		handlers.Schedule,
+
+		// ===== Quiz =====
+		handlers.Quiz,
+
+		// ===== Grade =====
+		handlers.Grade,
+
+		// ===== Exercise (RabbitMQ) =====
+		handlers.Exercise,
+
+		// ===== Review =====
+		handlers.Review,
+
+		// ===== Certificate (RabbitMQ) =====
+		handlers.Certificate,
+
+		// ===== Report =====
+		handlers.Report,
 
 		resources.Redis,
 		resources.MinioClient,

@@ -50,9 +50,17 @@ func SetupAllRoutes(
 	userStatsHandler *handler.UserStatsHandler,
 	walletHandler *handler.WalletHandler,
 	parentInvitationHandler *handler.ParentInvitationHandler,
+	parentDashboardHandler *handler.ParentDashboardHandler,
 	discussionHandler *handler.DiscussionHandler,
 	notificationHandler *handler.NotificationHandler,
 	userPreferenceHandler *handler.UserPreferenceHandler,
+	scheduleHandler *handler.ScheduleHandler,
+	quizHandler *handler.QuizHandler,
+	gradeHandler *handler.GradeHandler,
+	exerciseHandler *handler.ExerciseHandler,
+	reviewHandler *handler.ReviewHandler,
+	certificateHandler *handler.CertificateHandler,
+	reportHandler *handler.ReportHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 	aq *asynq_queue.Queue,
@@ -106,6 +114,8 @@ func SetupAllRoutes(
 
 	// Parent Invitation routes
 	SetupParentInvitationRoutes(api, cfg, parentInvitationHandler, redis)
+	// Parent Dashboard routes
+	SetupParentDashboardRoutes(api, cfg, parentDashboardHandler, redis)
 	// Discussion forum routes
 	SetupDiscussionRoutes(api, cfg, discussionHandler, redis)
 
@@ -114,4 +124,25 @@ func SetupAllRoutes(
 
 	// User Preference routes
 	SetupUserPreferenceRoutes(api, cfg, userPreferenceHandler, redis)
+
+	// Schedule routes (Asynq reminders)
+	SetupScheduleRoutes(api, cfg, scheduleHandler, redis)
+
+	// Quiz routes
+	SetupQuizRoutes(api, cfg, quizHandler, redis)
+
+	// Grade routes
+	SetupGradeRoutes(api, cfg, gradeHandler, redis)
+
+	// Exercise routes (RabbitMQ code execution)
+	SetupExerciseRoutes(api, cfg, exerciseHandler, redis)
+
+	// Review routes
+	SetupReviewRoutes(api, cfg, reviewHandler, redis)
+
+	// Certificate routes (RabbitMQ PDF generation)
+	SetupCertificateRoutes(api, cfg, certificateHandler, redis)
+
+	// Report routes
+	SetupReportRoutes(api, cfg, reportHandler, redis)
 }
