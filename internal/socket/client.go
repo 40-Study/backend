@@ -131,6 +131,17 @@ func (c *Client) handleMessage(data []byte) {
 			c.Unsubscribe(payload.Channel)
 		}
 
+	case EventConversationTyping:
+		var payload ConversationTypingPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err == nil {
+			payload.UserID = c.UserID
+			channelName := "conversation:" + payload.ConversationID
+			c.Hub.SendToChannel(channelName, Message{
+				Event:   EventConversationTyping,
+				Payload: payload,
+			})
+		}
+
 	default:
 		c.Hub.HandleClientMessage(c, msg)
 	}

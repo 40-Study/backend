@@ -61,6 +61,11 @@ func SetupAllRoutes(
 	reviewHandler *handler.ReviewHandler,
 	certificateHandler *handler.CertificateHandler,
 	reportHandler *handler.ReportHandler,
+	coinHandler *handler.CoinHandler,
+	groupHandler *handler.GroupHandler,
+	messageHandler *handler.MessageHandler,
+	contestHandler *handler.ContestHandler,
+	personalEventHandler *handler.PersonalEventHandler,
 	redis *redis.Client,
 	minio *minio.Client,
 	aq *asynq_queue.Queue,
@@ -145,4 +150,19 @@ func SetupAllRoutes(
 
 	// Report routes
 	SetupReportRoutes(api, cfg, reportHandler, redis)
+
+	// Coin routes
+	SetupCoinRoutes(api, cfg, coinHandler, redis)
+
+	// Group routes
+	SetupGroupRoutes(api, cfg, groupHandler, redis)
+
+	// Message routes
+	SetupMessageRoutes(api, cfg, messageHandler, redis)
+
+	// Contest routes
+	SetupContestRoutes(api, cfg, contestHandler, redis)
+
+	// Personal Event routes
+	SetupPersonalEventRoutes(api, cfg, personalEventHandler, redis)
 }

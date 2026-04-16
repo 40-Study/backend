@@ -165,7 +165,7 @@ func (s *CourseService) GetCourseByID(ctx context.Context, id uuid.UUID) (*dto.C
 	for i, sec := range course.Sections {
 		lessons := make([]dto.LessonResponseDTO, len(sec.Lessons))
 		for j, les := range sec.Lessons {
-			lessons[j] = s.toLessonResponseDTO(&les, nil)
+			lessons[j] = s.toLessonResponseDTO(&les, les.Contents)
 		}
 		sections[i] = dto.SectionResponseDTO{
 			ID:           sec.ID,
@@ -201,7 +201,7 @@ func (s *CourseService) GetCourseBySlug(ctx context.Context, slug string) (*dto.
 	for i, sec := range course.Sections {
 		lessons := make([]dto.LessonResponseDTO, len(sec.Lessons))
 		for j, les := range sec.Lessons {
-			lessons[j] = s.toLessonResponseDTO(&les, nil)
+			lessons[j] = s.toLessonResponseDTO(&les, les.Contents)
 		}
 		sections[i] = dto.SectionResponseDTO{
 			ID:           sec.ID,

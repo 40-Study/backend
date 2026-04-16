@@ -46,6 +46,9 @@ func (r *LessonRepository) Create(ctx context.Context, lesson *model.Lesson) err
 func (r *LessonRepository) GetAllBySectionID(ctx context.Context, sectionID uuid.UUID) ([]model.Lesson, error) {
 	var lessons []model.Lesson
 	err := r.db.WithContext(ctx).
+		Preload("Contents", func(db *gorm.DB) *gorm.DB {
+			return db.Order("display_order ASC")
+		}).
 		Where("section_id = ?", sectionID).
 		Order("display_order ASC").
 		Find(&lessons).Error

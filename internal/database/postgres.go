@@ -170,6 +170,47 @@ func Migrate(db *gorm.DB) error {
 		&model.RewardRedemption{},
 		&model.LearningGoal{},
 		&model.UserPreference{},
+
+		// ===== 21. Class-Lesson Content & Schedule =====
+		&model.ClassLessonContent{},
+		&model.ClassSchedule{},
+		&model.ClassSession{},
+		&model.SessionAttendance{},
+		&model.ReminderSetting{},
+		&model.ExtensionRequest{},
+
+		// ===== 22. Grades =====
+		&model.GradeColumn{},
+		&model.Grade{},
+		&model.FinalGrade{},
+
+		// ===== 23. Coins (phụ thuộc User) =====
+		&model.UserCoinWallet{},
+		&model.CoinTransaction{},
+		&model.CoinPackage{},
+		&model.CoinPurchase{},
+
+		// ===== 24. Groups (phụ thuộc User, Organization) =====
+		&model.Group{},
+		&model.GroupMember{},
+		&model.GroupJoinRequest{},
+
+		// ===== 25. Conversations & Messages (phụ thuộc User, Group) =====
+		&model.Conversation{},
+		&model.ConversationParticipant{},
+		&model.Message{},
+		&model.MessageReaction{},
+		&model.MessageAttachment{},
+		&model.MessageMention{},
+
+		// ===== 26. Contests & Competitions (phụ thuộc User, Organization) =====
+		&model.Contest{},
+		&model.ContestProblem{},
+		&model.ContestParticipant{},
+		&model.ContestSubmission{},
+
+		// ===== 27. Personal Calendar Events (phụ thuộc User) =====
+		&model.PersonalEvent{},
 	)
 }
 

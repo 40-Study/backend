@@ -69,6 +69,24 @@ type Repositories struct {
 	// ===== Wallet =====
 	Wallet *repository.WalletRepository
 
+	// ===== Coin =====
+	CoinWallet      *repository.CoinWalletRepository
+	CoinTransaction *repository.CoinTransactionRepository
+	CoinPackage     *repository.CoinPackageRepository
+	CoinPurchase    *repository.CoinPurchaseRepository
+
+	// ===== Group =====
+	Group           *repository.GroupRepository
+	GroupMember      *repository.GroupMemberRepository
+	GroupJoinRequest *repository.GroupJoinRequestRepository
+
+	// ===== Conversation & Message =====
+	Conversation            *repository.ConversationRepository
+	ConversationParticipant *repository.ConversationParticipantRepository
+	Message                 *repository.MessageRepository
+	MessageReaction         *repository.MessageReactionRepository
+	MessageAttachment       *repository.MessageAttachmentRepository
+
 	// ===== OAuth =====
 	OAuthProvider *repository.OAuthProviderRepository
 
@@ -103,6 +121,15 @@ type Repositories struct {
 
 	// ===== Report =====
 	Report *repository.ReportRepository
+
+	// ===== Contest =====
+	Contest            *repository.ContestRepository
+	ContestProblem     *repository.ContestProblemRepository
+	ContestParticipant *repository.ContestParticipantRepository
+	ContestSubmission  *repository.ContestSubmissionRepository
+
+	// ===== Personal Event =====
+	PersonalEvent *repository.PersonalEventRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -169,6 +196,24 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		// ===== Wallet =====
 		Wallet: repository.NewWalletRepository(db),
 
+		// ===== Coin =====
+		CoinWallet:      repository.NewCoinWalletRepository(db),
+		CoinTransaction: repository.NewCoinTransactionRepository(db),
+		CoinPackage:     repository.NewCoinPackageRepository(db),
+		CoinPurchase:    repository.NewCoinPurchaseRepository(db),
+
+		// ===== Group =====
+		Group:           repository.NewGroupRepository(db),
+		GroupMember:      repository.NewGroupMemberRepository(db),
+		GroupJoinRequest: repository.NewGroupJoinRequestRepository(db),
+
+		// ===== Conversation & Message =====
+		Conversation:            repository.NewConversationRepository(db),
+		ConversationParticipant: repository.NewConversationParticipantRepository(db),
+		Message:                 repository.NewMessageRepository(db),
+		MessageReaction:         repository.NewMessageReactionRepository(db),
+		MessageAttachment:       repository.NewMessageAttachmentRepository(db),
+
 		// ===== OAuth =====
 		OAuthProvider: repository.NewOAuthProviderRepository(db),
 
@@ -203,5 +248,14 @@ func InitRepositories(db *gorm.DB) *Repositories {
 
 		// ===== Report =====
 		Report: repository.NewReportRepository(db),
+
+		// ===== Contest =====
+		Contest:            repository.NewContestRepository(db),
+		ContestProblem:     repository.NewContestProblemRepository(db),
+		ContestParticipant: repository.NewContestParticipantRepository(db),
+		ContestSubmission:  repository.NewContestSubmissionRepository(db),
+
+		// ===== Personal Event =====
+		PersonalEvent: repository.NewPersonalEventRepository(db),
 	}
 }

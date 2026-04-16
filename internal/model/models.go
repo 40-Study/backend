@@ -115,5 +115,33 @@ func AllModels() []interface{} {
 		&GradeColumn{},
 		&Grade{},
 		&FinalGrade{},
+
+		// Coins
+		&UserCoinWallet{},
+		&CoinTransaction{},
+		&CoinPackage{},
+		&CoinPurchase{},
+
+		// Groups
+		&Group{},
+		&GroupMember{},
+		&GroupJoinRequest{},
+
+		// Conversations & Messages
+		&Conversation{},
+		&ConversationParticipant{},
+		&Message{},
+		&MessageReaction{},
+		&MessageAttachment{},
+		&MessageMention{},
+
+		// Contests & Competitions
+		&Contest{},
+		&ContestProblem{},
+		&ContestParticipant{},
+		&ContestSubmission{},
+
+		// Personal Calendar Events
+		&PersonalEvent{},
 	}
 }
