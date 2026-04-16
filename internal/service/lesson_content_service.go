@@ -207,7 +207,7 @@ func (s *LessonContentService) ReorderContents(ctx context.Context, lessonID uui
 }
 
 func (s *LessonContentService) toContentResponseDTO(c *model.LessonContent) *dto.LessonContentResponseDTO {
-	return &dto.LessonContentResponseDTO{
+	resp := &dto.LessonContentResponseDTO{
 		ID:           c.ID,
 		LessonID:     c.LessonID,
 		Type:         c.Type,
@@ -220,4 +220,21 @@ func (s *LessonContentService) toContentResponseDTO(c *model.LessonContent) *dto
 		CreatedAt:    c.CreatedAt,
 		UpdatedAt:    c.UpdatedAt,
 	}
+
+	// Extract upload ID from video_url patterns and generate HLS + fallback URLs
+	// Patterns: "/api/hls/{uploadId}/master.m3u8" or "/api/hls/{uploadId}/video.mp4"
+	if c.VideoURL != nil && *c.VideoURL != "" {
+		hlsPattern := regexp.MustCompile(`/hls/([a-f0-9-]{36})`)
+		if matches := hlsPattern.FindStringSubmatch(*c.VideoURL); len(matches) > 1 {
+			uploadID := matches[1]
+			hlsURL := "/api/hls/" + uploadID + "/master.m3u8"
+			fallbackURL := "/api/hls/" + uploadID + "/video.mp4"
+			resp.VideoUploadID = &uploadID
+			resp.VideoHLSURL = &hlsURL
+			// Always set VideoURL to fallback (original video) so it works immediately
+			resp.VideoURL = &fallbackURL
+		}
+	}
+
+	return resp
 }

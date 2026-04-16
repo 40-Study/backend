@@ -100,6 +100,21 @@ type Handlers struct {
 
 	// ===== Report =====
 	Report *handler.ReportHandler
+
+	// ===== Coin =====
+	Coin *handler.CoinHandler
+
+	// ===== Group =====
+	Group *handler.GroupHandler
+
+	// ===== Message =====
+	Message *handler.MessageHandler
+
+	// ===== Contest =====
+	Contest *handler.ContestHandler
+
+	// ===== Personal Event =====
+	PersonalEvent *handler.PersonalEventHandler
 }
 
 func InitHandlers(services *Services, repos *Repositories, minioClient *storage.MinioClient, cfg *config.Config) *Handlers {
@@ -197,5 +212,20 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 
 		// ===== Report =====
 		Report: handler.NewReportHandler(services.Report),
+
+		// ===== Coin =====
+		Coin: handler.NewCoinHandler(services.Coin),
+
+		// ===== Group =====
+		Group: handler.NewGroupHandler(services.Group),
+
+		// ===== Message =====
+		Message: handler.NewMessageHandler(services.Conversation),
+
+		// ===== Contest =====
+		Contest: handler.NewContestHandler(services.Contest),
+
+		// ===== Personal Event =====
+		PersonalEvent: handler.NewPersonalEventHandler(services.PersonalEvent),
 	}
 }

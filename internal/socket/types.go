@@ -20,6 +20,13 @@ const (
 	EventError            = "error"
 	EventPing             = "ping"
 	EventPong             = "pong"
+
+	// Conversation messaging events
+	EventConversationMessage = "conversation_message"
+	EventMessageEdited       = "message_edited"
+	EventMessageDeleted      = "message_deleted"
+	EventMessageReaction     = "message_reaction"
+	EventConversationTyping  = "conversation_typing"
 )
 
 // gửi đi
@@ -72,6 +79,14 @@ type UserStatusPayload struct {
 type ErrorPayload struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// ConversationTypingPayload represents typing in a conversation
+type ConversationTypingPayload struct {
+	ConversationID string    `json:"conversation_id"`
+	UserID         uuid.UUID `json:"user_id"`
+	UserName       string    `json:"user_name"`
+	IsTyping       bool      `json:"is_typing"`
 }
 
 // SubscribePayload - client gửi để join/leave channel

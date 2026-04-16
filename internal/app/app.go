@@ -29,6 +29,16 @@ func (a *defaultAuthorizer) CanSubscribe(userID uuid.UUID, channel string) (bool
 	if channel == "notifications" {
 		return true, nil
 	}
+	// Allow subscribing to conversation channels
+	// Format: "conversation:{conversationID}"
+	if len(channel) > 13 && channel[:13] == "conversation:" {
+		return true, nil
+	}
+	// Allow subscribing to group channels
+	// Format: "group:{groupID}"
+	if len(channel) > 6 && channel[:6] == "group:" {
+		return true, nil
+	}
 	return false, nil
 }
 
@@ -221,6 +231,21 @@ func New() (*App, error) {
 
 		// ===== Report =====
 		handlers.Report,
+
+		// ===== Coin =====
+		handlers.Coin,
+
+		// ===== Group =====
+		handlers.Group,
+
+		// ===== Message =====
+		handlers.Message,
+
+		// ===== Contest =====
+		handlers.Contest,
+
+		// ===== Personal Event =====
+		handlers.PersonalEvent,
 
 		resources.Redis,
 		resources.MinioClient,

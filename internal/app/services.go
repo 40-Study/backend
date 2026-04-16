@@ -109,6 +109,21 @@ type Services struct {
 
 	// ===== Report =====
 	Report *service.ReportService
+
+	// ===== Coin =====
+	Coin *service.CoinService
+
+	// ===== Group =====
+	Group *service.GroupService
+
+	// ===== Conversation =====
+	Conversation *service.ConversationService
+
+	// ===== Contest =====
+	Contest *service.ContestService
+
+	// ===== Personal Event =====
+	PersonalEvent *service.PersonalEventService
 }
 
 func InitServices(resources *Resources, repos *Repositories, notifier *socket.Notifier) *Services {
@@ -400,6 +415,43 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 
 		// ===== Report =====
 		Report: service.NewReportService(repos.Report),
+
+		// ===== Coin =====
+		Coin: service.NewCoinService(
+			repos.CoinWallet,
+			repos.CoinTransaction,
+			repos.CoinPackage,
+			repos.CoinPurchase,
+		),
+
+		// ===== Group =====
+		Group: service.NewGroupService(
+			repos.Group,
+			repos.GroupMember,
+			repos.GroupJoinRequest,
+			repos.Conversation,
+			repos.ConversationParticipant,
+		),
+
+		// ===== Conversation =====
+		Conversation: service.NewConversationService(
+			repos.Conversation,
+			repos.ConversationParticipant,
+			repos.Message,
+			repos.MessageReaction,
+			notifier,
+		),
+
+		// ===== Contest =====
+		Contest: service.NewContestService(
+			repos.Contest,
+			repos.ContestProblem,
+			repos.ContestParticipant,
+			repos.ContestSubmission,
+		),
+
+		// ===== Personal Event =====
+		PersonalEvent: service.NewPersonalEventService(repos.PersonalEvent, resources.Queue),
 	}
 }
 

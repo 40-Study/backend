@@ -194,6 +194,18 @@ func (c *FiberClient) handleMessage(data []byte) {
 			c.unsubscribe(payload.Channel)
 		}
 
+	case EventConversationTyping:
+		// Forward typing indicator to conversation channel
+		var payload ConversationTypingPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err == nil {
+			payload.UserID = c.UserID
+			channelName := "conversation:" + payload.ConversationID
+			c.Hub.SendToChannel(channelName, Message{
+				Event:   EventConversationTyping,
+				Payload: payload,
+			})
+		}
+
 	default:
 		log.Printf("[WS] Unknown event: %s", msg.Event)
 	}

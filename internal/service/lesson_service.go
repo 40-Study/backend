@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"regexp"
 
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -101,7 +102,7 @@ func (s *LessonService) GetAllLessons(ctx context.Context, sectionID uuid.UUID) 
 
 	result := make([]dto.LessonResponseDTO, len(lessons))
 	for i, les := range lessons {
-		result[i] = *s.toLessonResponseDTO(&les, nil)
+		result[i] = *s.toLessonResponseDTO(&les, les.Contents)
 	}
 
 	return result, nil
@@ -224,9 +225,10 @@ func (s *LessonService) toLessonResponseDTO(lesson *model.Lesson, contents []mod
 	}
 
 	if len(contents) > 0 {
+		hlsPattern := regexp.MustCompile(`/hls/([a-f0-9-]{36})`)
 		resp.Contents = make([]dto.LessonContentResponseDTO, len(contents))
 		for i, c := range contents {
-			resp.Contents[i] = dto.LessonContentResponseDTO{
+			item := dto.LessonContentResponseDTO{
 				ID:           c.ID,
 				LessonID:     c.LessonID,
 				Type:         c.Type,
@@ -237,6 +239,18 @@ func (s *LessonService) toLessonResponseDTO(lesson *model.Lesson, contents []mod
 				CreatedAt:    c.CreatedAt,
 				UpdatedAt:    c.UpdatedAt,
 			}
+			// Extract upload ID and generate HLS + fallback URLs
+			if c.VideoURL != nil && *c.VideoURL != "" {
+				if matches := hlsPattern.FindStringSubmatch(*c.VideoURL); len(matches) > 1 {
+					uploadID := matches[1]
+					hlsURL := "/api/hls/" + uploadID + "/master.m3u8"
+					fallbackURL := "/api/hls/" + uploadID + "/video.mp4"
+					item.VideoUploadID = &uploadID
+					item.VideoHLSURL = &hlsURL
+					item.VideoURL = &fallbackURL
+				}
+			}
+			resp.Contents[i] = item
 		}
 	}
 

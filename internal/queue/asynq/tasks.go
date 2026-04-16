@@ -24,6 +24,7 @@ const (
 	TaskDailyCheckin             string = "daily_checkin"
 	TaskStreakWarning            string = "streak_warning"
 	TaskClassSessionReminder    string = "class_session_reminder"
+	TaskEventReminder           string = "task:event_reminder"
 )
 
 // ===================== Payloads =====================
@@ -62,6 +63,12 @@ type ScheduleLivestreamRemindPayload struct {
 
 type AutoStartLivestreamPayload struct {
 	SessionID uuid.UUID `json:"session_id"`
+}
+
+type EventReminderPayload struct {
+	EventID uuid.UUID `json:"event_id"`
+	UserID  uuid.UUID `json:"user_id"`
+	Title   string    `json:"title"`
 }
 
 type LivestreamStarter func(ctx context.Context, sessionID uuid.UUID) error
@@ -151,6 +158,26 @@ func RegisterTasks(q *Queue, notifier *socket.Notifier, classRepo repository.Cla
 		} else {
 			log.Printf("[task] Auto-start livestream SUCCESS session=%s — room is now LIVE", p.SessionID)
 		}
+		return nil
+	})
+
+	// ===================== Event Reminder =====================
+	q.Handle(TaskEventReminder, func(ctx context.Context, payload []byte) error {
+		var p EventReminderPayload
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return fmt.Errorf("unmarshal event reminder: %w", err)
+		}
+
+		noti := socket.NotificationPayload{
+			ID:               uuid.New(),
+			Title:            "Nhắc nhở sự kiện",
+			Content:          fmt.Sprintf("Sự kiện \"%s\" sắp bắt đầu", p.Title),
+			NotificationType: "event_reminder",
+			CreatedAt:        time.Now().UTC().Format(time.RFC3339),
+		}
+
+		log.Printf("[task] Event reminder sent: event=%s user=%s title=%s", p.EventID, p.UserID, p.Title)
+		notifier.SendNotification(p.UserID, noti)
 		return nil
 	})
 
