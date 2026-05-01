@@ -1,0 +1,146 @@
+[
+  {
+    "name": "Người mới bắt đầu",
+    "slug": "first-lesson",
+    "description": "Hoàn thành bài học đầu tiên",
+    "category": "learning",
+    "points": 50,
+    "requirement": "complete_lessons",
+    "threshold": 1
+  },
+  {
+    "name": "Học viên chăm chỉ",
+    "slug": "complete-10-lessons",
+    "description": "Hoàn thành 10 bài học",
+    "category": "learning",
+    "points": 100,
+    "requirement": "complete_lessons",
+    "threshold": 10
+  },
+  {
+    "name": "Bậc thầy kiến thức",
+    "slug": "complete-50-lessons",
+    "description": "Hoàn thành 50 bài học",
+    "category": "learning",
+    "points": 500,
+    "requirement": "complete_lessons",
+    "threshold": 50
+  },
+  {
+    "name": "Hoàn thành khóa học",
+    "slug": "first-course-complete",
+    "description": "Hoàn thành khóa học đầu tiên",
+    "category": "learning",
+    "points": 200,
+    "requirement": "complete_courses",
+    "threshold": 1
+  },
+  {
+    "name": "Chuỗi 3 ngày",
+    "slug": "streak-3-days",
+    "description": "Duy trì chuỗi học 3 ngày liên tiếp",
+    "category": "streak",
+    "points": 30,
+    "requirement": "streak_days",
+    "threshold": 3
+  },
+  {
+    "name": "Chuỗi 7 ngày",
+    "slug": "streak-7-days",
+    "description": "Duy trì chuỗi học 7 ngày liên tiếp",
+    "category": "streak",
+    "points": 70,
+    "requirement": "streak_days",
+    "threshold": 7
+  },
+  {
+    "name": "Chuỗi 30 ngày",
+    "slug": "streak-30-days",
+    "description": "Duy trì chuỗi học 30 ngày liên tiếp",
+    "category": "streak",
+    "points": 300,
+    "requirement": "streak_days",
+    "threshold": 30
+  },
+  {
+    "name": "Chuỗi 100 ngày",
+    "slug": "streak-100-days",
+    "description": "Duy trì chuỗi học 100 ngày liên tiếp",
+    "category": "streak",
+    "points": 1000,
+    "requirement": "streak_days",
+    "threshold": 100
+  },
+  {
+    "name": "Kết nối đầu tiên",
+    "slug": "first-social",
+    "description": "Tham gia lớp học trực tuyến đầu tiên",
+    "category": "social",
+    "points": 50,
+    "requirement": "join_livestreams",
+    "threshold": 1
+  },
+  {
+    "name": "Người hòa đồng",
+    "slug": "social-10-livestreams",
+    "description": "Tham gia 10 lớp học trực tuyến",
+    "category": "social",
+    "points": 150,
+    "requirement": "join_livestreams",
+    "threshold": 10
+  },
+  {
+    "name": "Cột mốc 100 XP",
+    "slug": "milestone-100-xp",
+    "description": "Đạt 100 điểm kinh nghiệm",
+    "category": "milestone",
+    "points": 50,
+    "requirement": "total_xp",
+    "threshold": 100
+  },
+  {
+    "name": "Cột mốc 500 XP",
+    "slug": "milestone-500-xp",
+    "description": "Đạt 500 điểm kinh nghiệm",
+    "category": "milestone",
+    "points": 100,
+    "requirement": "total_xp",
+    "threshold": 500
+  },
+  {
+    "name": "Cột mốc 1000 XP",
+    "slug": "milestone-1000-xp",
+    "description": "Đạt 1000 điểm kinh nghiệm",
+    "category": "milestone",
+    "points": 200,
+    "requirement": "total_xp",
+    "threshold": 1000
+  },
+  {
+    "name": "Lập trình viên mới",
+    "slug": "first-submission",
+    "description": "Nộp bài code đầu tiên",
+    "category": "special",
+    "points": 50,
+    "requirement": "submit_code",
+    "threshold": 1
+  },
+  {
+    "name": "Accepted đầu tiên",
+    "slug": "first-accepted",
+    "description": "Đạt kết quả Accepted lần đầu tiên",
+    "category": "special",
+    "points": 100,
+    "requirement": "accepted_submissions",
+    "threshold": 1
+  },
+  {
+    "name": "Thợ code",
+    "slug": "submit-20-codes",
+    "description": "Nộp 20 bài code",
+    "category": "special",
+    "points": 200,
+    "requirement": "submit_code",
+    "threshold": 20
+  }
+]
