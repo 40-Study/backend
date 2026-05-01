@@ -23,16 +23,6 @@ type RoleSeed struct {
 	Permissions []string `json:"permissions"`
 }
 
-type AchievementSeed struct {
-	Name        string `json:"name"`
-	Slug        string `json:"slug"`
-	Description string `json:"description"`
-	Category    string `json:"category"`
-	Points      int    `json:"points"`
-	Requirement string `json:"requirement"`
-	Threshold   int    `json:"threshold"`
-}
-
 type Seeder struct {
 	db *gorm.DB
 }
@@ -165,52 +155,6 @@ func (s *Seeder) SeedRoles(filePath string) error {
 	return nil
 }
 
-func (s *Seeder) SeedAchievements(filePath string) error {
-	log.Println("Seeding achievements...")
-
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to read achievements file: %w", err)
-	}
-
-	var achievements []AchievementSeed
-	if err := json.Unmarshal(data, &achievements); err != nil {
-		return fmt.Errorf("failed to parse achievements JSON: %w", err)
-	}
-
-	for _, a := range achievements {
-		achievement := model.Achievement{
-			Name:        a.Name,
-			Slug:        a.Slug,
-			Description: a.Description,
-			Category:    a.Category,
-			Points:      a.Points,
-			Requirement: a.Requirement,
-			Threshold:   a.Threshold,
-			IsActive:    true,
-		}
-
-		result := s.db.Where("slug = ?", a.Slug).FirstOrCreate(&achievement)
-		if result.Error != nil {
-			return fmt.Errorf("failed to seed achievement %s: %w", a.Slug, result.Error)
-		}
-
-		if result.RowsAffected == 0 {
-			s.db.Model(&achievement).Where("slug = ?", a.Slug).Updates(map[string]interface{}{
-				"name":        a.Name,
-				"description": a.Description,
-				"category":    a.Category,
-				"points":      a.Points,
-				"requirement": a.Requirement,
-				"threshold":   a.Threshold,
-			})
-		}
-	}
-
-	log.Printf("Successfully seeded %d achievements\n", len(achievements))
-	return nil
-}
-
 func (s *Seeder) SeedAll(dataDir string) error {
 	// Seed all permission files from permissions folder
 	permissionsDir := filepath.Join(dataDir, "permissions")
@@ -232,14 +176,6 @@ func (s *Seeder) SeedAll(dataDir string) error {
 	rolesFilePath := filepath.Join(dataDir, "roles.json")
 	if err := s.SeedRoles(rolesFilePath); err != nil {
 		return err
-	}
-
-	// Seed achievements
-	achievementsFilePath := filepath.Join(dataDir, "achievements.json")
-	if _, err := os.Stat(achievementsFilePath); err == nil {
-		if err := s.SeedAchievements(achievementsFilePath); err != nil {
-			return err
-		}
 	}
 
 	log.Println("All seeds completed successfully!")
