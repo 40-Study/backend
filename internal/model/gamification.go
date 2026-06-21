@@ -24,7 +24,7 @@ type UserPoint struct {
 
 	// Relationships
 	User         User               `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
-	Transactions []PointTransaction `gorm:"foreignKey:UserID" json:"-"`
+	Transactions []PointTransaction `gorm:"foreignKey:UserID;references:UserID" json:"-"`
 }
 
 func (UserPoint) TableName() string {
