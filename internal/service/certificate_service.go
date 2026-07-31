@@ -23,18 +23,29 @@ type CertificateServiceInterface interface {
 	VerifyCertificate(ctx context.Context, number string) (*dto.VerifyCertificateResponseDTO, error)
 }
 
+type CertificateEnrollmentRepository interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*model.Enrollment, error)
+}
+
 type CertificateService struct {
-	repo     repository.CertificateRepositoryInterface
-	redis    *redis.Client
-	rabbitMQ *rabbitmq_queue.RabbitMQService
+	repo           repository.CertificateRepositoryInterface
+	enrollmentRepo CertificateEnrollmentRepository
+	redis          *redis.Client
+	rabbitMQ       *rabbitmq_queue.RabbitMQService
 }
 
 func NewCertificateService(
 	repo repository.CertificateRepositoryInterface,
+	enrollmentRepo CertificateEnrollmentRepository,
 	redis *redis.Client,
 	rabbitMQ *rabbitmq_queue.RabbitMQService,
 ) *CertificateService {
-	return &CertificateService{repo: repo, redis: redis, rabbitMQ: rabbitMQ}
+	return &CertificateService{
+		repo:           repo,
+		enrollmentRepo: enrollmentRepo,
+		redis:          redis,
+		rabbitMQ:       rabbitMQ,
+	}
 }
 
 const (
@@ -54,8 +65,26 @@ type CertificateGenerationMessage struct {
 }
 
 func (s *CertificateService) IssueCertificate(ctx context.Context, userID, courseID, enrollmentID uuid.UUID) (*dto.CertificateResponseDTO, error) {
-	// Check if already issued
-	existing, _ := s.repo.GetCertificateByCourseAndUser(ctx, courseID, userID)
+	if s.enrollmentRepo == nil {
+		return nil, errors.New("enrollment repository unavailable")
+	}
+
+	enrollment, err := s.enrollmentRepo.GetByID(ctx, enrollmentID)
+	if err != nil {
+		return nil, fmt.Errorf("get enrollment: %w", err)
+	}
+	if enrollment == nil || enrollment.UserID != userID || enrollment.CourseID != courseID {
+		return nil, errors.New("enrollment does not match the authenticated user and course")
+	}
+	if enrollment.CompletedAt == nil {
+		return nil, errors.New("course must be completed before issuing a certificate")
+	}
+
+	// The database also enforces this invariant to close concurrent request races.
+	existing, err := s.repo.GetCertificateByCourseAndUser(ctx, courseID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("check existing certificate: %w", err)
+	}
 	if existing != nil {
 		return nil, errors.New("certificate already issued for this course")
 	}

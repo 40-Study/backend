@@ -97,11 +97,24 @@ func (h *CertificateHandler) GetCertificateByID(c *fiber.Ctx) error {
 		})
 	}
 
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
 	certificate, err := h.service.GetCertificateByID(c.Context(), id)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Certificate not found",
 			"error":   err.Error(),
+		})
+	}
+	if certificate.UserID != userID {
+		// Không phân biệt "không tồn tại" và "không sở hữu" để tránh IDOR.
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"message": "Certificate not found",
 		})
 	}
 

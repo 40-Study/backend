@@ -169,7 +169,7 @@ func (s *CourseService) GetCourseByID(ctx context.Context, id uuid.UUID) (*dto.C
 		}
 		sections[i] = dto.SectionResponseDTO{
 			ID:           sec.ID,
-			CourseID:     sec.CourseID, 
+			CourseID:     sec.CourseID,
 			Title:        sec.Title,
 			Description:  sec.Description,
 			DisplayOrder: sec.DisplayOrder,
@@ -192,6 +192,9 @@ func (s *CourseService) GetCourseBySlug(ctx context.Context, slug string) (*dto.
 	if course == nil {
 		return nil, errors.New("course not found")
 	}
+	if course.Status != "published" {
+		return nil, errors.New("course not found")
+	}
 
 	detail := &dto.CourseDetailDTO{
 		CourseResponseDTO: *s.toCourseResponseDTO(course),
@@ -201,7 +204,8 @@ func (s *CourseService) GetCourseBySlug(ctx context.Context, slug string) (*dto.
 	for i, sec := range course.Sections {
 		lessons := make([]dto.LessonResponseDTO, len(sec.Lessons))
 		for j, les := range sec.Lessons {
-			lessons[j] = s.toLessonResponseDTO(&les, les.Contents)
+			// Public course detail exposes the syllabus, never protected content URLs.
+			lessons[j] = s.toLessonResponseDTO(&les, nil)
 		}
 		sections[i] = dto.SectionResponseDTO{
 			ID:           sec.ID,

@@ -411,7 +411,12 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Review: service.NewReviewService(repos.Review, resources.Redis),
 
 		// ===== Certificate (RabbitMQ for PDF generation) =====
-		Certificate: service.NewCertificateService(repos.Certificate, resources.Redis, resources.RabbitMQ),
+		Certificate: service.NewCertificateService(
+			repos.Certificate,
+			repos.Enrollment,
+			resources.Redis,
+			resources.RabbitMQ,
+		),
 
 		// ===== Report =====
 		Report: service.NewReportService(repos.Report),

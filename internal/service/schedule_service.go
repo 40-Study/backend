@@ -35,10 +35,10 @@ type ScheduleServiceInterface interface {
 	GenerateSessions(ctx context.Context, classID uuid.UUID, req dto.GenerateSessionsDTO) ([]dto.ClassSessionResponseDTO, error)
 
 	// SessionAttendance
-	GetSessionAttendances(ctx context.Context, sessionID uuid.UUID) ([]dto.SessionAttendanceResponseDTO, error)
+	GetSessionAttendances(ctx context.Context, sessionID, requesterID uuid.UUID) ([]dto.SessionAttendanceResponseDTO, error)
 	MarkAttendance(ctx context.Context, sessionID uuid.UUID, req dto.MarkAttendanceDTO, verifiedBy uuid.UUID) (*dto.SessionAttendanceResponseDTO, error)
 	BulkMarkAttendance(ctx context.Context, sessionID uuid.UUID, req dto.BulkMarkAttendanceDTO, verifiedBy uuid.UUID) ([]dto.SessionAttendanceResponseDTO, error)
-	UpdateAttendance(ctx context.Context, id uuid.UUID, req dto.UpdateSessionAttendanceDTO) (*dto.SessionAttendanceResponseDTO, error)
+	UpdateAttendance(ctx context.Context, sessionID, id uuid.UUID, req dto.UpdateSessionAttendanceDTO, verifiedBy uuid.UUID) (*dto.SessionAttendanceResponseDTO, error)
 	StudentCheckIn(ctx context.Context, sessionID, studentID uuid.UUID) (*dto.SessionAttendanceResponseDTO, error)
 	StudentCheckOut(ctx context.Context, sessionID, studentID uuid.UUID) (*dto.SessionAttendanceResponseDTO, error)
 	GetMyAttendances(ctx context.Context, studentID uuid.UUID, page, pageSize int) ([]dto.SessionAttendanceResponseDTO, int64, error)
@@ -71,10 +71,10 @@ func NewScheduleService(
 // ============================================================================
 
 const (
-	schedulesCachePrefix  = "schedules:class:"
-	sessionsCachePrefix   = "sessions:class:"
-	timetableCachePrefix  = "timetable:user:"
-	scheduleCacheTTL      = 15 * time.Minute
+	schedulesCachePrefix = "schedules:class:"
+	sessionsCachePrefix  = "sessions:class:"
+	timetableCachePrefix = "timetable:user:"
+	scheduleCacheTTL     = 15 * time.Minute
 )
 
 func (s *ScheduleService) invalidateScheduleCache(ctx context.Context, classID uuid.UUID) {
@@ -459,7 +459,32 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID uuid.UUI
 // SESSION ATTENDANCE
 // ============================================================================
 
-func (s *ScheduleService) GetSessionAttendances(ctx context.Context, sessionID uuid.UUID) ([]dto.SessionAttendanceResponseDTO, error) {
+func (s *ScheduleService) requireTeacherSessionAccess(ctx context.Context, sessionID, teacherID uuid.UUID) error {
+	allowed, err := s.repo.TeacherCanManageSession(ctx, sessionID, teacherID)
+	if err != nil {
+		return fmt.Errorf("check teacher session access: %w", err)
+	}
+	if !allowed {
+		return errors.New("not authorized to manage this session")
+	}
+	return nil
+}
+
+func (s *ScheduleService) requireStudentSessionAccess(ctx context.Context, sessionID, studentID uuid.UUID) error {
+	allowed, err := s.repo.StudentCanAttendSession(ctx, sessionID, studentID)
+	if err != nil {
+		return fmt.Errorf("check student session access: %w", err)
+	}
+	if !allowed {
+		return errors.New("student is not enrolled in this session's class")
+	}
+	return nil
+}
+
+func (s *ScheduleService) GetSessionAttendances(ctx context.Context, sessionID, requesterID uuid.UUID) ([]dto.SessionAttendanceResponseDTO, error) {
+	if err := s.requireTeacherSessionAccess(ctx, sessionID, requesterID); err != nil {
+		return nil, err
+	}
 	atts, err := s.repo.GetAttendancesBySessionID(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -473,12 +498,18 @@ func (s *ScheduleService) GetSessionAttendances(ctx context.Context, sessionID u
 }
 
 func (s *ScheduleService) MarkAttendance(ctx context.Context, sessionID uuid.UUID, req dto.MarkAttendanceDTO, verifiedBy uuid.UUID) (*dto.SessionAttendanceResponseDTO, error) {
+	if err := s.requireTeacherSessionAccess(ctx, sessionID, verifiedBy); err != nil {
+		return nil, err
+	}
 	studentID, err := uuid.Parse(req.StudentID)
 	if err != nil {
 		return nil, errors.New("invalid student_id")
 	}
 
-	existing, _ := s.repo.GetAttendanceBySessionAndStudent(ctx, sessionID, studentID)
+	existing, err := s.repo.GetAttendanceBySessionAndStudent(ctx, sessionID, studentID)
+	if err != nil {
+		return nil, fmt.Errorf("check existing attendance: %w", err)
+	}
 	if existing != nil {
 		return nil, errors.New("attendance already recorded for this student")
 	}
@@ -505,25 +536,65 @@ func (s *ScheduleService) MarkAttendance(ctx context.Context, sessionID uuid.UUI
 }
 
 func (s *ScheduleService) BulkMarkAttendance(ctx context.Context, sessionID uuid.UUID, req dto.BulkMarkAttendanceDTO, verifiedBy uuid.UUID) ([]dto.SessionAttendanceResponseDTO, error) {
-	var results []dto.SessionAttendanceResponseDTO
+	if err := s.requireTeacherSessionAccess(ctx, sessionID, verifiedBy); err != nil {
+		return nil, err
+	}
+	attendances := make([]model.SessionAttendance, 0, len(req.Attendances))
+	seen := make(map[uuid.UUID]struct{}, len(req.Attendances))
 	for _, item := range req.Attendances {
-		result, err := s.MarkAttendance(ctx, sessionID, item, verifiedBy)
+		studentID, err := uuid.Parse(item.StudentID)
 		if err != nil {
-			log.Printf("BulkMarkAttendance: skip student %s: %v", item.StudentID, err)
-			continue
+			return nil, fmt.Errorf("invalid student_id %q", item.StudentID)
 		}
-		results = append(results, *result)
+		if _, duplicate := seen[studentID]; duplicate {
+			return nil, fmt.Errorf("student %s appears more than once", studentID)
+		}
+		seen[studentID] = struct{}{}
+
+		existing, err := s.repo.GetAttendanceBySessionAndStudent(ctx, sessionID, studentID)
+		if err != nil {
+			return nil, fmt.Errorf("check attendance for student %s: %w", studentID, err)
+		}
+		if existing != nil {
+			return nil, fmt.Errorf("attendance already recorded for student %s", studentID)
+		}
+
+		attendance := model.SessionAttendance{
+			SessionID:  sessionID,
+			StudentID:  studentID,
+			Status:     model.AttendanceStatus(item.Status),
+			VerifiedBy: &verifiedBy,
+		}
+		if item.Note != "" {
+			attendance.Note = &item.Note
+		}
+		attendances = append(attendances, attendance)
+	}
+
+	if err := s.repo.BulkCreateAttendance(ctx, attendances); err != nil {
+		return nil, err
+	}
+
+	results := make([]dto.SessionAttendanceResponseDTO, len(attendances))
+	for i := range attendances {
+		results[i] = *s.mapAttendanceToDTO(&attendances[i])
 	}
 	return results, nil
 }
 
-func (s *ScheduleService) UpdateAttendance(ctx context.Context, id uuid.UUID, req dto.UpdateSessionAttendanceDTO) (*dto.SessionAttendanceResponseDTO, error) {
+func (s *ScheduleService) UpdateAttendance(ctx context.Context, sessionID, id uuid.UUID, req dto.UpdateSessionAttendanceDTO, verifiedBy uuid.UUID) (*dto.SessionAttendanceResponseDTO, error) {
+	if err := s.requireTeacherSessionAccess(ctx, sessionID, verifiedBy); err != nil {
+		return nil, err
+	}
 	att, err := s.repo.GetAttendanceByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if att == nil {
 		return nil, errors.New("attendance not found")
+	}
+	if att.SessionID != sessionID {
+		return nil, errors.New("attendance does not belong to this session")
 	}
 
 	if req.Status != nil {
@@ -543,10 +614,17 @@ func (s *ScheduleService) UpdateAttendance(ctx context.Context, id uuid.UUID, re
 }
 
 func (s *ScheduleService) StudentCheckIn(ctx context.Context, sessionID, studentID uuid.UUID) (*dto.SessionAttendanceResponseDTO, error) {
+	if err := s.requireStudentSessionAccess(ctx, sessionID, studentID); err != nil {
+		return nil, err
+	}
 	now := time.Now()
-	existing, _ := s.repo.GetAttendanceBySessionAndStudent(ctx, sessionID, studentID)
+	existing, err := s.repo.GetAttendanceBySessionAndStudent(ctx, sessionID, studentID)
+	if err != nil {
+		return nil, fmt.Errorf("get attendance for check-in: %w", err)
+	}
 	if existing != nil {
 		existing.CheckInTime = &now
+		existing.Status = model.AttendancePresent
 		if err := s.repo.UpdateAttendance(ctx, existing); err != nil {
 			return nil, err
 		}
@@ -566,8 +644,14 @@ func (s *ScheduleService) StudentCheckIn(ctx context.Context, sessionID, student
 }
 
 func (s *ScheduleService) StudentCheckOut(ctx context.Context, sessionID, studentID uuid.UUID) (*dto.SessionAttendanceResponseDTO, error) {
-	att, _ := s.repo.GetAttendanceBySessionAndStudent(ctx, sessionID, studentID)
-	if att == nil {
+	if err := s.requireStudentSessionAccess(ctx, sessionID, studentID); err != nil {
+		return nil, err
+	}
+	att, err := s.repo.GetAttendanceBySessionAndStudent(ctx, sessionID, studentID)
+	if err != nil {
+		return nil, fmt.Errorf("get attendance for check-out: %w", err)
+	}
+	if att == nil || att.CheckInTime == nil {
 		return nil, errors.New("no check-in found for this session")
 	}
 
@@ -768,9 +852,9 @@ func (s *ScheduleService) scheduleSessionReminder(ctx context.Context, session *
 	}
 
 	payload := asynq_queue.ClassReminderPayload{
-		SessionID: session.ID,
-		ClassID:   classID,
-		StartTime: session.StartTime,
+		SessionID:  session.ID,
+		ClassID:    classID,
+		StartTime:  session.StartTime,
 		MinsBefore: 30,
 	}
 

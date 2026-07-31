@@ -244,7 +244,10 @@ func TestGetCertificateByID_FlatFields(t *testing.T) {
 
 	app := fiber.New()
 	h := NewCertificateHandler(svc)
-	app.Get("/certificates/:id", h.GetCertificateByID)
+	app.Get("/certificates/:id", func(c *fiber.Ctx) error {
+		c.Locals("user_id", cert.UserID)
+		return h.GetCertificateByID(c)
+	})
 
 	resp, _ := app.Test(httptest.NewRequest("GET", "/certificates/"+uuid.New().String(), nil))
 	body := decodeBody(t, resp.Body)
@@ -262,9 +265,28 @@ func TestGetCertificateByID_FlatFields(t *testing.T) {
 	}
 }
 
-// ============================================================================
-// TODO(bao-mat): GetCertificateByID hien KHONG kiem tra quyen so huu.
-// Bat ky tai khoan da dang nhap nao biet UUID deu doc duoc chung chi cua
-// nguoi khac (IDOR). Khi backend them check, bo sung test:
-//   - user A goi GET /certificates/{id-cua-user-B} -> 403/404
-// ============================================================================
+func TestGetCertificateByID_RejectsDifferentUser(t *testing.T) {
+	cert := sampleCert()
+	svc := &stubCertificateService{
+		getByIDFn: func(ctx context.Context, id uuid.UUID) (*dto.CertificateResponseDTO, error) {
+			return cert, nil
+		},
+	}
+
+	app := fiber.New()
+	h := NewCertificateHandler(svc)
+	app.Get("/certificates/:id", func(c *fiber.Ctx) error {
+		c.Locals("user_id", uuid.New())
+		return h.GetCertificateByID(c)
+	})
+
+	resp, _ := app.Test(httptest.NewRequest("GET", "/certificates/"+cert.ID.String(), nil))
+	if resp.StatusCode != fiber.StatusNotFound {
+		t.Fatalf("status = %d, muon 404 de khong lo chung chi user khac", resp.StatusCode)
+	}
+
+	body := decodeBody(t, resp.Body)
+	if _, exists := body["data"]; exists {
+		t.Error("response IDOR khong duoc kem data chung chi")
+	}
+}

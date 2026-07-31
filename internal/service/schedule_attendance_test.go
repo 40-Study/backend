@@ -24,12 +24,18 @@ type stubScheduleRepo struct {
 	// state: attendance da ton tai, key = sessionID|studentID
 	existing map[string]*model.SessionAttendance
 
-	createdCount int
-	updatedCount int
+	createdCount     int
+	updatedCount     int
+	teacherCanManage bool
+	studentCanAttend bool
 }
 
 func newStubRepo() *stubScheduleRepo {
-	return &stubScheduleRepo{existing: map[string]*model.SessionAttendance{}}
+	return &stubScheduleRepo{
+		existing:         map[string]*model.SessionAttendance{},
+		teacherCanManage: true,
+		studentCanAttend: true,
+	}
 }
 
 func key(sessionID, studentID uuid.UUID) string {
@@ -50,6 +56,15 @@ func (r *stubScheduleRepo) CreateAttendance(ctx context.Context, att *model.Sess
 	return nil
 }
 
+func (r *stubScheduleRepo) BulkCreateAttendance(ctx context.Context, attendances []model.SessionAttendance) error {
+	for i := range attendances {
+		attendances[i].ID = uuid.New()
+		r.existing[key(attendances[i].SessionID, attendances[i].StudentID)] = &attendances[i]
+		r.createdCount++
+	}
+	return nil
+}
+
 func (r *stubScheduleRepo) UpdateAttendance(ctx context.Context, att *model.SessionAttendance) error {
 	r.existing[key(att.SessionID, att.StudentID)] = att
 	r.updatedCount++
@@ -63,6 +78,14 @@ func (r *stubScheduleRepo) GetAttendanceByID(ctx context.Context, id uuid.UUID) 
 		}
 	}
 	return nil, nil
+}
+
+func (r *stubScheduleRepo) TeacherCanManageSession(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return r.teacherCanManage, nil
+}
+
+func (r *stubScheduleRepo) StudentCanAttendSession(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return r.studentCanAttend, nil
 }
 
 func newTestService(repo repository.ScheduleRepositoryInterface) *ScheduleService {
@@ -129,22 +152,27 @@ func TestMarkAttendance_InvalidStudentID(t *testing.T) {
 	}
 }
 
+func TestMarkAttendance_RejectsTeacherOutsideSessionClass(t *testing.T) {
+	repo := newStubRepo()
+	repo.teacherCanManage = false
+
+	_, err := newTestService(repo).MarkAttendance(context.Background(), uuid.New(), dto.MarkAttendanceDTO{
+		StudentID: uuid.New().String(),
+		Status:    "present",
+	}, uuid.New())
+	if err == nil {
+		t.Fatal("muon tu choi teacher khong duoc gan vao lop cua session")
+	}
+	if repo.createdCount != 0 {
+		t.Fatal("khong duoc ghi attendance khi teacher khong co quyen")
+	}
+}
+
 // ============================================================================
-// BulkMarkAttendance — HANH VI NGUY HIEM, ghi lai bang test
+// BulkMarkAttendance
 // ============================================================================
 
-// Bulk goi MarkAttendance cho tung hoc sinh; hoc sinh da co ban ghi se bi
-// MarkAttendance tra loi, va bulk NUOT loi do bang `continue` (chi log phia
-// server) roi van tra ve nil error.
-//
-// => Giao vien diem danh lan 2 de SUA se khong luu duoc gi, ma client van
-// nhan 200 OK. Frontend da phai ne bang cach tach create/update
-// (web/src/components/attendance/use-attendance-draft.ts).
-//
-// Test nay CO Y khoa lai hanh vi hien tai de mo ta dung su that. Khi backend
-// duoc sua de bao cao danh sach bi bo qua, test nay se do va can cap nhat —
-// do la tin hieu dung, khong phai loi test.
-func TestBulkMarkAttendance_SilentlySkipsExistingRecords(t *testing.T) {
+func TestBulkMarkAttendance_RejectsWholeBatchWhenRecordExists(t *testing.T) {
 	repo := newStubRepo()
 	sessionID, teacherID := uuid.New(), uuid.New()
 	studentA, studentB := uuid.New(), uuid.New()
@@ -157,32 +185,22 @@ func TestBulkMarkAttendance_SilentlySkipsExistingRecords(t *testing.T) {
 	svc := newTestService(repo)
 	results, err := svc.BulkMarkAttendance(context.Background(), sessionID, dto.BulkMarkAttendanceDTO{
 		Attendances: []dto.MarkAttendanceDTO{
-			{StudentID: studentA.String(), Status: "present"}, // se bi bo qua
-			{StudentID: studentB.String(), Status: "present"}, // se duoc tao
+			{StudentID: studentA.String(), Status: "present"},
+			{StudentID: studentB.String(), Status: "present"},
 		},
 	}, teacherID)
 
-	if err != nil {
-		t.Fatalf("bulk tra loi: %v — dang le nuot loi va tra nil", err)
+	if err == nil {
+		t.Fatal("muon bulk bao loi khi mot ban ghi da ton tai")
 	}
-
-	// Chi 1 ban ghi duoc tao (cua B); A bi bo qua trong im lang
-	if len(results) != 1 {
-		t.Errorf("len(results) = %d, muon 1 (chi B duoc tao)", len(results))
+	if results != nil {
+		t.Errorf("results = %#v, muon nil khi ca batch bi tu choi", results)
 	}
-	if repo.createdCount != 1 {
-		t.Errorf("createdCount = %d, muon 1", repo.createdCount)
+	if repo.createdCount != 0 {
+		t.Errorf("createdCount = %d, muon 0 de tranh partial success", repo.createdCount)
 	}
-
-	// Trang thai cua A KHONG doi du client gui "present"
 	if got := repo.existing[key(sessionID, studentA)].Status; got != model.AttendanceAbsent {
-		t.Errorf("trang thai cua A = %q, muon van la \"absent\" (bi bo qua)", got)
-	}
-
-	// Day la mau chot: caller khong co cach nao biet A bi bo qua.
-	// err == nil VA results chi thieu phan tu — khong co danh sach loi tra ve.
-	if err == nil && len(results) < 2 {
-		t.Log("XAC NHAN: bulk bo qua ban ghi da ton tai ma khong bao loi cho client")
+		t.Errorf("trang thai cua A = %q, muon van la \"absent\"", got)
 	}
 }
 
@@ -230,6 +248,19 @@ func TestStudentCheckIn_CreatesRecordWithPresentStatus(t *testing.T) {
 	}
 }
 
+func TestStudentCheckIn_RejectsStudentOutsideSessionClass(t *testing.T) {
+	repo := newStubRepo()
+	repo.studentCanAttend = false
+
+	_, err := newTestService(repo).StudentCheckIn(context.Background(), uuid.New(), uuid.New())
+	if err == nil {
+		t.Fatal("muon tu choi student khong thuoc lop cua session")
+	}
+	if repo.createdCount != 0 {
+		t.Fatal("khong duoc tao attendance cho student ngoai lop")
+	}
+}
+
 func TestStudentCheckIn_UpsertsWhenRecordExists(t *testing.T) {
 	repo := newStubRepo()
 	sessionID, studentID := uuid.New(), uuid.New()
@@ -249,6 +280,9 @@ func TestStudentCheckIn_UpsertsWhenRecordExists(t *testing.T) {
 	if got.CheckInTime == nil {
 		t.Error("check_in_time phai duoc cap nhat")
 	}
+	if got.Status != string(model.AttendancePresent) {
+		t.Errorf("status = %q, muon \"present\" sau khi check-in", got.Status)
+	}
 }
 
 func TestStudentCheckOut_FailsWithoutCheckIn(t *testing.T) {
@@ -257,5 +291,21 @@ func TestStudentCheckOut_FailsWithoutCheckIn(t *testing.T) {
 	_, err := svc.StudentCheckOut(context.Background(), uuid.New(), uuid.New())
 	if err == nil {
 		t.Fatal("muon loi khi chua tung check-in")
+	}
+}
+
+func TestStudentCheckOut_FailsWhenAttendanceExistsWithoutCheckInTime(t *testing.T) {
+	repo := newStubRepo()
+	sessionID, studentID := uuid.New(), uuid.New()
+	repo.existing[key(sessionID, studentID)] = &model.SessionAttendance{
+		ID: uuid.New(), SessionID: sessionID, StudentID: studentID, Status: model.AttendanceAbsent,
+	}
+
+	_, err := newTestService(repo).StudentCheckOut(context.Background(), sessionID, studentID)
+	if err == nil {
+		t.Fatal("muon loi khi co ban ghi diem danh nhung hoc sinh chua check-in")
+	}
+	if repo.updatedCount != 0 {
+		t.Fatal("khong duoc ghi check_out_time khi chua check-in")
 	}
 }

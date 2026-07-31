@@ -72,6 +72,7 @@ func (r *CertificateRepository) GetCertificatesByUserID(ctx context.Context, use
 
 	offset := (page - 1) * pageSize
 	err := query.
+		Preload("User").
 		Preload("Course").
 		Order("issued_at DESC").
 		Offset(offset).
