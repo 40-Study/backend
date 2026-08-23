@@ -39,6 +39,7 @@ type OrderServiceInterface interface {
 	CancelOrder(ctx context.Context, userID, orderID uuid.UUID, reason string) error
 	CompleteOrder(ctx context.Context, orderID uuid.UUID, paymentMethod, transactionID string) error
 	ValidateIdempotencyKey(ctx context.Context, scope, key string, requestHash string) (*dto.OrderResponse, bool, error)
+	GetOrderWithPaymentCapture(ctx context.Context, orderID uuid.UUID, paymentService PaymentServiceInterface) (*dto.OrderResponse, error)
 }
 
 type OrderService struct {
@@ -138,7 +139,11 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 
 	subtotal := decimal.Zero
 	for _, course := range courses {
+		// Use discount price if available, otherwise use regular price
 		price := course.Price
+		if course.DiscountPrice != nil && course.DiscountPrice.GreaterThan(decimal.Zero) {
+			price = *course.DiscountPrice
+		}
 		subtotal = subtotal.Add(price)
 	}
 
@@ -190,7 +195,11 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 	// Create order items with price snapshot
 	items := make([]model.OrderItem, 0, len(courses))
 	for _, course := range courses {
+		// Use discount price if available
 		price := course.Price
+		if course.DiscountPrice != nil && course.DiscountPrice.GreaterThan(decimal.Zero) {
+			price = *course.DiscountPrice
+		}
 
 		item := model.OrderItem{
 			ID:             uuid.New(),
@@ -202,7 +211,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 			FinalPrice:     price,
 		}
 
-		// Apply pro-rated discount
+		// Apply pro-rated coupon discount
 		if discountAmount.GreaterThan(decimal.Zero) && subtotal.GreaterThan(decimal.Zero) {
 			item.DiscountAmount = price.Mul(discountAmount).Div(subtotal)
 			item.FinalPrice = price.Sub(item.DiscountAmount)
@@ -217,11 +226,12 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 			return err
 		}
 
-		if err := s.orderItemRepo.CreateBatch(items); err != nil {
+		// Create items within the same transaction using txRepo's db
+		if err := txRepo.CreateOrderItems(items); err != nil {
 			return err
 		}
 
-		// Create status history
+		// Create status history within the same transaction
 		history := &model.OrderStatusHistory{
 			ID:         uuid.New(),
 			CreatedAt:  time.Now(),
@@ -230,7 +240,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 			ToStatus:   "pending",
 			Reason:     "Order created",
 		}
-		if err := s.orderHistoryRepo.Create(history); err != nil {
+		if err := txRepo.CreateOrderHistory(history); err != nil {
 			return err
 		}
 
@@ -263,6 +273,28 @@ func (s *OrderService) GetOrderByID(ctx context.Context, orderID uuid.UUID) (*dt
 	}
 
 	return s.toOrderResponse(order, items), nil
+}
+
+// GetOrderWithPaymentCapture - Get order with embedded payment capture info
+func (s *OrderService) GetOrderWithPaymentCapture(ctx context.Context, orderID uuid.UUID, paymentService PaymentServiceInterface) (*dto.OrderResponse, error) {
+	order, err := s.orderRepo.GetByID(orderID)
+	if err != nil {
+		return nil, ErrOrderNotFound
+	}
+
+	items, err := s.orderItemRepo.GetByOrderID(orderID)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := s.toOrderResponse(order, items)
+
+	// Attach payment capture info if order is pending/processing
+	if paymentService != nil {
+		resp.PaymentCapture = paymentService.GetPaymentCaptureInfo(order)
+	}
+
+	return resp, nil
 }
 
 // GetOrderByNumber - Get order by order number
@@ -487,13 +519,29 @@ func (s *OrderService) getCoursesByIDs(ctx context.Context, ids []uuid.UUID) ([]
 func (s *OrderService) toOrderResponse(order *model.Order, items []model.OrderItem) *dto.OrderResponse {
 	itemResponses := make([]dto.OrderItemResponse, 0, len(items))
 	for _, item := range items {
+		var courseName, courseThumbnail, courseInstructor string
+		if s.courseRepo != nil {
+			if course, err := s.courseRepo.GetByID(context.Background(), item.CourseID); err == nil && course != nil {
+				courseName = course.Title
+				if course.ThumbnailURL != nil {
+					courseThumbnail = *course.ThumbnailURL
+				}
+				if course.Instructor.FullName != nil && *course.Instructor.FullName != "" {
+					courseInstructor = *course.Instructor.FullName
+				} else {
+					courseInstructor = course.Instructor.UserName
+				}
+			}
+		}
 		itemResponses = append(itemResponses, dto.OrderItemResponse{
-			ID:             item.ID,
-			CourseID:       item.CourseID,
-			CourseName:     "", // Will be populated if needed
-			Price:          item.Price,
-			DiscountAmount: item.DiscountAmount,
-			FinalPrice:     item.FinalPrice,
+			ID:               item.ID,
+			CourseID:         item.CourseID,
+			CourseName:       courseName,
+			CourseThumbnail:  courseThumbnail,
+			CourseInstructor: courseInstructor,
+			Price:            item.Price,
+			DiscountAmount:   item.DiscountAmount,
+			FinalPrice:       item.FinalPrice,
 		})
 	}
 

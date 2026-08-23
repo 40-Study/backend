@@ -76,8 +76,25 @@ func (s *LessonContentService) CreateContent(ctx context.Context, lessonID uuid.
 		content.DisplayOrder = *req.DisplayOrder
 	}
 
+	// Auto-fetch duration from video upload if not provided
+	if content.Duration == 0 && req.VideoURL != nil && s.videoUploadService != nil {
+		hlsPattern := regexp.MustCompile(`/hls/([a-f0-9-]{36})`)
+		if matches := hlsPattern.FindStringSubmatch(*req.VideoURL); len(matches) > 1 {
+			if uploadID, err := uuid.Parse(matches[1]); err == nil {
+				if status, err := s.videoUploadService.GetUploadStatus(ctx, uploadID); err == nil && status.Duration != nil {
+					content.Duration = int(*status.Duration)
+				}
+			}
+		}
+	}
+
 	if err := s.lessonRepo.CreateContent(ctx, content); err != nil {
 		return nil, err
+	}
+
+	// Also update lesson duration
+	if content.Duration > 0 {
+		s.lessonRepo.UpdateDuration(ctx, lessonID, content.Duration)
 	}
 
 	return s.toContentResponseDTO(content), nil
@@ -92,7 +109,19 @@ func (s *LessonContentService) GetContentByID(ctx context.Context, contentID uui
 		return nil, errors.New("content not found")
 	}
 
-	return s.toContentResponseDTO(content), nil
+	resp := s.toContentResponseDTO(content)
+
+	// Enrich with video upload duration if available
+	if resp.VideoUploadID != nil && s.videoUploadService != nil {
+		uploadID, err := uuid.Parse(*resp.VideoUploadID)
+		if err == nil {
+			if status, err := s.videoUploadService.GetUploadStatus(ctx, uploadID); err == nil && status.Duration != nil {
+				resp.Duration = int(*status.Duration)
+			}
+		}
+	}
+
+	return resp, nil
 }
 
 func (s *LessonContentService) GetContentsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]dto.LessonContentResponseDTO, error) {
@@ -108,6 +137,16 @@ func (s *LessonContentService) GetContentsByLessonID(ctx context.Context, lesson
 	result := make([]dto.LessonContentResponseDTO, len(contents))
 	for i, c := range contents {
 		result[i] = *s.toContentResponseDTO(&c)
+
+		// Enrich with video upload duration if available
+		if result[i].VideoUploadID != nil && s.videoUploadService != nil {
+			uploadID, err := uuid.Parse(*result[i].VideoUploadID)
+			if err == nil {
+				if status, err := s.videoUploadService.GetUploadStatus(ctx, uploadID); err == nil && status.Duration != nil {
+					result[i].Duration = int(*status.Duration)
+				}
+			}
+		}
 	}
 
 	return result, nil
@@ -136,6 +175,9 @@ func (s *LessonContentService) UpdateContent(ctx context.Context, contentID uuid
 	}
 	if req.ExerciseID != nil {
 		content.ExerciseID = req.ExerciseID
+	}
+	if req.LivestreamSessionID != nil {
+		content.LivestreamSessionID = req.LivestreamSessionID
 	}
 	if req.IsMandatory != nil {
 		content.IsMandatory = *req.IsMandatory
@@ -208,17 +250,18 @@ func (s *LessonContentService) ReorderContents(ctx context.Context, lessonID uui
 
 func (s *LessonContentService) toContentResponseDTO(c *model.LessonContent) *dto.LessonContentResponseDTO {
 	resp := &dto.LessonContentResponseDTO{
-		ID:           c.ID,
-		LessonID:     c.LessonID,
-		Type:         c.Type,
-		Title:        c.Title,
-		VideoURL:     c.VideoURL,
-		Duration:     c.Duration,
-		ExerciseID:   c.ExerciseID,
-		IsMandatory:  c.IsMandatory,
-		DisplayOrder: c.DisplayOrder,
-		CreatedAt:    c.CreatedAt,
-		UpdatedAt:    c.UpdatedAt,
+		ID:                  c.ID,
+		LessonID:            c.LessonID,
+		Type:                c.Type,
+		Title:               c.Title,
+		VideoURL:            c.VideoURL,
+		Duration:            c.Duration,
+		ExerciseID:          c.ExerciseID,
+		LivestreamSessionID: c.LivestreamSessionID,
+		IsMandatory:         c.IsMandatory,
+		DisplayOrder:        c.DisplayOrder,
+		CreatedAt:           c.CreatedAt,
+		UpdatedAt:           c.UpdatedAt,
 	}
 
 	// Extract upload ID from video_url patterns and generate HLS + fallback URLs

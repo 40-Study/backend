@@ -101,6 +101,7 @@ func (s *CartService) GetCart(ctx context.Context, userID uuid.UUID) (*dto.CartL
 
 	return &dto.CartListResponseDTO{
 		Items:     responseItems,
+		Total:     int(totalPrice),
 		TotalItem: len(responseItems),
 	}, nil
 }

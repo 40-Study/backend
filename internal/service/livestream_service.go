@@ -19,6 +19,7 @@ import (
 type LivestreamServiceInterface interface {
 	Create(ctx context.Context, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*dto.LivestreamDetailDTO, error)
+	GetByLessonContentID(ctx context.Context, lessonContentID uuid.UUID) (*dto.LivestreamResponseDTO, error)
 	GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID) (*dto.LivestreamListDTO, error)
 	Update(ctx context.Context, id uuid.UUID, req dto.UpdateLivestreamDTO) (*model.LivestreamSession, error)
 	Delete(ctx context.Context, id uuid.UUID) error
@@ -28,6 +29,7 @@ type LivestreamServiceInterface interface {
 	Leave(ctx context.Context, sessionID uuid.UUID, req dto.LeaveLivestreamDTO) error
 	GetParticipants(ctx context.Context, sessionID uuid.UUID, page, pageSize int) ([]model.Participant, int64, error)
 	MuteParticipant(ctx context.Context, sessionID, userID uuid.UUID) error
+	UnmuteParticipant(ctx context.Context, sessionID, userID uuid.UUID) error
 	KickParticipant(ctx context.Context, sessionID, userID uuid.UUID) error
 	LockWhiteboard(ctx context.Context, sessionID uuid.UUID, locked bool) error
 	StartScreenShare(ctx context.Context, sessionID, userID uuid.UUID) error
@@ -74,9 +76,14 @@ func (s *LivestreamService) Create(ctx context.Context, req dto.CreateLivestream
 		return nil, errors.New("invalid host_id")
 	}
 
-	classID, err := uuid.Parse(req.ClassID)
-	if err != nil {
-		return nil, errors.New("invalid class_id")
+	// ClassID optional
+	var classIDPtr *uuid.UUID
+	if req.ClassID != "" {
+		classID, err := uuid.Parse(req.ClassID)
+		if err != nil {
+			return nil, errors.New("invalid class_id")
+		}
+		classIDPtr = &classID
 	}
 
 	// CourseID optional
@@ -87,6 +94,16 @@ func (s *LivestreamService) Create(ctx context.Context, req dto.CreateLivestream
 			return nil, errors.New("invalid course_id")
 		}
 		courseIDPtr = &courseID
+	}
+
+	// LessonID optional
+	var lessonIDPtr *uuid.UUID
+	if req.LessonID != "" {
+		lessonID, err := uuid.Parse(req.LessonID)
+		if err != nil {
+			return nil, errors.New("invalid lesson_id")
+		}
+		lessonIDPtr = &lessonID
 	}
 
 	// LessonContentID optional
@@ -108,6 +125,20 @@ func (s *LivestreamService) Create(ctx context.Context, req dto.CreateLivestream
 		maxViewers = 100
 	}
 
+	// Default values
+	platform := req.Platform
+	if platform == "" {
+		platform = "40study"
+	}
+	durationMinutes := req.DurationMinutes
+	if durationMinutes <= 0 {
+		durationMinutes = 60
+	}
+	var customLinkPtr *string
+	if req.CustomLink != "" {
+		customLinkPtr = &req.CustomLink
+	}
+
 	settings := model.LivestreamSettings{
 		IsChatEnabled:        true,
 		IsQAEnabled:          true,
@@ -122,19 +153,25 @@ func (s *LivestreamService) Create(ctx context.Context, req dto.CreateLivestream
 		Title:           req.Title,
 		Description:     &req.Description,
 		HostID:          hostID,
-		ClassID:         classID,
+		ClassID:         classIDPtr,
 		CourseID:        courseIDPtr,
+		LessonID:        lessonIDPtr,
 		LessonContentID: lessonContentIDPtr,
 		RoomName:        roomName,
 		Status:          model.LivestreamStatusScheduled,
+		DurationMinutes: durationMinutes,
+		Platform:        platform,
+		CustomLink:      customLinkPtr,
+		EnableReminder:  req.EnableReminder,
 		MaxViewers:      maxViewers,
-		IsRecorded:      req.IsRecorded,
+		IsRecorded:      req.EnableRecording,
 		Settings:        settings,
 	}
 
-	// Set ScheduledAt trước khi lưu DB
-	if req.ScheduledAt != "" {
-		scheduledTime, err := time.Parse(time.RFC3339, req.ScheduledAt)
+	// Parse scheduled_date + start_time into ScheduledAt
+	if req.ScheduledDate != "" && req.StartTime != "" {
+		dateTimeStr := req.ScheduledDate + "T" + req.StartTime + ":00"
+		scheduledTime, err := time.Parse("2006-01-02T15:04:05", dateTimeStr)
 		if err == nil {
 			session.ScheduledAt = &scheduledTime
 		}
@@ -145,10 +182,10 @@ func (s *LivestreamService) Create(ctx context.Context, req dto.CreateLivestream
 	}
 
 	// Enqueue reminder tasks sau khi lưu DB thành công
-	if session.ScheduledAt != nil {
+	if session.ScheduledAt != nil && session.EnableReminder {
 		payload := asynq_queue.ScheduleLivestreamRemindPayload{
 			SessionID:   sessionID,
-			ClassID:     &classID,
+			ClassID:     classIDPtr,
 			Title:       req.Title,
 			ScheduledAt: *session.ScheduledAt,
 		}
@@ -194,6 +231,18 @@ func (s *LivestreamService) GetByID(ctx context.Context, id uuid.UUID) (*dto.Liv
 	}
 
 	return detail, nil
+}
+
+func (s *LivestreamService) GetByLessonContentID(ctx context.Context, lessonContentID uuid.UUID) (*dto.LivestreamResponseDTO, error) {
+	session, err := s.repo.GetByLessonContentID(ctx, lessonContentID)
+	if err != nil {
+		return nil, err
+	}
+	if session == nil {
+		return nil, nil
+	}
+	resp := s.toResponseDTO(*session)
+	return &resp, nil
 }
 
 func (s *LivestreamService) GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID) (*dto.LivestreamListDTO, error) {
@@ -327,22 +376,19 @@ func (s *LivestreamService) Join(ctx context.Context, sessionID uuid.UUID, req d
 		return nil, errors.New("session not found")
 	}
 
-	// Check if user is host - host can join 30 min early, regular users 10 min early
+	// Check if user is host - host can ALWAYS join their own session
 	isHost := userID == session.HostID
-	canJoinEarly := false
-	if session.ScheduledAt != nil {
-		var earlyMinutes int
-		if isHost {
-			earlyMinutes = 30
-		} else {
-			earlyMinutes = 10
-		}
-		earlyJoinTime := session.ScheduledAt.Add(-time.Duration(earlyMinutes) * time.Minute)
-		canJoinEarly = time.Now().After(earlyJoinTime)
-	}
 
-	if session.Status != model.LivestreamStatusLive && !canJoinEarly {
-		return nil, errors.New("session is not live")
+	// Host can always join, others need session to be live or within early join window
+	if !isHost {
+		canJoinEarly := false
+		if session.ScheduledAt != nil {
+			earlyJoinTime := session.ScheduledAt.Add(-10 * time.Minute)
+			canJoinEarly = time.Now().After(earlyJoinTime)
+		}
+		if session.Status != model.LivestreamStatusLive && !canJoinEarly {
+			return nil, errors.New("session is not live")
+		}
 	}
 
 	if session.MaxViewers > 0 {
@@ -445,6 +491,9 @@ func (s *LivestreamService) MuteParticipant(ctx context.Context, sessionID, user
 	if session == nil {
 		return errors.New("session not found")
 	}
+	if userID == session.HostID {
+		return errors.New("cannot mute host")
+	}
 
 	participant, err := s.participantRepo.GetBySessionAndUser(ctx, sessionID, userID)
 	if err != nil {
@@ -455,6 +504,30 @@ func (s *LivestreamService) MuteParticipant(ctx context.Context, sessionID, user
 	}
 	updateReq := dto.UpdateParticipantDTO{
 		CanPublish: ptrBool(false),
+	}
+	_, err = s.livekitSvc.UpdateParticipant(ctx, session.RoomName, userID.String(), updateReq)
+	return err
+}
+
+func (s *LivestreamService) UnmuteParticipant(ctx context.Context, sessionID, userID uuid.UUID) error {
+	session, err := s.repo.GetByID(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session == nil {
+		return errors.New("session not found")
+	}
+
+	participant, err := s.participantRepo.GetBySessionAndUser(ctx, sessionID, userID)
+	if err != nil {
+		return err
+	}
+	if participant == nil {
+		return errors.New("participant not found")
+	}
+
+	updateReq := dto.UpdateParticipantDTO{
+		CanPublish: ptrBool(true),
 	}
 	_, err = s.livekitSvc.UpdateParticipant(ctx, session.RoomName, userID.String(), updateReq)
 	return err
@@ -544,13 +617,18 @@ func (s *LivestreamService) toResponseDTO(session model.LivestreamSession) dto.L
 		Description:     ptrToStr(session.Description),
 		HostID:          session.HostID,
 		ClassID:         session.ClassID,
-		CourseID:         session.CourseID,
+		CourseID:        session.CourseID,
+		LessonID:        session.LessonID,
 		LessonContentID: session.LessonContentID,
 		RoomName:        session.RoomName,
 		Status:          string(session.Status),
 		StartedAt:       startedAt,
 		EndedAt:         endedAt,
 		ScheduledAt:     scheduledAt,
+		DurationMinutes: session.DurationMinutes,
+		Platform:        session.Platform,
+		CustomLink:      session.CustomLink,
+		EnableReminder:  session.EnableReminder,
 		MaxViewers:      session.MaxViewers,
 		IsRecorded:      session.IsRecorded,
 		Settings:        string(settingsJSON),

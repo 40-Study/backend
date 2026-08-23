@@ -141,13 +141,13 @@ async def get_transaction_count(
 
 @app.get("/transactions/check-pin")
 async def check_transaction_by_pin(
-    pin: str = Query(..., description="Mã PIN 15 ký tự (9 chữ cái + 6 ký tự mã hóa thời gian)", min_length=15, max_length=15),
+    pin: str = Query(..., description="Payment code to search in transaction description"),
     from_date: str = Query(..., description="Format: hh-mm-ss-dd-mm-yyyy"),
     to_date: str = Query(..., description="Format: hh-mm-ss-dd-mm-yyyy")
 ):
     try:
-        if len(pin) != 15:
-            raise HTTPException(status_code=400, detail="PIN must be exactly 15 characters")
+        if len(pin) < 3:
+            raise HTTPException(status_code=400, detail="PIN must be at least 3 characters")
         
         from_dt = parse_datetime(from_date)
         to_dt = parse_datetime(to_date)

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"path"
@@ -51,19 +52,32 @@ func NewHLSHandler(minioClient *storage.MinioClient, uploadRepo repository.Video
 	return &HLSHandler{minioClient: minioClient, uploadRepo: uploadRepo}
 }
 
-// getOriginalVideoURL returns relative API URL for streaming original video
+// getOriginalVideoURL returns direct CDN URL for original video
+// Videos are protected by Referer checking in bucket policy
 func (h *HLSHandler) getOriginalVideoURL(c *fiber.Ctx, uploadID string) (string, error) {
 	uid, err := uuid.Parse(uploadID)
 	if err != nil {
 		return "", err
 	}
-	// Verify upload exists
-	_, err = h.uploadRepo.GetUploadByID(c.Context(), uid)
+	// Get upload to find actual object key
+	upload, err := h.uploadRepo.GetUploadByID(c.Context(), uid)
 	if err != nil {
 		return "", err
 	}
-	// Return relative URL - will be served by StreamOriginalVideo endpoint
-	return "/api/hls/" + uploadID + "/video.mp4", nil
+	// Build direct CDN URL (protected by Referer policy)
+	cdnURL := h.buildCDNUrl(upload.Bucket, upload.ObjectKey)
+	return cdnURL, nil
+}
+
+// buildCDNUrl constructs direct CDN/MinIO URL for an object
+func (h *HLSHandler) buildCDNUrl(bucket, objectKey string) string {
+	// Use public endpoint if configured, otherwise use internal endpoint
+	// The MinioClient already handles this via config
+	baseURL := "http://localhost:9000" // Default for local dev
+	if publicEndpoint := h.minioClient.GetPublicEndpoint(); publicEndpoint != "" {
+		baseURL = publicEndpoint
+	}
+	return fmt.Sprintf("%s/%s/%s", baseURL, bucket, objectKey)
 }
 
 // StreamOriginalVideo streams the original video file (fallback when HLS not ready)
@@ -282,16 +296,21 @@ func (h *HLSHandler) GetVideoInfo(c *fiber.Ctx) error {
 	qualityMap := map[string]string{"v0": "480p", "v1": "720p", "v2": "1080p"}
 	availableQualities := []fiber.Map{}
 
+	bucket := h.minioClient.GetDefaultBucket()
+
 	for _, obj := range allObjects {
 		if path.Base(obj.Key) == "master.m3u8" {
 			hasMaster = true
 		}
 		for dir, label := range qualityMap {
 			if strings.Contains(obj.Key, "/"+dir+"/") && path.Base(obj.Key) == "index.m3u8" {
+				// Direct CDN URL (protected by Referer policy)
+				playlistKey := path.Join("videos", uploadID, dir, "index.m3u8")
+				playlistURL := h.buildCDNUrl(bucket, playlistKey)
 				availableQualities = append(availableQualities, fiber.Map{
 					"id":       dir,
 					"label":    label,
-					"playlist": "/api/hls/" + uploadID + "/" + dir + "/index.m3u8",
+					"playlist": playlistURL,
 				})
 			}
 		}
@@ -314,10 +333,14 @@ func (h *HLSHandler) GetVideoInfo(c *fiber.Ctx) error {
 		})
 	}
 
+	// Direct CDN URL for master playlist (protected by Referer policy)
+	masterKey := path.Join("videos", uploadID, "master.m3u8")
+	masterURL := h.buildCDNUrl(bucket, masterKey)
+
 	return c.JSON(fiber.Map{
 		"upload_id":  uploadID,
 		"hls_ready":  true,
-		"master_url": "/api/hls/" + uploadID + "/master.m3u8",
+		"master_url": masterURL,
 		"qualities":  availableQualities,
 		"status":     "ready",
 	})

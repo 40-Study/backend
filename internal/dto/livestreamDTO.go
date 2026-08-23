@@ -5,13 +5,19 @@ import "github.com/google/uuid"
 type CreateLivestreamDTO struct {
 	Title           string `json:"title" validate:"required,min=3,max=255"`
 	Description     string `json:"description"`
-	HostID          string `json:"host_id" validate:"required,uuid"`
-	ClassID         string `json:"class_id" validate:"required,uuid"`
+	HostID          string `json:"host_id" validate:"omitempty,uuid"`
+	ClassID         string `json:"class_id" validate:"omitempty,uuid"`
 	CourseID        string `json:"course_id" validate:"omitempty,uuid"`
+	LessonID        string `json:"lesson_id" validate:"omitempty,uuid"`
 	LessonContentID string `json:"lesson_content_id" validate:"omitempty,uuid"`
+	ScheduledDate   string `json:"scheduled_date"`
+	StartTime       string `json:"start_time"`
+	DurationMinutes int    `json:"duration_minutes"`
+	Platform        string `json:"platform" validate:"omitempty,oneof=40study zoom custom"`
+	CustomLink      string `json:"custom_link" validate:"omitempty,url"`
+	EnableReminder  bool   `json:"enable_reminder"`
+	EnableRecording bool   `json:"enable_recording"`
 	MaxViewers      int64  `json:"max_viewers"`
-	IsRecorded      bool   `json:"is_recorded"`
-	ScheduledAt     string `json:"scheduled_at"`
 }
 
 type UpdateLivestreamDTO struct {
@@ -39,14 +45,19 @@ type LivestreamResponseDTO struct {
 	Title           string     `json:"title"`
 	Description     string     `json:"description"`
 	HostID          uuid.UUID  `json:"host_id"`
-	ClassID         uuid.UUID  `json:"class_id"`
+	ClassID         *uuid.UUID `json:"class_id,omitempty"`
 	CourseID        *uuid.UUID `json:"course_id,omitempty"`
+	LessonID        *uuid.UUID `json:"lesson_id,omitempty"`
 	LessonContentID *uuid.UUID `json:"lesson_content_id,omitempty"`
 	RoomName        string     `json:"room_name"`
 	Status          string     `json:"status"`
 	StartedAt       *string    `json:"started_at,omitempty"`
 	EndedAt         *string    `json:"ended_at,omitempty"`
 	ScheduledAt     *string    `json:"scheduled_at,omitempty"`
+	DurationMinutes int        `json:"duration_minutes"`
+	Platform        string     `json:"platform"`
+	CustomLink      *string    `json:"custom_link,omitempty"`
+	EnableReminder  bool       `json:"enable_reminder"`
 	MaxViewers      int64      `json:"max_viewers"`
 	IsRecorded      bool       `json:"is_recorded"`
 	Settings        string     `json:"settings"`

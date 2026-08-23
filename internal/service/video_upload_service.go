@@ -7,7 +7,6 @@ import (
 	"math"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -158,26 +157,13 @@ func (s *VideoUploadService) InitVideoUpload(ctx context.Context, req *dto.InitV
 		log.Printf("Failed to update upload status to uploading: %v", err)
 	}
 
+	// Track active uploads trong Redis (chỉ để monitoring, không dùng cho chunk tracking)
 	if s.redisClient != nil {
 		redisKey := "active_uploads"
 		if err := s.redisClient.SAdd(ctx, redisKey, upload.ID.String()).Err(); err != nil {
 			log.Printf("Failed to add upload to Redis active set: %v", err)
 		} else {
 			s.redisClient.Expire(ctx, redisKey, 7*24*time.Hour)
-			log.Printf("Đã thêm upload %s vào Redis Set active_uploads", upload.ID)
-		}
-
-		// Lưu meta vào Redis Hash để CompleteChunkUpload đọc không cần query DB
-		// Key: upload:{id}:meta, field: total_chunks / chunk_size
-		redisMetaKey := fmt.Sprintf("upload:%s:meta", upload.ID)
-		pipe := s.redisClient.Pipeline()
-		pipe.HMSet(ctx, redisMetaKey, map[string]interface{}{
-			"total_chunks": totalChunks,
-			"chunk_size":   chunkSize,
-		})
-		pipe.Expire(ctx, redisMetaKey, 7*24*time.Hour)
-		if _, pipeErr := pipe.Exec(ctx); pipeErr != nil {
-			log.Printf("Failed to store upload meta in Redis: %v", pipeErr)
 		}
 	}
 
@@ -303,76 +289,60 @@ func (s *VideoUploadService) CompleteChunkUpload(ctx context.Context, req *dto.C
 }
 
 func (s *VideoUploadService) CompleteVideoUpload(ctx context.Context, req *dto.CompleteVideoUploadRequest) (*dto.CompleteVideoUploadResponse, error) {
-	// Get upload record with chunks
+	// Get upload record
 	upload, err := s.uploadRepo.GetUploadByID(ctx, req.UploadID)
 	if err != nil {
 		return nil, fmt.Errorf("upload not found: %w", err)
 	}
 
-	// Build parts list - đọc từ Redis trước (không cần query DB), fallback DB nếu Redis miss
 	var parts []storage.CompletePart
-	redisChunksKey := fmt.Sprintf("upload:%s:chunks", req.UploadID)
 
-	if s.redisClient != nil {
-		chunkData, redisErr := s.redisClient.HGetAll(ctx, redisChunksKey).Result()
-		if redisErr == nil && len(chunkData) > 0 {
-			// Đọc ETags từ Redis Hash
-			for field, value := range chunkData {
-				chunkNum, _ := strconv.Atoi(field)
-				valueParts := strings.SplitN(value, "|", 2)
-				etag := valueParts[0]
-				parts = append(parts, storage.CompletePart{
-					PartNumber: chunkNum,
-					ETag:       etag,
-				})
-			}
-			// S3 yêu cầu parts phải theo thứ tự
-			sort.Slice(parts, func(i, j int) bool {
-				return parts[i].PartNumber < parts[j].PartNumber
-			})
-			if len(parts) < upload.TotalChunks {
-				return nil, fmt.Errorf("not all chunks uploaded: %d/%d", len(parts), upload.TotalChunks)
-			}
-
-			// 🔄 BULK INSERT Redis → DB trong 1 lần (thay vì 82 UPDATE riêng lẻ)
-			dbParts := make([]model.VideoUploadPart, 0, len(chunkData))
-			for field, value := range chunkData {
-				chunkNum, _ := strconv.Atoi(field)
-				valueParts := strings.SplitN(value, "|", 2)
-				etag := valueParts[0]
-				dbParts = append(dbParts, model.VideoUploadPart{
-					UploadID:   upload.ID,
-					PartNumber: chunkNum,
-					ETag:       etag,
-				})
-			}
-			if dbErr := s.uploadRepo.BulkInsertParts(ctx, dbParts); dbErr != nil {
-				log.Printf("⚠️ Failed to bulk insert parts to DB: %v", dbErr)
-			}
-			progress := float64(len(dbParts)) / float64(upload.TotalChunks) * 100
-			if dbErr := s.uploadRepo.SetUploadedChunks(ctx, upload.ID, len(dbParts), progress); dbErr != nil {
-				log.Printf("⚠️ Failed to update uploaded chunks count: %v", dbErr)
-			}
-			log.Printf("✅ Bulk inserted %d parts from Redis to DB for upload %s", len(dbParts), upload.ID)
-		}
-	}
-
-	if len(parts) == 0 {
-		// Fallback: Redis không khả dụng — đọc từ video_upload_parts (chỉ có data nếu đã từng complete trước)
-		// Trade-off đã biết: nếu Redis mất data khi upload đang dở → không resume được, user phải upload lại
-		dbParts, err := s.uploadRepo.GetPartsByUploadID(ctx, req.UploadID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get parts: %w", err)
-		}
-		if len(dbParts) < upload.TotalChunks {
-			return nil, fmt.Errorf("redis unavailable and no part records found (%d/%d) — upload must be restarted", len(dbParts), upload.TotalChunks)
-		}
-		for _, p := range dbParts {
+	// Ưu tiên 1: FE gửi parts (flow tối ưu - không cần gọi MinIO/Redis)
+	if len(req.Parts) > 0 {
+		log.Printf("✅ CompleteVideoUpload: Using %d parts from FE request", len(req.Parts))
+		for _, p := range req.Parts {
 			parts = append(parts, storage.CompletePart{
 				PartNumber: p.PartNumber,
 				ETag:       p.ETag,
 			})
 		}
+		// Sort theo part number (S3 yêu cầu)
+		sort.Slice(parts, func(i, j int) bool {
+			return parts[i].PartNumber < parts[j].PartNumber
+		})
+	}
+
+	// Ưu tiên 2: Gọi MinIO ListParts (fallback khi FE không gửi parts)
+	if len(parts) == 0 {
+		log.Printf("📡 CompleteVideoUpload: FE didn't send parts, calling MinIO ListParts")
+		minioParts, err := s.storage.ListParts(ctx, upload.Bucket, upload.ObjectKey, upload.S3UploadKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list parts from MinIO: %w", err)
+		}
+		parts = minioParts
+		// ListParts đã trả về sorted
+	}
+
+	// Validate số lượng parts
+	if len(parts) < upload.TotalChunks {
+		return nil, fmt.Errorf("not all chunks uploaded: %d/%d", len(parts), upload.TotalChunks)
+	}
+
+	// Lưu parts vào DB để audit/history
+	dbParts := make([]model.VideoUploadPart, 0, len(parts))
+	for _, p := range parts {
+		dbParts = append(dbParts, model.VideoUploadPart{
+			UploadID:   upload.ID,
+			PartNumber: p.PartNumber,
+			ETag:       p.ETag,
+		})
+	}
+	if dbErr := s.uploadRepo.BulkInsertParts(ctx, dbParts); dbErr != nil {
+		log.Printf("⚠️ Failed to bulk insert parts to DB: %v", dbErr)
+	}
+	progress := float64(len(dbParts)) / float64(upload.TotalChunks) * 100
+	if dbErr := s.uploadRepo.SetUploadedChunks(ctx, upload.ID, len(dbParts), progress); dbErr != nil {
+		log.Printf("⚠️ Failed to update uploaded chunks count: %v", dbErr)
 	}
 
 	// Complete multipart upload in MinIO
@@ -439,13 +409,13 @@ func (s *VideoUploadService) GetUploadStatus(ctx context.Context, uploadID uuid.
 		return nil, fmt.Errorf("upload not found: %w", err)
 	}
 
-	// Nếu upload đang active, đọc progress chính xác từ Redis (vì ta không write DB mỗi chunk)
+	// Nếu upload đang active, gọi MinIO ListParts để lấy progress chính xác
 	uploadedChunks := upload.UploadedChunks
 	progress := upload.Progress
-	if s.redisClient != nil && upload.Status == model.VideoUploadStatusUploading {
-		redisChunksKey := fmt.Sprintf("upload:%s:chunks", uploadID)
-		if count, err := s.redisClient.HLen(ctx, redisChunksKey).Result(); err == nil && count > 0 {
-			uploadedChunks = int(count)
+	if upload.Status == model.VideoUploadStatusUploading {
+		parts, err := s.storage.ListParts(ctx, upload.Bucket, upload.ObjectKey, upload.S3UploadKey)
+		if err == nil && len(parts) > 0 {
+			uploadedChunks = len(parts)
 			if upload.TotalChunks > 0 {
 				progress = float64(uploadedChunks) / float64(upload.TotalChunks) * 100
 			}
@@ -490,6 +460,7 @@ func (s *VideoUploadService) GetUploadStatus(ctx context.Context, uploadID uuid.
 }
 
 // GetResumeInfo provides information needed to resume an upload
+// Sử dụng MinIO ListParts để lấy danh sách parts đã upload - không phụ thuộc Redis
 func (s *VideoUploadService) GetResumeInfo(ctx context.Context, uploadID uuid.UUID) (*dto.GetResumeInfoResponse, error) {
 	upload, err := s.uploadRepo.GetUploadByID(ctx, uploadID)
 	if err != nil {
@@ -503,37 +474,29 @@ func (s *VideoUploadService) GetResumeInfo(ctx context.Context, uploadID uuid.UU
 		}, nil
 	}
 
-	// Get completed and pending chunks - kiểm tra Redis trước (source of truth khi đang upload)
-	var completedChunks []int
-	var pendingChunks []int
-	redisChunksKey := fmt.Sprintf("upload:%s:chunks", uploadID)
-
-	redisHit := false
-	if s.redisClient != nil {
-		chunkData, redisErr := s.redisClient.HGetAll(ctx, redisChunksKey).Result()
-		if redisErr == nil && len(chunkData) > 0 {
-			completedSet := make(map[int]bool, len(chunkData))
-			for field := range chunkData {
-				n, _ := strconv.Atoi(field)
-				completedSet[n] = true
-				completedChunks = append(completedChunks, n)
-			}
-			for i := 1; i <= upload.TotalChunks; i++ {
-				if !completedSet[i] {
-					pendingChunks = append(pendingChunks, i)
-				}
-			}
-			sort.Ints(completedChunks)
-			redisHit = true
-		}
+	// Gọi MinIO ListParts để lấy parts đã upload - source of truth
+	parts, err := s.storage.ListParts(ctx, upload.Bucket, upload.ObjectKey, upload.S3UploadKey)
+	if err != nil {
+		log.Printf("⚠️ GetResumeInfo: ListParts failed for upload %s: %v", uploadID, err)
+		// Nếu ListParts fail (upload expired on MinIO), không thể resume
+		return &dto.GetResumeInfoResponse{
+			UploadID:  uploadID,
+			CanResume: false,
+		}, nil
 	}
 
-	if !redisHit {
-		// Fallback: Redis không có data → không biết chunk nào đã xong
-		// video_upload_parts chỉ có rows sau khi complete, không có trong quá trình upload
-		// → Trả về tất cả là pending (user upload lại từ đầu — trade-off đã chấp nhận)
-		log.Printf("⚠️ GetResumeInfo: Redis miss for upload %s, all chunks treated as pending", uploadID)
-		for i := 1; i <= upload.TotalChunks; i++ {
+	// Build completed và pending chunks từ ListParts result
+	completedSet := make(map[int]bool, len(parts))
+	completedChunks := make([]int, 0, len(parts))
+	for _, part := range parts {
+		completedSet[part.PartNumber] = true
+		completedChunks = append(completedChunks, part.PartNumber)
+	}
+	sort.Ints(completedChunks)
+
+	pendingChunks := make([]int, 0, upload.TotalChunks-len(completedChunks))
+	for i := 1; i <= upload.TotalChunks; i++ {
+		if !completedSet[i] {
 			pendingChunks = append(pendingChunks, i)
 		}
 	}

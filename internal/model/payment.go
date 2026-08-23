@@ -23,6 +23,7 @@ type Order struct {
 	PaymentMethod        *string         `gorm:"type:varchar(30)" json:"payment_method,omitempty"`
 	PaymentGateway       *string         `gorm:"type:varchar(30)" json:"payment_gateway,omitempty"`
 	PaymentTransactionID *string         `gorm:"type:varchar(255)" json:"payment_transaction_id,omitempty"`
+	PaymentCodeCreatedAt *time.Time      `json:"payment_code_created_at,omitempty"`
 	PaidAt               *time.Time      `json:"paid_at,omitempty"`
 	CouponID             *uuid.UUID      `gorm:"type:uuid" json:"coupon_id,omitempty"`
 	Notes                *string         `gorm:"type:text" json:"notes,omitempty"`

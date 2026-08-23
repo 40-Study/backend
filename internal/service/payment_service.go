@@ -3,15 +3,16 @@ package service
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
+	"log"
+	"net/url"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"github.com/spf13/viper"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -32,16 +33,18 @@ type PaymentServiceInterface interface {
 	CreatePaymentIntent(ctx context.Context, userID, orderID uuid.UUID, paymentMethod string) (*dto.PaymentIntentResponse, error)
 	CheckAndProcessPayment(ctx context.Context, orderID uuid.UUID) (*dto.PaymentStatusResponse, error)
 	GetPaymentStatus(ctx context.Context, orderID uuid.UUID) (*dto.PaymentStatusResponse, error)
+	GetPaymentCaptureInfo(order *model.Order) *dto.PaymentCaptureInfo
 }
 
 type PaymentService struct {
-	orderRepo          repository.OrderRepositoryInterface
-	orderItemRepo      repository.OrderItemRepositoryInterface
-	paymentEventRepo   repository.PaymentEventRepositoryInterface
-	orderHistoryRepo   repository.OrderStatusHistoryRepositoryInterface
-	enrollmentRepo     interface{}
-	couponRepo         repository.CouponRepositoryInterface
-	transactionService TransactionServiceInterface
+	orderRepo           repository.OrderRepositoryInterface
+	orderItemRepo       repository.OrderItemRepositoryInterface
+	paymentEventRepo    repository.PaymentEventRepositoryInterface
+	orderHistoryRepo    repository.OrderStatusHistoryRepositoryInterface
+	enrollmentRepo      interface{}
+	couponRepo          repository.CouponRepositoryInterface
+	transactionService  TransactionServiceInterface
+	notificationService NotificationServiceInterface
 }
 
 func NewPaymentService(
@@ -52,20 +55,23 @@ func NewPaymentService(
 	enrollmentRepo interface{},
 	couponRepo repository.CouponRepositoryInterface,
 	transactionService TransactionServiceInterface,
+	notificationService NotificationServiceInterface,
 ) *PaymentService {
 	return &PaymentService{
-		orderRepo:          orderRepo,
-		orderItemRepo:      orderItemRepo,
-		paymentEventRepo:   paymentEventRepo,
-		orderHistoryRepo:   orderHistoryRepo,
-		enrollmentRepo:     enrollmentRepo,
-		couponRepo:         couponRepo,
-		transactionService: transactionService,
+		orderRepo:           orderRepo,
+		orderItemRepo:       orderItemRepo,
+		paymentEventRepo:    paymentEventRepo,
+		orderHistoryRepo:    orderHistoryRepo,
+		enrollmentRepo:      enrollmentRepo,
+		couponRepo:          couponRepo,
+		transactionService:  transactionService,
+		notificationService: notificationService,
 	}
 }
 
+const PaymentCodeTTL = 30 * time.Minute
+
 func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderID uuid.UUID, paymentMethod string) (*dto.PaymentIntentResponse, error) {
-	// Get order
 	order, err := s.orderRepo.GetByID(orderID)
 	if err != nil {
 		return nil, ErrOrderNotFound
@@ -75,54 +81,136 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 		return nil, errors.New("unauthorized")
 	}
 
-	// Verify order is in correct state
-	if order.Status != "pending" {
+	if order.Status != "pending" && order.Status != "processing" {
 		return nil, ErrInvalidStateTransition
 	}
 
-	// Generate payment code
-	paymentCode := s.generatePaymentCode()
+	now := time.Now()
+	var paymentCode string
+	var paymentCodeCreatedAt time.Time
+	needsNewPaymentCode := true
 
-	// Update order to processing status
-	oldStatus := order.Status
-	if err := s.orderRepo.UpdateStatus(orderID, "processing"); err != nil {
-		return nil, err
+	// Check if existing payment code is still valid
+	if order.PaymentTransactionID != nil && *order.PaymentTransactionID != "" &&
+		order.PaymentCodeCreatedAt != nil {
+		expiredAt := order.PaymentCodeCreatedAt.Add(PaymentCodeTTL)
+		if now.Before(expiredAt) {
+			paymentCode = *order.PaymentTransactionID
+			paymentCodeCreatedAt = *order.PaymentCodeCreatedAt
+			needsNewPaymentCode = false
+		}
 	}
 
-	// Create status history
-	history := &model.OrderStatusHistory{
-		ID:         uuid.New(),
-		CreatedAt:  time.Now(),
-		OrderID:    orderID,
-		FromStatus: oldStatus,
-		ToStatus:   "processing",
-		Reason:     "Payment initiated",
-	}
-	s.orderHistoryRepo.Create(history)
+	// Generate new payment code only if needed
+	if needsNewPaymentCode {
+		paymentCode = s.generatePaymentCode()
+		paymentCodeCreatedAt = now
 
-	// Build response
-	resp := &dto.PaymentIntentResponse{
+		// Update order to processing if pending
+		if order.Status == "pending" {
+			oldStatus := order.Status
+			if err := s.orderRepo.UpdateStatus(orderID, "processing"); err != nil {
+				return nil, err
+			}
+			history := &model.OrderStatusHistory{
+				ID:         uuid.New(),
+				CreatedAt:  now,
+				OrderID:    orderID,
+				FromStatus: oldStatus,
+				ToStatus:   "processing",
+				Reason:     "Payment initiated",
+			}
+			s.orderHistoryRepo.Create(history)
+		}
+
+		// Save new payment code
+		s.orderRepo.UpdatePaymentCode(orderID, paymentCode, paymentCodeCreatedAt)
+
+		// Send notification only for new payment
+		if s.notificationService != nil {
+			refType := "order"
+			s.notificationService.SendNotification(dto.CreateNotificationDTO{
+				Title:            "Đơn hàng đang chờ thanh toán",
+				Content:          fmt.Sprintf("Đơn hàng #%s đang chờ thanh toán. Vui lòng hoàn tất thanh toán trong 30 phút.", order.OrderNumber),
+				NotificationType: "payment_pending",
+				ReferenceType:    &refType,
+				ReferenceID:      &orderID,
+				UserIDs:          []uuid.UUID{userID},
+			})
+		}
+	}
+
+	bankName, accountNumber, accountName := getBankTransferInfoFromEnv()
+	transferContent := fmt.Sprintf("40STUDY %s", paymentCode)
+	expiredAt := paymentCodeCreatedAt.Add(PaymentCodeTTL)
+
+	return &dto.PaymentIntentResponse{
 		OrderID:     orderID,
 		PaymentCode: paymentCode,
 		Amount:      order.TotalAmount,
 		Currency:    order.Currency,
-		ExpiredAt:   time.Now().Add(24 * time.Hour), // 24 hours expiry
-	}
-
-	// Generate QR content for QR transfer
-	if paymentMethod == "qr_transfer" {
-		resp.QRContent = s.generateQRContent(order, paymentCode)
-	} else if paymentMethod == "bank_transfer" {
-		bankName, accountNumber, accountName := getBankTransferInfoFromEnv()
-		resp.BankTransferInfo = &dto.BankTransferInfo{
+		ExpiredAt:   expiredAt,
+		QRContent:   generateVietQRUrl(bankName, accountNumber, accountName, order.TotalAmount, transferContent),
+		BankTransferInfo: &dto.BankTransferInfo{
 			BankName:      bankName,
 			AccountNumber: accountNumber,
 			AccountName:   accountName,
-			Content:       fmt.Sprintf("40STUDY %s", paymentCode),
+			Content:       transferContent,
+		},
+	}, nil
+}
+
+// GetPaymentCaptureInfo returns payment capture info for an order (for embedding in OrderResponse)
+func (s *PaymentService) GetPaymentCaptureInfo(order *model.Order) *dto.PaymentCaptureInfo {
+	if order.Status != "pending" && order.Status != "processing" {
+		return nil
+	}
+
+	// No payment code yet
+	if order.PaymentTransactionID == nil || *order.PaymentTransactionID == "" {
+		return nil
+	}
+
+	now := time.Now()
+	paymentCode := *order.PaymentTransactionID
+
+	// Check expiry
+	var expiredAt time.Time
+	if order.PaymentCodeCreatedAt != nil {
+		expiredAt = order.PaymentCodeCreatedAt.Add(PaymentCodeTTL)
+	} else {
+		// Legacy: no created_at, assume expired
+		return &dto.PaymentCaptureInfo{
+			PaymentCode: paymentCode,
+			IsExpired:   true,
 		}
 	}
 
-	return resp, nil
+	isExpired := now.After(expiredAt)
+	if isExpired {
+		return &dto.PaymentCaptureInfo{
+			PaymentCode:      paymentCode,
+			PaymentExpiredAt: &expiredAt,
+			IsExpired:        true,
+		}
+	}
+
+	// Still valid - include QR
+	bankName, accountNumber, accountName := getBankTransferInfoFromEnv()
+	transferContent := fmt.Sprintf("40STUDY %s", paymentCode)
+
+	return &dto.PaymentCaptureInfo{
+		PaymentCode:      paymentCode,
+		QRContent:        generateVietQRUrl(bankName, accountNumber, accountName, order.TotalAmount, transferContent),
+		PaymentExpiredAt: &expiredAt,
+		IsExpired:        false,
+		BankTransferInfo: &dto.BankTransferInfo{
+			BankName:      bankName,
+			AccountNumber: accountNumber,
+			AccountName:   accountName,
+			Content:       transferContent,
+		},
+	}
 }
 
 // CheckAndProcessPayment - Check transaction via gRPC and process if found
@@ -162,18 +250,26 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID uui
 		return nil, errors.New("payment code not found")
 	}
 
-	// Calculate time range (last 24 hours)
-	toTime := time.Now()
-	fromTime := toTime.Add(-24 * time.Hour)
+	// Calculate time range (+/- 5 minutes)
+	now := time.Now()
+	fromTime := now.Add(-5 * time.Minute)
+	toTime := now.Add(5 * time.Minute)
 
-	// Call transaction service via gRPC
+	log.Printf("🔍 Checking payment for OrderID: %s, PaymentCode: %s", orderID, paymentCode)
+
+	// Debug: Print all transactions in range
+	s.transactionService.GetAllTransactions(ctx, fromTime, toTime)
+
+	// Call transaction service via HTTP
 	result, err := s.transactionService.CheckTransaction(ctx, paymentCode, fromTime, toTime)
 	if err != nil {
+		log.Printf("❌ Failed to check transaction: %v", err)
 		return nil, fmt.Errorf("failed to check transaction: %w", err)
 	}
 
 	// If transaction not found
 	if !result.Found {
+		log.Printf("⏳ Transaction not found yet for PaymentCode: %s", paymentCode)
 		return &dto.PaymentStatusResponse{
 			OrderID: orderID,
 			Status:  "pending",
@@ -184,8 +280,11 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID uui
 	// Verify amount matches
 	amount, _ := decimal.NewFromString(result.Amount)
 	if amount.Compare(order.TotalAmount) != 0 {
+		log.Printf("❌ Payment amount mismatch: expected %s, got %s", order.TotalAmount.String(), result.Amount)
 		return nil, ErrPaymentAmountMismatch
 	}
+
+	log.Printf("✅ PAYMENT FOUND! OrderID: %s, Amount: %s, TransactionID: %s", orderID, result.Amount, result.TransactionID)
 
 	// Transaction found, complete the order
 	oldStatus := order.Status
@@ -240,9 +339,14 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID uui
 				CourseID:   item.CourseID,
 				EnrolledAt: time.Now(),
 			}
-			s.enrollmentRepo.(interface {
+			err := s.enrollmentRepo.(interface {
 				Create(ctx context.Context, enrollment *model.Enrollment) error
 			}).Create(ctx, enrollment)
+			if err != nil {
+				log.Printf("❌ Failed to create enrollment for course %s: %v", item.CourseID, err)
+			} else {
+				log.Printf("✅ Enrolled user %s in course %s", order.UserID, item.CourseID)
+			}
 		}
 
 		// Update coupon usage if applicable
@@ -261,11 +365,12 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID uui
 		}
 	}
 
-	now := time.Now()
+	completedAt := time.Now()
+	log.Printf("🎉 ORDER COMPLETED! OrderID: %s, Amount: %s", orderID, order.TotalAmount.String())
 	return &dto.PaymentStatusResponse{
 		OrderID: orderID,
 		Status:  "completed",
-		PaidAt:  &now,
+		PaidAt:  &completedAt,
 		Amount:  order.TotalAmount,
 	}, nil
 }
@@ -291,9 +396,15 @@ func (s *PaymentService) GetPaymentStatus(ctx context.Context, orderID uuid.UUID
 }
 
 func (s *PaymentService) generatePaymentCode() string {
+	// Generate unique 8-char code using alphanumeric (0-9, A-Z)
+	const charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	code := make([]byte, 8)
 	randomBytes := make([]byte, 8)
 	rand.Read(randomBytes)
-	return fmt.Sprintf("PAY%s%s", time.Now().Format("060102150405"), hex.EncodeToString(randomBytes)[:8])
+	for i := 0; i < 8; i++ {
+		code[i] = charset[randomBytes[i]%36]
+	}
+	return string(code)
 }
 
 func (s *PaymentService) generateQRContent(order *model.Order, paymentCode string) string {
@@ -312,20 +423,36 @@ func (s *PaymentService) generateQRContent(order *model.Order, paymentCode strin
 }
 
 func getBankTransferInfoFromEnv() (bankName, accountNumber, accountName string) {
-	bankName = os.Getenv("MB_BANK_NAME")
+	bankName = viper.GetString("MB_BANK_NAME")
 	if bankName == "" {
 		bankName = "MB"
 	}
 
-	accountNumber = os.Getenv("MB_ACCOUNT_NO")
+	accountNumber = viper.GetString("MB_ACCOUNT_NO")
 	if accountNumber == "" {
-		accountNumber = "1234567890"
+		accountNumber = "0343150904"
 	}
 
-	accountName = os.Getenv("BANK_ACCOUNT_NAME")
+	accountName = viper.GetString("BANK_ACCOUNT_NAME")
 	if accountName == "" {
-		accountName = "40Study"
+		accountName = "FORTEX"
 	}
 
 	return bankName, accountNumber, accountName
+}
+
+func generateVietQRUrl(bankCode, accountNumber, accountName string, amount decimal.Decimal, content string) string {
+	// VietQR format: https://img.vietqr.io/image/{BankCode}-{AccountNumber}-{template}.png
+	baseUrl := "https://img.vietqr.io/image"
+	template := "compact2"
+
+	return fmt.Sprintf("%s/%s-%s-%s.png?amount=%s&addInfo=%s&accountName=%s",
+		baseUrl,
+		bankCode,
+		accountNumber,
+		template,
+		amount.String(),
+		url.QueryEscape(content),
+		url.QueryEscape(accountName),
+	)
 }

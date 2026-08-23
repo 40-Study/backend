@@ -58,9 +58,62 @@ func (h *CourseHandler) CreateCourse(c *fiber.Ctx) error {
 }
 
 func (h *CourseHandler) GetAllCourses(c *fiber.Ctx) error {
+	// Check if requesting own courses (for teachers)
+	isMine := c.Query("mine") == "true"
+	userID, hasUser := c.Locals("user_id").(uuid.UUID)
+
+	status := c.Query("status")
+
+	// If requesting own courses and authenticated, allow all statuses
+	// Otherwise, force published only
+	if isMine && hasUser {
+		// Filter by instructor_id for "mine" queries
+		params := dto.CourseFilterParams{
+			Level:    c.Query("level"),
+			Status:   status, // Allow any status for own courses
+			Keyword:  c.Query("keyword"),
+			Page:     c.QueryInt("page", 1),
+			PageSize: c.QueryInt("page_size", 20),
+		}
+		params.InstructorID = &userID
+
+		if catID := c.Query("category_id"); catID != "" {
+			id, err := uuid.Parse(catID)
+			if err == nil {
+				params.CategoryID = &id
+			}
+		}
+
+		if c.Query("is_free") == "true" {
+			isFree := true
+			params.IsFree = &isFree
+		} else if c.Query("is_free") == "false" {
+			isFree := false
+			params.IsFree = &isFree
+		}
+
+		courses, err := h.service.GetAllCourses(c.Context(), params)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"message": "Failed to retrieve courses",
+				"error":   err.Error(),
+			})
+		}
+
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"message": "Courses retrieved successfully",
+			"data":    courses,
+		})
+	}
+
+	// Public listing - force published only
+	if status != "published" {
+		status = "published"
+	}
+
 	params := dto.CourseFilterParams{
 		Level:    c.Query("level"),
-		Status:   c.Query("status"),
+		Status:   status,
 		Keyword:  c.Query("keyword"),
 		Page:     c.QueryInt("page", 1),
 		PageSize: c.QueryInt("page_size", 20),
@@ -123,6 +176,16 @@ func (h *CourseHandler) GetCourseByID(c *fiber.Ctx) error {
 		})
 	}
 
+	// If course is not published, only allow instructor to view
+	if course.Status != "published" {
+		userID, ok := c.Locals("user_id").(uuid.UUID)
+		if !ok || userID != course.InstructorID {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"message": "Course not found",
+			})
+		}
+	}
+
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Course retrieved successfully",
 		"data":    course,
@@ -144,6 +207,16 @@ func (h *CourseHandler) GetCourseBySlug(c *fiber.Ctx) error {
 			"message": "Course not found",
 			"error":   err.Error(),
 		})
+	}
+
+	// If course is not published, only allow instructor to view
+	if course.Status != "published" {
+		userID, ok := c.Locals("user_id").(uuid.UUID)
+		if !ok || userID != course.InstructorID {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"message": "Course not found",
+			})
+		}
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

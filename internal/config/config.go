@@ -135,7 +135,7 @@ func LoadConfig() (*Config, error) {
 
 	// Transaction Service
 	viper.SetDefault("TRANSACTION_SERVICE_HOST", "localhost")
-	viper.SetDefault("TRANSACTION_SERVICE_PORT", "50051")
+	viper.SetDefault("TRANSACTION_SERVICE_PORT", "8000")
 
 	// GITHUB
 	viper.SetDefault("GITHUB_CLIENT_ID", "")

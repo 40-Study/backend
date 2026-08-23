@@ -272,6 +272,9 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 	)
 	oauthSvc.SetParentInvitationService(parentInvitationSvc)
 
+	// ================= Notification Service =================
+	notificationSvc := service.NewNotificationService(repos.Notification, notifier)
+
 	// ================= Return Services =================
 	return &Services{
 		// ===== Auth =====
@@ -375,6 +378,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 			repos.Enrollment,
 			repos.Coupon,
 			transactionSvc,
+			notificationSvc,
 		),
 		TransactionService: transactionSvc,
 		Voucher:            service.NewVoucherService(repos.Voucher, repos.User),
@@ -390,7 +394,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Discussion: service.NewDiscussionService(repos.Discussion),
 
 		// ===== Notification =====
-		Notification: service.NewNotificationService(repos.Notification, notifier),
+		Notification: notificationSvc,
 
 		// ===== User Preference =====
 		UserPreference: service.NewUserPreferenceService(repos.UserPreference),

@@ -12,6 +12,7 @@ func SetupProfileRoutes(api fiber.Router, cfg *config.Config, profileHandler *ha
 	me := api.Group("/me", middleware.AuthMiddleware(cfg, redis))
 
 	me.Get("/children", profileHandler.GetChildren)
+	me.Get("/parents", profileHandler.GetParents)
 	me.Get("/organizations", profileHandler.GetOrganizations)
 	me.Get("/org-roles", profileHandler.GetMyOrgRoles)
 }

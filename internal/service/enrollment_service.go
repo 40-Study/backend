@@ -95,16 +95,26 @@ func (s *EnrollmentService) GetMyEnrollments(ctx context.Context, userID uuid.UU
 		return nil, err
 	}
 
-	result := make([]dto.EnrollmentResponseDTO, len(enrollments))
+	result := make([]dto.EnrollmentResponseDTO, 0, len(enrollments))
 	for i := range enrollments {
-		d := s.toEnrollmentResponseDTO(&enrollments[i])
-		d.CourseTitle = enrollments[i].Course.Title
-		d.CourseSlug = enrollments[i].Course.Slug
-		d.CourseThumbnail = enrollments[i].Course.ThumbnailURL
-		if enrollments[i].Course.Category != nil {
-			d.CourseCategory = enrollments[i].Course.Category.Name
+		course := enrollments[i].Course
+		isDeleted := course.DeletedAt.Valid
+
+		// Skip unpublished courses (unless deleted - show deleted with badge)
+		if !isDeleted && course.Status != "published" {
+			continue
 		}
-		result[i] = *d
+
+		d := s.toEnrollmentResponseDTO(&enrollments[i])
+		d.CourseTitle = course.Title
+		d.CourseSlug = course.Slug
+		d.CourseThumbnail = course.ThumbnailURL
+		d.CourseStatus = course.Status
+		d.CourseDeleted = isDeleted
+		if course.Category != nil {
+			d.CourseCategory = course.Category.Name
+		}
+		result = append(result, *d)
 	}
 
 	return &dto.EnrollmentListResponseDTO{

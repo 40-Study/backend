@@ -14,6 +14,7 @@ type LivestreamRepositoryInterface interface {
 	Create(ctx context.Context, session *model.LivestreamSession) error
 	GetByID(ctx context.Context, id uuid.UUID) (*model.LivestreamSession, error)
 	GetByRoomName(ctx context.Context, roomName string) (*model.LivestreamSession, error)
+	GetByLessonContentID(ctx context.Context, lessonContentID uuid.UUID) (*model.LivestreamSession, error)
 	GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID) ([]model.LivestreamSession, int64, error)
 	Update(ctx context.Context, session *model.LivestreamSession) error
 	Delete(ctx context.Context, id uuid.UUID) error
@@ -53,6 +54,18 @@ func (r *LivestreamRepository) GetByID(ctx context.Context, id uuid.UUID) (*mode
 func (r *LivestreamRepository) GetByRoomName(ctx context.Context, roomName string) (*model.LivestreamSession, error) {
 	var session model.LivestreamSession
 	err := r.db.WithContext(ctx).Where("room_name = ?", roomName).First(&session).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &session, nil
+}
+
+func (r *LivestreamRepository) GetByLessonContentID(ctx context.Context, lessonContentID uuid.UUID) (*model.LivestreamSession, error) {
+	var session model.LivestreamSession
+	err := r.db.WithContext(ctx).Where("lesson_content_id = ?", lessonContentID).First(&session).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

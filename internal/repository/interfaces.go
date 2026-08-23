@@ -19,6 +19,7 @@ type OrderRepositoryInterface interface {
 	GetByUserIDAndStatus(userID uuid.UUID, status string) ([]model.Order, error)
 	UpdateStatus(orderID uuid.UUID, status string) error
 	UpdatePaymentInfo(orderID uuid.UUID, paymentMethod, paymentGateway, transactionID string, paidAt time.Time) error
+	UpdatePaymentCode(orderID uuid.UUID, paymentCode string, createdAt time.Time) error
 	Update(order *model.Order) error
 	Delete(id uuid.UUID) error
 	WithTransaction(fn func(repo *OrderRepository) error) error

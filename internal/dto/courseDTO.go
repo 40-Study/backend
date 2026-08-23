@@ -26,6 +26,7 @@ type CreateCourseDTO struct {
 	Objectives        []string   `json:"objectives"`
 	TargetAudience    []string   `json:"target_audience"`
 	IsFree            *bool      `json:"is_free"`
+	DeliveryMode      string     `json:"delivery_mode" validate:"omitempty,oneof=video livestream hybrid"`
 	TagIDs            []uuid.UUID `json:"tag_ids"`
 }
 
@@ -47,6 +48,7 @@ type UpdateCourseDTO struct {
 	IsFree            *bool           `json:"is_free"`
 	IsFeatured        *bool           `json:"is_featured"`
 	Status            *string         `json:"status" validate:"omitempty,oneof=draft pending_review published archived"`
+	DeliveryMode      *string         `json:"delivery_mode" validate:"omitempty,oneof=video livestream hybrid"`
 	TagIDs            []uuid.UUID      `json:"tag_ids"`
 }
 
@@ -77,6 +79,7 @@ type CourseResponseDTO struct {
 	PublishedAt       *time.Time       `json:"published_at,omitempty"`
 	IsFeatured        bool             `json:"is_featured"`
 	IsFree            bool             `json:"is_free"`
+	DeliveryMode      string           `json:"delivery_mode"`
 	Instructor        *CourseInstructorDTO `json:"instructor,omitempty"`
 	Category          *CategoryResponseDTO `json:"category,omitempty"`
 	Tags              []TagResponseDTO   `json:"tags,omitempty"`

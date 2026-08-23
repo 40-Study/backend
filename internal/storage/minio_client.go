@@ -48,6 +48,10 @@ type MinioClientInterface interface {
 	// Xóa tất cả các part đã upload để giải phóng storage
 	AbortMultipartUpload(ctx context.Context, bucket, objectKey, uploadID string) error
 
+	// ListParts lấy danh sách các parts đã upload thành công cho một multipart upload
+	// Dùng để resume upload - biết chunks nào đã xong mà không cần track ở backend
+	ListParts(ctx context.Context, bucket, objectKey, uploadID string) ([]CompletePart, error)
+
 	// === OBJECT OPERATIONS ===
 	// Các thao tác cơ bản với object trong MinIO
 
@@ -73,6 +77,9 @@ type MinioClientInterface interface {
 
 	// GetDefaultBucket trả về bucket mặc định từ config
 	GetDefaultBucket() string
+
+	// GetPublicEndpoint trả về public endpoint URL (CDN) nếu có
+	GetPublicEndpoint() string
 
 	// GeneratePresignedURL tạo presigned URL với method tùy chỉnh (GET/PUT)
 	GeneratePresignedURL(ctx context.Context, bucket, objectKey string, expires time.Duration, method string) (string, error)
@@ -260,6 +267,36 @@ func (m *MinioClient) AbortMultipartUpload(ctx context.Context, bucket, objectKe
 	return nil
 }
 
+// ListParts lấy danh sách các parts đã upload cho một multipart upload session
+// Dùng để resume upload - client gọi API này để biết chunks nào đã upload thành công
+func (m *MinioClient) ListParts(ctx context.Context, bucket, objectKey, uploadID string) ([]CompletePart, error) {
+	var allParts []CompletePart
+	partNumberMarker := 0
+
+	for {
+		// ListObjectParts trả về tối đa 1000 parts mỗi lần, cần paginate
+		result, err := m.core.ListObjectParts(ctx, bucket, objectKey, uploadID, partNumberMarker, 1000)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list parts: %w", err)
+		}
+
+		for _, part := range result.ObjectParts {
+			allParts = append(allParts, CompletePart{
+				PartNumber: part.PartNumber,
+				ETag:       part.ETag,
+			})
+		}
+
+		// Nếu còn parts tiếp theo, tiếp tục paginate
+		if !result.IsTruncated {
+			break
+		}
+		partNumberMarker = result.NextPartNumberMarker
+	}
+
+	return allParts, nil
+}
+
 // StatObject lấy thông tin metadata của object mà không cần download nội dung
 // Dùng để kiểm tra object có tồn tại, lấy size, last modified time, content type, ...
 func (m *MinioClient) StatObject(ctx context.Context, bucket, objectKey string) (minio.ObjectInfo, error) {
@@ -421,6 +458,11 @@ func (m *MinioClient) GetDefaultBucket() string {
 	return m.cfg.MinIOBucketName
 }
 
+// GetPublicEndpoint trả về public endpoint URL (CDN) nếu có
+func (m *MinioClient) GetPublicEndpoint() string {
+	return m.cfg.MinioPublicEndpoint
+}
+
 // EnsureBuckets tạo các bucket cần thiết nếu chưa tồn tại
 // Gọi 1 lần khi khởi động app
 func (m *MinioClient) EnsureBuckets(ctx context.Context) error {
@@ -455,14 +497,14 @@ func (m *MinioClient) EnsureBuckets(ctx context.Context) error {
 	return nil
 }
 
-// SetBucketPublicRead sets bucket policy to allow anonymous read access
-// This allows images to be displayed directly in browsers without authentication
+// SetBucketPublicRead sets bucket policy to allow anonymous read access for all objects
 func (m *MinioClient) SetBucketPublicRead(ctx context.Context, bucket string) error {
-	// Policy JSON cho phép anonymous read tất cả objects trong bucket
+	// Simple public read policy for all objects
 	policy := fmt.Sprintf(`{
 		"Version": "2012-10-17",
 		"Statement": [
 			{
+				"Sid": "AllowPublicRead",
 				"Effect": "Allow",
 				"Principal": {"AWS": ["*"]},
 				"Action": ["s3:GetObject"],

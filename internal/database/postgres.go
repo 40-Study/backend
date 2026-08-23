@@ -49,7 +49,7 @@ func Migrate(db *gorm.DB) error {
 		}
 	}
 
-	return db.AutoMigrate(
+	err := db.AutoMigrate(
 		// ===== 1. Base Tables (độc lập) =====
 		&model.Organization{},
 
@@ -212,6 +212,29 @@ func Migrate(db *gorm.DB) error {
 		// ===== 27. Personal Calendar Events (phụ thuộc User) =====
 		&model.PersonalEvent{},
 	)
+	if err != nil {
+		return err
+	}
+
+	// Fix notification_type constraint to include payment_pending
+	if err := db.Exec(`
+		DO $$
+		BEGIN
+			ALTER TABLE notifications DROP CONSTRAINT IF EXISTS chk_notifications_notification_type;
+			ALTER TABLE notifications ADD CONSTRAINT chk_notifications_notification_type
+			CHECK (notification_type IN (
+				'course_update', 'new_lesson', 'quiz_reminder', 'certificate_earned',
+				'payment_pending', 'payment_success', 'payment_failed',
+				'promotion', 'system', 'achievement', 'streak', 'point_earned'
+			));
+		EXCEPTION WHEN others THEN
+			NULL;
+		END $$;
+	`).Error; err != nil {
+		log.Printf("[WARN] Failed to update notification_type constraint: %v", err)
+	}
+
+	return nil
 }
 
 func Close(db *gorm.DB) error {

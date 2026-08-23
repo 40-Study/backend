@@ -10,6 +10,7 @@ import (
 
 type ProfileHandlerInterface interface {
 	GetChildren(c *fiber.Ctx) error
+	GetParents(c *fiber.Ctx) error
 	GetOrganizations(c *fiber.Ctx) error
 	GetMyOrgRoles(c *fiber.Ctx) error
 }
@@ -49,6 +50,29 @@ func (h *ProfileHandler) GetChildren(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Success",
 		"data":    result,
+	})
+}
+
+// GetParents lấy danh sách phụ huynh của học sinh
+func (h *ProfileHandler) GetParents(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	parents, err := h.profileService.GetParents(c.Context(), userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to get parents",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Success",
+		"data":    fiber.Map{"parents": parents},
 	})
 }
 

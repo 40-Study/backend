@@ -12,6 +12,8 @@ import (
 type ProfileServiceInterface interface {
 	// GetChildren lấy danh sách con của phụ huynh
 	GetChildren(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.PaginatedChildrenResponse, error)
+	// GetParents lấy danh sách phụ huynh của học sinh
+	GetParents(ctx context.Context, userID uuid.UUID) ([]dto.ParentDto, error)
 	// GetOrganizations lấy danh sách tổ chức của user
 	GetOrganizations(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.PaginatedOrganizationsResponse, error)
 }
@@ -63,6 +65,34 @@ func (s *ProfileService) GetChildren(ctx context.Context, userID uuid.UUID, page
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
+}
+
+// GetParents lấy danh sách phụ huynh của học sinh
+func (s *ProfileService) GetParents(ctx context.Context, userID uuid.UUID) ([]dto.ParentDto, error) {
+	relations, err := s.parentStudentRepo.GetParentsByStudentID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get parents: %w", err)
+	}
+
+	parents := make([]dto.ParentDto, 0, len(relations))
+	for _, rel := range relations {
+		if rel.Parent == nil || rel.Status != "active" {
+			continue
+		}
+		parent := dto.ParentDto{
+			ID:           rel.Parent.ID.String(),
+			Name:         "",
+			Email:        rel.Parent.Email,
+			Relationship: rel.Relationship,
+			CanPay:       rel.CanMakePayments,
+		}
+		if rel.Parent.FullName != nil {
+			parent.Name = *rel.Parent.FullName
+		}
+		parents = append(parents, parent)
+	}
+
+	return parents, nil
 }
 
 // GetOrganizations lấy danh sách tổ chức của user với pagination

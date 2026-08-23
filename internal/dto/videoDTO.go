@@ -62,9 +62,17 @@ type CompleteChunkUploadResponse struct {
 	IsCompleted    bool    `json:"is_completed"` // True if all chunks uploaded
 }
 
+// UploadPart - Thông tin một part đã upload (FE gửi lên khi complete)
+type UploadPart struct {
+	PartNumber int    `json:"part_number" validate:"required,min=1"`
+	ETag       string `json:"etag" validate:"required"`
+}
+
 // CompleteVideoUploadRequest - Request to complete the entire upload
+// Parts có thể được gửi từ FE (tối ưu) hoặc BE sẽ gọi MinIO ListParts (fallback)
 type CompleteVideoUploadRequest struct {
-	UploadID uuid.UUID `json:"upload_id" validate:"required"`
+	UploadID uuid.UUID    `json:"upload_id" validate:"required"`
+	Parts    []UploadPart `json:"parts,omitempty"` // Optional: FE gửi ETags, nếu không có thì BE gọi ListParts
 }
 
 // CompleteVideoUploadResponse - Response after completing upload

@@ -10,6 +10,7 @@ import (
 type LivestreamHandlerInterface interface {
 	Create(c *fiber.Ctx) error
 	GetByID(c *fiber.Ctx) error
+	GetByContentID(c *fiber.Ctx) error
 	GetAll(c *fiber.Ctx) error
 	Update(c *fiber.Ctx) error
 	Delete(c *fiber.Ctx) error
@@ -19,6 +20,7 @@ type LivestreamHandlerInterface interface {
 	Leave(c *fiber.Ctx) error
 	GetParticipants(c *fiber.Ctx) error
 	MuteParticipant(c *fiber.Ctx) error
+	UnmuteParticipant(c *fiber.Ctx) error
 	KickParticipant(c *fiber.Ctx) error
 	LockWhiteboard(c *fiber.Ctx) error
 	UnlockWhiteboard(c *fiber.Ctx) error
@@ -38,6 +40,15 @@ func (h *LivestreamHandler) Create(c *fiber.Ctx) error {
 	var req dto.CreateLivestreamDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Get host_id from authenticated user if not provided
+	if req.HostID == "" {
+		userID, ok := c.Locals("user_id").(uuid.UUID)
+		if !ok {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		}
+		req.HostID = userID.String()
 	}
 
 	session, err := h.svc.Create(c.Context(), req)
@@ -66,6 +77,23 @@ func (h *LivestreamHandler) GetByID(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"data": detail})
+}
+
+func (h *LivestreamHandler) GetByContentID(c *fiber.Ctx) error {
+	contentID, err := uuid.Parse(c.Params("contentId"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid content id"})
+	}
+
+	session, err := h.svc.GetByLessonContentID(c.Context(), contentID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if session == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "session not found"})
+	}
+
+	return c.JSON(fiber.Map{"data": session})
 }
 
 func (h *LivestreamHandler) GetAll(c *fiber.Ctx) error {
@@ -229,6 +257,29 @@ func (h *LivestreamHandler) MuteParticipant(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"message": "Participant muted"})
+}
+
+func (h *LivestreamHandler) UnmuteParticipant(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+	}
+
+	var req dto.ModerationActionDTO
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	userID, err := uuid.Parse(req.UserID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid user_id"})
+	}
+
+	if err := h.svc.UnmuteParticipant(c.Context(), id, userID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"message": "Participant unmuted"})
 }
 
 func (h *LivestreamHandler) KickParticipant(c *fiber.Ctx) error {

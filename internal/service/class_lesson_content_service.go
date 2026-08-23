@@ -413,9 +413,11 @@ func (s *ClassLessonContentService) createLivestreamSession(ctx context.Context,
 	if content.Title != nil {
 		title = *content.Title
 	}
-	scheduledAt := ""
+	scheduledDate := ""
+	startTime := ""
 	if clc.ScheduledAt != nil {
-		scheduledAt = clc.ScheduledAt.Format(time.RFC3339)
+		scheduledDate = clc.ScheduledAt.Format("2006-01-02")
+		startTime = clc.ScheduledAt.Format("15:04")
 	}
 
 	livestreamReq := dto.CreateLivestreamDTO{
@@ -424,9 +426,12 @@ func (s *ClassLessonContentService) createLivestreamSession(ctx context.Context,
 		ClassID:         clc.ClassID.String(),
 		CourseID:        courseID.String(),
 		LessonContentID: clc.LessonContentID.String(),
+		ScheduledDate:   scheduledDate,
+		StartTime:       startTime,
+		DurationMinutes: 60,
+		Platform:        "40study",
+		EnableRecording: true,
 		MaxViewers:      1000,
-		IsRecorded:      true,
-		ScheduledAt:     scheduledAt,
 	}
 
 	_, _ = s.livestreamSvc.Create(ctx, livestreamReq)

@@ -22,19 +22,11 @@ func NewOrderHandler(orderService service.OrderServiceInterface, paymentService 
 }
 
 func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
-	userIDStr := c.Locals("user_id")
-	if userIDStr == nil {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
 			"message": "Unauthorized",
-		})
-	}
-
-	userID, err := uuid.Parse(userIDStr.(string))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_USER",
-			"message": "Invalid user ID",
 		})
 	}
 
@@ -58,9 +50,10 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 }
 
 // GetOrder - GET /api/v1/orders/:id
+// Returns order details with embedded payment capture (QR, bank info) if applicable
 func (h *OrderHandler) GetOrder(c *fiber.Ctx) error {
-	userIDStr := c.Locals("user_id")
-	if userIDStr == nil {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
 			"message": "Unauthorized",
@@ -75,7 +68,7 @@ func (h *OrderHandler) GetOrder(c *fiber.Ctx) error {
 		})
 	}
 
-	order, err := h.orderService.GetOrderByID(c.Context(), orderID)
+	order, err := h.orderService.GetOrderWithPaymentCapture(c.Context(), orderID, h.paymentService)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"code":    "ERR_NOT_FOUND",
@@ -88,19 +81,11 @@ func (h *OrderHandler) GetOrder(c *fiber.Ctx) error {
 
 // GetUserOrders - GET /api/v1/orders/me
 func (h *OrderHandler) GetUserOrders(c *fiber.Ctx) error {
-	userIDStr := c.Locals("user_id")
-	if userIDStr == nil {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
 			"message": "Unauthorized",
-		})
-	}
-
-	userID, err := uuid.Parse(userIDStr.(string))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_USER",
-			"message": "Invalid user ID",
 		})
 	}
 
@@ -121,19 +106,11 @@ func (h *OrderHandler) GetUserOrders(c *fiber.Ctx) error {
 
 // CancelOrder - POST /api/v1/orders/:id/cancel
 func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
-	userIDStr := c.Locals("user_id")
-	if userIDStr == nil {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
 			"message": "Unauthorized",
-		})
-	}
-
-	userID, err := uuid.Parse(userIDStr.(string))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_USER",
-			"message": "Invalid user ID",
 		})
 	}
 
@@ -163,19 +140,11 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 
 // CreatePaymentIntent - POST /api/v1/orders/:id/payment-intent
 func (h *OrderHandler) CreatePaymentIntent(c *fiber.Ctx) error {
-	userIDStr := c.Locals("user_id")
-	if userIDStr == nil {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
 			"message": "Unauthorized",
-		})
-	}
-
-	userID, err := uuid.Parse(userIDStr.(string))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_USER",
-			"message": "Invalid user ID",
 		})
 	}
 
@@ -207,7 +176,6 @@ func (h *OrderHandler) CreatePaymentIntent(c *fiber.Ctx) error {
 }
 
 // GetPaymentStatus - GET /api/v1/orders/:id/payment-status
-// This will call gRPC to check transaction status
 func (h *OrderHandler) GetPaymentStatus(c *fiber.Ctx) error {
 	orderID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
@@ -229,7 +197,6 @@ func (h *OrderHandler) GetPaymentStatus(c *fiber.Ctx) error {
 }
 
 // CheckPayment - POST /api/v1/orders/:id/check-payment
-// Explicitly trigger a check with the transaction service via gRPC
 func (h *OrderHandler) CheckPayment(c *fiber.Ctx) error {
 	orderID, err := uuid.Parse(c.Params("id"))
 	if err != nil {

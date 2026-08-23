@@ -14,7 +14,7 @@ func SetupOrderRoutes(api fiber.Router,
 	redis *redis.Client) {
 	orders := api.Group("/orders")
 
-	authMiddleware := middleware.AuthMiddleware(nil, nil)
+	authMiddleware := middleware.AuthMiddleware(cfg, redis)
 	orders.Post("/", authMiddleware, orderHandler.CreateOrder)
 	orders.Get("/me", authMiddleware, orderHandler.GetUserOrders)
 	orders.Get("/:id", authMiddleware, orderHandler.GetOrder)

@@ -19,6 +19,8 @@ type EnrollmentResponseDTO struct {
 	CourseSlug      string          `json:"course_slug,omitempty"`
 	CourseThumbnail *string         `json:"course_thumbnail,omitempty"`
 	CourseCategory  string          `json:"course_category,omitempty"`
+	CourseStatus    string          `json:"course_status,omitempty"`
+	CourseDeleted   bool            `json:"course_deleted"`
 }
 
 type EnrollmentDetailDTO struct {

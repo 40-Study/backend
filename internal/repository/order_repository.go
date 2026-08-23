@@ -106,6 +106,15 @@ func (r *OrderRepository) UpdatePaymentInfo(orderID uuid.UUID, paymentMethod, pa
 	return r.db.Model(&model.Order{}).Where("id = ?", orderID).Updates(updates).Error
 }
 
+// UpdatePaymentCode - Update payment code with created timestamp
+func (r *OrderRepository) UpdatePaymentCode(orderID uuid.UUID, paymentCode string, createdAt time.Time) error {
+	updates := map[string]interface{}{
+		"payment_transaction_id":  paymentCode,
+		"payment_code_created_at": createdAt,
+	}
+	return r.db.Model(&model.Order{}).Where("id = ?", orderID).Updates(updates).Error
+}
+
 // Update - Update order
 func (r *OrderRepository) Update(order *model.Order) error {
 	return r.db.Save(order).Error
@@ -168,4 +177,17 @@ func (r *OrderRepository) CalculateUserSpent(userID uuid.UUID) (decimal.Decimal,
 		Select("COALESCE(SUM(total_amount), 0)").
 		Scan(&total).Error
 	return total, err
+}
+
+// CreateOrderItems - Create order items within the same transaction
+func (r *OrderRepository) CreateOrderItems(items []model.OrderItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	return r.db.Create(&items).Error
+}
+
+// CreateOrderHistory - Create order status history within the same transaction
+func (r *OrderRepository) CreateOrderHistory(history *model.OrderStatusHistory) error {
+	return r.db.Create(history).Error
 }

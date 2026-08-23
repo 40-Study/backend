@@ -69,6 +69,7 @@ type Course struct {
 	PublishedAt       *time.Time       `json:"published_at,omitempty"`
 	IsFeatured        bool             `gorm:"default:false" json:"is_featured"`
 	IsFree            bool             `gorm:"default:false" json:"is_free"`
+	DeliveryMode      string           `gorm:"type:varchar(20);default:'hybrid';check:delivery_mode IN ('video','livestream','hybrid')" json:"delivery_mode"`
 
 	// Relationships
 	Instructor  User         `gorm:"foreignKey:InstructorID" json:"-"`
@@ -138,6 +139,9 @@ type LessonContent struct {
 
 	// Exercise fields (bài tập khóa học)
 	ExerciseID *uuid.UUID `gorm:"type:uuid" json:"exercise_id,omitempty"`
+
+	// Livestream session link
+	LivestreamSessionID *uuid.UUID `gorm:"type:uuid" json:"livestream_session_id,omitempty"`
 
 	// Bắt buộc hoàn thành mới được học tiếp
 	IsMandatory bool `gorm:"default:true" json:"is_mandatory"`

@@ -34,15 +34,28 @@ type OrderResponse struct {
 	Items           []OrderItemResponse `json:"items"`
 	CreatedAt       time.Time       `json:"created_at"`
 	ExpiresAt       *time.Time      `json:"expires_at,omitempty"`
+
+	// Payment capture - included when order is pending/processing
+	PaymentCapture *PaymentCaptureInfo `json:"payment_capture,omitempty"`
+}
+
+type PaymentCaptureInfo struct {
+	PaymentCode      string            `json:"payment_code,omitempty"`
+	QRContent        string            `json:"qr_content,omitempty"`
+	BankTransferInfo *BankTransferInfo `json:"bank_transfer_info,omitempty"`
+	PaymentExpiredAt *time.Time        `json:"payment_expired_at,omitempty"`
+	IsExpired        bool              `json:"is_expired"`
 }
 
 type OrderItemResponse struct {
-	ID             uuid.UUID       `json:"id"`
-	CourseID       uuid.UUID       `json:"course_id"`
-	CourseName     string          `json:"course_name"`
-	Price          decimal.Decimal `json:"price"`
-	DiscountAmount decimal.Decimal `json:"discount_amount"`
-	FinalPrice     decimal.Decimal `json:"final_price"`
+	ID               uuid.UUID       `json:"id"`
+	CourseID         uuid.UUID       `json:"course_id"`
+	CourseName       string          `json:"course_name"`
+	CourseThumbnail  string          `json:"course_thumbnail,omitempty"`
+	CourseInstructor string          `json:"course_instructor,omitempty"`
+	Price            decimal.Decimal `json:"price"`
+	DiscountAmount   decimal.Decimal `json:"discount_amount"`
+	FinalPrice       decimal.Decimal `json:"final_price"`
 }
 
 type OrderListResponse struct {

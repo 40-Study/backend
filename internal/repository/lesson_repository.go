@@ -20,6 +20,7 @@ type LessonRepositoryInterface interface {
 	CountByIDsAndSection(ctx context.Context, ids []uuid.UUID, sectionID uuid.UUID) (int64, error)
 	Exists(ctx context.Context, id uuid.UUID) (bool, error)
 	Reorder(ctx context.Context, items []ReorderItem) error
+	UpdateDuration(ctx context.Context, lessonID uuid.UUID, durationSeconds int) error
 
 	// LessonContent
 	CreateContent(ctx context.Context, content *model.LessonContent) error
@@ -126,6 +127,13 @@ func (r *LessonRepository) Reorder(ctx context.Context, items []ReorderItem) err
 		}
 		return nil
 	})
+}
+
+func (r *LessonRepository) UpdateDuration(ctx context.Context, lessonID uuid.UUID, durationSeconds int) error {
+	return r.db.WithContext(ctx).
+		Model(&model.Lesson{}).
+		Where("id = ?", lessonID).
+		Update("duration", durationSeconds).Error
 }
 
 // LessonContent methods

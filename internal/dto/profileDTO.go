@@ -9,6 +9,15 @@ type ChildDto struct {
 	Relationship string  `json:"relationship" example:"parent"` // parent, guardian, grandparent
 }
 
+// ParentDto - Thông tin phụ huynh (của học sinh)
+type ParentDto struct {
+	ID           string `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Name         string `json:"name" example:"Nguyễn Văn A"`
+	Email        string `json:"email" example:"parent@email.com"`
+	Relationship string `json:"relationship" example:"parent"` // parent, guardian, grandparent
+	CanPay       bool   `json:"can_pay" example:"true"`
+}
+
 // PaginatedChildrenResponse - Response cho GET /me/children
 type PaginatedChildrenResponse struct {
 	Children []ChildDto `json:"children"`
