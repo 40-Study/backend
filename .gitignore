@@ -29,6 +29,8 @@ go.work.sum
 
 # env file
 .env
+.env.*
+!.env.example
 
 # Editor/IDE
 .idea/
@@ -46,3 +48,6 @@ CLAUDE.md
 postman/
 docs/client_secret_*.json 
 .env.prod
+
+# Runtime logs
+tmp/*.log

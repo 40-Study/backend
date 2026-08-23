@@ -15,11 +15,11 @@ func SetupClassRoutes(
 	attendanceHandler *handler.AttendanceHandler,
 	redis *redis.Client,
 ) {
-	classes := api.Group("/classes")
+	classes := api.Group("/classes", middleware.AuthMiddleware(cfg, redis))
 	{
 		classes.Post("/", classHandler.CreateClass)
 		classes.Get("/", classHandler.GetAllClasses)
-		classes.Get("/me", middleware.AuthMiddleware(cfg, redis), classHandler.GetMyClasses)
+		classes.Get("/me", classHandler.GetMyClasses)
 		classes.Get("/:id", classHandler.GetClassByID)
 		classes.Put("/:id", classHandler.UpdateClass)
 		classes.Delete("/:id", classHandler.DeleteClass)

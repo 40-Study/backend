@@ -39,6 +39,8 @@ type ScheduleRepositoryInterface interface {
 	UpdateAttendance(ctx context.Context, attendance *model.SessionAttendance) error
 	GetStudentAttendanceHistory(ctx context.Context, studentID uuid.UUID, page, pageSize int) ([]model.SessionAttendance, int64, error)
 	GetAttendanceBySessionAndStudent(ctx context.Context, sessionID, studentID uuid.UUID) (*model.SessionAttendance, error)
+	TeacherCanManageSession(ctx context.Context, sessionID, teacherID uuid.UUID) (bool, error)
+	StudentCanAttendSession(ctx context.Context, sessionID, studentID uuid.UUID) (bool, error)
 
 	// ReminderSetting
 	GetReminderSettings(ctx context.Context, userID uuid.UUID) ([]model.ReminderSetting, error)
@@ -249,6 +251,26 @@ func (r *ScheduleRepository) GetAttendanceBySessionAndStudent(ctx context.Contex
 		return nil, err
 	}
 	return &att, nil
+}
+
+func (r *ScheduleRepository) TeacherCanManageSession(ctx context.Context, sessionID, teacherID uuid.UUID) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Table("teacher_classes AS tc").
+		Joins("JOIN class_sessions AS cs ON cs.class_id = tc.class_id").
+		Where("cs.id = ? AND tc.teacher_id = ?", sessionID, teacherID).
+		Count(&count).Error
+	return count > 0, err
+}
+
+func (r *ScheduleRepository) StudentCanAttendSession(ctx context.Context, sessionID, studentID uuid.UUID) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Table("student_classes AS sc").
+		Joins("JOIN class_sessions AS cs ON cs.class_id = sc.class_id").
+		Where("cs.id = ? AND sc.student_id = ? AND sc.status = ?", sessionID, studentID, "active").
+		Count(&count).Error
+	return count > 0, err
 }
 
 // ============================================================================

@@ -445,7 +445,12 @@ func (h *ScheduleHandler) GetSessionAttendances(c *fiber.Ctx) error {
 		})
 	}
 
-	attendances, err := h.service.GetSessionAttendances(c.Context(), sessionID)
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+
+	attendances, err := h.service.GetSessionAttendances(c.Context(), sessionID, userID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve attendances",
@@ -550,7 +555,7 @@ func (h *ScheduleHandler) BulkMarkAttendance(c *fiber.Ctx) error {
 }
 
 func (h *ScheduleHandler) UpdateAttendance(c *fiber.Ctx) error {
-	_, err := uuid.Parse(c.Params("sessionId"))
+	sessionID, err := uuid.Parse(c.Params("sessionId"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid session ID",
@@ -564,6 +569,11 @@ func (h *ScheduleHandler) UpdateAttendance(c *fiber.Ctx) error {
 			"message": "Invalid attendance ID",
 			"error":   err.Error(),
 		})
+	}
+
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
 	}
 
 	var req dto.UpdateSessionAttendanceDTO
@@ -581,7 +591,7 @@ func (h *ScheduleHandler) UpdateAttendance(c *fiber.Ctx) error {
 		})
 	}
 
-	attendance, err := h.service.UpdateAttendance(c.Context(), id, req)
+	attendance, err := h.service.UpdateAttendance(c.Context(), sessionID, id, req, userID)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update attendance",

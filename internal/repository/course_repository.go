@@ -167,7 +167,7 @@ func (r *CourseRepository) GetDetailBySlug(ctx context.Context, slug string) (*m
 		Preload("Sections.Lessons.Contents", func(db *gorm.DB) *gorm.DB {
 			return db.Order("display_order ASC")
 		}).
-		Where("slug = ?", slug).
+		Where("slug = ? AND status = ?", slug, "published").
 		First(&course).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

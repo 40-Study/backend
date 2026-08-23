@@ -58,6 +58,9 @@ services:
       - ./judge/judge0.conf:/judge0.conf:ro
       - ./judge/init-cgroups.sh:/init-cgroups.sh:ro
     entrypoint: ["/bin/bash", "-c", "/init-cgroups.sh ./scripts/server"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     ports:
       - "2358:2358"
     privileged: true
@@ -77,6 +80,9 @@ services:
       - ./judge/judge0.conf:/judge0.conf:ro
       - ./judge/init-cgroups.sh:/init-cgroups.sh:ro
     entrypoint: ["/bin/bash", "-c", "/init-cgroups.sh ./scripts/workers"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     privileged: true
 
     restart: always
@@ -220,14 +226,20 @@ services:
 
   livekit:
     image: livekit/livekit-server:latest
-    command: --config /etc/livekit.yml
-    volumes:
-      - ./livekit/livekit.yml:/etc/livekit.yml:ro
     environment:
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - LIVEKIT_NODE_IP=${LIVEKIT_NODE_IP}
-      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
-      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      LIVEKIT_NODE_IP: ${LIVEKIT_NODE_IP:?LIVEKIT_NODE_IP must be set}
+      LIVEKIT_CONFIG: |
+        port: 7880
+        rtc:
+          udp_port: 7882
+          tcp_port: 7881
+        redis:
+          address: redis:6379
+          password: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+        keys:
+          ${LIVEKIT_API_KEY:?LIVEKIT_API_KEY must be set}: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET must be set}
+        logging:
+          level: info
     ports:
       - "7880:7880"
       - "7881:7881"
@@ -241,10 +253,21 @@ services:
   livekit_egress:
     image: livekit/egress:latest
     privileged: true
-    volumes:
-      - ./livekit/egress.yaml:/etc/egress.yaml:ro
     environment:
-      - EGRESS_CONFIG_FILE=/etc/egress.yaml
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?LIVEKIT_API_KEY must be set}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET must be set}
+      EGRESS_CONFIG_BODY: |
+        ws_url: ws://livekit:7880
+        redis:
+          address: redis:6379
+          password: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+        s3:
+          access_key: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+          secret: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+          region: ap-southeast-1
+          bucket: recordings
+          endpoint: http://minio:9000
+          force_path_style: true
 
     depends_on:
       - livekit

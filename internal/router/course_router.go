@@ -21,15 +21,14 @@ func SetupCourseRoutes(
 	redis *redis.Client,
 ) {
 	auth := middleware.AuthMiddleware(cfg, redis)
-	optionalAuth := middleware.OptionalAuthMiddleware(cfg, redis)
 
 	// Courses - public read, auth required for write
 	courses := api.Group("/courses")
 	{
-		// Public routes (with optional auth for filtering by instructor)
-		courses.Get("/", optionalAuth, courseHandler.GetAllCourses)
-		courses.Get("/slug/:slug", optionalAuth, courseHandler.GetCourseBySlug)
-		courses.Get("/:id", optionalAuth, courseHandler.GetCourseByID)
+		// Public routes
+		courses.Get("/", courseHandler.GetAllCourses)
+		courses.Get("/slug/:slug", courseHandler.GetCourseBySlug)
+		courses.Get("/:id", auth, courseHandler.GetCourseByID)
 
 		// Protected routes - require authentication
 		courses.Post("/", auth, courseHandler.CreateCourse)
