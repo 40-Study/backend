@@ -36,17 +36,17 @@ type PaymentServiceInterface interface {
 }
 
 type PaymentService struct {
-	orderRepo          repository.OrderRepositoryInterface
-	orderItemRepo      repository.OrderItemRepositoryInterface
-	paymentEventRepo   repository.PaymentEventRepositoryInterface
-	orderHistoryRepo   repository.OrderStatusHistoryRepositoryInterface
+	orderRepo        repository.OrderRepositoryInterface
+	orderItemRepo    repository.OrderItemRepositoryInterface
+	paymentEventRepo repository.PaymentEventRepositoryInterface
+	orderHistoryRepo repository.OrderStatusHistoryRepositoryInterface
 	// enrollmentRepo (item 14, dọn dẹp phụ khi tách completeOrderFulfillment dùng chung):
 	// TRƯỚC ĐÂY khai kiểu interface{} rồi type-assert bằng interface ẩn danh mỗi lần dùng
 	// (xem git blame CheckAndProcessPayment cũ) — không cần thiết vì repos.Enrollment luôn
 	// implement đúng repository.EnrollmentRepositoryInterface (xem app/services.go). Đổi
 	// sang kiểu cụ thể để completeOrderFulfillment (dùng chung với OrderService.CreateOrder,
 	// đơn 0đ) không phải type-assert lại.
-	enrollmentRepo     repository.EnrollmentRepositoryInterface
+	enrollmentRepo repository.EnrollmentRepositoryInterface
 	// courseRepo (H2-04, review vòng 3): completeOrderFulfillment cần tăng total_students khi
 	// tạo/khôi phục enrollment — trước đây hàm này hoàn toàn không đụng tới total_students.
 	courseRepo         repository.CourseRepositoryInterface
@@ -274,29 +274,13 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 	// tiếp tục gọi gRPC check giao dịch. "expired" đã là trạng thái web mong đợi (xem
 	// web/src/services/order.service.ts OrderStatus + use-orders.ts PAYMENT_TERMINAL_STATUSES).
 	if order.PaymentCodeExpiredAt != nil && time.Now().After(*order.PaymentCodeExpiredAt) {
-		oldStatus := order.Status
+		// M3-02/H3-01c (review vòng 4): dùng chung releaseOrderAndTransition (order_service.go)
+		// thay vì tự UpdateStatus vô điều kiện — UPDATE có điều kiện (WHERE status = order.Status
+		// vừa đọc) + kiểm RowsAffected chặn race 2 request đồng thời (vd 1 tab poll trúng lúc hết
+		// hạn + 1 tab bấm "Hủy đơn") cùng vượt qua guard và cùng gọi ReleaseVoucherUsage.
 		expireErr := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
-			if err := txRepo.UpdateStatus(order.ID, "expired"); err != nil {
-				return err
-			}
-			history := &model.OrderStatusHistory{
-				ID:         uuid.New(),
-				CreatedAt:  time.Now(),
-				OrderID:    order.ID,
-				FromStatus: oldStatus,
-				ToStatus:   "expired",
-				Reason:     "Payment code expired",
-			}
-			orderHistoryRepoTx := repository.NewOrderStatusHistoryRepository(txRepo.TxDB())
-			if err := orderHistoryRepoTx.Create(history); err != nil {
-				return err
-			}
-			if order.VoucherID != nil && s.voucherService != nil {
-				if err := s.voucherService.ReleaseVoucherUsage(ctx, txRepo.TxDB(), *order.VoucherID); err != nil {
-					return err
-				}
-			}
-			return nil
+			_, txErr := releaseOrderAndTransition(ctx, txRepo, s.voucherService, order, []string{order.Status}, "expired", "Payment code expired")
+			return txErr
 		})
 		if expireErr != nil {
 			return nil, expireErr

@@ -29,6 +29,9 @@ type OrderRepositoryInterface interface {
 	UpdateStatusWithTx(tx *gorm.DB, orderID uuid.UUID, status string) error
 	CheckOrderNumberExists(orderNumber string) (bool, error)
 	GetPendingOrders(expiredBefore time.Time) ([]model.Order, error)
+	// GetExpiredHeldOrdersForUser (H3-01b, review vòng 4): xem comment tại
+	// OrderRepository.GetExpiredHeldOrdersForUser (order_repository.go).
+	GetExpiredHeldOrdersForUser(userID uuid.UUID, defaultTTL time.Duration) ([]model.Order, error)
 	CalculateUserSpent(userID uuid.UUID) (decimal.Decimal, error)
 }
 

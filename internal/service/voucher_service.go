@@ -16,11 +16,11 @@ import (
 
 var (
 	ErrVoucherInactive        = errors.New("voucher is inactive")
-	ErrVoucherNotStarted     = errors.New("voucher is not started yet")
-	ErrVoucherExpired        = errors.New("voucher is expired")
-	ErrVoucherMinPurchase    = errors.New("order does not meet minimum purchase requirement")
+	ErrVoucherNotStarted      = errors.New("voucher is not started yet")
+	ErrVoucherExpired         = errors.New("voucher is expired")
+	ErrVoucherMinPurchase     = errors.New("order does not meet minimum purchase requirement")
 	ErrVoucherPaymentNotAllow = errors.New("payment method is not accepted by voucher")
-	ErrInvalidNumeric        = errors.New("invalid numeric value")
+	ErrInvalidNumeric         = errors.New("invalid numeric value")
 	// ErrVoucherUsageLimitExceeded/ErrVoucherPerUserLimitExceeded (item 24, review web +
 	// review vòng 1): dùng cho ValidateAndApplyVoucher — tương đương
 	// ErrCouponUsageExceeded/ErrCouponPerUserExceeded của coupon_repository.go, viết lại ở
@@ -34,6 +34,11 @@ var (
 	// (errorMessage "Voucher này đổi bằng điểm..."), backend trước đây ÂM THẦM trả discount=0
 	// cho nhánh PERCENT (vẫn coi là "áp dụng thành công", chỉ là giảm 0đ) thay vì từ chối hẳn.
 	ErrVoucherNotMoneyUnit = errors.New("voucher is point-based, not applicable to cash payment")
+	// ErrVoucherNotApplicable (H3-03, review vòng 4): discount tính ra <= 0 (vd PERCENT trên
+	// subtotal quá nhỏ, Floor về 0; hoặc FIXED với discount_amount_money null/0) — khớp nhánh
+	// "discount <= 0" của web (voucher.service.ts), từ chối HẲN thay vì áp dụng "thành công"
+	// với giảm giá 0đ (tránh tiêu một lượt used_count vô ích — xem H2-05/H3-01).
+	ErrVoucherNotApplicable = errors.New("voucher is not applicable to this order (discount would be zero)")
 )
 
 type VoucherServiceInterface interface {
@@ -519,11 +524,21 @@ func (vs *VoucherService) ValidateAndApplyVoucher(ctx context.Context, code stri
 	}
 
 	if voucher.UsagePerUser > 0 {
-		userUsageCount, err := vs.vr.CountUserVoucherUsage(ctx, userID, voucher.ID)
+		// H3-01a (review vòng 4): TRƯỚC ĐÂY chỉ đếm voucher_logs (đơn đã HOÀN TẤT) —
+		// usage_per_user hoàn toàn "mù" với đơn pending/processing đang GIỮ CHỖ voucher (đã
+		// reserve used_count lúc tạo đơn — H2-05 — nhưng chưa hoàn tất nên chưa có voucher_log).
+		// Một tài khoản gọi POST /orders N lần với cùng mã (không cần thanh toán) trước đây vượt
+		// qua check này N lần liên tiếp. Cộng thêm CountUserHeldOrders (đơn đang giữ chỗ) vào
+		// tổng số lượt user đó đã dùng/đang giữ.
+		completedCount, err := vs.vr.CountUserVoucherUsage(ctx, userID, voucher.ID)
 		if err != nil {
 			return nil, decimal.Zero, err
 		}
-		if userUsageCount >= int64(voucher.UsagePerUser) {
+		heldCount, err := vs.vr.CountUserHeldOrders(ctx, userID, voucher.ID)
+		if err != nil {
+			return nil, decimal.Zero, err
+		}
+		if completedCount+heldCount >= int64(voucher.UsagePerUser) {
 			return nil, decimal.Zero, ErrVoucherPerUserLimitExceeded
 		}
 	}
@@ -542,6 +557,15 @@ func (vs *VoucherService) ValidateAndApplyVoucher(ctx context.Context, code stri
 	}
 
 	discount := calculateVoucherDiscountDecimal(voucher, subtotal)
+	// H3-03 (review vòng 4): discount <= 0 phải bị TỪ CHỐI (khớp web voucher.service.ts:
+	// "if (discount <= 0) return { ok:false, ... }") — trước đây backend trả (voucher, 0, nil),
+	// tức "áp dụng thành công, giảm 0đ", khiến CreateOrder vẫn gán order.VoucherID + gọi
+	// ReserveVoucherUsage (H2-05), TIÊU MỘT LƯỢT used_count cho một mã không giảm được đồng
+	// nào (vd PERCENT 10% trên subtotal=5 → Floor(0.5)=0; hoặc FIXED với discount_amount_money
+	// null/0).
+	if discount.LessThanOrEqual(decimal.Zero) {
+		return nil, decimal.Zero, ErrVoucherNotApplicable
+	}
 	return voucher, discount, nil
 }
 
@@ -552,10 +576,23 @@ func (vs *VoucherService) IncrementUsedCount(ctx context.Context, voucherID uuid
 
 // ReserveVoucherUsage — xem comment interface. Chạy trực tiếp trên "tx" (không qua vs.vr, vốn
 // luôn cầm connection gốc) để lời gọi này tham gia đúng transaction của caller.
-func (vs *VoucherService) ReserveVoucherUsage(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) error {
-	result := tx.WithContext(ctx).Model(&model.Voucher{}).
-		Where("id = ? AND (usage_limit <= 0 OR used_count < usage_limit)", voucherID).
+//
+// M3-05 (review vòng 4): TRƯỚC ĐÂY copy tay chuỗi điều kiện "usage_limit <= 0 OR used_count <
+// usage_limit" thay vì gọi lại buildIncrementUsedCountQuery (repository.VoucherRepository) —
+// dùng repository.VoucherUsageAvailableCondition (hằng số dùng chung, cũng thêm "usage_limit IS
+// NULL" mà bản copy cũ thiếu) thay vì viết lại chuỗi, tránh lệch nhau lần nữa.
+// buildReserveVoucherUsageQuery (M3-06, review vòng 4): tách phần XÂY câu UPDATE ra khỏi phần
+// map RowsAffected -> error — cùng mẫu buildIncrementUsedCountQuery/buildRestoreAndReactivateQuery
+// đã dùng ở repository layer, để test DryRun (voucher_service_reserve_release_test.go) gọi được
+// ĐÚNG hàm sản xuất thật thay vì hand-roll lại câu query trong test.
+func (vs *VoucherService) buildReserveVoucherUsageQuery(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) *gorm.DB {
+	return tx.WithContext(ctx).Model(&model.Voucher{}).
+		Where("id = ? AND ("+repository.VoucherUsageAvailableCondition+")", voucherID).
 		Update("used_count", gorm.Expr("used_count + 1"))
+}
+
+func (vs *VoucherService) ReserveVoucherUsage(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) error {
+	result := vs.buildReserveVoucherUsageQuery(ctx, tx, voucherID)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -565,12 +602,17 @@ func (vs *VoucherService) ReserveVoucherUsage(ctx context.Context, tx *gorm.DB, 
 	return nil
 }
 
+// buildReleaseVoucherUsageQuery (M3-06, review vòng 4) — xem comment buildReserveVoucherUsageQuery.
+func (vs *VoucherService) buildReleaseVoucherUsageQuery(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) *gorm.DB {
+	return tx.WithContext(ctx).Model(&model.Voucher{}).
+		Where("id = ? AND used_count > 0", voucherID).
+		Update("used_count", gorm.Expr("used_count - 1"))
+}
+
 // ReleaseVoucherUsage — hoàn lại 1 lượt used_count đã reserve khi đơn hàng bị hủy/hết hạn trước
 // khi hoàn tất. Điều kiện "used_count > 0" tránh giảm xuống âm nếu bị gọi trùng lặp.
 func (vs *VoucherService) ReleaseVoucherUsage(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) error {
-	return tx.WithContext(ctx).Model(&model.Voucher{}).
-		Where("id = ? AND used_count > 0", voucherID).
-		Update("used_count", gorm.Expr("used_count - 1")).Error
+	return vs.buildReleaseVoucherUsageQuery(ctx, tx, voucherID).Error
 }
 
 // RecordUsageLogTx — xem comment interface (RecordUsageLogTx/RecordUsageLog). Tự tra lại

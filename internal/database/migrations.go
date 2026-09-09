@@ -132,6 +132,23 @@ func RunPostMigrations(db *gorm.DB) error {
 				END $$;
 			`,
 		},
+		{
+			// B3-01 (review vòng 4): thêm 'expired' vào CHECK constraint của orders.status —
+			// AutoMigrate CHỈ tạo mới constraint còn thiếu theo TÊN (Migrator().HasConstraint),
+			// không nới rộng constraint đã tồn tại trên DB cũ dù tag Go đã đổi (model/payment.go
+			// Order.Status). Không dùng DO $$ IF NOT EXISTS ở đây vì mục đích là THAY THẾ nội
+			// dung constraint (không phải chỉ tạo nếu chưa có) — DROP CONSTRAINT IF EXISTS rồi
+			// ADD CONSTRAINT lại là idempotent tự nhiên: chạy lại nhiều lần cho kết quả giống
+			// hệt lần đầu (drop cái vừa tạo, tạo lại y hệt). Tên constraint chk_orders_status
+			// khớp quy ước đặt tên mặc định của GORM cho check tag không có tên tường minh
+			// (chk_<table>_<column>).
+			name: "widen chk_orders_status to include 'expired' (B3-01)",
+			sql: `
+				ALTER TABLE orders DROP CONSTRAINT IF EXISTS chk_orders_status;
+				ALTER TABLE orders ADD CONSTRAINT chk_orders_status
+					CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'refunded', 'cancelled', 'expired'));
+			`,
+		},
 	}
 
 	for _, stmt := range statements {

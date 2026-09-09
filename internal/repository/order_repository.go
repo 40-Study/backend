@@ -104,8 +104,8 @@ func (r *OrderRepository) UpdateStatus(orderID uuid.UUID, status string) error {
 // nghĩa cột này sau khi hoàn tất) và payment_code_expired_at trong CÙNG một UPDATE.
 func (r *OrderRepository) UpdatePaymentCode(orderID uuid.UUID, paymentCode string, expiredAt time.Time) error {
 	updates := map[string]interface{}{
-		"status":                   "processing",
-		"payment_transaction_id":   paymentCode,
+		"status":                  "processing",
+		"payment_transaction_id":  paymentCode,
 		"payment_code_expired_at": expiredAt,
 	}
 	return r.db.Model(&model.Order{}).Where("id = ?", orderID).Updates(updates).Error
@@ -115,10 +115,10 @@ func (r *OrderRepository) UpdatePaymentCode(orderID uuid.UUID, paymentCode strin
 func (r *OrderRepository) UpdatePaymentInfo(orderID uuid.UUID, paymentMethod, paymentGateway, transactionID string, paidAt time.Time) error {
 	updates := map[string]interface{}{
 		"payment_method":         paymentMethod,
-		"payment_gateway":       paymentGateway,
+		"payment_gateway":        paymentGateway,
 		"payment_transaction_id": transactionID,
-		"paid_at":              paidAt,
-		"status":               "completed",
+		"paid_at":                paidAt,
+		"status":                 "completed",
 	}
 	return r.db.Model(&model.Order{}).Where("id = ?", orderID).Updates(updates).Error
 }
@@ -191,6 +191,27 @@ func (r *OrderRepository) CheckOrderNumberExists(orderNumber string) (bool, erro
 func (r *OrderRepository) GetPendingOrders(expiredBefore time.Time) ([]model.Order, error) {
 	var orders []model.Order
 	if err := r.db.Where("status = ? AND created_at < ?", "pending", expiredBefore).Find(&orders).Error; err != nil {
+		return nil, err
+	}
+	return orders, nil
+}
+
+// GetExpiredHeldOrdersForUser (H3-01b, review vòng 4): trả về các đơn "pending"/"processing"
+// CỦA MỘT USER đã quá hạn — payment_code_expired_at đã qua (đơn đã tạo payment intent), HOẶC
+// (chưa có payment_code_expired_at NHƯNG created_at đã quá defaultTTL — đơn "pending" bị bỏ rơi
+// ngay từ bước tạo đơn, chưa từng bấm tạo payment intent). Dùng cho lazy-sweep ngay lúc
+// CreateOrder (xem OrderService.sweepExpiredHeldOrders) — không cần cron/worker riêng: mỗi lần
+// user tạo đơn mới là một cơ hội dọn các đơn cũ CHÍNH HỌ đã bỏ rơi, trả lại used_count voucher
+// đã reserve trước khi tính usage_per_user cho đơn mới.
+func (r *OrderRepository) GetExpiredHeldOrdersForUser(userID uuid.UUID, defaultTTL time.Duration) ([]model.Order, error) {
+	var orders []model.Order
+	now := time.Now()
+	err := r.db.
+		Where("user_id = ? AND status IN ('pending','processing')", userID).
+		Where("(payment_code_expired_at IS NOT NULL AND payment_code_expired_at < ?) OR (payment_code_expired_at IS NULL AND created_at < ?)",
+			now, now.Add(-defaultTTL)).
+		Find(&orders).Error
+	if err != nil {
 		return nil, err
 	}
 	return orders, nil

@@ -18,13 +18,25 @@ var (
 	ErrVoucherUsageExceeded = errors.New("voucher usage limit exceeded")
 )
 
+// VoucherUsageAvailableCondition (M3-05, review vòng 4): điều kiện "voucher còn lượt dùng" —
+// TRƯỚC ĐÂY có 3 bản sao rải rác (buildIncrementUsedCountQuery, GetPublicVouchers, và
+// ReserveVoucherUsage bên package service copy tay), đã LỆCH NHAU thật (`usage_limit = 0` ở
+// GetPublicVouchers vs `usage_limit <= 0` ở 2 chỗ còn lại) — chứng minh rủi ro drift là có thật.
+// Đưa về MỘT hằng số dùng chung. Thêm "usage_limit IS NULL" — cột UsageLimit (`int32`, không
+// `not null`) có thể NULL do seed/SQL tay; trước đây `NULL <= 0` -> NULL (không phải true) nên 0
+// dòng khớp, khiến voucher vốn KHÔNG giới hạn (NULL nghĩa là "chưa set", không phải "giới hạn 0")
+// bị coi là "hết lượt". Không đổi cột UsageLimit sang not null;default:0 ở lần sửa này — cần một
+// bước UPDATE backfill dữ liệu NULL hiện có trước khi ALTER TABLE ... NOT NULL, vượt phạm vi một
+// sửa an toàn <20 dòng (xem "chưa làm" trong báo cáo).
+const VoucherUsageAvailableCondition = "usage_limit IS NULL OR usage_limit <= 0 OR used_count < usage_limit"
+
 // DeletedMode - Mode for soft delete queries
 type DeletedMode int
 
 const (
 	DeletedExclude DeletedMode = iota // Exclude deleted records
-	DeletedOnly                      // Only deleted records
-	DeletedWith                      // Include deleted records
+	DeletedOnly                       // Only deleted records
+	DeletedWith                       // Include deleted records
 )
 
 // VoucherRepository - Repository for Voucher
@@ -53,7 +65,7 @@ func (r *VoucherRepository) CreateVoucher(ctx context.Context, voucher *model.Vo
 // trong test — xóa/sửa sai điều kiện WHERE ở đây sẽ làm test đỏ.
 func (r *VoucherRepository) buildIncrementUsedCountQuery(ctx context.Context, voucherID uuid.UUID) *gorm.DB {
 	return r.db.WithContext(ctx).Model(&model.Voucher{}).
-		Where("id = ? AND (usage_limit <= 0 OR used_count < usage_limit)", voucherID).
+		Where("id = ? AND ("+VoucherUsageAvailableCondition+")", voucherID).
 		Update("used_count", gorm.Expr("used_count + 1"))
 }
 
@@ -74,6 +86,22 @@ func (r *VoucherRepository) CountUserVoucherUsage(ctx context.Context, userID, v
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.VoucherLog{}).
 		Where("user_id = ? AND voucher_id = ? AND action = ?", userID, voucherID, "used").
+		Count(&count).Error
+	return count, err
+}
+
+// CountUserHeldOrders (H3-01a, review vòng 4): đếm số đơn "pending"/"processing" CỦA USER ĐÓ
+// đang GIỮ CHỖ voucher này (đã reserve used_count lúc tạo đơn — xem
+// VoucherServiceInterface.ReserveVoucherUsage — nhưng CHƯA hoàn tất nên voucher_logs chưa có
+// bản ghi). CountUserVoucherUsage (ở trên) chỉ đếm voucher_logs (đơn đã HOÀN TẤT), nên trước
+// đây usage_per_user hoàn toàn "mù" với đơn pending/processing — một tài khoản gọi POST /orders
+// N lần với cùng mã voucher (không cần thanh toán) sẽ đẩy used_count lên N và làm cạn voucher
+// cho người khác mà không tốn đồng nào. ValidateAndApplyVoucher cộng kết quả hàm này với
+// CountUserVoucherUsage để có tổng số lượt user đó ĐANG GIỮ + ĐÃ DÙNG.
+func (r *VoucherRepository) CountUserHeldOrders(ctx context.Context, userID, voucherID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Order{}).
+		Where("user_id = ? AND voucher_id = ? AND status IN ('pending','processing')", userID, voucherID).
 		Count(&count).Error
 	return count, err
 }
@@ -202,7 +230,7 @@ func (r *VoucherRepository) GetPublicVouchers(ctx context.Context, limit, offset
 	query = query.Where("(start_date IS NULL OR start_date <= ?)", now)
 
 	// Has usage limit not reached
-	query = query.Where("(usage_limit = 0 OR used_count < usage_limit)")
+	query = query.Where("(" + VoucherUsageAvailableCondition + ")")
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err

@@ -99,6 +99,16 @@ var validTransitions = map[string][]string{
 	"failed":     {"pending"}, // Allow retry
 	"cancelled":  {},
 	"refunded":   {},
+	// "expired" (M3-04, review vòng 4): TRƯỚC ĐÂY không có key này — isValidTransition("expired",
+	// ...) luôn false một cách NGẪU NHIÊN (không có key -> map trả zero-value {}), không phải
+	// chủ đích. Sau khi B3-01 được vá, đơn thực sự chuyển "expired" (CheckAndProcessPayment hết
+	// hạn mã thanh toán, hoặc lazy sweep của CreateOrder — cả hai đều đi qua
+	// releaseOrderAndTransition, không qua isValidTransition/CancelOrder). Khai báo TƯỜNG MINH
+	// là trạng thái CHỐT (không cho chuyển tiếp qua CancelOrder) — hiện hệ thống chưa có luồng
+	// "tạo lại payment intent cho đơn đã expired", nên KHÔNG mở "pending" ở đây để tránh CancelOrder
+	// vô tình cho phép 1 hành động chưa có route/luồng nào hỗ trợ. Đây cũng là lý do CancelOrder
+	// không double-release voucher sau khi đơn đã expired — chốt chặn có chủ đích, không phải may.
+	"expired": {},
 }
 
 func (s *OrderService) isValidTransition(from, to string) bool {
@@ -114,7 +124,25 @@ func (s *OrderService) isValidTransition(from, to string) bool {
 	return false
 }
 
+// pendingOrderDefaultTTL (H3-01b, review vòng 4): hạn mặc định cho đơn "pending" CHƯA từng tạo
+// payment intent (payment_code_expired_at còn NULL) — dùng làm ngưỡng lazy-sweep trong
+// sweepExpiredHeldOrders. Khớp đúng hạn 24h đã dùng sẵn cho payment intent thật
+// (CreatePaymentIntent, payment_service.go) và cho ExpiresAt hiển thị ở toOrderResponse bên
+// dưới — không phát minh một con số mới, giữ nhất quán với quy ước đã có trong codebase.
+const pendingOrderDefaultTTL = 24 * time.Hour
+
 func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dto.CreateOrderRequest) (*dto.OrderResponse, error) {
+	// H3-01b (review vòng 4): quét lazy — trước khi tạo đơn mới, chuyển các đơn pending/
+	// processing CỦA USER ĐÓ đã quá hạn sang "expired" + hoàn used_count voucher đã reserve.
+	// KHÔNG cần cron/worker riêng: mỗi lần user tạo đơn mới là một cơ hội dọn các đơn cũ CHÍNH
+	// HỌ đã bỏ rơi (tạo đơn xong đóng tab, không bao giờ bấm thanh toán) — đặt NGAY ĐẦU hàm, TRƯỚC
+	// bước tính usage_per_user (ValidateAndApplyVoucher bên dưới) để voucher vừa được giải
+	// phóng có thể dùng lại được luôn trong CHÍNH lần tạo đơn này. Lỗi sweep KHÔNG bị nuốt — nếu
+	// sweep lỗi, dừng hẳn CreateOrder thay vì tạo đơn mới trên trạng thái voucher có thể sai.
+	if err := s.sweepExpiredHeldOrders(ctx, userID); err != nil {
+		return nil, err
+	}
+
 	var courseIDs []uuid.UUID
 	// selectedCourseIDs (item 26, review web vòng 1): khi client gửi kèm course_ids CÙNG với
 	// source="cart" (chọn một phần giỏ hàng để checkout thay vì cả giỏ), nhớ lại tập đã CHỌN
@@ -449,45 +477,79 @@ func (s *OrderService) CancelOrder(ctx context.Context, userID, orderID uuid.UUI
 		return ErrInvalidStateTransition
 	}
 
-	oldStatus := order.Status
-
-	return s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
-		txDB := txRepo.TxDB()
-
-		// H2-06 (review vòng 3, phát hiện phụ khi sửa item 4/H2-05): TRƯỚC ĐÂY gọi
-		// txRepo.UpdateStatusWithTx(&gorm.DB{}, ...) — truyền một *gorm.DB RỖNG (chưa từng mở
-		// connection/Statement) thay vì tx thật của transaction, khiến UPDATE này chạy trên một
-		// gorm.DB vô hiệu thay vì tham gia transaction (hoặc lỗi thẳng). Sửa bằng UpdateStatus
-		// (method đã tự dùng txRepo.db — chính là *gorm.DB của tx — không cần tham số tx rời).
-		if err := txRepo.UpdateStatus(orderID, "cancelled"); err != nil {
-			return err
-		}
-
-		// Create history — cùng lý do H2-06: dùng bản TX-BOUND thay vì s.orderHistoryRepo
-		// (connection gốc) để history cùng rollback với UpdateStatus nếu bước dưới lỗi.
-		history := &model.OrderStatusHistory{
-			ID:         uuid.New(),
-			CreatedAt:  time.Now(),
-			OrderID:    orderID,
-			FromStatus: oldStatus,
-			ToStatus:   "cancelled",
-			Reason:     reason,
-		}
-		orderHistoryRepoTx := repository.NewOrderStatusHistoryRepository(txDB)
-		if err := orderHistoryRepoTx.Create(history); err != nil {
-			return err
-		}
-
-		// H2-05: hoàn lại used_count đã reserve lúc tạo đơn (nếu đơn có áp voucher) — đơn bị
-		// hủy trước khi hoàn tất không được giữ chỗ voucher nữa.
-		if order.VoucherID != nil {
-			if err := s.voucherService.ReleaseVoucherUsage(ctx, txDB, *order.VoucherID); err != nil {
-				return err
-			}
-		}
-
-		return nil
+	var applied bool
+	err = s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
+		var txErr error
+		// M3-02/H3-01c (review vòng 4): releaseOrderAndTransition dùng UPDATE CÓ ĐIỀU KIỆN
+		// (WHERE status = order.Status vừa đọc ở trên) + kiểm RowsAffected — chặn race 2 request
+		// đồng thời (2 tab bấm "Hủy đơn", hoặc 1 tab hủy + 1 tab poll trúng lúc mã hết hạn) cùng
+		// vượt qua isValidTransition() (đọc TRƯỚC transaction, có thể đã stale) và cùng gọi
+		// ReleaseVoucherUsage — trước đây UpdateStatus/UpdateStatusWithTx chạy VÔ ĐIỀU KIỆN nên
+		// cả 2 request đều "thắng", trừ used_count 2 lần cho 1 lần reserve.
+		applied, txErr = releaseOrderAndTransition(ctx, txRepo, s.voucherService, order, []string{order.Status}, "cancelled", reason)
+		return txErr
 	})
+	if err != nil {
+		return err
+	}
+	if !applied {
+		// RowsAffected == 0: trạng thái order đã đổi (bởi request khác) kể từ lúc đọc ở trên —
+		// không còn đúng "order.Status" đã kiểm isValidTransition, coi như transition thất bại.
+		return ErrInvalidStateTransition
+	}
+	return nil
+}
+
+// releaseOrderAndTransition (H3-01c/M3-02, review vòng 4): chuyển order sang targetStatus bằng
+// UPDATE CÓ ĐIỀU KIỆN (status hiện tại phải nằm trong fromStatuses) + kiểm RowsAffected — chỉ
+// ghi history + release voucher NẾU RowsAffected == 1 (đúng 1 request "thắng" cuộc đua chuyển
+// trạng thái). Dùng chung cho CancelOrder (chuyển "cancelled"), OrderService.CreateOrder's lazy
+// sweep VÀ PaymentService.CheckAndProcessPayment's nhánh hết hạn mã thanh toán (cả hai chuyển
+// "expired") — tránh 3 nơi tự viết lại cùng 1 pattern UPDATE-có-điều-kiện rồi lệch nhau (đúng
+// bài học M3-05 review vòng 4: 3 bản sao điều kiện usage_limit đã lệch nhau vì copy tay).
+// applied=false nghĩa là KHÔNG có gì thay đổi (status đã bị request khác đổi trước) — caller tự
+// quyết định coi đó là lỗi (CancelOrder) hay bỏ qua êm (sweep/expire, best-effort).
+func releaseOrderAndTransition(
+	ctx context.Context,
+	txRepo *repository.OrderRepository,
+	voucherService VoucherServiceInterface,
+	order *model.Order,
+	fromStatuses []string,
+	targetStatus string,
+	reason string,
+) (applied bool, err error) {
+	txDB := txRepo.TxDB()
+
+	result := txDB.Model(&model.Order{}).
+		Where("id = ? AND status IN ?", order.ID, fromStatuses).
+		Update("status", targetStatus)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return false, nil
+	}
+
+	history := &model.OrderStatusHistory{
+		ID:         uuid.New(),
+		CreatedAt:  time.Now(),
+		OrderID:    order.ID,
+		FromStatus: order.Status,
+		ToStatus:   targetStatus,
+		Reason:     reason,
+	}
+	orderHistoryRepoTx := repository.NewOrderStatusHistoryRepository(txDB)
+	if err := orderHistoryRepoTx.Create(history); err != nil {
+		return false, err
+	}
+
+	if order.VoucherID != nil && voucherService != nil {
+		if err := voucherService.ReleaseVoucherUsage(ctx, txDB, *order.VoucherID); err != nil {
+			return false, err
+		}
+	}
+
+	return true, nil
 }
 
 // H2-06 vòng 3b: CompleteOrder (flow COUPON cũ, dùng payment_method/transaction_id nhận trực
@@ -530,6 +592,27 @@ func (s *OrderService) ValidateIdempotencyKey(ctx context.Context, scope, key st
 	}
 
 	return nil, true, nil
+}
+
+// sweepExpiredHeldOrders (H3-01b, review vòng 4) — xem comment gọi ở đầu CreateOrder. Mỗi đơn
+// quá hạn được chuyển "expired" trong TRANSACTION RIÊNG (không gộp chung 1 transaction cho cả
+// batch) qua releaseOrderAndTransition — 1 đơn lỗi/đã bị request khác xử lý trước (applied=false,
+// bỏ qua êm) không chặn việc dọn các đơn còn lại trong batch.
+func (s *OrderService) sweepExpiredHeldOrders(ctx context.Context, userID uuid.UUID) error {
+	staleOrders, err := s.orderRepo.GetExpiredHeldOrdersForUser(userID, pendingOrderDefaultTTL)
+	if err != nil {
+		return err
+	}
+	for i := range staleOrders {
+		order := &staleOrders[i]
+		if err := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
+			_, txErr := releaseOrderAndTransition(ctx, txRepo, s.voucherService, order, []string{order.Status}, "expired", "Order expired (lazy sweep on new order creation)")
+			return txErr
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Helper functions

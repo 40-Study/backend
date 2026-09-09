@@ -64,20 +64,54 @@ func TestRestoreAndReactivate_SingleUpdateClearsDeletedAt(t *testing.T) {
 	}
 }
 
-// TestRestoreAndReactivate_DelegatesToQueryBuilder (M2-05, review vòng 3) — pin hợp đồng RẰNG
-// RestoreAndReactivate (method thật, dùng ở EnrollmentService.Enroll/completeOrderFulfillment)
-// TRẢ VỀ đúng .Error của buildRestoreAndReactivateQuery, không tự làm gì khác. Gọi trên DryRun DB
-// (không thực thi thật, .Error luôn nil cho một Statement hợp lệ) — nếu ai xóa hẳn
-// RestoreAndReactivate, test này đỏ vì không còn compile được.
+// TestRestoreAndReactivate_DelegatesToQueryBuilder (M2-05 vòng 3, đã sửa lại ở H3-02 vòng 4) —
+// vòng 3 CHỈ assert `err == nil` trên DryRun DB, mà DryRun không thực thi gì cả nên `err == nil`
+// đúng với BẤT KỲ implementation nào — kể cả `func RestoreAndReactivate(...) error { return nil }`
+// rỗng hoàn toàn. Reviewer vòng 4 (H3-02) đã CHỨNG MINH bằng mutation test thật: gutting thân hàm
+// thành `return nil` vẫn để cả 2 test trong file này xanh. Tên hàm "DelegatesToQueryBuilder" hứa
+// hẹn kiểm tra HÀNH VI ủy quyền, nhưng bản cũ chỉ là compile-time reference check.
+//
+// Sửa: gọi ĐÚNG RestoreAndReactivate thật (không phải buildRestoreAndReactivateQuery như test ở
+// trên) và bắt câu SQL nó SINH RA bằng GORM callback — RestoreAndReactivate chỉ trả về `.Error`,
+// không trả `*gorm.DB`, nên không có cách nào đọc Statement.SQL từ giá trị trả về; đăng ký một
+// callback chạy SAU "gorm:update" (callback mặc định GORM dùng để build+chạy UPDATE, kể cả ở chế
+// độ DryRun — DryRun chỉ bỏ qua bước Exec thật, KHÔNG bỏ qua việc build Statement.SQL hay các
+// callback đăng ký sau đó) để "chụp" lại Statement.SQL ngay khi RestoreAndReactivate thực thi.
+// Callback không bao giờ fire nếu thân hàm bị gut thành `return nil` (không còn UPDATE nào chạy
+// qua callback chain) — capturedSQL vẫn rỗng, cả 2 assertion strings.Contains bên dưới đỏ ngay.
+//
+// Đã tự kiểm chứng: sửa tạm RestoreAndReactivate thành `return nil`, chạy lại — test này FAIL
+// đúng như mong đợi (capturedSQL == ""); revert lại nguyên trạng, chạy lại — PASS. Không giữ
+// lại bản mutation trong working tree.
 func TestRestoreAndReactivate_DelegatesToQueryBuilder(t *testing.T) {
 	db, err := gorm.Open(gormtests.DummyDialector{}, &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to open dummy gorm db: %v", err)
 	}
-	repo := &EnrollmentRepository{db: db.Session(&gorm.Session{DryRun: true})}
+	dryRunDB := db.Session(&gorm.Session{DryRun: true})
 
+	var capturedSQL string
+	if err := dryRunDB.Callback().Update().After("gorm:update").
+		Register("test:capture_sql", func(tx *gorm.DB) {
+			capturedSQL = tx.Statement.SQL.String()
+		}); err != nil {
+		t.Fatalf("failed to register capture callback: %v", err)
+	}
+
+	repo := &EnrollmentRepository{db: dryRunDB}
 	updates := map[string]interface{}{"enrolled_at": "now"}
-	if err := repo.RestoreAndReactivate(context.Background(), uuid.New(), updates); err != nil {
-		t.Errorf("RestoreAndReactivate() on DryRun DB should not error, got %v", err)
+	enrollmentID := uuid.New()
+
+	if err := repo.RestoreAndReactivate(context.Background(), enrollmentID, updates); err != nil {
+		t.Fatalf("RestoreAndReactivate() on DryRun DB unexpected error: %v", err)
+	}
+
+	// DummyDialector quote identifier bằng backtick (kiểu MySQL: `enrollments`), không phải
+	// dấu nháy kép kiểu Postgres thật — không giả định ký tự quote, chỉ kiểm tên bảng xuất hiện.
+	if !strings.Contains(capturedSQL, "UPDATE") || !strings.Contains(capturedSQL, "enrollments") {
+		t.Fatalf("expected RestoreAndReactivate to actually run an UPDATE ... enrollments ... statement, captured SQL: %q", capturedSQL)
+	}
+	if !strings.Contains(capturedSQL, "deleted_at") {
+		t.Errorf("expected deleted_at reset in SET clause (H-02), captured SQL: %q", capturedSQL)
 	}
 }

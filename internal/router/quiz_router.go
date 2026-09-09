@@ -36,9 +36,11 @@ func SetupQuizRoutes(
 	{
 		questions.Post("/", quizHandler.CreateQuestion)
 		questions.Get("/", quizHandler.GetQuestionsByQuiz)
+		// M3-01 (review vòng 4): Fiber khớp route theo THỨ TỰ ĐĂNG KÝ — PUT /reorder đăng ký
+		// TRƯỚC PUT /:id (cùng lỗi MEDIUM-11 đã sửa ở grade_router.go, quét ra còn sót ở đây).
+		questions.Put("/reorder", quizHandler.ReorderQuestions)
 		questions.Put("/:id", quizHandler.UpdateQuestion)
 		questions.Delete("/:id", quizHandler.DeleteQuestion)
-		questions.Put("/reorder", quizHandler.ReorderQuestions)
 		questions.Post("/bulk", quizHandler.BulkCreateQuestions)
 	}
 

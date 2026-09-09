@@ -112,6 +112,25 @@ func TestCalculateVoucherDiscountDecimal(t *testing.T) {
 			subtotal: decimal.RequireFromString("200000"),
 			want:     "100000", // cap=0 nghia la khong gioi han, khop web "if (cap > 0)"
 		},
+		{
+			// H3-03 (review vòng 4): ví dụ THẬT trong báo cáo review — PERCENT 10% trên
+			// subtotal=5 (voucher DiscountUnit=MONEY, tức KHÔNG bị chặn bởi check H2-01 ở
+			// ValidateAndApplyVoucher như case POINT phía trên) -> 0.5 -> Floor -> 0. Trước H3-03,
+			// ValidateAndApplyVoucher vẫn trả (voucher, 0, nil) = "áp dụng thành công" cho case
+			// này và CreateOrder gọi ReserveVoucherUsage, tiêu một lượt used_count thật cho một
+			// mã không giảm được đồng nào. Hàm calculateVoucherDiscountDecimal ở đây chỉ pin lại
+			// discount=0 LÀ ĐÚNG (không đổi công thức) — phần TỪ CHỐI (ErrVoucherNotApplicable)
+			// nằm trong ValidateAndApplyVoucher, hàm cần DB thật (vs.vr) nên không có unit test
+			// độc lập ở file này (xem "chưa làm" trong báo cáo vòng 4).
+			name: "H3-03: PERCENT MONEY tren subtotal qua nho -> discount=0 (ValidateAndApplyVoucher se tu choi)",
+			voucher: &model.Voucher{
+				DiscountMethod:  model.DiscountMethodPercent,
+				DiscountUnit:    model.DiscountUnitMoney,
+				DiscountPercent: percent("10"),
+			},
+			subtotal: decimal.RequireFromString("5"),
+			want:     "0",
+		},
 	}
 
 	for _, tt := range tests {
