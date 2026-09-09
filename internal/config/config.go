@@ -196,13 +196,26 @@ func LoadConfig() (*Config, error) {
 	// Set defaults for SMTP and JWT
 	viper.SetDefault("SMTP_HOST", "smtp.gmail.com")
 	viper.SetDefault("SMTP_PORT", 587)
-	viper.SetDefault("JWT_SECRET", "supersecretkey-change-in-production")
+	// H-04 (audit 260909 vòng 2): trước đây có viper.SetDefault("JWT_SECRET",
+	// "supersecretkey-change-in-production") — nếu deploy thiếu biến môi trường JWT_SECRET,
+	// app vẫn khởi động bình thường và ký/verify token bằng 1 secret CÔNG KHAI (nằm thẳng
+	// trong source code), cho phép bất kỳ ai tự ký JWT hợp lệ giả danh user/admin bất kỳ.
+	// Xoá default — JWT_SECRET bắt buộc phải được set qua .env/.env.prod hoặc biến môi
+	// trường thật; validate ngay dưới đây để fail-fast khi thiếu/còn giá trị mặc định cũ.
 	viper.SetDefault("ALLOWED_ORIGINS", "http://localhost:3000")
 	viper.SetDefault("JWT_ACCESS_EXPIRATION_MINUTES", 15)
 	viper.SetDefault("JWT_REFRESH_EXPIRATION_DAYS", 7)
 
 	if err := viper.Unmarshal(config); err != nil {
 		return nil, fmt.Errorf("unable to decode into struct: %w", err)
+	}
+
+	// H-04: fail-fast thay vì âm thầm chạy với secret rỗng hoặc secret mặc định cũ đã từng
+	// nằm trong source code (nếu deploy nào đó copy nguyên .env mẫu cũ có giá trị này).
+	// Tách thành hàm thuần validateJWTSecret để unit test được (LoadConfig dùng flag/viper
+	// global state, gọi 2 lần trong 1 process test sẽ panic "flag redefined").
+	if err := validateJWTSecret(config.JWTSecret, configFile); err != nil {
+		return nil, err
 	}
 
 	// Set JWT expiration durations
@@ -235,4 +248,23 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return config, nil
+}
+
+// insecureDefaultJWTSecret là giá trị mặc định KHÔNG AN TOÀN đã từng nằm thẳng trong source
+// code trước H-04 (audit 260909 vòng 2) — nếu bất kỳ deploy nào copy nguyên file .env mẫu cũ
+// (chứa chuỗi này), token vẫn ký được bằng secret công khai. Giữ hằng số riêng (không phải
+// literal lặp lại) để dễ grep/audit sau này.
+const insecureDefaultJWTSecret = "supersecretkey-change-in-production"
+
+// validateJWTSecret (H-04) là hàm THUẦN (không đụng viper/flag/env) để unit test được độc
+// lập — LoadConfig() dùng global flag.CommandLine nên gọi LoadConfig() nhiều lần trong 1
+// process test sẽ panic "flag redefined: env"; tách validate ra khỏi đó tránh vấn đề này.
+func validateJWTSecret(secret, configFileHint string) error {
+	if strings.TrimSpace(secret) == "" {
+		return fmt.Errorf("JWT_SECRET is required but not set — set it in %s or as an environment variable", configFileHint)
+	}
+	if secret == insecureDefaultJWTSecret {
+		return fmt.Errorf("JWT_SECRET is still set to the old insecure default value — set a real secret in %s or as an environment variable", configFileHint)
+	}
+	return nil
 }

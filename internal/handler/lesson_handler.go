@@ -4,16 +4,18 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
 
 type LessonHandler struct {
-	service service.LessonServiceInterface
+	service     service.LessonServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewLessonHandler(service service.LessonServiceInterface) *LessonHandler {
-	return &LessonHandler{service: service}
+func NewLessonHandler(service service.LessonServiceInterface, permChecker *middleware.PermissionChecker) *LessonHandler {
+	return &LessonHandler{service: service, permChecker: permChecker}
 }
 
 // lessonForbiddenResponse ánh xạ ErrNotLessonCourseOwner (C-12) sang HTTP 403.
@@ -152,7 +154,8 @@ func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
 		})
 	}
 
-	lesson, err := h.service.UpdateLesson(c.Context(), lessonID, userID, req)
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	lesson, err := h.service.UpdateLesson(c.Context(), lessonID, userID, isAdmin, req)
 	if err != nil {
 		if lessonForbiddenResponse(c, err) {
 			return nil
@@ -185,7 +188,8 @@ func (h *LessonHandler) DeleteLesson(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteLesson(c.Context(), lessonID, userID); err != nil {
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	if err := h.service.DeleteLesson(c.Context(), lessonID, userID, isAdmin); err != nil {
 		if lessonForbiddenResponse(c, err) {
 			return nil
 		}

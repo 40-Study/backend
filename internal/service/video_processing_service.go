@@ -10,6 +10,7 @@ import (
 	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/storage"
+	"study.com/v1/internal/utils"
 )
 
 // MinioClientAdapter adapts MinioClient to VideoStorageInterface
@@ -150,7 +151,9 @@ func (vps *VideoProcessingService) StartCleanupScheduler(ctx context.Context) er
 	// Run cleanup every hour
 	ticker := time.NewTicker(1 * time.Hour)
 
-	go func() {
+	// M-05 (audit 260909 vòng 2): bọc SafeGo — panic trong 1 lần performCleanup (chạy mỗi giờ,
+	// suốt vòng đời app) trước đây sập cả server thay vì chỉ dừng riêng scheduler này.
+	utils.SafeGo(func() {
 		defer ticker.Stop()
 
 		for {
@@ -162,7 +165,7 @@ func (vps *VideoProcessingService) StartCleanupScheduler(ctx context.Context) er
 				vps.performCleanup(ctx)
 			}
 		}
-	}()
+	})
 
 	return nil
 }

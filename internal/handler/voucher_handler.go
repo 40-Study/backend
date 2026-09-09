@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/service"
+	"study.com/v1/internal/utils"
 )
 
 type VoucherHandler struct {
@@ -26,6 +27,17 @@ func (h *VoucherHandler) CreateVoucher(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"code":    "ERR_INVALID_REQUEST",
 			"message": "Invalid request body",
+		})
+	}
+
+	// M-01 (audit 260909 vòng 2): DTO đã có validate tag đầy đủ (required/oneof/min/max)
+	// nhưng handler trước đây không gọi ValidateStruct — mọi tag đều vô tác dụng, user có
+	// thể tạo voucher discount_percent > 100, usage_limit âm, v.v.
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"code":    "ERR_VALIDATION",
+			"message": "Validation failed",
+			"errors":  errs,
 		})
 	}
 
@@ -126,6 +138,15 @@ func (h *VoucherHandler) UpdateVoucher(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"code":    "ERR_INVALID_REQUEST",
 			"message": "Invalid request body",
+		})
+	}
+
+	// M-01 (audit 260909 vòng 2): xem ghi chú ở CreateVoucher.
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"code":    "ERR_VALIDATION",
+			"message": "Validation failed",
+			"errors":  errs,
 		})
 	}
 
@@ -238,19 +259,15 @@ func (h *VoucherHandler) DeactivateVoucher(c *fiber.Ctx) error {
 
 // SaveVoucher - POST /api/v1/vouchers/:id/save
 func (h *VoucherHandler) SaveVoucher(c *fiber.Ctx) error {
-	userIDStr := c.Locals("user_id")
-	if userIDStr == nil {
+	// M-01 (audit 260909 vòng 2) — bug tìm thấy khi thêm validate: handler này trước đây đọc
+	// Locals("user_id") rồi ép kiểu ".(string)", trong khi AuthMiddleware set thẳng uuid.UUID
+	// (xem ghi chú getAuthUserID trong order_handler.go, cùng package handler) — type
+	// assertion 1 giá trị sai kiểu PANIC, route này 500 với MỌI user đã đăng nhập.
+	userID, ok := getAuthUserID(c)
+	if !ok {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
 			"message": "Unauthorized",
-		})
-	}
-
-	userID, err := uuid.Parse(userIDStr.(string))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_USER",
-			"message": "Invalid user ID",
 		})
 	}
 
@@ -272,8 +289,18 @@ func (h *VoucherHandler) SaveVoucher(c *fiber.Ctx) error {
 	}
 
 	var req dto.SaveVoucherRequest
-	c.BodyParser(&req)
+	_ = c.BodyParser(&req)
 	req.VoucherCode = voucher.Code
+
+	// M-01 (audit 260909 vòng 2): DTO có validate tag (VoucherCode required) nhưng handler
+	// chưa gọi ValidateStruct.
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"code":    "ERR_VALIDATION",
+			"message": "Validation failed",
+			"errors":  errs,
+		})
+	}
 
 	savedVoucher, err := h.voucherService.SaveVoucher(c.Context(), userID, &req)
 	if err != nil {

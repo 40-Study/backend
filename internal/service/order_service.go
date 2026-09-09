@@ -16,6 +16,13 @@ import (
 	"study.com/v1/internal/repository"
 )
 
+// ErrOrderForbidden (H-06, audit 260909 vòng 2): GetOrder/Cancel/PaymentIntent/PaymentStatus/
+// CheckPayment trước đây không kiểm tra order.UserID với actor gọi API — bất kỳ user đăng
+// nhập nào biết orderID (UUID có thể đoán được qua thứ tự tạo hoặc rò rỉ) đều xem/hủy/thao
+// tác thanh toán đơn hàng của người khác. Dùng chung 1 error cho mọi service (order/payment)
+// vì cùng 1 khái niệm "không phải chủ đơn hàng, không phải admin".
+var ErrOrderForbidden = errors.New("forbidden: not the order owner")
+
 var (
 	ErrOrderNotFound              = errors.New("order not found")
 	ErrInvalidStateTransition     = errors.New("invalid state transition")
@@ -33,10 +40,10 @@ var (
 
 type OrderServiceInterface interface {
 	CreateOrder(ctx context.Context, userID uuid.UUID, req dto.CreateOrderRequest) (*dto.OrderResponse, error)
-	GetOrderByID(ctx context.Context, orderID uuid.UUID) (*dto.OrderResponse, error)
+	GetOrderByID(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool) (*dto.OrderResponse, error)
 	GetOrderByNumber(ctx context.Context, orderNumber string) (*dto.OrderResponse, error)
 	GetUserOrders(ctx context.Context, userID uuid.UUID, page, limit int, status string) (*dto.OrderListResponse, error)
-	CancelOrder(ctx context.Context, userID, orderID uuid.UUID, reason string) error
+	CancelOrder(ctx context.Context, userID, orderID uuid.UUID, isAdmin bool, reason string) error
 	CompleteOrder(ctx context.Context, orderID uuid.UUID, paymentMethod, transactionID string) error
 	ValidateIdempotencyKey(ctx context.Context, scope, key string, requestHash string) (*dto.OrderResponse, bool, error)
 }
@@ -251,10 +258,15 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 }
 
 // GetOrderByID - Get order by ID
-func (s *OrderService) GetOrderByID(ctx context.Context, orderID uuid.UUID) (*dto.OrderResponse, error) {
+func (s *OrderService) GetOrderByID(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool) (*dto.OrderResponse, error) {
 	order, err := s.orderRepo.GetByID(orderID)
 	if err != nil {
 		return nil, ErrOrderNotFound
+	}
+	// H-06: chỉ chủ đơn hàng hoặc admin mới xem được — đơn hàng chứa thông tin nhạy cảm
+	// (giá, mã giảm giá, phương thức thanh toán).
+	if order.UserID != actorUserID && !isAdmin {
+		return nil, ErrOrderForbidden
 	}
 
 	items, err := s.orderItemRepo.GetByOrderID(orderID)
@@ -314,14 +326,15 @@ func (s *OrderService) GetUserOrders(ctx context.Context, userID uuid.UUID, page
 	}, nil
 }
 
-func (s *OrderService) CancelOrder(ctx context.Context, userID, orderID uuid.UUID, reason string) error {
+func (s *OrderService) CancelOrder(ctx context.Context, userID, orderID uuid.UUID, isAdmin bool, reason string) error {
 	order, err := s.orderRepo.GetByID(orderID)
 	if err != nil {
 		return ErrOrderNotFound
 	}
 
-	if order.UserID != userID {
-		return errors.New("unauthorized")
+	// H-06: chỉ chủ đơn hàng hoặc admin mới hủy được.
+	if order.UserID != userID && !isAdmin {
+		return ErrOrderForbidden
 	}
 
 	if !s.isValidTransition(order.Status, "cancelled") {

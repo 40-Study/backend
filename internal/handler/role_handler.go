@@ -4,7 +4,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
+	"study.com/v1/internal/utils"
 )
 
 type RoleHandlerInterface interface {
@@ -23,11 +25,23 @@ type RoleHandlerInterface interface {
 }
 
 type RoleHandler struct {
-	service service.RoleServiceInterface
+	service     service.RoleServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewRoleHandler(service service.RoleServiceInterface) *RoleHandler {
-	return &RoleHandler{service: service}
+func NewRoleHandler(service service.RoleServiceInterface, permChecker *middleware.PermissionChecker) *RoleHandler {
+	return &RoleHandler{service: service, permChecker: permChecker}
+}
+
+// roleErrorStatus ánh xạ lỗi phân quyền (C-03 residual) sang HTTP 403; trả 0 khi không nhận
+// diện được để caller giữ nguyên xử lý 400 hiện có.
+func roleErrorStatus(err error) int {
+	switch err {
+	case service.ErrNotRoleOrgMember:
+		return fiber.StatusForbidden
+	default:
+		return 0
+	}
 }
 
 func (h *RoleHandler) CreateRole(c *fiber.Ctx) error {
@@ -36,6 +50,14 @@ func (h *RoleHandler) CreateRole(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid request body",
 			"error":   err.Error(),
+		})
+	}
+
+	// M-01 (audit 260909 vòng 2): file này trước đây không gọi ValidateStruct lần nào.
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errs,
 		})
 	}
 
@@ -128,8 +150,33 @@ func (h *RoleHandler) UpdateRole(c *fiber.Ctx) error {
 		})
 	}
 
-	role, err := h.service.UpdateRole(c.Context(), id, req)
+	// M-01 (audit 260909 vòng 2): xem ghi chú ở CreateRole.
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errs,
+		})
+	}
+
+	// C-03 residual: :id là Role.ID, không phải Organization.ID nên middleware router chưa
+	// đối chiếu được — kiểm tra role.OrganizationID khớp active_org_id ở tầng service.
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	var activeOrgID *uuid.UUID
+	if orgID, ok := c.Locals("active_org_id").(uuid.UUID); ok {
+		activeOrgID = &orgID
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	role, err := h.service.UpdateRole(c.Context(), id, activeOrgID, isAdmin, req)
 	if err != nil {
+		if status := roleErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update role",
 			"error":   err.Error(),
@@ -154,7 +201,23 @@ func (h *RoleHandler) DeleteRole(c *fiber.Ctx) error {
 
 	hardDelete := c.QueryBool("hard_delete", false)
 
-	if err := h.service.DeleteRole(c.Context(), id, hardDelete); err != nil {
+	// C-03 residual: xem ghi chú ở UpdateRole.
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	var activeOrgID *uuid.UUID
+	if orgID, ok := c.Locals("active_org_id").(uuid.UUID); ok {
+		activeOrgID = &orgID
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	if err := h.service.DeleteRole(c.Context(), id, activeOrgID, isAdmin, hardDelete); err != nil {
+		if status := roleErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete role",
 			"error":   err.Error(),
@@ -207,6 +270,14 @@ func (h *RoleHandler) AddPermissionsToRole(c *fiber.Ctx) error {
 		})
 	}
 
+	// M-01 (audit 260909 vòng 2): xem ghi chú ở CreateRole.
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errs,
+		})
+	}
+
 	if err := h.service.AddPermissionsToRole(c.Context(), roleID, req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to add permissions to role",
@@ -237,6 +308,14 @@ func (h *RoleHandler) RemovePermissionsFromRole(c *fiber.Ctx) error {
 		})
 	}
 
+	// M-01 (audit 260909 vòng 2): xem ghi chú ở CreateRole.
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errs,
+		})
+	}
+
 	if err := h.service.RemovePermissionsFromRole(c.Context(), roleID, req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to remove permissions from role",
@@ -264,6 +343,14 @@ func (h *RoleHandler) SetRolePermissions(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid request body",
 			"error":   err.Error(),
+		})
+	}
+
+	// M-01 (audit 260909 vòng 2): xem ghi chú ở CreateRole.
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errs,
 		})
 	}
 

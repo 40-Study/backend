@@ -299,6 +299,15 @@ func (h *CoinHandler) UpdatePackage(c *fiber.Ctx) error {
 		})
 	}
 
+	// M-01 (audit 260909 vòng 2): DTO đã có validate tag (price gt=0, discount 0-100, ...)
+	// nhưng thiếu lời gọi ValidateStruct — chỉ handler duy nhất trong file thiếu.
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errs,
+		})
+	}
+
 	result, err := h.coinService.UpdatePackage(c.Context(), id, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -334,6 +343,14 @@ func (h *CoinHandler) DeletePackage(c *fiber.Ctx) error {
 
 // AdminAdjust - POST /api/coins/admin/adjust
 func (h *CoinHandler) AdminAdjust(c *fiber.Ctx) error {
+	// C-08 (audit 260909 vòng 2): actorID để ghi audit trail ai đã chỉnh số dư.
+	actorID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
 	var req dto.AdminAdjustCoinRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -348,7 +365,7 @@ func (h *CoinHandler) AdminAdjust(c *fiber.Ctx) error {
 		})
 	}
 
-	result, err := h.coinService.AdminAdjust(c.Context(), req)
+	result, err := h.coinService.AdminAdjust(c.Context(), actorID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": err.Error(),

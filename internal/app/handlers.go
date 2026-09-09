@@ -3,6 +3,7 @@ package app
 import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/storage"
 )
 
@@ -117,11 +118,15 @@ type Handlers struct {
 	PersonalEvent *handler.PersonalEventHandler
 }
 
-func InitHandlers(services *Services, repos *Repositories, minioClient *storage.MinioClient, cfg *config.Config) *Handlers {
+// C-12/H-11 (audit 260909 vòng 2): permChecker được tiêm vào đây để CourseHandler/
+// SectionHandler/LessonHandler/ClassHandler tính "actor có phải SYSTEM_ADMIN không" (cho phép
+// admin sửa/xóa tài nguyên của người khác) mà không phải tiêm PermissionChecker vào tầng
+// service (xem ghi chú requireClassTeacherOrAdmin trong class_service.go).
+func InitHandlers(services *Services, repos *Repositories, minioClient *storage.MinioClient, cfg *config.Config, permChecker *middleware.PermissionChecker) *Handlers {
 	return &Handlers{
 		// ===== Auth & Role =====
 		Auth:                 handler.NewAuthHandler(services.Auth),
-		Role:                 handler.NewRoleHandler(services.Role),
+		Role:                 handler.NewRoleHandler(services.Role, permChecker),
 		SystemRole:           handler.NewSystemRoleHandler(services.SystemRole),
 		UserSystemRole:       handler.NewUserSystemRoleHandler(services.UserSystemRole),
 		UserOrganizationRole: handler.NewUserOrganizationRoleHandler(services.UserOrganizationRole),
@@ -136,7 +141,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		TeacherProfile: handler.NewTeacherProfileHandler(services.TeacherProfile),
 
 		// ===== Class =====
-		Class:              handler.NewClassHandler(services.Class),
+		Class:              handler.NewClassHandler(services.Class, permChecker),
 		ClassLessonContent: handler.NewClassLessonContentHandler(services.ClassLessonContent),
 		Attendance:         handler.NewAttendanceHandler(services.Attendance),
 
@@ -144,9 +149,9 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		Category:      handler.NewCategoryHandler(services.Category),
 		Tag:           handler.NewTagHandler(services.Tag),
 		Cart:          handler.NewCartHandler(services.Cart),
-		CourseHandler: handler.NewCourseHandler(services.CourseService),
-		Section:       handler.NewSectionHandler(services.Section),
-		Lesson:        handler.NewLessonHandler(services.Lesson),
+		CourseHandler: handler.NewCourseHandler(services.CourseService, permChecker),
+		Section:       handler.NewSectionHandler(services.Section, permChecker),
+		Lesson:        handler.NewLessonHandler(services.Lesson, permChecker),
 		LessonContent: handler.NewLessonContentHandler(services.LessonContent),
 		Enrollment:    handler.NewEnrollmentHandler(services.Enrollment),
 
@@ -164,7 +169,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		Analytics:  handler.NewAnalyticsHandler(services.Analytics),
 
 		// ===== Order & Payment =====
-		Order:   handler.NewOrderHandler(services.Order, services.Payment),
+		Order:   handler.NewOrderHandler(services.Order, services.Payment, permChecker),
 		Voucher: handler.NewVoucherHandler(services.Voucher),
 
 		// ===== Gamification =====

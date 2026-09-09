@@ -18,8 +18,8 @@ type SectionServiceInterface interface {
 	CreateSection(ctx context.Context, courseID, actorUserID uuid.UUID, req dto.CreateSectionDTO) (*dto.SectionResponseDTO, error)
 	GetAllSections(ctx context.Context, courseID uuid.UUID) ([]dto.SectionResponseDTO, error)
 	GetSectionByID(ctx context.Context, sectionID uuid.UUID) (*dto.SectionResponseDTO, error)
-	UpdateSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID, req dto.UpdateSectionDTO) (*dto.SectionResponseDTO, error)
-	DeleteSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID) error
+	UpdateSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateSectionDTO) (*dto.SectionResponseDTO, error)
+	DeleteSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID, isAdmin bool) error
 	ReorderSections(ctx context.Context, courseID uuid.UUID, req dto.ReorderDTO) error
 }
 
@@ -51,7 +51,10 @@ func (s *SectionService) validateCourse(ctx context.Context, courseID uuid.UUID)
 
 // validateCourseOwnership giống validateCourse nhưng còn kiểm tra actorUserID có phải
 // giảng viên sở hữu course hay không (C-12) — dùng cho mọi thao tác GHI trên section.
-func (s *SectionService) validateCourseOwnership(ctx context.Context, courseID, actorUserID uuid.UUID) error {
+// isAdmin (vòng 2, đã tính sẵn ở handler qua PermissionChecker) cho phép SYSTEM_ADMIN
+// override chủ sở hữu; CreateSection luôn gọi với isAdmin=false (admin không tạo section hộ
+// giảng viên khác, chỉ được sửa/xóa nội dung vi phạm — đúng phạm vi C-12 vòng 2).
+func (s *SectionService) validateCourseOwnership(ctx context.Context, courseID, actorUserID uuid.UUID, isAdmin bool) error {
 	course, err := s.courseRepo.GetByID(ctx, courseID)
 	if err != nil {
 		return err
@@ -59,14 +62,14 @@ func (s *SectionService) validateCourseOwnership(ctx context.Context, courseID, 
 	if course == nil {
 		return errors.New("course not found")
 	}
-	if course.InstructorID != actorUserID {
+	if course.InstructorID != actorUserID && !isAdmin {
 		return ErrNotSectionCourseOwner
 	}
 	return nil
 }
 
 func (s *SectionService) CreateSection(ctx context.Context, courseID, actorUserID uuid.UUID, req dto.CreateSectionDTO) (*dto.SectionResponseDTO, error) {
-	if err := s.validateCourseOwnership(ctx, courseID, actorUserID); err != nil {
+	if err := s.validateCourseOwnership(ctx, courseID, actorUserID, false); err != nil {
 		return nil, err
 	}
 	// Determine display order
@@ -133,8 +136,8 @@ func (s *SectionService) GetSectionByID(ctx context.Context, sectionID uuid.UUID
 	return s.toSectionResponseDTO(section, lessons), nil
 }
 
-func (s *SectionService) UpdateSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID, req dto.UpdateSectionDTO) (*dto.SectionResponseDTO, error) {
-	if err := s.validateCourseOwnership(ctx, courseID, actorUserID); err != nil {
+func (s *SectionService) UpdateSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateSectionDTO) (*dto.SectionResponseDTO, error) {
+	if err := s.validateCourseOwnership(ctx, courseID, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 
@@ -176,8 +179,8 @@ func (s *SectionService) UpdateSection(ctx context.Context, courseID, sectionID,
 	return s.toSectionResponseDTO(section, lessons), nil
 }
 
-func (s *SectionService) DeleteSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID) error {
-	if err := s.validateCourseOwnership(ctx, courseID, actorUserID); err != nil {
+func (s *SectionService) DeleteSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID, isAdmin bool) error {
+	if err := s.validateCourseOwnership(ctx, courseID, actorUserID, isAdmin); err != nil {
 		return err
 	}
 

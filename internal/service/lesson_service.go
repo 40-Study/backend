@@ -19,8 +19,8 @@ type LessonServiceInterface interface {
 	CreateLesson(ctx context.Context, sectionID, actorUserID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error)
 	GetAllLessons(ctx context.Context, sectionID uuid.UUID) ([]dto.LessonResponseDTO, error)
 	GetLessonByID(ctx context.Context, lessonID uuid.UUID) (*dto.LessonResponseDTO, error)
-	UpdateLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error)
-	DeleteLesson(ctx context.Context, lessonID, actorUserID uuid.UUID) error
+	UpdateLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error)
+	DeleteLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool) error
 	ReorderLessons(ctx context.Context, sectionID uuid.UUID, req dto.ReorderDTO) error
 }
 
@@ -80,8 +80,9 @@ func (s *LessonService) checkSectionCourseOwnership(ctx context.Context, section
 }
 
 // checkLessonCourseOwnership giong checkSectionCourseOwnership nhung xuat phat tu lessonID
-// (di qua lesson.SectionID -> section.CourseID -> course.InstructorID).
-func (s *LessonService) checkLessonCourseOwnership(ctx context.Context, lesson *model.Lesson, actorUserID uuid.UUID) error {
+// (di qua lesson.SectionID -> section.CourseID -> course.InstructorID). isAdmin (vòng 2, tính
+// sẵn ở handler qua PermissionChecker) cho phép SYSTEM_ADMIN override chủ sở hữu khi sửa/xóa.
+func (s *LessonService) checkLessonCourseOwnership(ctx context.Context, lesson *model.Lesson, actorUserID uuid.UUID, isAdmin bool) error {
 	section, err := s.sectionRepo.GetByID(ctx, lesson.SectionID)
 	if err != nil {
 		return err
@@ -96,7 +97,7 @@ func (s *LessonService) checkLessonCourseOwnership(ctx context.Context, lesson *
 	if course == nil {
 		return errors.New("course not found")
 	}
-	if course.InstructorID != actorUserID {
+	if course.InstructorID != actorUserID && !isAdmin {
 		return ErrNotLessonCourseOwner
 	}
 	return nil
@@ -178,7 +179,7 @@ func (s *LessonService) GetLessonByID(ctx context.Context, lessonID uuid.UUID) (
 	return s.toLessonResponseDTO(lesson, contents), nil
 }
 
-func (s *LessonService) UpdateLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error) {
+func (s *LessonService) UpdateLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error) {
 	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
 	if err != nil {
 		return nil, err
@@ -186,7 +187,7 @@ func (s *LessonService) UpdateLesson(ctx context.Context, lessonID, actorUserID 
 	if lesson == nil {
 		return nil, errors.New("lesson not found")
 	}
-	if err := s.checkLessonCourseOwnership(ctx, lesson, actorUserID); err != nil {
+	if err := s.checkLessonCourseOwnership(ctx, lesson, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 
@@ -218,7 +219,7 @@ func (s *LessonService) UpdateLesson(ctx context.Context, lessonID, actorUserID 
 	return s.toLessonResponseDTO(lesson, contents), nil
 }
 
-func (s *LessonService) DeleteLesson(ctx context.Context, lessonID, actorUserID uuid.UUID) error {
+func (s *LessonService) DeleteLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool) error {
 	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
 	if err != nil {
 		return err
@@ -226,7 +227,7 @@ func (s *LessonService) DeleteLesson(ctx context.Context, lessonID, actorUserID 
 	if lesson == nil {
 		return errors.New("lesson not found")
 	}
-	if err := s.checkLessonCourseOwnership(ctx, lesson, actorUserID); err != nil {
+	if err := s.checkLessonCourseOwnership(ctx, lesson, actorUserID, isAdmin); err != nil {
 		return err
 	}
 

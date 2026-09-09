@@ -6,16 +6,18 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
 
 type SectionHandler struct {
-	service service.SectionServiceInterface
+	service     service.SectionServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewSectionHandler(service service.SectionServiceInterface) *SectionHandler {
-	return &SectionHandler{service: service}
+func NewSectionHandler(service service.SectionServiceInterface, permChecker *middleware.PermissionChecker) *SectionHandler {
+	return &SectionHandler{service: service, permChecker: permChecker}
 }
 
 // sectionForbiddenResponse ánh xạ ErrNotSectionCourseOwner (C-12) sang HTTP 403; trả false
@@ -165,7 +167,8 @@ func (h *SectionHandler) UpdateSection(c *fiber.Ctx) error {
 		})
 	}
 
-	section, err := h.service.UpdateSection(c.Context(), courseID, sectionID, userID, req)
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	section, err := h.service.UpdateSection(c.Context(), courseID, sectionID, userID, isAdmin, req)
 	if err != nil {
 		if sectionForbiddenResponse(c, err) {
 			return nil
@@ -206,7 +209,8 @@ func (h *SectionHandler) DeleteSection(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteSection(c.Context(), courseID, sectionID, userID); err != nil {
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	if err := h.service.DeleteSection(c.Context(), courseID, sectionID, userID, isAdmin); err != nil {
 		if sectionForbiddenResponse(c, err) {
 			return nil
 		}

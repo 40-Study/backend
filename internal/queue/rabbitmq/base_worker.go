@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"time"
+
+	"study.com/v1/internal/utils"
 )
 
 //
@@ -104,11 +106,13 @@ func (w *BaseWorker) Start(ctx context.Context) error {
 		return err
 	}
 
-	go func() {
+	// M-05 (audit 260909 vòng 2): bọc SafeGo cho nhất quán với mọi goroutine nền khác trong
+	// app — panic ở đây (nếu có, kể cả về sau khi code đổi) không sập cả process.
+	utils.SafeGo(func() {
 		<-w.stopChan
 		w.running = false
 		log.Printf("[BaseWorker] Worker stopped for queue: %s", w.queueName)
-	}()
+	})
 
 	log.Printf("[BaseWorker] Worker started successfully for queue: %s", w.queueName)
 	return nil

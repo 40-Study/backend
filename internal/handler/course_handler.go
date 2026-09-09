@@ -6,16 +6,18 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
 
 type CourseHandler struct {
-	service service.CourseServiceInterface
+	service     service.CourseServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewCourseHandler(service service.CourseServiceInterface) *CourseHandler {
-	return &CourseHandler{service: service}
+func NewCourseHandler(service service.CourseServiceInterface, permChecker *middleware.PermissionChecker) *CourseHandler {
+	return &CourseHandler{service: service, permChecker: permChecker}
 }
 
 func (h *CourseHandler) CreateCourse(c *fiber.Ctx) error {
@@ -184,7 +186,8 @@ func (h *CourseHandler) UpdateCourse(c *fiber.Ctx) error {
 		})
 	}
 
-	course, err := h.service.UpdateCourse(c.Context(), id, userID, req)
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	course, err := h.service.UpdateCourse(c.Context(), id, userID, isAdmin, req)
 	if err != nil {
 		if err == service.ErrNotCourseOwner {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
@@ -220,7 +223,8 @@ func (h *CourseHandler) DeleteCourse(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteCourse(c.Context(), id, userID); err != nil {
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	if err := h.service.DeleteCourse(c.Context(), id, userID, isAdmin); err != nil {
 		if err == service.ErrNotCourseOwner {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 				"message": "You are not the instructor of this course",

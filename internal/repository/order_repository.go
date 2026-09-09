@@ -124,6 +124,15 @@ func (r *OrderRepository) WithTransaction(fn func(repo *OrderRepository) error) 
 	})
 }
 
+// RecordBankTransactionUsage (M-06, audit 260909 vòng 2): ghi nhận 1 bank_transaction_id đã
+// được dùng để xác nhận thanh toán — gọi bên trong closure của WithTransaction (r.db lúc đó
+// là *gorm.DB của transaction, không phải connection gốc) để việc chống-replay và việc chuyển
+// đơn sang "completed" thành công/thất bại CÙNG NHAU (unique constraint vi phạm -> insert lỗi
+// -> transaction rollback -> đơn KHÔNG bị đánh dấu completed lần 2).
+func (r *OrderRepository) RecordBankTransactionUsage(usage *model.BankTransactionUsage) error {
+	return r.db.Create(usage).Error
+}
+
 // GetForUpdate - Get order with row lock for update
 func (r *OrderRepository) GetForUpdate(tx *gorm.DB, id uuid.UUID) (*model.Order, error) {
 	var order model.Order

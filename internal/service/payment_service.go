@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -29,9 +30,9 @@ var (
 )
 
 type PaymentServiceInterface interface {
-	CreatePaymentIntent(ctx context.Context, userID, orderID uuid.UUID, paymentMethod string) (*dto.PaymentIntentResponse, error)
-	CheckAndProcessPayment(ctx context.Context, orderID uuid.UUID) (*dto.PaymentStatusResponse, error)
-	GetPaymentStatus(ctx context.Context, orderID uuid.UUID) (*dto.PaymentStatusResponse, error)
+	CreatePaymentIntent(ctx context.Context, userID, orderID uuid.UUID, isAdmin bool, paymentMethod string) (*dto.PaymentIntentResponse, error)
+	CheckAndProcessPayment(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool) (*dto.PaymentStatusResponse, error)
+	GetPaymentStatus(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool) (*dto.PaymentStatusResponse, error)
 }
 
 type PaymentService struct {
@@ -64,15 +65,17 @@ func NewPaymentService(
 	}
 }
 
-func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderID uuid.UUID, paymentMethod string) (*dto.PaymentIntentResponse, error) {
+func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderID uuid.UUID, isAdmin bool, paymentMethod string) (*dto.PaymentIntentResponse, error) {
 	// Get order
 	order, err := s.orderRepo.GetByID(orderID)
 	if err != nil {
 		return nil, ErrOrderNotFound
 	}
 
-	if order.UserID != userID {
-		return nil, errors.New("unauthorized")
+	// H-06 (audit 260909 vòng 2): thêm nhánh admin override — trước đây đã có check chủ đơn
+	// hàng nhưng dùng errors.New("unauthorized") không phân biệt được để trả 403 ở handler.
+	if order.UserID != userID && !isAdmin {
+		return nil, ErrOrderForbidden
 	}
 
 	// Verify order is in correct state
@@ -126,11 +129,16 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 }
 
 // CheckAndProcessPayment - Check transaction via gRPC and process if found
-func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID uuid.UUID) (*dto.PaymentStatusResponse, error) {
+func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool) (*dto.PaymentStatusResponse, error) {
 	// Get order
 	order, err := s.orderRepo.GetByID(orderID)
 	if err != nil {
 		return nil, ErrOrderNotFound
+	}
+	// H-06: trước đây route này không nhận userID gì cả — bất kỳ user đăng nhập nào biết
+	// orderID cũng trigger check thanh toán (và xem kết quả) đơn hàng của người khác.
+	if order.UserID != actorUserID && !isAdmin {
+		return nil, ErrOrderForbidden
 	}
 
 	// If already completed, return success
@@ -191,6 +199,21 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID uui
 	oldStatus := order.Status
 
 	err = s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
+		// M-06 (audit 260909 vòng 2): chống replay — giao dịch ngân hàng này (result.TransactionID)
+		// đã dùng cho đơn/lần mua xu khác chưa? Unique constraint DB-level (bank_transaction_usages)
+		// là chốt chặn thật; vi phạm -> insert lỗi -> transaction rollback -> đơn KHÔNG completed.
+		usage := &model.BankTransactionUsage{
+			BankTransactionID: result.TransactionID,
+			ReferenceType:     "order",
+			ReferenceID:       order.ID,
+		}
+		if err := txRepo.RecordBankTransactionUsage(usage); err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return ErrPaymentAlreadyDone
+			}
+			return err
+		}
+
 		// Update payment info
 		if err := txRepo.UpdatePaymentInfo(order.ID, "bank_transfer", "mbbank", result.TransactionID, time.Now()); err != nil {
 			return err
@@ -222,14 +245,25 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID uui
 		return nil, err
 	}
 
-	// enrollmentRepo type assertion - simplified for now
+	// H-08 (audit 260909 vòng 2): trước đây các lệnh ghi enrollment/coupon usage dưới đây
+	// gọi hàm nhưng KHÔNG gán lỗi trả về vào biến nào cả (không có cả "_ ="), nên lỗi INSERT
+	// bị nuốt hoàn toàn — đơn hàng chuyển "completed" (đã trừ tiền/xác nhận thanh toán) nhưng
+	// học viên có thể không được ghi danh, không log, không cách nào phát hiện. Sửa để lỗi
+	// được trả về (visible) thay vì biến mất. LƯU Ý: đây chỉ đóng phần "lỗi bị nuốt", KHÔNG
+	// đóng H-07 (toàn bộ khối này vẫn chưa cùng transaction với UpdatePaymentInfo/history phía
+	// trên — đó là thay đổi kiến trúc Unit-of-Work lớn hơn, xem "chưa làm" trong báo cáo).
 	if s.enrollmentRepo != nil {
+		enrollmentRepo, ok := s.enrollmentRepo.(interface {
+			GetByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error)
+			Create(ctx context.Context, enrollment *model.Enrollment) error
+		})
+		if !ok {
+			return nil, errors.New("enrollmentRepo does not implement required interface")
+		}
+
 		for _, item := range items {
 			// Check if already enrolled
-			existingEnrollment, checkErr := s.enrollmentRepo.(interface {
-				GetByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error)
-			}).GetByUserAndCourse(ctx, order.UserID, item.CourseID)
-
+			existingEnrollment, checkErr := enrollmentRepo.GetByUserAndCourse(ctx, order.UserID, item.CourseID)
 			if checkErr == nil && existingEnrollment != nil {
 				continue // Already enrolled
 			}
@@ -240,14 +274,16 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID uui
 				CourseID:   item.CourseID,
 				EnrolledAt: time.Now(),
 			}
-			s.enrollmentRepo.(interface {
-				Create(ctx context.Context, enrollment *model.Enrollment) error
-			}).Create(ctx, enrollment)
+			if err := enrollmentRepo.Create(ctx, enrollment); err != nil {
+				return nil, fmt.Errorf("failed to create enrollment for course %s: %w", item.CourseID, err)
+			}
 		}
 
 		// Update coupon usage if applicable
 		if order.CouponID != nil {
-			s.couponRepo.IncrementUsageCount(*order.CouponID)
+			if err := s.couponRepo.IncrementUsageCount(*order.CouponID); err != nil {
+				return nil, fmt.Errorf("failed to increment coupon usage: %w", err)
+			}
 
 			usage := &model.CouponUsage{
 				ID:             uuid.New(),
@@ -257,7 +293,9 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID uui
 				OrderID:        orderID,
 				DiscountAmount: order.DiscountAmount,
 			}
-			s.couponRepo.CreateUsage(usage)
+			if err := s.couponRepo.CreateUsage(usage); err != nil {
+				return nil, fmt.Errorf("failed to create coupon usage record: %w", err)
+			}
 		}
 	}
 
@@ -271,15 +309,19 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID uui
 }
 
 // GetPaymentStatus - Get payment status for order
-func (s *PaymentService) GetPaymentStatus(ctx context.Context, orderID uuid.UUID) (*dto.PaymentStatusResponse, error) {
+func (s *PaymentService) GetPaymentStatus(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool) (*dto.PaymentStatusResponse, error) {
 	order, err := s.orderRepo.GetByID(orderID)
 	if err != nil {
 		return nil, ErrOrderNotFound
 	}
+	// H-06: cùng lý do CheckAndProcessPayment — route trước đây không kiểm tra chủ đơn hàng.
+	if order.UserID != actorUserID && !isAdmin {
+		return nil, ErrOrderForbidden
+	}
 
 	// If order is still processing, try to check transaction
 	if order.Status == "processing" {
-		return s.CheckAndProcessPayment(ctx, orderID)
+		return s.CheckAndProcessPayment(ctx, orderID, actorUserID, isAdmin)
 	}
 
 	return &dto.PaymentStatusResponse{

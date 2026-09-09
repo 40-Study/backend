@@ -10,12 +10,20 @@ import (
 	"study.com/v1/internal/repository"
 )
 
+// ErrNotRoleOrgMember (C-03 residual, audit 260909 vòng 2): route "/org-roles/:id" dùng :id
+// là Role.ID chứ không phải Organization.ID nên RequireOrgPermission (router) không đối
+// chiếu được organization_id của role với active_org_id. Một ORG_OWNER của tổ chức A (có
+// permission ORG_ROLES_MANAGE trong tổ chức mình) vẫn qua được middleware khi gọi PUT/DELETE
+// "/org-roles/:id" với :id là role của tổ chức B — chỉ bị chặn ở đây, tầng service, sau khi
+// đã fetch role và biết được role.OrganizationID thật.
+var ErrNotRoleOrgMember = errors.New("forbidden: role does not belong to your organization")
+
 type RoleServiceInterface interface {
 	CreateRole(ctx context.Context, req dto.CreateRoleDTO) (*dto.RoleResponseDTO, error)
 	GetRoleByID(ctx context.Context, id uuid.UUID) (*dto.RoleDetailResponseDTO, error)
 	GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string, organizationID *uuid.UUID) (*dto.RoleListResponseDTO, error)
-	UpdateRole(ctx context.Context, id uuid.UUID, req dto.UpdateRoleDTO) (*dto.RoleResponseDTO, error)
-	DeleteRole(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	UpdateRole(ctx context.Context, id uuid.UUID, activeOrgID *uuid.UUID, isAdmin bool, req dto.UpdateRoleDTO) (*dto.RoleResponseDTO, error)
+	DeleteRole(ctx context.Context, id uuid.UUID, activeOrgID *uuid.UUID, isAdmin, hardDelete bool) error
 	RestoreRole(ctx context.Context, id uuid.UUID) error
 
 	// Role-Permission management
@@ -89,13 +97,28 @@ func (s *RoleService) GetAllRoles(ctx context.Context, page, pageSize int, keywo
 	}, nil
 }
 
-func (s *RoleService) UpdateRole(ctx context.Context, id uuid.UUID, req dto.UpdateRoleDTO) (*dto.RoleResponseDTO, error) {
+// requireRoleOrgMatch (C-03 residual): admin (đã xác thực SYSTEM_SETTINGS_MANAGE ở handler)
+// bỏ qua kiểm tra; còn lại bắt buộc role.OrganizationID khớp đúng activeOrgID trong JWT.
+func requireRoleOrgMatch(role *model.Role, activeOrgID *uuid.UUID, isAdmin bool) error {
+	if isAdmin {
+		return nil
+	}
+	if role.OrganizationID == nil || activeOrgID == nil || *role.OrganizationID != *activeOrgID {
+		return ErrNotRoleOrgMember
+	}
+	return nil
+}
+
+func (s *RoleService) UpdateRole(ctx context.Context, id uuid.UUID, activeOrgID *uuid.UUID, isAdmin bool, req dto.UpdateRoleDTO) (*dto.RoleResponseDTO, error) {
 	role, err := s.repo.GetRoleByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if role == nil {
 		return nil, errors.New("role not found")
+	}
+	if err := requireRoleOrgMatch(role, activeOrgID, isAdmin); err != nil {
+		return nil, err
 	}
 
 	if req.Name != nil {
@@ -114,13 +137,16 @@ func (s *RoleService) UpdateRole(ctx context.Context, id uuid.UUID, req dto.Upda
 	return toRoleResponseDTO(role), nil
 }
 
-func (s *RoleService) DeleteRole(ctx context.Context, id uuid.UUID, hardDelete bool) error {
+func (s *RoleService) DeleteRole(ctx context.Context, id uuid.UUID, activeOrgID *uuid.UUID, isAdmin, hardDelete bool) error {
 	role, err := s.repo.GetRoleByID(ctx, id)
 	if err != nil {
 		return err
 	}
 	if role == nil {
 		return errors.New("role not found")
+	}
+	if err := requireRoleOrgMatch(role, activeOrgID, isAdmin); err != nil {
+		return err
 	}
 
 	return s.repo.DeleteRole(ctx, id, hardDelete)

@@ -143,10 +143,26 @@ func (r *CouponRepository) ValidateCoupon(code string, userID uuid.UUID, courseI
 }
 
 // IncrementUsageCount - Increment coupon usage count
+// IncrementUsageCount (M-07, audit 260909 vòng 2): trước đây UPDATE vô điều kiện
+// ("usage_count + 1" không kèm WHERE nào kiểm tra usage_limit) — `UsageCount >= UsageLimit`
+// chỉ được kiểm ở `ValidateCoupon` lúc TẠO đơn hàng, còn lượt trừ thật diễn ra lúc thanh toán
+// xong (`CheckAndProcessPayment`/`CompleteOrder`), cách nhau một khoảng thời gian tuỳ ý — N
+// đơn hàng có thể cùng đi qua `ValidateCoupon` khi voucher còn 1 lượt, rồi tất cả đều thanh
+// toán thành công và cùng increment, vượt `usage_limit`. Sửa bằng UPDATE có điều kiện
+// ("WHERE usage_limit IS NULL OR usage_count < usage_limit") + kiểm tra RowsAffected — đơn
+// nào "thắng" mới được tính là dùng voucher; đơn thua nhận ErrCouponUsageExceeded để tầng
+// service rollback (không coi voucher là đã áp dụng, không completed đơn với discount sai).
 func (r *CouponRepository) IncrementUsageCount(couponID uuid.UUID) error {
-	return r.db.Model(&model.Coupon{}).
-		Where("id = ?", couponID).
-		Update("usage_count", gorm.Expr("usage_count + 1")).Error
+	result := r.db.Model(&model.Coupon{}).
+		Where("id = ? AND (usage_limit IS NULL OR usage_count < usage_limit)", couponID).
+		Update("usage_count", gorm.Expr("usage_count + 1"))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrCouponUsageExceeded
+	}
+	return nil
 }
 
 // CreateUsage - Create coupon usage record

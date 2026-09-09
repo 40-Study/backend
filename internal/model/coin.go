@@ -81,7 +81,13 @@ type CoinTransaction struct {
 	BalanceAfter  int64               `gorm:"not null" json:"balance_after"`
 	ReferenceType *string             `gorm:"type:varchar(50)" json:"reference_type,omitempty"`
 	ReferenceID   *uuid.UUID          `gorm:"type:uuid" json:"reference_id,omitempty"`
-	Description   *string             `gorm:"type:text" json:"description,omitempty"`
+	// ActorID (C-08 audit trail, audit 260909 vòng 2): người THỰC HIỆN giao dịch — chỉ có
+	// giá trị cho CoinTxAdminAdjust (admin nào chỉnh xu của UserID). NULL cho mọi loại giao
+	// dịch khác (UserID đã là actor: tự mua/tự tặng). Không dùng ReferenceID vì field đó đã
+	// mang nghĩa "id thực thể liên quan" (purchase/order) ở các loại giao dịch khác — dùng
+	// chung sẽ lẫn 2 khái niệm khác nhau.
+	ActorID     *uuid.UUID `gorm:"type:uuid;index" json:"actor_id,omitempty"`
+	Description *string    `gorm:"type:text" json:"description,omitempty"`
 	Metadata      datatypes.JSON      `gorm:"type:jsonb;default:'{}'" json:"metadata"`
 
 	// Relationships

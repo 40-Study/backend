@@ -39,7 +39,7 @@ type CoinServiceInterface interface {
 	CreatePackage(ctx context.Context, req dto.CreateCoinPackageRequest) (*dto.CoinPackageResponse, error)
 	UpdatePackage(ctx context.Context, id uuid.UUID, req dto.UpdateCoinPackageRequest) (*dto.CoinPackageResponse, error)
 	DeletePackage(ctx context.Context, id uuid.UUID) error
-	AdminAdjust(ctx context.Context, req dto.AdminAdjustCoinRequest) (*dto.CoinWalletResponse, error)
+	AdminAdjust(ctx context.Context, actorID uuid.UUID, req dto.AdminAdjustCoinRequest) (*dto.CoinWalletResponse, error)
 }
 
 type CoinService struct {
@@ -244,6 +244,41 @@ func (s *CoinService) VerifyPurchase(ctx context.Context, userID, purchaseID uui
 	// C3/C4: cộng xu + ghi ledger + đánh dấu purchase completed atomic trong 1
 	// transaction, có khoá dòng ví để tránh race condition.
 	err = s.walletRepo.WithTransaction(func(tx *gorm.DB) error {
+		// H-10 (audit 260909 vòng 2): check "purchase.Status != Pending" ở trên đọc TRƯỚC
+		// khi vào transaction — 2 request verify song song cho CÙNG purchaseID đều đọc được
+		// Pending, cùng đi tới đây. Khoá ví (lockOrCreateWalletTx) chỉ serialize được write
+		// vào CÙNG 1 ví, không ngăn request thứ 2 (đang cầm bản Go struct purchase.Status
+		// còn "Pending" từ trước khi vào tx) cộng xu lần nữa sau khi request 1 đã commit.
+		// Chặn bằng UPDATE có điều kiện (mẫu M-07 dùng cho voucher) + kiểm tra RowsAffected:
+		// request thắng cuộc mới đổi được status, request thua RowsAffected=0 -> rollback
+		// toàn bộ transaction (không cộng xu, không tạo ledger).
+		guard := tx.Model(&model.CoinPurchase{}).
+			Where("id = ? AND status = ?", purchaseID, model.CoinPurchasePending).
+			Update("status", model.CoinPurchaseCompleted)
+		if guard.Error != nil {
+			return guard.Error
+		}
+		if guard.RowsAffected == 0 {
+			return errors.New("purchase already processed")
+		}
+
+		// M-06 (audit 260909 vòng 2): chống replay giao dịch ngân hàng — CHUNG 1 bảng với
+		// payment_service.go (đơn hàng khóa học) vì cùng khái niệm "giao dịch ngân hàng này
+		// đã tiêu thụ chưa". Không có cơ chế này thì cùng 1 giao dịch chuyển khoản (khớp
+		// payment code + số tiền) đã dùng để nạp xu 1 lần, có thể bị dùng để mua thêm gói xu
+		// khác (purchase ID khác) do trùng nội dung chuyển khoản/replay request.
+		usage := &model.BankTransactionUsage{
+			BankTransactionID: result.TransactionID,
+			ReferenceType:     "coin_purchase",
+			ReferenceID:       purchaseID,
+		}
+		if err := tx.Create(usage).Error; err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return errors.New("bank transaction already used for another payment")
+			}
+			return err
+		}
+
 		wallet, err := lockOrCreateWalletTx(tx, userID)
 		if err != nil {
 			return err
@@ -559,7 +594,7 @@ func (s *CoinService) DeletePackage(ctx context.Context, id uuid.UUID) error {
 	return s.packageRepo.Delete(ctx, id)
 }
 
-func (s *CoinService) AdminAdjust(ctx context.Context, req dto.AdminAdjustCoinRequest) (*dto.CoinWalletResponse, error) {
+func (s *CoinService) AdminAdjust(ctx context.Context, actorID uuid.UUID, req dto.AdminAdjustCoinRequest) (*dto.CoinWalletResponse, error) {
 	wallet, err := s.walletRepo.GetOrCreate(ctx, req.UserID)
 	if err != nil {
 		return nil, err
@@ -580,15 +615,23 @@ func (s *CoinService) AdminAdjust(ctx context.Context, req dto.AdminAdjustCoinRe
 		return nil, err
 	}
 
-	tx := &model.CoinTransaction{
+	// C-08 (audit 260909 vòng 2): AdminAdjust trước đây không nhận actorID nên không thể
+	// truy vết ai đã chỉnh số dư của user nào — chỉ ghi lại UserID (chủ ví), không ghi ai
+	// thực hiện. Ghi actorID vào cột riêng (ActorID) để không lẫn với ReferenceID (vốn mang
+	// nghĩa "id thực thể liên quan"). Lỗi ghi ledger trước đây bị nuốt (`_ = ...Create(...)`)
+	// — số dư đã đổi nhưng có thể không có log — nay trả lỗi thay vì nuốt.
+	txEntry := &model.CoinTransaction{
 		WalletID:     wallet.ID,
 		UserID:       req.UserID,
+		ActorID:      &actorID,
 		Type:         model.CoinTxAdminAdjust,
 		Amount:       req.Amount,
 		BalanceAfter: wallet.Balance,
 		Description:  &req.Description,
 	}
-	_ = s.txRepo.Create(ctx, tx)
+	if err := s.txRepo.Create(ctx, txEntry); err != nil {
+		return nil, fmt.Errorf("failed to record admin adjust audit log: %w", err)
+	}
 
 	return &dto.CoinWalletResponse{
 		ID:          wallet.ID,
