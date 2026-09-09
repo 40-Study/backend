@@ -69,6 +69,11 @@ type VoucherServiceInterface interface {
 	// đổi ĐIỂM GỌI trong luồng order.
 	IncrementUsedCount(ctx context.Context, voucherID uuid.UUID) error
 	RecordUsageLog(ctx context.Context, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error
+	// RecordUsageLogTx (H2-06, review vòng 3b): giống RecordUsageLog nhưng ghi VoucherLog TRÊN
+	// "tx" được truyền vào (nil => dùng connection gốc, hành vi giống RecordUsageLog) — cho phép
+	// completeOrderFulfillment tham gia CÙNG transaction với enrollment/total_students khi caller
+	// có sẵn transaction đang mở (CheckAndProcessPayment nhánh trả phí, CreateOrder nhánh 0đ).
+	RecordUsageLogTx(ctx context.Context, tx *gorm.DB, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error
 	// ReserveVoucherUsage / ReleaseVoucherUsage (H2-05, review vòng 3): tăng/giảm used_count
 	// bằng UPDATE có điều kiện chạy TRÊN "tx" được truyền vào (không phải trên vs.vr — connection
 	// gốc) để tham gia CÙNG một database transaction với việc tạo/hủy đơn hàng — xem
@@ -568,10 +573,15 @@ func (vs *VoucherService) ReleaseVoucherUsage(ctx context.Context, tx *gorm.DB, 
 		Update("used_count", gorm.Expr("used_count - 1")).Error
 }
 
-// RecordUsageLog — xem comment interface. Tự tra lại voucher.Code (VoucherLog.VoucherCode
-// not-null) thay vì bắt caller truyền vào, tránh caller phải tự query/preload thêm. Amount
-// trong VoucherLog là int64 (không có phần thập phân với VND) nên dùng IntPart().
-func (vs *VoucherService) RecordUsageLog(ctx context.Context, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error {
+// RecordUsageLogTx — xem comment interface (RecordUsageLogTx/RecordUsageLog). Tự tra lại
+// voucher.Code (VoucherLog.VoucherCode not-null) thay vì bắt caller truyền vào, tránh caller
+// phải tự query/preload thêm. Amount trong VoucherLog là int64 (không có phần thập phân với
+// VND) nên dùng IntPart().
+//
+// H2-06 vòng 3b: "tx" != nil -> ghi VoucherLog TRÊN chính transaction đó (tham gia cùng
+// transaction với completeOrderFulfillment) — dùng cho CheckAndProcessPayment/CreateOrder khi đã
+// có sẵn transaction đang mở. "tx" == nil -> ghi qua vs.vr (connection gốc) như hành vi cũ.
+func (vs *VoucherService) RecordUsageLogTx(ctx context.Context, tx *gorm.DB, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error {
 	voucher, err := vs.vr.GetVoucherByID(ctx, voucherID)
 	if err != nil {
 		return err
@@ -589,7 +599,16 @@ func (vs *VoucherService) RecordUsageLog(ctx context.Context, voucherID, userID,
 		Action:      "used",
 		Amount:      discountAmount.IntPart(),
 	}
+	if tx != nil {
+		return tx.WithContext(ctx).Create(log).Error
+	}
 	return vs.vr.CreateVoucherLog(ctx, log)
+}
+
+// RecordUsageLog — giữ nguyên chữ ký cũ (không tx) cho tương thích ngược, ủy quyền thẳng tới
+// RecordUsageLogTx(ctx, nil, ...).
+func (vs *VoucherService) RecordUsageLog(ctx context.Context, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error {
+	return vs.RecordUsageLogTx(ctx, nil, voucherID, userID, orderID, discountAmount)
 }
 
 // ============================================================

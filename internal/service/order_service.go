@@ -43,7 +43,6 @@ type OrderServiceInterface interface {
 	GetOrderByNumber(ctx context.Context, orderNumber string) (*dto.OrderResponse, error)
 	GetUserOrders(ctx context.Context, userID uuid.UUID, page, limit int, status string) (*dto.OrderListResponse, error)
 	CancelOrder(ctx context.Context, userID, orderID uuid.UUID, isAdmin bool, reason string) error
-	CompleteOrder(ctx context.Context, orderID uuid.UUID, paymentMethod, transactionID string) error
 	ValidateIdempotencyKey(ctx context.Context, scope, key string, requestHash string) (*dto.OrderResponse, bool, error)
 }
 
@@ -330,7 +329,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 		if isFreeOrder {
 			enrollmentRepoTx := repository.NewEnrollmentRepository(txDB)
 			courseRepoTx := repository.NewCourseRepository(txDB)
-			if err := completeOrderFulfillment(ctx, enrollmentRepoTx, courseRepoTx, s.voucherService, items, order); err != nil {
+			if err := completeOrderFulfillment(ctx, txDB, enrollmentRepoTx, courseRepoTx, s.voucherService, items, order); err != nil {
 				return err
 			}
 		}
@@ -491,84 +490,13 @@ func (s *OrderService) CancelOrder(ctx context.Context, userID, orderID uuid.UUI
 	})
 }
 
-// CompleteOrder - Complete order after successful payment
-func (s *OrderService) CompleteOrder(ctx context.Context, orderID uuid.UUID, paymentMethod, transactionID string) error {
-	order, err := s.orderRepo.GetByID(orderID)
-	if err != nil {
-		return ErrOrderNotFound
-	}
-
-	if order.Status != "processing" {
-		return ErrInvalidStateTransition
-	}
-
-	oldStatus := order.Status
-
-	return s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
-		// Update payment info
-		if err := txRepo.UpdatePaymentInfo(orderID, paymentMethod, "internal", transactionID, time.Now()); err != nil {
-			return err
-		}
-
-		// Create history
-		history := &model.OrderStatusHistory{
-			ID:         uuid.New(),
-			CreatedAt:  time.Now(),
-			OrderID:    orderID,
-			FromStatus: oldStatus,
-			ToStatus:   "completed",
-			Reason:     "Payment completed",
-		}
-		if err := s.orderHistoryRepo.Create(history); err != nil {
-			return err
-		}
-
-		// Create enrollments for each course
-		items, err := s.orderItemRepo.GetByOrderID(orderID)
-		if err != nil {
-			return err
-		}
-
-		for _, item := range items {
-			// Check if already enrolled
-			existingEnrollment, err := s.enrollmentRepo.GetByUserAndCourse(ctx, order.UserID, item.CourseID)
-			if err == nil && existingEnrollment != nil {
-				continue // Already enrolled, skip
-			}
-
-			// Create enrollment - Enrollment uses BaseModel which has ID
-			enrollment := &model.Enrollment{
-				UserID:     order.UserID,
-				CourseID:   item.CourseID,
-				EnrolledAt: time.Now(),
-			}
-			if err := s.enrollmentRepo.Create(ctx, enrollment); err != nil {
-				return err
-			}
-		}
-
-		// Update coupon usage if applicable
-		if order.CouponID != nil {
-			if err := s.couponRepo.IncrementUsageCount(*order.CouponID); err != nil {
-				return err
-			}
-
-			usage := &model.CouponUsage{
-				ID:             uuid.New(),
-				CreatedAt:      time.Now(),
-				CouponID:       *order.CouponID,
-				UserID:         order.UserID,
-				OrderID:        orderID,
-				DiscountAmount: order.DiscountAmount,
-			}
-			if err := s.couponRepo.CreateUsage(usage); err != nil {
-				return err
-			}
-		}
-
-		return nil
-	})
-}
+// H2-06 vòng 3b: CompleteOrder (flow COUPON cũ, dùng payment_method/transaction_id nhận trực
+// tiếp thay vì đi qua PaymentService/gRPC) đã bị XÓA — grep xác nhận 0 caller (interface, handler,
+// test) ở cả vòng 1/2/3, dùng flow coupons đã deprecated (bảng "coupons" không còn route/handler
+// nào tạo dữ liệu — xem comment couponRepo phía trên), và có cùng lớp lỗi H2-04
+// (GetByUserAndCourse có scope + Create vô điều kiện, không IncrementTotalStudents) như
+// completeOrderFulfillment TRƯỚC KHI được sửa ở vòng 3. Quyết định team-lead vòng 3b: xóa hẳn
+// thay vì sửa code chết. Luồng thật đi qua PaymentService.CheckAndProcessPayment.
 
 // ValidateIdempotencyKey - Check if request is idempotent
 func (s *OrderService) ValidateIdempotencyKey(ctx context.Context, scope, key string, requestHash string) (*dto.OrderResponse, bool, error) {

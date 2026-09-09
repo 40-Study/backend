@@ -62,15 +62,17 @@ func (f *fakeCourseRepoForFulfillment) IncrementTotalStudents(ctx context.Contex
 }
 
 // fakeVoucherServiceForFulfillment là fake tối thiểu cho VoucherServiceInterface, chỉ override
-// RecordUsageLog — đủ cho completeOrderFulfillment sau khi sửa H2-05 (review vòng 3):
-// IncrementUsedCount KHÔNG còn được gọi ở đây nữa (used_count giờ reserve lúc tạo đơn).
+// RecordUsageLogTx — đủ cho completeOrderFulfillment sau khi sửa H2-05 (review vòng 3):
+// IncrementUsedCount KHÔNG còn được gọi ở đây nữa (used_count giờ reserve lúc tạo đơn). H2-06
+// vòng 3b: completeOrderFulfillment giờ gọi RecordUsageLogTx (không phải RecordUsageLog) để
+// tham gia transaction của caller khi có — fake override đúng method thật được gọi.
 type fakeVoucherServiceForFulfillment struct {
 	VoucherServiceInterface
 	loggedDiscount decimal.Decimal
 	logCalled      bool
 }
 
-func (f *fakeVoucherServiceForFulfillment) RecordUsageLog(ctx context.Context, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error {
+func (f *fakeVoucherServiceForFulfillment) RecordUsageLogTx(ctx context.Context, tx *gorm.DB, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error {
 	f.logCalled = true
 	f.loggedDiscount = discountAmount
 	return nil
@@ -102,7 +104,7 @@ func TestCompleteOrderFulfillment(t *testing.T) {
 		items := []model.OrderItem{{CourseID: courseNotEnrolled}}
 		order := &model.Order{ID: orderID, UserID: userID}
 
-		if err := completeOrderFulfillment(context.Background(), enrollmentRepo, courseRepo, nil, items, order); err != nil {
+		if err := completeOrderFulfillment(context.Background(), nil, enrollmentRepo, courseRepo, nil, items, order); err != nil {
 			t.Fatalf("completeOrderFulfillment() unexpected error: %v", err)
 		}
 
@@ -123,7 +125,7 @@ func TestCompleteOrderFulfillment(t *testing.T) {
 		items := []model.OrderItem{{CourseID: courseActiveEnrolled}}
 		order := &model.Order{ID: orderID, UserID: userID}
 
-		if err := completeOrderFulfillment(context.Background(), enrollmentRepo, courseRepo, nil, items, order); err != nil {
+		if err := completeOrderFulfillment(context.Background(), nil, enrollmentRepo, courseRepo, nil, items, order); err != nil {
 			t.Fatalf("completeOrderFulfillment() unexpected error: %v", err)
 		}
 
@@ -144,7 +146,7 @@ func TestCompleteOrderFulfillment(t *testing.T) {
 		items := []model.OrderItem{{CourseID: courseUnenrolledBefore}}
 		order := &model.Order{ID: orderID, UserID: userID}
 
-		if err := completeOrderFulfillment(context.Background(), enrollmentRepo, courseRepo, nil, items, order); err != nil {
+		if err := completeOrderFulfillment(context.Background(), nil, enrollmentRepo, courseRepo, nil, items, order); err != nil {
 			t.Fatalf("completeOrderFulfillment() unexpected error: %v", err)
 		}
 
@@ -165,7 +167,7 @@ func TestCompleteOrderFulfillment(t *testing.T) {
 		voucherSvc := &fakeVoucherServiceForFulfillment{}
 		order := &model.Order{ID: orderID, UserID: userID, VoucherID: nil}
 
-		if err := completeOrderFulfillment(context.Background(), enrollmentRepo, courseRepo, voucherSvc, nil, order); err != nil {
+		if err := completeOrderFulfillment(context.Background(), nil, enrollmentRepo, courseRepo, voucherSvc, nil, order); err != nil {
 			t.Fatalf("completeOrderFulfillment() unexpected error: %v", err)
 		}
 		if voucherSvc.logCalled {
@@ -180,7 +182,7 @@ func TestCompleteOrderFulfillment(t *testing.T) {
 		discount := decimal.RequireFromString("50000")
 		order := &model.Order{ID: orderID, UserID: userID, VoucherID: &voucherID, DiscountAmount: discount}
 
-		if err := completeOrderFulfillment(context.Background(), enrollmentRepo, courseRepo, voucherSvc, nil, order); err != nil {
+		if err := completeOrderFulfillment(context.Background(), nil, enrollmentRepo, courseRepo, voucherSvc, nil, order); err != nil {
 			t.Fatalf("completeOrderFulfillment() unexpected error: %v", err)
 		}
 		if !voucherSvc.logCalled || !voucherSvc.loggedDiscount.Equal(discount) {

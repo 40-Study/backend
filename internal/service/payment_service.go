@@ -103,6 +103,11 @@ func NewPaymentService(
 // tại song song. Hàm này chỉ còn ghi VoucherLog (audit trail) khi fulfillment thành công.
 func completeOrderFulfillment(
 	ctx context.Context,
+	// tx (H2-06, review vòng 3b): *gorm.DB của transaction caller đang mở (CreateOrder nhánh 0đ,
+	// CheckAndProcessPayment nhánh trả phí) — truyền xuống RecordUsageLogTx để voucher log tham
+	// gia CÙNG transaction với enrollment/total_students. nil nếu caller không có transaction
+	// đang mở (hiện không còn call site nào như vậy, nhưng giữ nil-safe cho tương lai).
+	tx *gorm.DB,
 	enrollmentRepo repository.EnrollmentRepositoryInterface,
 	courseRepo repository.CourseRepositoryInterface,
 	voucherService VoucherServiceInterface,
@@ -154,7 +159,7 @@ func completeOrderFulfillment(
 	// xem comment VoucherID/CouponID tại model.Order). used_count đã reserve lúc tạo đơn
 	// (H2-05) — ở đây chỉ ghi log.
 	if order.VoucherID != nil && voucherService != nil {
-		if err := voucherService.RecordUsageLog(ctx, *order.VoucherID, order.UserID, order.ID, order.DiscountAmount); err != nil {
+		if err := voucherService.RecordUsageLogTx(ctx, tx, *order.VoucherID, order.UserID, order.ID, order.DiscountAmount); err != nil {
 			return fmt.Errorf("failed to record voucher usage log: %w", err)
 		}
 	}
@@ -341,7 +346,20 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 	// Transaction found, complete the order
 	oldStatus := order.Status
 
+	// H2-06 vòng 3b (quyết định team-lead, đóng gap H-07 cho nhánh TRẢ PHÍ — nhánh 0đ đã đóng ở
+	// vòng 3 qua OrderService.CreateOrder): TRƯỚC ĐÂY chỉ bank_transaction_usage +
+	// UpdatePaymentInfo + history chạy trong transaction — enrollment/total_students/voucher log
+	// (completeOrderFulfillment) chạy SAU KHI transaction đã commit, nên đơn có thể "completed"
+	// (đã ghi nhận thanh toán, đã tiêu bank_transaction_id) nhưng enrollment lỗi giữa chừng thì
+	// KHÔNG rollback được gì. Giờ TOÀN BỘ — bank_transaction_usage, payment info, history,
+	// order_items (đọc để fulfillment), enrollment/total_students, voucher usage log — nằm
+	// CHUNG một transaction: lỗi ở bất kỳ bước nào rollback tất cả, kể cả bank_transaction_usage
+	// (coi như giao dịch CHƯA được xử lý, có thể check lại — không mất giao dịch, không double-
+	// charge vì unique constraint vẫn còn nguyên sau rollback).
+	var items []model.OrderItem
 	err = s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
+		txDB := txRepo.TxDB()
+
 		// M-06 (audit 260909 vòng 2): chống replay — giao dịch ngân hàng này (result.TransactionID)
 		// đã dùng cho đơn/lần mua xu khác chưa? Unique constraint DB-level (bank_transaction_usages)
 		// là chốt chặn thật; vi phạm -> insert lỗi -> transaction rollback -> đơn KHÔNG completed.
@@ -371,8 +389,32 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 			ToStatus:   "completed",
 			Reason:     "Payment received via transaction check",
 		}
-		if err := s.orderHistoryRepo.Create(history); err != nil {
+		orderHistoryRepoTx := repository.NewOrderStatusHistoryRepository(txDB)
+		if err := orderHistoryRepoTx.Create(history); err != nil {
 			return err
+		}
+
+		// H-08 (audit 260909 vòng 2): trước đây các lệnh ghi enrollment/coupon usage dưới đây
+		// gọi hàm nhưng KHÔNG gán lỗi trả về vào biến nào cả (không có cả "_ ="), nên lỗi INSERT
+		// bị nuốt hoàn toàn — đơn hàng chuyển "completed" (đã trừ tiền/xác nhận thanh toán) nhưng
+		// học viên có thể không được ghi danh, không log, không cách nào phát hiện. Sửa để lỗi
+		// được trả về (visible) thay vì biến mất.
+		//
+		// item 14: logic tạo enrollment + ghi usage voucher tách thành completeOrderFulfillment
+		// (dùng chung với nhánh đơn 0đ tự hoàn tất trong OrderService.CreateOrder).
+		orderItemRepoTx := repository.NewOrderItemRepository(txDB)
+		var itemsErr error
+		items, itemsErr = orderItemRepoTx.GetByOrderID(orderID)
+		if itemsErr != nil {
+			return itemsErr
+		}
+
+		if s.enrollmentRepo != nil {
+			enrollmentRepoTx := repository.NewEnrollmentRepository(txDB)
+			courseRepoTx := repository.NewCourseRepository(txDB)
+			if err := completeOrderFulfillment(ctx, txDB, enrollmentRepoTx, courseRepoTx, s.voucherService, items, order); err != nil {
+				return err
+			}
 		}
 
 		return nil
@@ -380,28 +422,6 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 
 	if err != nil {
 		return nil, err
-	}
-
-	// Create enrollments for each course
-	items, err := s.orderItemRepo.GetByOrderID(orderID)
-	if err != nil {
-		return nil, err
-	}
-
-	// H-08 (audit 260909 vòng 2): trước đây các lệnh ghi enrollment/coupon usage dưới đây
-	// gọi hàm nhưng KHÔNG gán lỗi trả về vào biến nào cả (không có cả "_ ="), nên lỗi INSERT
-	// bị nuốt hoàn toàn — đơn hàng chuyển "completed" (đã trừ tiền/xác nhận thanh toán) nhưng
-	// học viên có thể không được ghi danh, không log, không cách nào phát hiện. Sửa để lỗi
-	// được trả về (visible) thay vì biến mất. LƯU Ý: đây chỉ đóng phần "lỗi bị nuốt", KHÔNG
-	// đóng H-07 (toàn bộ khối này vẫn chưa cùng transaction với UpdatePaymentInfo/history phía
-	// trên — đó là thay đổi kiến trúc Unit-of-Work lớn hơn, xem "chưa làm" trong báo cáo).
-	//
-	// item 14: logic tạo enrollment + ghi usage voucher tách thành completeOrderFulfillment
-	// (dùng chung với nhánh đơn 0đ tự hoàn tất trong OrderService.CreateOrder).
-	if s.enrollmentRepo != nil {
-		if err := completeOrderFulfillment(ctx, s.enrollmentRepo, s.courseRepo, s.voucherService, items, order); err != nil {
-			return nil, err
-		}
 	}
 
 	now := time.Now()
