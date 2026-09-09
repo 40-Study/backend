@@ -328,6 +328,32 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 	err = s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
 		txDB := txRepo.TxDB()
 
+		// C-01 (review vòng 5, phát hiện lại ở review vòng 5→6): khoá voucher + đếm
+		// usage_per_user + reserve PHẢI chạy TRƯỚC txRepo.Create(order) — TRƯỚC ĐÂY khối này
+		// nằm SAU Create(order), nên CountUserHeldOrders (chạy TRONG cùng transaction, thấy cả
+		// ghi CHƯA commit của chính nó) đếm luôn CHÍNH đơn vừa insert, khiến usage_per_user=1
+		// KHÔNG BAO GIỜ tạo được đơn đầu tiên (heldCount=1 >= usage_per_user=1 ngay lập tức).
+		// Thứ tự đúng: lock → đếm → reserve → Create(order) → items → history.
+		if voucher != nil {
+			// I-02 (review vòng 5): khoá dòng voucher (SELECT ... FOR UPDATE) + đếm lại
+			// usage_per_user TRONG transaction này, TRƯỚC ReserveVoucherUsage — đóng nốt TOCTOU
+			// mà ValidateAndApplyVoucher (chạy NGOÀI transaction, ở trên) không tự đóng được: 2
+			// request đồng thời của CÙNG user giờ tuần tự hoá qua lock hàng thay vì cùng đọc
+			// heldCount cũ rồi cùng vượt qua.
+			if err := s.voucherService.LockAndCheckUsagePerUser(ctx, txDB, voucher, userID); err != nil {
+				return err
+			}
+			// H2-05 (review vòng 3): reserve used_count NGAY khi tạo đơn (áp dụng cho MỌI đơn có
+			// voucher, không chỉ đơn 0đ) — trước đây chỉ tăng lúc đơn HOÀN TẤT
+			// (completeOrderFulfillment), để hở khoảng trống: nhiều đơn "pending" cùng lúc dùng
+			// chung 1 voucher có thể vượt usage_limit vì chưa ai bị trừ lúc tạo đơn. Hoàn lại ở
+			// CancelOrder khi đơn bị hủy trước khi hoàn tất (và ở CheckAndProcessPayment khi mã
+			// thanh toán hết hạn — M2-02).
+			if err := s.voucherService.ReserveVoucherUsage(ctx, txDB, voucher.ID); err != nil {
+				return err
+			}
+		}
+
 		if err := txRepo.Create(order); err != nil {
 			return err
 		}
@@ -354,26 +380,6 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 		orderHistoryRepoTx := repository.NewOrderStatusHistoryRepository(txDB)
 		if err := orderHistoryRepoTx.Create(history); err != nil {
 			return err
-		}
-
-		// H2-05 (review vòng 3): reserve used_count NGAY khi tạo đơn (áp dụng cho MỌI đơn có
-		// voucher, không chỉ đơn 0đ) — trước đây chỉ tăng lúc đơn HOÀN TẤT
-		// (completeOrderFulfillment), để hở khoảng trống: nhiều đơn "pending" cùng lúc dùng
-		// chung 1 voucher có thể vượt usage_limit vì chưa ai bị trừ lúc tạo đơn. Hoàn lại ở
-		// CancelOrder khi đơn bị hủy trước khi hoàn tất (và ở CheckAndProcessPayment khi mã
-		// thanh toán hết hạn — M2-02).
-		if voucher != nil {
-			// I-02 (review vòng 5): khoá dòng voucher (SELECT ... FOR UPDATE) + đếm lại
-			// usage_per_user TRONG transaction này, TRƯỚC ReserveVoucherUsage — đóng nốt TOCTOU
-			// mà ValidateAndApplyVoucher (chạy NGOÀI transaction, ở trên) không tự đóng được: 2
-			// request đồng thời của CÙNG user giờ tuần tự hoá qua lock hàng thay vì cùng đọc
-			// heldCount cũ rồi cùng vượt qua.
-			if err := s.voucherService.LockAndCheckUsagePerUser(ctx, txDB, voucher, userID); err != nil {
-				return err
-			}
-			if err := s.voucherService.ReserveVoucherUsage(ctx, txDB, voucher.ID); err != nil {
-				return err
-			}
 		}
 
 		// H2-03 (review vòng 3): đơn 0đ (khóa miễn phí/voucher giảm 100%) hoàn tất fulfillment
