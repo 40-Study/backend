@@ -29,6 +29,23 @@ func (f *fakeContestServiceForRouteTest) GetMyContests(ctx context.Context, user
 	return []dto.ContestResponse{}, nil
 }
 
+func (f *fakeContestServiceForRouteTest) ListContests(ctx context.Context, keyword, status string, page, limit int) (*dto.ContestListResponse, error) {
+	return &dto.ContestListResponse{}, nil
+}
+
+// GetProblems/GetLeaderboard (I6-01, review vòng 6→7): implement thật (không để nil-embed) vì
+// đây ĐÚNG là 2 route duy nhất trong contest_routes.go KHÔNG có lớp phòng thủ thứ 2
+// (parseUserID) ở tầng handler — nếu mutation gỡ `auth` khỏi 1 trong 2 route này, request sẽ
+// CHẠY THẬT tới đây thay vì dừng ở 401 (xem TestContestRoutes_AllRoutesAuthCorrect + mutation
+// bên dưới) — cần implement thật để không panic khi mutation chạy.
+func (f *fakeContestServiceForRouteTest) GetProblems(ctx context.Context, contestID uuid.UUID) ([]dto.ContestProblemResponse, error) {
+	return []dto.ContestProblemResponse{}, nil
+}
+
+func (f *fakeContestServiceForRouteTest) GetLeaderboard(ctx context.Context, contestID uuid.UUID, page, pageSize int) (*dto.ContestLeaderboardResponse, error) {
+	return &dto.ContestLeaderboardResponse{}, nil
+}
+
 // TestContestRoutes_SlugPublicMeRequiresAuth (C-02, review vòng 5→6) — dựng Fiber app THẬT,
 // gọi SetupContestRoutes THẬT, gửi request THẬT không kèm token:
 //   - GET /api/contests/:slug  -> KHÔNG được là 401 (route công khai, dùng để tra cứu chi tiết
