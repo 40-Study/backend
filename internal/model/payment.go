@@ -20,13 +20,15 @@ type Order struct {
 	TaxAmount      decimal.Decimal `gorm:"type:decimal(12,2);default:0" json:"tax_amount"`
 	TotalAmount    decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"total_amount"`
 	Currency       string          `gorm:"type:varchar(3);default:'VND'" json:"currency"`
-	// Status (B3-01, review vòng 4): TRƯỚC ĐÂY thiếu 'expired' trong CHECK — payment_service.go
-	// CheckAndProcessPayment (M2-02, vòng 3) chuyển đơn sang "expired" khi mã thanh toán hết
-	// hạn, nhưng UPDATE đó vi phạm CHECK constraint ở DB (chk_orders_status) → lỗi runtime 100%,
-	// đơn kẹt vĩnh viễn ở "processing", used_count không bao giờ được release. AutoMigrate KHÔNG
-	// tự nới rộng constraint đã tồn tại trên DB cũ — sửa tag ở đây CHƯA đủ, xem thêm
-	// RunPostMigrations (internal/database/migrations.go) DROP+ADD lại constraint idempotent.
-	// Mọi giá trị ở đây PHẢI khớp `codeUsedOrderStatuses` (internal/model/order_status_test.go).
+	// Status (B3-01, review vòng 4; I-01, review vòng 5): TRƯỚC ĐÂY thiếu 'expired' trong CHECK —
+	// payment_service.go CheckAndProcessPayment (M2-02, vòng 3) chuyển đơn sang "expired" khi mã
+	// thanh toán hết hạn, nhưng UPDATE đó vi phạm CHECK constraint ở DB (chk_orders_status) →
+	// lỗi runtime 100%, đơn kẹt vĩnh viễn ở "processing", used_count không bao giờ được release.
+	// AutoMigrate KHÔNG tự nới rộng constraint đã tồn tại trên DB cũ — sửa tag ở đây CHƯA đủ,
+	// xem thêm RunPostMigrations (internal/database/migrations.go), SINH câu SQL constraint TỪ
+	// OrderStatuses (order_status.go, NGUỒN SỰ THẬT DUY NHẤT — SỬA DANH SÁCH Ở ĐÓ TRƯỚC, rồi
+	// cập nhật tag bên dưới cho khớp). Tag ở đây PHẢI khớp OrderStatuses cả hai chiều — pin bằng
+	// TestOrderStatusTagMatchesSSOT (internal/model/order_status_test.go).
 	Status               string     `gorm:"type:varchar(20);default:'pending';check:status IN ('pending', 'processing', 'completed', 'failed', 'refunded', 'cancelled', 'expired');index" json:"status"`
 	PaymentMethod        *string    `gorm:"type:varchar(30)" json:"payment_method,omitempty"`
 	PaymentGateway       *string    `gorm:"type:varchar(30)" json:"payment_gateway,omitempty"`

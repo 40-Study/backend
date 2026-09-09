@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"study.com/v1/internal/model"
 )
 
@@ -104,6 +105,22 @@ func (r *VoucherRepository) CountUserHeldOrders(ctx context.Context, userID, vou
 		Where("user_id = ? AND voucher_id = ? AND status IN ('pending','processing')", userID, voucherID).
 		Count(&count).Error
 	return count, err
+}
+
+// LockVoucherForUpdate (I-02, review vòng 5) — SELECT ... FOR UPDATE trên đúng 1 dòng voucher.
+// BẮT BUỘC gọi trên "r" đã được dựng từ *gorm.DB của MỘT TRANSACTION ĐANG MỞ
+// (repository.NewVoucherRepository(txDB) — xem VoucherService.LockAndCheckUsagePerUser) — gọi
+// trên connection gốc (ngoài transaction) sẽ khoá rồi NHẢ NGAY (mỗi câu SQL rời rạc tự động
+// commit), không có tác dụng tuần tự hoá gì cả.
+//
+// Mục đích: TUẦN TỰ HOÁ 2 giao dịch tạo đơn ĐỒNG THỜI cùng dùng 1 voucher — giao dịch B phải đợi
+// giao dịch A commit/rollback xong (nhả lock) mới được khoá dòng này, nên B luôn đếm
+// CountUserHeldOrders/CountUserVoucherUsage SAU KHI A đã ghi xong, không còn đọc "heldCount cũ"
+// song song với A như trước (I-02 — ValidateAndApplyVoucher đếm usage_per_user NGOÀI transaction
+// tạo đơn, 2 request đồng thời của CÙNG user có thể cùng đọc heldCount=0 rồi cùng vượt qua).
+func (r *VoucherRepository) LockVoucherForUpdate(ctx context.Context, voucherID uuid.UUID) error {
+	return r.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", voucherID).Take(&model.Voucher{}).Error
 }
 
 // GetVoucherByID - Get voucher by ID

@@ -13,6 +13,16 @@ import (
 
 var (
 	ErrOrderNotFound = errors.New("order not found")
+	// ErrOrderConflict (M-02, review vòng 5): trả về khi UpdatePaymentInfo chạy UPDATE CÓ ĐIỀU
+	// KIỆN (WHERE status IN ('pending','processing')) nhưng RowsAffected==0 — nghĩa là đơn đã bị
+	// đổi trạng thái bởi một luồng KHÁC (thường gặp nhất: sweepExpiredHeldOrders lazy-sweep của
+	// một request tạo-đơn-mới khác đẩy đơn này sang "expired" + release voucher, đúng lúc nhánh
+	// thanh toán của CheckAndProcessPayment cũng đang xử lý CÙNG đơn) giữa lúc đọc order.Status
+	// (guard "processing" ở đầu CheckAndProcessPayment) và lúc UPDATE thật thực thi. Trước vòng
+	// 5, UpdatePaymentInfo UPDATE vô điều kiện — nếu thắng race này, đơn bị ép "completed" dù
+	// vừa được sweep sang "expired" + đã release used_count, khiến used_count hụt 1 so với thực
+	// tế VÀ FromStatus ghi trong history sai (ghi "processing" dù DB lúc UPDATE thật đã là
+	// "expired"). Field cũ TRƯỚC ĐÂY không có call site nào (dead), giờ dùng lại đúng mục đích.
 	ErrOrderConflict = errors.New("order conflict")
 )
 
@@ -89,11 +99,6 @@ func (r *OrderRepository) GetByUserIDAndStatus(userID uuid.UUID, status string) 
 	return orders, nil
 }
 
-// UpdateStatus - Update order status
-func (r *OrderRepository) UpdateStatus(orderID uuid.UUID, status string) error {
-	return r.db.Model(&model.Order{}).Where("id = ?", orderID).Update("status", status).Error
-}
-
 // UpdatePaymentCode (item 25, review web vòng 1): TRƯỚC ĐÂY CreatePaymentIntent chỉ gọi
 // UpdateStatus("processing") — mã thanh toán (paymentCode) sinh ra chỉ tồn tại trong response
 // trả về client, KHÔNG được lưu vào order. CheckAndProcessPayment/GetPaymentStatus sau đó đọc
@@ -111,8 +116,10 @@ func (r *OrderRepository) UpdatePaymentCode(orderID uuid.UUID, paymentCode strin
 	return r.db.Model(&model.Order{}).Where("id = ?", orderID).Updates(updates).Error
 }
 
-// UpdatePaymentInfo - Update payment information
-func (r *OrderRepository) UpdatePaymentInfo(orderID uuid.UUID, paymentMethod, paymentGateway, transactionID string, paidAt time.Time) error {
+// buildUpdatePaymentInfoQuery (M-02, review vòng 5) — tách phần XÂY câu UPDATE có điều kiện ra
+// khỏi phần map RowsAffected -> error, cùng mẫu buildReserveVoucherUsageQuery/
+// buildRestoreAndReactivateQuery, để test DryRun gọi được ĐÚNG hàm sản xuất thật.
+func (r *OrderRepository) buildUpdatePaymentInfoQuery(orderID uuid.UUID, paymentMethod, paymentGateway, transactionID string, paidAt time.Time) *gorm.DB {
 	updates := map[string]interface{}{
 		"payment_method":         paymentMethod,
 		"payment_gateway":        paymentGateway,
@@ -120,7 +127,26 @@ func (r *OrderRepository) UpdatePaymentInfo(orderID uuid.UUID, paymentMethod, pa
 		"paid_at":                paidAt,
 		"status":                 "completed",
 	}
-	return r.db.Model(&model.Order{}).Where("id = ?", orderID).Updates(updates).Error
+	// M-02 (review vòng 5): UPDATE CÓ ĐIỀU KIỆN — WHERE status IN ('pending','processing') —
+	// thay vì vô điều kiện như trước. Đơn phải đang ở 1 trong 2 trạng thái "còn sống" này mới
+	// được chuyển "completed"; nếu một luồng khác (lazy-sweep, CancelOrder) đã đổi status trước
+	// đó, UPDATE này khớp 0 dòng thay vì âm thầm ghi đè lên trạng thái đã đổi.
+	return r.db.Model(&model.Order{}).
+		Where("id = ? AND status IN ('pending','processing')", orderID).
+		Updates(updates)
+}
+
+// UpdatePaymentInfo - Update payment information. Trả ErrOrderConflict nếu đơn không còn ở
+// "pending"/"processing" tại thời điểm UPDATE thật thực thi (xem comment ErrOrderConflict).
+func (r *OrderRepository) UpdatePaymentInfo(orderID uuid.UUID, paymentMethod, paymentGateway, transactionID string, paidAt time.Time) error {
+	result := r.buildUpdatePaymentInfoQuery(orderID, paymentMethod, paymentGateway, transactionID, paidAt)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrOrderConflict
+	}
+	return nil
 }
 
 // Update - Update order
@@ -173,11 +199,6 @@ func (r *OrderRepository) GetForUpdate(tx *gorm.DB, id uuid.UUID) (*model.Order,
 	return &order, nil
 }
 
-// UpdateStatusWithTx - Update order status within transaction
-func (r *OrderRepository) UpdateStatusWithTx(tx *gorm.DB, orderID uuid.UUID, status string) error {
-	return tx.Model(&model.Order{}).Where("id = ?", orderID).Update("status", status).Error
-}
-
 // CheckOrderNumberExists - Check if order number exists
 func (r *OrderRepository) CheckOrderNumberExists(orderNumber string) (bool, error) {
 	var count int64
@@ -185,15 +206,6 @@ func (r *OrderRepository) CheckOrderNumberExists(orderNumber string) (bool, erro
 		return false, err
 	}
 	return count > 0, nil
-}
-
-// GetPendingOrders - Get all pending orders (for cleanup)
-func (r *OrderRepository) GetPendingOrders(expiredBefore time.Time) ([]model.Order, error) {
-	var orders []model.Order
-	if err := r.db.Where("status = ? AND created_at < ?", "pending", expiredBefore).Find(&orders).Error; err != nil {
-		return nil, err
-	}
-	return orders, nil
 }
 
 // GetExpiredHeldOrdersForUser (H3-01b, review vòng 4): trả về các đơn "pending"/"processing"

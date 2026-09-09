@@ -88,6 +88,15 @@ type VoucherServiceInterface interface {
 	// < usage_limit), không viết lại logic mới.
 	ReserveVoucherUsage(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) error
 	ReleaseVoucherUsage(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) error
+	// LockAndCheckUsagePerUser (I-02, review vòng 5): khoá dòng voucher (SELECT ... FOR UPDATE)
+	// rồi mới đếm usage_per_user (CountUserVoucherUsage + CountUserHeldOrders) — PHẢI gọi TRONG
+	// transaction tạo đơn (tx khác nil), NGAY TRƯỚC ReserveVoucherUsage. Trước vòng 5, phần đếm
+	// này nằm trong ValidateAndApplyVoucher và chạy NGOÀI transaction — 2 request đồng thời của
+	// CÙNG user có thể cùng đọc heldCount cũ rồi cùng vượt qua (TOCTOU). usagePerUser <= 0 nghĩa
+	// là "không giới hạn số lượt/user" (voucher chỉ còn bị chặn bởi usage_limit TOÀN CỤC qua
+	// ReserveVoucherUsage) — bỏ qua khoá+đếm hẳn trong trường hợp này để không trả giá SELECT...
+	// FOR UPDATE vô ích trên voucher không giới hạn per-user.
+	LockAndCheckUsagePerUser(ctx context.Context, tx *gorm.DB, voucher *model.Voucher, userID uuid.UUID) error
 
 	// User Voucher (Bookmark/Save)
 	SaveVoucher(ctx context.Context, userID uuid.UUID, req *dto.SaveVoucherRequest) (*model.UserVoucher, error)
@@ -523,25 +532,15 @@ func (vs *VoucherService) ValidateAndApplyVoucher(ctx context.Context, code stri
 		return nil, decimal.Zero, ErrVoucherUsageLimitExceeded
 	}
 
-	if voucher.UsagePerUser > 0 {
-		// H3-01a (review vòng 4): TRƯỚC ĐÂY chỉ đếm voucher_logs (đơn đã HOÀN TẤT) —
-		// usage_per_user hoàn toàn "mù" với đơn pending/processing đang GIỮ CHỖ voucher (đã
-		// reserve used_count lúc tạo đơn — H2-05 — nhưng chưa hoàn tất nên chưa có voucher_log).
-		// Một tài khoản gọi POST /orders N lần với cùng mã (không cần thanh toán) trước đây vượt
-		// qua check này N lần liên tiếp. Cộng thêm CountUserHeldOrders (đơn đang giữ chỗ) vào
-		// tổng số lượt user đó đã dùng/đang giữ.
-		completedCount, err := vs.vr.CountUserVoucherUsage(ctx, userID, voucher.ID)
-		if err != nil {
-			return nil, decimal.Zero, err
-		}
-		heldCount, err := vs.vr.CountUserHeldOrders(ctx, userID, voucher.ID)
-		if err != nil {
-			return nil, decimal.Zero, err
-		}
-		if completedCount+heldCount >= int64(voucher.UsagePerUser) {
-			return nil, decimal.Zero, ErrVoucherPerUserLimitExceeded
-		}
-	}
+	// I-02 (review vòng 5): phần đếm usage_per_user (CountUserVoucherUsage + CountUserHeldOrders)
+	// TRƯỚC ĐÂY nằm ở đây (H3-01a, review vòng 4) — chạy NGOÀI transaction tạo đơn nên vẫn TOCTOU
+	// được: 2 request đồng thời của CÙNG user cùng đọc heldCount cũ rồi cùng vượt qua, trước khi
+	// bên nào kịp tạo đơn/reserve. Đã CHUYỂN HẲN vào LockAndCheckUsagePerUser (bên dưới) — gọi
+	// TRONG transaction tạo đơn, SAU khi đã SELECT ... FOR UPDATE khoá dòng voucher, để tuần tự
+	// hoá đúng 2 giao dịch đồng thời thay vì đọc song song không khoá. ValidateAndApplyVoucher từ
+	// đây chỉ còn làm các kiểm tra THUẦN (không phụ thuộc lock/đếm) để trả lỗi sớm cho UX — kết
+	// quả CHƯA phải quyết định cuối cùng cho usage_per_user, quyết định thật nằm ở
+	// LockAndCheckUsagePerUser bên trong transaction.
 
 	if paymentMethod != "" && !voucher.AcceptAllPaymentMethods {
 		allowed := false
@@ -613,6 +612,36 @@ func (vs *VoucherService) buildReleaseVoucherUsageQuery(ctx context.Context, tx 
 // khi hoàn tất. Điều kiện "used_count > 0" tránh giảm xuống âm nếu bị gọi trùng lặp.
 func (vs *VoucherService) ReleaseVoucherUsage(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) error {
 	return vs.buildReleaseVoucherUsageQuery(ctx, tx, voucherID).Error
+}
+
+// LockAndCheckUsagePerUser — xem comment interface. tx != nil BẮT BUỘC (gọi ngoài transaction
+// không có tác dụng khoá gì — LockVoucherForUpdate tự nhả lock ngay sau câu SQL đơn lẻ đó).
+func (vs *VoucherService) LockAndCheckUsagePerUser(ctx context.Context, tx *gorm.DB, voucher *model.Voucher, userID uuid.UUID) error {
+	if voucher.UsagePerUser <= 0 {
+		// usagePerUser <= 0: "không giới hạn số lượt/user" — GIỮ hành vi cũ (H3-01a, review
+		// vòng 4), chỉ khác là giờ có comment tường minh (I-02, review vòng 5, chỉ đạo team-lead:
+		// "usage_per_user = 0 nghĩa là không giới hạn — GIỮ, nhưng ghi comment rõ + test"). Admin
+		// vẫn có thể giới hạn TOÀN CỤC qua UsageLimit/ReserveVoucherUsage; usage_per_user chỉ
+		// kiểm soát riêng số lượt của TỪNG user, để 0/âm nghĩa "không kiểm soát riêng nữa".
+		return nil
+	}
+
+	txVr := repository.NewVoucherRepository(tx)
+	if err := txVr.LockVoucherForUpdate(ctx, voucher.ID); err != nil {
+		return err
+	}
+	completedCount, err := txVr.CountUserVoucherUsage(ctx, userID, voucher.ID)
+	if err != nil {
+		return err
+	}
+	heldCount, err := txVr.CountUserHeldOrders(ctx, userID, voucher.ID)
+	if err != nil {
+		return err
+	}
+	if completedCount+heldCount >= int64(voucher.UsagePerUser) {
+		return ErrVoucherPerUserLimitExceeded
+	}
+	return nil
 }
 
 // RecordUsageLogTx — xem comment interface (RecordUsageLogTx/RecordUsageLog). Tự tra lại

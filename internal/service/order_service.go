@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,18 +24,28 @@ import (
 var ErrOrderForbidden = errors.New("forbidden: not the order owner")
 
 var (
-	ErrOrderNotFound              = errors.New("order not found")
-	ErrInvalidStateTransition     = errors.New("invalid state transition")
-	ErrOrderAlreadyCompleted      = errors.New("order already completed")
-	ErrOrderAlreadyCancelled      = errors.New("order already cancelled")
-	ErrDuplicateOrderItem         = errors.New("duplicate order item")
-	ErrAmountMismatch             = errors.New("amount mismatch")
-	ErrAlreadyEnrolled            = errors.New("already enrolled in course")
-	ErrCouponInvalid              = errors.New("invalid coupon")
-	ErrCourseNotFound             = errors.New("course not found")
-	ErrIdempotencyPayloadMismatch = errors.New("idempotency payload mismatch")
-	ErrIdempotencyKeyNotFound     = errors.New("idempotency key not found")
-	ErrIdempotencyKeyExpired      = errors.New("idempotency key expired")
+	ErrOrderNotFound          = errors.New("order not found")
+	ErrInvalidStateTransition = errors.New("invalid state transition")
+	ErrOrderAlreadyCompleted  = errors.New("order already completed")
+	ErrOrderAlreadyCancelled  = errors.New("order already cancelled")
+	ErrDuplicateOrderItem     = errors.New("duplicate order item")
+	ErrAmountMismatch         = errors.New("amount mismatch")
+	ErrAlreadyEnrolled        = errors.New("already enrolled in course")
+	ErrCouponInvalid          = errors.New("invalid coupon")
+	// ErrVoucherNotApplicableToFreeOrder (M-06, review vòng 5) — thông báo RÕ RÀNG hơn cho
+	// đúng 1 trường hợp: user nhập voucher hợp lệ (mã đúng/còn hạn/còn lượt) nhưng đơn là 0đ
+	// (khóa miễn phí hoặc giỏ chỉ toàn khóa 0đ) nên calculateVoucherDiscountDecimal luôn ra
+	// discount<=0 trên subtotal=0 -> ValidateAndApplyVoucher trả ErrVoucherNotApplicable. TRƯỚC
+	// ĐÂY bị làm phẳng thành ErrCouponInvalid ("invalid coupon") giống mọi lỗi voucher khác —
+	// user không hiểu TẠI SAO mã hợp lệ lại bị từ chối. Hành vi TỪ CHỐI voucher trên đơn 0đ vẫn
+	// GIỮ NGUYÊN (khớp web voucher.service.ts) — đây là BREAKING CHANGE CÓ CHỦ ĐÍCH so với hành
+	// vi CŨ HƠN NỮA (trước H3-03 vòng 4, backend từng vẫn tạo đơn 0đ có voucher, chỉ là discount
+	// không có tác dụng gì) — ghi rõ trong báo cáo vòng 5 để team-lead xác nhận web đã sẵn sàng.
+	ErrVoucherNotApplicableToFreeOrder = errors.New("Voucher không áp dụng cho đơn 0đ")
+	ErrCourseNotFound                  = errors.New("course not found")
+	ErrIdempotencyPayloadMismatch      = errors.New("idempotency payload mismatch")
+	ErrIdempotencyKeyNotFound          = errors.New("idempotency key not found")
+	ErrIdempotencyKeyExpired           = errors.New("idempotency key expired")
 )
 
 type OrderServiceInterface interface {
@@ -129,10 +140,18 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 	// KHÔNG cần cron/worker riêng: mỗi lần user tạo đơn mới là một cơ hội dọn các đơn cũ CHÍNH
 	// HỌ đã bỏ rơi (tạo đơn xong đóng tab, không bao giờ bấm thanh toán) — đặt NGAY ĐẦU hàm, TRƯỚC
 	// bước tính usage_per_user (ValidateAndApplyVoucher bên dưới) để voucher vừa được giải
-	// phóng có thể dùng lại được luôn trong CHÍNH lần tạo đơn này. Lỗi sweep KHÔNG bị nuốt — nếu
-	// sweep lỗi, dừng hẳn CreateOrder thay vì tạo đơn mới trên trạng thái voucher có thể sai.
+	// phóng có thể dùng lại được luôn trong CHÍNH lần tạo đơn này.
+	//
+	// M-04 (review vòng 4, quyết định team-lead vòng 5): TRƯỚC ĐÂY lỗi sweep chặn hẳn
+	// CreateOrder (return err ngay) — review chỉ ra rủi ro thật: một đơn cũ "độc" (lỗi DB lặp
+	// lại, constraint chưa nới trên DB triển khai chưa restart) khiến user KHÔNG tạo được đơn
+	// mới nào, kể cả đơn không hề dùng voucher — sweep chỉ nên là "best-effort dọn dẹp", không
+	// phải điều kiện tiên quyết để tạo đơn. Đổi thành LOG lỗi rồi ĐI TIẾP thay vì chặn — đơn mới
+	// vẫn tạo được (voucher của đơn cũ bị bỏ rơi có thể tạm thời chưa được release, nhưng đó là
+	// tình trạng "used_count treo" đã biết và chấp nhận được — xem M-07/câu hỏi treo — không tệ
+	// bằng chặn đứng toàn bộ luồng tạo đơn của user).
 	if err := s.sweepExpiredHeldOrders(ctx, userID); err != nil {
-		return nil, err
+		log.Printf("[ORDER-SWEEP-WARN] user=%s sweep đơn hết hạn lỗi (không chặn tạo đơn mới): %v", userID, err)
 	}
 
 	var courseIDs []uuid.UUID
@@ -213,6 +232,13 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 	if req.CouponCode != "" {
 		voucher, discountAmount, err = s.voucherService.ValidateAndApplyVoucher(ctx, req.CouponCode, userID, subtotal, "")
 		if err != nil {
+			// M-06 (review vòng 5): CHỈ đổi thông báo cho ĐÚNG nguyên nhân "voucher không áp
+			// dụng được vì đơn 0đ" (errors.Is ErrVoucherNotApplicable + subtotal thật sự = 0) —
+			// KHÔNG làm phẳng/đổi message cho mọi lỗi voucher khác (mã sai/hết hạn/hết lượt vẫn
+			// trả ErrCouponInvalid như cũ, ngoài phạm vi M-06 được giao — xem M-05 "chưa làm").
+			if errors.Is(err, ErrVoucherNotApplicable) && subtotal.IsZero() {
+				return nil, ErrVoucherNotApplicableToFreeOrder
+			}
 			return nil, ErrCouponInvalid
 		}
 	}
@@ -337,6 +363,14 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 		// CancelOrder khi đơn bị hủy trước khi hoàn tất (và ở CheckAndProcessPayment khi mã
 		// thanh toán hết hạn — M2-02).
 		if voucher != nil {
+			// I-02 (review vòng 5): khoá dòng voucher (SELECT ... FOR UPDATE) + đếm lại
+			// usage_per_user TRONG transaction này, TRƯỚC ReserveVoucherUsage — đóng nốt TOCTOU
+			// mà ValidateAndApplyVoucher (chạy NGOÀI transaction, ở trên) không tự đóng được: 2
+			// request đồng thời của CÙNG user giờ tuần tự hoá qua lock hàng thay vì cùng đọc
+			// heldCount cũ rồi cùng vượt qua.
+			if err := s.voucherService.LockAndCheckUsagePerUser(ctx, txDB, voucher, userID); err != nil {
+				return err
+			}
 			if err := s.voucherService.ReserveVoucherUsage(ctx, txDB, voucher.ID); err != nil {
 				return err
 			}

@@ -3,9 +3,64 @@ package database
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	"gorm.io/gorm"
+	"study.com/v1/internal/model"
 )
+
+// buildOrderStatusConstraintSQL (I-01 + I-05, review vòng 5) — SINH câu SQL của constraint
+// chk_orders_status TỪ statuses (gọi với model.OrderStatuses — SSOT, internal/model/
+// order_status.go) thay vì tự chép lại một chuỗi literal độc lập như TRƯỚC vòng 5. Bằng chứng
+// review vòng 4 (mutation #4): bản literal cũ xóa 'expired' đi mà không có test nào bắt được —
+// SINH ĐỘNG từ slice khiến lớp lỗi đó KHÔNG THỂ xảy ra nữa (sửa migrations.go một mình không đủ
+// để làm SQL lệch khỏi statuses — muốn lệch phải sửa CHÍNH statuses, mà sửa statuses thì
+// TestOrderStatusTagMatchesSSOT bên internal/model đỏ ngay vì tag không đổi theo).
+//
+// I-05: TRƯỚC ĐÂY DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT chạy VÔ ĐIỀU KIỆN mỗi lần
+// RunPostMigrations được gọi (tức mỗi lần API khởi động — internal/app/resources.go) — kết quả
+// idempotent (chạy lại nhiều lần vẫn ra constraint giống hệt) NHƯNG chi phí thì KHÔNG: ALTER
+// TABLE ... ADD CONSTRAINT CHECK khoá ACCESS EXCLUSIVE và VALIDATE TOÀN BỘ bảng orders, ngay cả
+// khi constraint đã đúng sẵn từ lần chạy trước. Bọc DO $$ ... IF NOT EXISTS (...) THEN ... END
+// IF $$ — cùng khuôn với chk_coin_wallet_balance_nonneg (thống kê bên dưới) — chỉ khác:
+// chk_coin_wallet_balance_nonneg chỉ kiểm TỒN TẠI THEO TÊN (constraint đó không bao giờ đổi nội
+// dung sau khi tạo), còn chk_orders_status có thể tồn tại nhưng SAI NỘI DUNG (đúng lỗ hổng
+// B3-01 gốc — dữ liệu cũ có constraint tên đúng nhưng thiếu 'expired') nên phải kiểm THÊM nội
+// dung định nghĩa hiện tại (pg_get_constraintdef) có chứa ĐỦ MỌI giá trị trong statuses không —
+// LIKE '%<status>%' cho từng giá trị (Postgres render CHECK IN (...) thành dạng
+// "= ANY (ARRAY[...])" khi đọc lại qua pg_get_constraintdef, nên so khớp CHÍNH XÁC toàn chuỗi là
+// giòn/dễ vỡ theo version Postgres; kiểm SUBSTRING từng giá trị là đủ để phát hiện "thiếu 1 giá
+// trị" mà không phụ thuộc cách Postgres canonical-hoá cú pháp). Chỉ khi THIẾU (constraint chưa
+// tồn tại HOẶC thiếu ít nhất 1 giá trị) mới trả giá DROP+ADD — đúng 1 lần trên mỗi DB, không
+// phải mỗi lần boot.
+func buildOrderStatusConstraintSQL(statuses []string) string {
+	quoted := make([]string, len(statuses))
+	likeConditions := make([]string, len(statuses))
+	for i, s := range statuses {
+		// statuses luôn đến từ model.OrderStatuses — hằng số compile-time trong code Go, KHÔNG
+		// phải input người dùng, nên nối chuỗi trực tiếp vào SQL literal an toàn (không có input
+		// nào từ bên ngoài chạm tới hàm này).
+		quoted[i] = "'" + s + "'"
+		likeConditions[i] = fmt.Sprintf("pg_get_constraintdef(oid) LIKE '%%%s%%'", s)
+	}
+	valueList := strings.Join(quoted, ", ")
+	allValuesPresent := strings.Join(likeConditions, " AND ")
+
+	return fmt.Sprintf(`
+		DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_constraint
+				WHERE conname = 'chk_orders_status'
+				  AND (%s)
+			) THEN
+				ALTER TABLE orders DROP CONSTRAINT IF EXISTS chk_orders_status;
+				ALTER TABLE orders ADD CONSTRAINT chk_orders_status
+					CHECK (status IN (%s));
+			END IF;
+		END $$;
+	`, allValuesPresent, valueList)
+}
 
 // RunPostMigrations chạy các câu SQL idempotent SAU khi AutoMigrate xong, để sửa
 // những thứ AutoMigrate không tự sửa được: đổi tên/xoá index sai, chuyển unique
@@ -133,21 +188,18 @@ func RunPostMigrations(db *gorm.DB) error {
 			`,
 		},
 		{
-			// B3-01 (review vòng 4): thêm 'expired' vào CHECK constraint của orders.status —
+			// B3-01 (review vòng 4) + I-01/I-05 (review vòng 5): widen CHECK constraint của
+			// orders.status để khớp model.OrderStatuses (SSOT, internal/model/order_status.go).
 			// AutoMigrate CHỈ tạo mới constraint còn thiếu theo TÊN (Migrator().HasConstraint),
-			// không nới rộng constraint đã tồn tại trên DB cũ dù tag Go đã đổi (model/payment.go
-			// Order.Status). Không dùng DO $$ IF NOT EXISTS ở đây vì mục đích là THAY THẾ nội
-			// dung constraint (không phải chỉ tạo nếu chưa có) — DROP CONSTRAINT IF EXISTS rồi
-			// ADD CONSTRAINT lại là idempotent tự nhiên: chạy lại nhiều lần cho kết quả giống
-			// hệt lần đầu (drop cái vừa tạo, tạo lại y hệt). Tên constraint chk_orders_status
-			// khớp quy ước đặt tên mặc định của GORM cho check tag không có tên tường minh
-			// (chk_<table>_<column>).
-			name: "widen chk_orders_status to include 'expired' (B3-01)",
-			sql: `
-				ALTER TABLE orders DROP CONSTRAINT IF EXISTS chk_orders_status;
-				ALTER TABLE orders ADD CONSTRAINT chk_orders_status
-					CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'refunded', 'cancelled', 'expired'));
-			`,
+			// không nới rộng constraint đã tồn tại trên DB cũ dù tag Go đã đổi. Tên constraint
+			// chk_orders_status khớp quy ước đặt tên mặc định của GORM cho check tag không có
+			// tên tường minh (chk_<table>_<column>). SQL được SINH TỪ model.OrderStatuses (xem
+			// buildOrderStatusConstraintSQL ở trên) — KHÔNG còn chép tay danh sách 7 giá trị ở
+			// đây nữa (I-01), và chỉ DROP+ADD khi định nghĩa hiện tại THIẾU giá trị nào đó thay
+			// vì chạy vô điều kiện mỗi lần boot (I-05, tránh ACCESS EXCLUSIVE + validate toàn
+			// bảng orders lặp lại không cần thiết).
+			name: "widen chk_orders_status to match model.OrderStatuses (B3-01/I-01/I-05)",
+			sql:  buildOrderStatusConstraintSQL(model.OrderStatuses),
 		},
 	}
 

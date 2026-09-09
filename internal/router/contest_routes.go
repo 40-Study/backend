@@ -15,14 +15,21 @@ func SetupContestRoutes(api fiber.Router, cfg *config.Config, h *handler.Contest
 
 	// Public
 	contests.Get("/", h.ListContests)
-	contests.Get("/:slug", h.GetContest)
 
 	// Auth required
 	authed := contests.Group("")
 	authed.Use(auth)
 
-	// My contests
+	// My contests (I-04, review vòng 4/5): PHẢI đăng ký TRƯỚC "/:slug" bên dưới — cùng tiền tố
+	// "/contests" (authed := contests.Group("")), Fiber khớp theo THỨ TỰ ĐĂNG KÝ khi route tham
+	// số và route tĩnh cùng độ sâu, không tự ưu tiên tĩnh trước tham số (đã tự kiểm chứng cùng
+	// lớp lỗi ở quiz_router.go/grade_router.go, review vòng 3/4). TRƯỚC ĐÂY "/:slug" đăng ký
+	// trước "/me" nên GET /api/contests/me luôn rơi vào GetContest(slug="me"),
+	// GetMyContests là code chết vĩnh viễn dù không lỗi biên dịch/runtime nào báo.
 	authed.Get("/me", h.GetMyContests)
+
+	// Public slug lookup — ĐĂNG KÝ SAU "/me" ở trên (xem comment).
+	contests.Get("/:slug", h.GetContest)
 
 	// Contest CRUD
 	authed.Post("/", h.CreateContest)

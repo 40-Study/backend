@@ -441,20 +441,17 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 		// phải tx vừa rollback) để có dấu vết trace ngay trong chính bảng order_status_histories
 		// của đơn, không chỉ nằm trong log file. Nếu chính bước ghi fallback này cũng lỗi, chỉ
 		// log thêm — KHÔNG che lỗi gốc.
-		log.Printf("[PAYMENT-ALERT] order=%s tx=%s amount=%s err=%v", orderID, result.TransactionID, result.Amount, err)
-		fallbackHistory := &model.OrderStatusHistory{
-			ID:         uuid.New(),
-			CreatedAt:  time.Now(),
-			OrderID:    orderID,
-			FromStatus: oldStatus,
-			ToStatus:   "fulfillment_failed",
-			Reason: fmt.Sprintf(
-				"Payment transaction %s received (amount %s matched) but order fulfillment failed and the whole transaction rolled back — needs manual reconciliation: %v",
-				result.TransactionID, result.Amount, err),
-		}
-		if histErr := s.orderHistoryRepo.Create(fallbackHistory); histErr != nil {
-			log.Printf("[PAYMENT-ALERT] order=%s tx=%s failed to write fallback fulfillment_failed history: %v", orderID, result.TransactionID, histErr)
-		}
+		//
+		// Tách thành method riêng (vòng 4b, chỉ đạo team-lead — "test: fake fulfillment lỗi ->
+		// có history fulfillment_failed"): DummyDialector (gormtests) KHÔNG hỗ trợ db.Transaction
+		// thật (trả "invalid transaction", không gọi closure) và cũng panic khi Create() chạy
+		// ngoài DryRun (đã tự kiểm chứng bằng script tay, xem báo cáo vòng 4b) — không có
+		// sqlmock/sqlite trong go.sum để giả lập transaction thật. Vì vậy không thể lái toàn bộ
+		// CheckAndProcessPayment qua WithTransaction thật trong unit test. Tách riêng phần XỬ LÝ
+		// SAU KHI transaction đã rollback (log alert + ghi history fallback, dùng connection gốc
+		// s.orderHistoryRepo — không phải tx) thành 1 method độc lập, test trực tiếp bằng fake
+		// orderHistoryRepo mô phỏng lỗi fulfillment, không cần DB thật.
+		s.recordFulfillmentFailureAlert(orderID, oldStatus, result.TransactionID, result.Amount, err)
 		return nil, err
 	}
 
@@ -465,6 +462,31 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 		PaidAt:  &now,
 		Amount:  order.TotalAmount,
 	}, nil
+}
+
+// recordFulfillmentFailureAlert (vòng 4b, chỉ đạo team-lead — tách ra từ CheckAndProcessPayment
+// để test được không cần DB thật): gọi khi nhánh TRẢ PHÍ của CheckAndProcessPayment rollback vì
+// completeOrderFulfillment lỗi, SAU KHI đã loại trừ ErrPaymentAlreadyDone (benign, không alert).
+// Tại thời điểm này giao dịch ngân hàng ĐÃ được amount-match nhưng KHÔNG còn dấu vết nào trong DB
+// (transaction rollback hết) — log "[PAYMENT-ALERT]" cố định prefix để ops grep + ghi 1 dòng
+// order_status_history "fulfillment_failed" NGOÀI transaction đã rollback (best-effort, dùng
+// connection gốc s.orderHistoryRepo). Lỗi ở chính bước ghi fallback này chỉ log thêm, KHÔNG che
+// lỗi gốc (fulfillErr vẫn được caller trả về nguyên vẹn).
+func (s *PaymentService) recordFulfillmentFailureAlert(orderID uuid.UUID, oldStatus, bankTxID, amount string, fulfillErr error) {
+	log.Printf("[PAYMENT-ALERT] order=%s tx=%s amount=%s err=%v", orderID, bankTxID, amount, fulfillErr)
+	fallbackHistory := &model.OrderStatusHistory{
+		ID:         uuid.New(),
+		CreatedAt:  time.Now(),
+		OrderID:    orderID,
+		FromStatus: oldStatus,
+		ToStatus:   "fulfillment_failed",
+		Reason: fmt.Sprintf(
+			"Payment transaction %s received (amount %s matched) but order fulfillment failed and the whole transaction rolled back — needs manual reconciliation: %v",
+			bankTxID, amount, fulfillErr),
+	}
+	if histErr := s.orderHistoryRepo.Create(fallbackHistory); histErr != nil {
+		log.Printf("[PAYMENT-ALERT] order=%s tx=%s failed to write fallback fulfillment_failed history: %v", orderID, bankTxID, histErr)
+	}
 }
 
 // GetPaymentStatus - Get payment status for order

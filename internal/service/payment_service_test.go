@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -187,6 +189,75 @@ func TestCompleteOrderFulfillment(t *testing.T) {
 		}
 		if !voucherSvc.logCalled || !voucherSvc.loggedDiscount.Equal(discount) {
 			t.Errorf("expected RecordUsageLog called with discount=%s, got called=%v amount=%s", discount, voucherSvc.logCalled, voucherSvc.loggedDiscount)
+		}
+	})
+}
+
+// fakeOrderHistoryRepoForAlert (vòng 4b, chỉ đạo team-lead — "test: fake fulfillment lỗi -> có
+// history fulfillment_failed") — fake tối thiểu cho OrderStatusHistoryRepositoryInterface, chỉ
+// override Create để bắt lại history được ghi (hoặc mô phỏng chính bước ghi fallback này cũng
+// lỗi, xem test case thứ 2).
+type fakeOrderHistoryRepoForAlert struct {
+	repository.OrderStatusHistoryRepositoryInterface
+	created   []*model.OrderStatusHistory
+	createErr error
+}
+
+func (f *fakeOrderHistoryRepoForAlert) Create(history *model.OrderStatusHistory) error {
+	f.created = append(f.created, history)
+	return f.createErr
+}
+
+// TestRecordFulfillmentFailureAlert (vòng 4b, chỉ đạo team-lead) — pin hành vi của
+// recordFulfillmentFailureAlert (tách ra từ nhánh rollback của CheckAndProcessPayment, xem
+// comment tại đó lý do không test được end-to-end qua WithTransaction thật: DummyDialector
+// không hỗ trợ db.Transaction thật và panic khi Create() chạy ngoài DryRun — không có
+// sqlmock/sqlite trong go.sum):
+//   - fake completeOrderFulfillment lỗi (giả lập bằng 1 error tuỳ ý truyền thẳng vào) -> phải
+//     ghi ĐÚNG 1 dòng order_status_history với ToStatus="fulfillment_failed", FromStatus=trạng
+//     thái cũ của đơn, Reason chứa cả bankTxID lẫn nội dung lỗi gốc (để đối soát thủ công).
+//   - nếu chính bước ghi fallback history cũng lỗi -> không panic, không giấu gì thêm (hàm vẫn
+//     return bình thường, lỗi gốc do CALLER trả về nguyên vẹn — recordFulfillmentFailureAlert
+//     không có giá trị trả về nên chỉ cần verify không panic + Create vẫn được gọi).
+func TestRecordFulfillmentFailureAlert(t *testing.T) {
+	orderID := uuid.New()
+	oldStatus := "processing"
+	bankTxID := "FT26099999999"
+	amount := "199000"
+	fulfillErr := fmt.Errorf("enrollment insert failed: unique constraint violation")
+
+	t.Run("fulfillment loi -> ghi 1 dong history fulfillment_failed", func(t *testing.T) {
+		historyRepo := &fakeOrderHistoryRepoForAlert{}
+		s := &PaymentService{orderHistoryRepo: historyRepo}
+
+		s.recordFulfillmentFailureAlert(orderID, oldStatus, bankTxID, amount, fulfillErr)
+
+		if len(historyRepo.created) != 1 {
+			t.Fatalf("expected exactly 1 history row created, got %d", len(historyRepo.created))
+		}
+		h := historyRepo.created[0]
+		if h.OrderID != orderID {
+			t.Errorf("expected OrderID=%s, got %s", orderID, h.OrderID)
+		}
+		if h.ToStatus != "fulfillment_failed" {
+			t.Errorf("expected ToStatus=fulfillment_failed, got %q", h.ToStatus)
+		}
+		if h.FromStatus != oldStatus {
+			t.Errorf("expected FromStatus=%s, got %q", oldStatus, h.FromStatus)
+		}
+		if !strings.Contains(h.Reason, bankTxID) || !strings.Contains(h.Reason, fulfillErr.Error()) {
+			t.Errorf("expected Reason to reference bankTxID and original error, got %q", h.Reason)
+		}
+	})
+
+	t.Run("ghi fallback history cung loi -> khong panic, van goi Create", func(t *testing.T) {
+		historyRepo := &fakeOrderHistoryRepoForAlert{createErr: fmt.Errorf("db down")}
+		s := &PaymentService{orderHistoryRepo: historyRepo}
+
+		s.recordFulfillmentFailureAlert(orderID, oldStatus, bankTxID, amount, fulfillErr)
+
+		if len(historyRepo.created) != 1 {
+			t.Fatalf("expected Create to still be attempted once, got %d calls", len(historyRepo.created))
 		}
 	})
 }

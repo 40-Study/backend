@@ -11,13 +11,22 @@ import (
 )
 
 // OrderRepositoryInterface defines the interface for Order operations
+//
+// M-07 (review vòng 5): UpdateStatus/UpdateStatusWithTx/GetPendingOrders ĐÃ XÓA khỏi cả interface
+// này lẫn OrderRepository (order_repository.go) — grep xác nhận (2026-09-09, toàn bộ backend/,
+// loại trừ 2 file định nghĩa) 0 call site nào còn lại sau khi releaseOrderAndTransition (vòng 4)
+// thay thế mọi UPDATE status vô điều kiện bằng UPDATE có điều kiện + RowsAffected, và lazy-sweep
+// (H3-01b, vòng 4) thay thế vai trò "cron dọn đơn hết hạn" mà GetPendingOrders từng chuẩn bị cho.
+// Rủi ro CÒN TỒN ĐỌNG sau khi xóa (ghi rõ, không giấu — xem báo cáo vòng 5 "câu hỏi treo"):
+// lazy-sweep CHỈ dọn đơn của CHÍNH user đang tạo đơn mới — đơn "pending" của một user KHÔNG BAO
+// GIỜ quay lại tạo đơn nữa sẽ giữ used_count voucher ĐÃ RESERVE vĩnh viễn, không ai dọn. Xóa hẳn
+// (không giữ để viết cron sau) là quyết định team-lead vòng 5.
 type OrderRepositoryInterface interface {
 	Create(order *model.Order) error
 	GetByID(id uuid.UUID) (*model.Order, error)
 	GetByOrderNumber(orderNumber string) (*model.Order, error)
 	GetByUserID(userID uuid.UUID, page, limit int, status string) ([]model.Order, int64, error)
 	GetByUserIDAndStatus(userID uuid.UUID, status string) ([]model.Order, error)
-	UpdateStatus(orderID uuid.UUID, status string) error
 	UpdatePaymentCode(orderID uuid.UUID, paymentCode string, expiredAt time.Time) error
 	UpdatePaymentInfo(orderID uuid.UUID, paymentMethod, paymentGateway, transactionID string, paidAt time.Time) error
 	Update(order *model.Order) error
@@ -26,9 +35,7 @@ type OrderRepositoryInterface interface {
 	// TxDB (H2-06, review vòng 3): xem comment tại OrderRepository.TxDB (order_repository.go).
 	TxDB() *gorm.DB
 	GetForUpdate(tx *gorm.DB, id uuid.UUID) (*model.Order, error)
-	UpdateStatusWithTx(tx *gorm.DB, orderID uuid.UUID, status string) error
 	CheckOrderNumberExists(orderNumber string) (bool, error)
-	GetPendingOrders(expiredBefore time.Time) ([]model.Order, error)
 	// GetExpiredHeldOrdersForUser (H3-01b, review vòng 4): xem comment tại
 	// OrderRepository.GetExpiredHeldOrdersForUser (order_repository.go).
 	GetExpiredHeldOrdersForUser(userID uuid.UUID, defaultTTL time.Duration) ([]model.Order, error)
