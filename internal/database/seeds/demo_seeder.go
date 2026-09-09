@@ -43,6 +43,34 @@ func (s *Seeder) SeedDemoData() error {
 		return fmt.Errorf("demo vouchers: %w", err)
 	}
 
+	if err := s.SeedDemoDiscussions(users); err != nil {
+		return fmt.Errorf("demo discussions: %w", err)
+	}
+
+	if err := s.SeedDemoReviews(users, courses); err != nil {
+		return fmt.Errorf("demo reviews: %w", err)
+	}
+
+	if err := s.SeedDemoCertificates(users, courses); err != nil {
+		return fmt.Errorf("demo certificates: %w", err)
+	}
+
+	if err := s.SeedDemoCoins(users); err != nil {
+		return fmt.Errorf("demo coins: %w", err)
+	}
+
+	if err := s.SeedDemoNotifications(users); err != nil {
+		return fmt.Errorf("demo notifications: %w", err)
+	}
+
+	if err := s.SeedDemoBaskets(users, courses); err != nil {
+		return fmt.Errorf("demo baskets: %w", err)
+	}
+
+	if err := s.SeedDemoClasses(users, courses); err != nil {
+		return fmt.Errorf("demo classes: %w", err)
+	}
+
 	log.Println("=== Demo data seeded successfully ===")
 	return nil
 }
