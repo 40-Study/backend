@@ -47,10 +47,18 @@ func (r *VoucherRepository) CreateVoucher(ctx context.Context, voucher *model.Vo
 // vì đây mới là bảng web thực sự dùng (GET /vouchers/code/:code) — order_service.CreateOrder
 // giờ validate/áp mã giảm giá qua vouchers thay vì coupons (bảng coupons không còn route/handler
 // nào tạo dữ liệu, xem ghi chú "coupons deprecated" trong báo cáo).
-func (r *VoucherRepository) IncrementUsedCount(ctx context.Context, voucherID uuid.UUID) error {
-	result := r.db.WithContext(ctx).Model(&model.Voucher{}).
+// buildIncrementUsedCountQuery (M2-05, review vòng 3): tách phần XÂY câu UPDATE có điều kiện
+// chống race ra khỏi phần map RowsAffected -> error, để test DryRun
+// (voucher_repository_test.go) gọi được ĐÚNG hàm sản xuất thật thay vì hand-roll lại câu query
+// trong test — xóa/sửa sai điều kiện WHERE ở đây sẽ làm test đỏ.
+func (r *VoucherRepository) buildIncrementUsedCountQuery(ctx context.Context, voucherID uuid.UUID) *gorm.DB {
+	return r.db.WithContext(ctx).Model(&model.Voucher{}).
 		Where("id = ? AND (usage_limit <= 0 OR used_count < usage_limit)", voucherID).
 		Update("used_count", gorm.Expr("used_count + 1"))
+}
+
+func (r *VoucherRepository) IncrementUsedCount(ctx context.Context, voucherID uuid.UUID) error {
+	result := r.buildIncrementUsedCountQuery(ctx, voucherID)
 	if result.Error != nil {
 		return result.Error
 	}

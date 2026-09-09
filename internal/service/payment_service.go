@@ -47,6 +47,9 @@ type PaymentService struct {
 	// sang kiểu cụ thể để completeOrderFulfillment (dùng chung với OrderService.CreateOrder,
 	// đơn 0đ) không phải type-assert lại.
 	enrollmentRepo     repository.EnrollmentRepositoryInterface
+	// courseRepo (H2-04, review vòng 3): completeOrderFulfillment cần tăng total_students khi
+	// tạo/khôi phục enrollment — trước đây hàm này hoàn toàn không đụng tới total_students.
+	courseRepo         repository.CourseRepositoryInterface
 	couponRepo         repository.CouponRepositoryInterface
 	voucherService     VoucherServiceInterface
 	transactionService TransactionServiceInterface
@@ -58,6 +61,7 @@ func NewPaymentService(
 	paymentEventRepo repository.PaymentEventRepositoryInterface,
 	orderHistoryRepo repository.OrderStatusHistoryRepositoryInterface,
 	enrollmentRepo repository.EnrollmentRepositoryInterface,
+	courseRepo repository.CourseRepositoryInterface,
 	couponRepo repository.CouponRepositoryInterface,
 	voucherService VoucherServiceInterface,
 	transactionService TransactionServiceInterface,
@@ -68,6 +72,7 @@ func NewPaymentService(
 		paymentEventRepo:   paymentEventRepo,
 		orderHistoryRepo:   orderHistoryRepo,
 		enrollmentRepo:     enrollmentRepo,
+		courseRepo:         courseRepo,
 		couponRepo:         couponRepo,
 		voucherService:     voucherService,
 		transactionService: transactionService,
@@ -76,43 +81,79 @@ func NewPaymentService(
 
 // completeOrderFulfillment (item 14, review vòng 1 — "gọi đúng logic tạo enrollment đang dùng
 // ở CheckAndProcessPayment, tách thành hàm dùng chung, không copy"): tạo enrollment cho từng
-// course trong đơn (bỏ qua nếu đã enroll), và ghi nhận usage voucher (nếu có) — increment
-// used_count + tạo VoucherLog. Dùng chung cho CheckAndProcessPayment (đơn trả phí, sau khi
-// khớp giao dịch ngân hàng) VÀ nhánh đơn 0đ tự hoàn tất trong OrderService.CreateOrder.
+// course trong đơn (bỏ qua nếu đã enroll), và ghi nhận usage voucher (nếu có). Dùng chung cho
+// CheckAndProcessPayment (đơn trả phí, sau khi khớp giao dịch ngân hàng) VÀ nhánh đơn 0đ tự
+// hoàn tất trong OrderService.CreateOrder.
 //
-// H-07 (báo cáo vòng 2, mục "chưa làm", vẫn còn nguyên — KHÔNG mở rộng sửa ở đây): khối này
-// chạy SAU KHI order status đã cập nhật xong (ở CheckAndProcessPayment) — nếu enrollment tạo
-// lỗi giữa chừng, order đã "completed" nhưng có thể thiếu enrollment cho vài course. Đây là gap
-// kiến trúc Unit-of-Work đã biết từ trước, không phải lỗi mới của lần sửa này.
+// H2-04 (review vòng 3): TRƯỚC ĐÂY dùng GetByUserAndCourse (có scope, loại soft-delete) + Create
+// vô điều kiện — mua lại một khóa đã Unenroll trước đó (bản ghi cũ vẫn còn, chỉ bị soft-delete)
+// sẽ vi phạm unique index idx_user_course khi INSERT mới. Đồng thời hàm này KHÔNG hề gọi
+// IncrementTotalStudents, khiến courses.total_students sai lệch với số enrollment thật cho MỌI
+// đơn hàng đi qua CreateOrder/CheckAndProcessPayment. Sửa bằng cách TÁI DÙNG đúng logic
+// EnrollmentService.Enroll (GetByUserAndCourseUnscoped + RestoreAndReactivate cho trường hợp
+// re-enroll, Create cho trường hợp enroll lần đầu, IncrementTotalStudents đúng 1 lần cho cả hai
+// nhánh) — không copy logic mới, chỉ viết lại inline vì đây là 1 hàm tự do (không phải method
+// của EnrollmentService) nên không gọi thẳng EnrollmentService.Enroll được (Enroll còn có bước
+// kiểm course.Price.IsZero() không áp dụng ở đây — item này được gọi CHÍNH XÁC vì order đã trả
+// tiền/đơn 0đ, không cần kiểm lại giá).
+//
+// H2-05 (review vòng 3): KHÔNG còn gọi voucherService.IncrementUsedCount ở đây nữa — used_count
+// giờ được "reserve" (tăng) ngay lúc TẠO đơn (OrderService.CreateOrder, trong cùng transaction —
+// xem VoucherServiceInterface.ReserveVoucherUsage) để chặn oversell khi nhiều đơn "pending" tồn
+// tại song song. Hàm này chỉ còn ghi VoucherLog (audit trail) khi fulfillment thành công.
 func completeOrderFulfillment(
 	ctx context.Context,
 	enrollmentRepo repository.EnrollmentRepositoryInterface,
+	courseRepo repository.CourseRepositoryInterface,
 	voucherService VoucherServiceInterface,
 	items []model.OrderItem,
 	order *model.Order,
 ) error {
 	for _, item := range items {
-		existingEnrollment, checkErr := enrollmentRepo.GetByUserAndCourse(ctx, order.UserID, item.CourseID)
-		if checkErr == nil && existingEnrollment != nil {
-			continue // Already enrolled
+		existing, err := enrollmentRepo.GetByUserAndCourseUnscoped(ctx, order.UserID, item.CourseID)
+		if err != nil {
+			return fmt.Errorf("failed to check existing enrollment for course %s: %w", item.CourseID, err)
 		}
 
-		enrollment := &model.Enrollment{
-			UserID:     order.UserID,
-			CourseID:   item.CourseID,
-			EnrolledAt: time.Now(),
+		if existing != nil && !existing.DeletedAt.Valid {
+			continue // Đã enroll (active) — bỏ qua, không tăng total_students lần 2.
 		}
-		if err := enrollmentRepo.Create(ctx, enrollment); err != nil {
-			return fmt.Errorf("failed to create enrollment for course %s: %w", item.CourseID, err)
+
+		if existing != nil && existing.DeletedAt.Valid {
+			// Mua lại khóa đã Unenroll trước đó: khôi phục bản ghi cũ thay vì INSERT mới, tránh
+			// vi phạm idx_user_course — khớp EnrollmentService.Enroll.
+			now := time.Now()
+			updates := map[string]interface{}{
+				"enrolled_at":         now,
+				"completed_at":        nil,
+				"last_accessed_at":    nil,
+				"progress_percentage": decimal.Zero,
+			}
+			if err := enrollmentRepo.RestoreAndReactivate(ctx, existing.ID, updates); err != nil {
+				return fmt.Errorf("failed to restore enrollment for course %s: %w", item.CourseID, err)
+			}
+		} else {
+			enrollment := &model.Enrollment{
+				UserID:     order.UserID,
+				CourseID:   item.CourseID,
+				EnrolledAt: time.Now(),
+			}
+			if err := enrollmentRepo.Create(ctx, enrollment); err != nil {
+				return fmt.Errorf("failed to create enrollment for course %s: %w", item.CourseID, err)
+			}
+		}
+
+		if courseRepo != nil {
+			if err := courseRepo.IncrementTotalStudents(ctx, item.CourseID, 1); err != nil {
+				return fmt.Errorf("failed to increment total_students for course %s: %w", item.CourseID, err)
+			}
 		}
 	}
 
-	// item 24: voucher usage (bảng vouchers) thay cho coupon usage (bảng coupons đã bỏ —
-	// xem comment VoucherID/CouponID tại model.Order).
+	// item 24: voucher usage log (bảng vouchers) thay cho coupon usage (bảng coupons đã bỏ —
+	// xem comment VoucherID/CouponID tại model.Order). used_count đã reserve lúc tạo đơn
+	// (H2-05) — ở đây chỉ ghi log.
 	if order.VoucherID != nil && voucherService != nil {
-		if err := voucherService.IncrementUsedCount(ctx, *order.VoucherID); err != nil {
-			return fmt.Errorf("failed to increment voucher usage: %w", err)
-		}
 		if err := voucherService.RecordUsageLog(ctx, *order.VoucherID, order.UserID, order.ID, order.DiscountAmount); err != nil {
 			return fmt.Errorf("failed to record voucher usage log: %w", err)
 		}
@@ -220,6 +261,48 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 		}, nil
 	}
 
+	// M2-02 (review vòng 3): payment_code_expired_at TRƯỚC ĐÂY được LƯU (item 25, vòng 1) nhưng
+	// KHÔNG BAO GIỜ được đọc lại để từ chối — người dùng vẫn có thể bấm "Tôi đã chuyển khoản"
+	// (CheckPayment, gọi thẳng hàm này) hoặc poll GetPaymentStatus sau khi mã đã hết hạn và giao
+	// dịch ngân hàng khớp muộn vẫn được xử lý bình thường. Chặn ngay khi phát hiện quá hạn:
+	// chuyển đơn sang "expired" (hoàn lại used_count đã reserve nếu có voucher — H2-05) thay vì
+	// tiếp tục gọi gRPC check giao dịch. "expired" đã là trạng thái web mong đợi (xem
+	// web/src/services/order.service.ts OrderStatus + use-orders.ts PAYMENT_TERMINAL_STATUSES).
+	if order.PaymentCodeExpiredAt != nil && time.Now().After(*order.PaymentCodeExpiredAt) {
+		oldStatus := order.Status
+		expireErr := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
+			if err := txRepo.UpdateStatus(order.ID, "expired"); err != nil {
+				return err
+			}
+			history := &model.OrderStatusHistory{
+				ID:         uuid.New(),
+				CreatedAt:  time.Now(),
+				OrderID:    order.ID,
+				FromStatus: oldStatus,
+				ToStatus:   "expired",
+				Reason:     "Payment code expired",
+			}
+			orderHistoryRepoTx := repository.NewOrderStatusHistoryRepository(txRepo.TxDB())
+			if err := orderHistoryRepoTx.Create(history); err != nil {
+				return err
+			}
+			if order.VoucherID != nil && s.voucherService != nil {
+				if err := s.voucherService.ReleaseVoucherUsage(ctx, txRepo.TxDB(), *order.VoucherID); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if expireErr != nil {
+			return nil, expireErr
+		}
+		return &dto.PaymentStatusResponse{
+			OrderID: orderID,
+			Status:  "expired",
+			Amount:  order.TotalAmount,
+		}, nil
+	}
+
 	// Get payment code from order (stored in PaymentTransactionID for now)
 	paymentCode := ""
 	if order.PaymentTransactionID != nil {
@@ -316,7 +399,7 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 	// item 14: logic tạo enrollment + ghi usage voucher tách thành completeOrderFulfillment
 	// (dùng chung với nhánh đơn 0đ tự hoàn tất trong OrderService.CreateOrder).
 	if s.enrollmentRepo != nil {
-		if err := completeOrderFulfillment(ctx, s.enrollmentRepo, s.voucherService, items, order); err != nil {
+		if err := completeOrderFulfillment(ctx, s.enrollmentRepo, s.courseRepo, s.voucherService, items, order); err != nil {
 			return nil, err
 		}
 	}

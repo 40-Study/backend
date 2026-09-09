@@ -1,13 +1,13 @@
 package repository
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	gormtests "gorm.io/gorm/utils/tests"
-	"study.com/v1/internal/model"
 )
 
 // TestRestoreAndReactivate_SingleUpdateClearsDeletedAt (H-02, review vòng 1) — pin lại đúng
@@ -23,11 +23,18 @@ import (
 //
 // Dùng DummyDialector (đã có sẵn trong module gorm, không thêm dependency) ở chế độ DryRun,
 // giống pattern coupon_repository_test.go — không cần Postgres thật.
+//
+// M2-05 (review vòng 3): TRƯỚC ĐÂY test này hand-roll lại câu query bằng tay
+// (db.Model(...).Where(...).Updates(...)) thay vì gọi RestoreAndReactivate thật — xóa hẳn
+// RestoreAndReactivate vẫn không làm test này đỏ ("green that proves nothing"). Sửa bằng cách
+// gọi buildRestoreAndReactivateQuery — hàm PRODUCTION thật mà RestoreAndReactivate ủy quyền tới
+// (xem enrollment_repository.go) — trên DryRun DB rồi đọc Statement.SQL từ kết quả trả về.
 func TestRestoreAndReactivate_SingleUpdateClearsDeletedAt(t *testing.T) {
 	db, err := gorm.Open(gormtests.DummyDialector{}, &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to open dummy gorm db: %v", err)
 	}
+	repo := &EnrollmentRepository{db: db.Session(&gorm.Session{DryRun: true})}
 
 	enrollmentID := uuid.New()
 	updates := map[string]interface{}{
@@ -36,13 +43,8 @@ func TestRestoreAndReactivate_SingleUpdateClearsDeletedAt(t *testing.T) {
 		"last_accessed_at":    nil,
 		"progress_percentage": 0,
 	}
-	updates["deleted_at"] = nil
 
-	dryRun := db.Session(&gorm.Session{DryRun: true}).
-		Unscoped().
-		Model(&model.Enrollment{}).
-		Where("id = ?", enrollmentID).
-		Updates(updates)
+	dryRun := repo.buildRestoreAndReactivateQuery(context.Background(), enrollmentID, updates)
 
 	sql := dryRun.Statement.SQL.String()
 
@@ -59,5 +61,23 @@ func TestRestoreAndReactivate_SingleUpdateClearsDeletedAt(t *testing.T) {
 	// được đúng bản ghi đang bị soft-delete (deleted_at IS NULL sẽ loại nó ra khỏi WHERE).
 	if strings.Contains(sql, `"enrollments"."deleted_at" IS NULL`) {
 		t.Errorf("expected Unscoped() to remove default soft-delete WHERE clause, got SQL: %s", sql)
+	}
+}
+
+// TestRestoreAndReactivate_DelegatesToQueryBuilder (M2-05, review vòng 3) — pin hợp đồng RẰNG
+// RestoreAndReactivate (method thật, dùng ở EnrollmentService.Enroll/completeOrderFulfillment)
+// TRẢ VỀ đúng .Error của buildRestoreAndReactivateQuery, không tự làm gì khác. Gọi trên DryRun DB
+// (không thực thi thật, .Error luôn nil cho một Statement hợp lệ) — nếu ai xóa hẳn
+// RestoreAndReactivate, test này đỏ vì không còn compile được.
+func TestRestoreAndReactivate_DelegatesToQueryBuilder(t *testing.T) {
+	db, err := gorm.Open(gormtests.DummyDialector{}, &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open dummy gorm db: %v", err)
+	}
+	repo := &EnrollmentRepository{db: db.Session(&gorm.Session{DryRun: true})}
+
+	updates := map[string]interface{}{"enrolled_at": "now"}
+	if err := repo.RestoreAndReactivate(context.Background(), uuid.New(), updates); err != nil {
+		t.Errorf("RestoreAndReactivate() on DryRun DB should not error, got %v", err)
 	}
 }

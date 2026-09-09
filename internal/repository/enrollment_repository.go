@@ -96,9 +96,16 @@ func (r *EnrollmentRepository) Restore(ctx context.Context, id uuid.UUID) error 
 // trong bộ nhớ, nên Save() ghi đè lại đúng giá trị deleted_at vừa xóa, vô hiệu hóa Restore().
 // Gộp restore + set field vào MỘT lệnh Updates() duy nhất (map, không qua struct) để tránh
 // hoàn toàn vấn đề stale-in-memory-field.
-func (r *EnrollmentRepository) RestoreAndReactivate(ctx context.Context, id uuid.UUID, updates map[string]interface{}) error {
+// buildRestoreAndReactivateQuery (M2-05, review vòng 3): tách phần XÂY câu UPDATE ra khỏi phần
+// đọc .Error, để test DryRun (enrollment_repository_test.go) gọi được ĐÚNG hàm sản xuất thật
+// thay vì hand-roll lại câu query trong test — xóa/sửa sai hàm này sẽ làm test đỏ.
+func (r *EnrollmentRepository) buildRestoreAndReactivateQuery(ctx context.Context, id uuid.UUID, updates map[string]interface{}) *gorm.DB {
 	updates["deleted_at"] = nil
-	return r.db.WithContext(ctx).Unscoped().Model(&model.Enrollment{}).Where("id = ?", id).Updates(updates).Error
+	return r.db.WithContext(ctx).Unscoped().Model(&model.Enrollment{}).Where("id = ?", id).Updates(updates)
+}
+
+func (r *EnrollmentRepository) RestoreAndReactivate(ctx context.Context, id uuid.UUID, updates map[string]interface{}) error {
+	return r.buildRestoreAndReactivateQuery(ctx, id, updates).Error
 }
 
 func (r *EnrollmentRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Enrollment, error) {

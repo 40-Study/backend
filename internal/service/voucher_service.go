@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -28,6 +29,11 @@ var (
 	ErrVoucherUsageLimitExceeded   = errors.New("voucher usage limit exceeded")
 	ErrVoucherPerUserLimitExceeded = errors.New("voucher usage limit per user exceeded")
 	ErrVoucherNotFoundByCode       = errors.New("voucher not found")
+	// ErrVoucherNotMoneyUnit (H2-01, review vòng 3): voucher discount_unit != MONEY (đổi bằng
+	// điểm) không áp dụng được cho đơn hàng tiền mặt — web từ chối rõ ràng
+	// (errorMessage "Voucher này đổi bằng điểm..."), backend trước đây ÂM THẦM trả discount=0
+	// cho nhánh PERCENT (vẫn coi là "áp dụng thành công", chỉ là giảm 0đ) thay vì từ chối hẳn.
+	ErrVoucherNotMoneyUnit = errors.New("voucher is point-based, not applicable to cash payment")
 )
 
 type VoucherServiceInterface interface {
@@ -55,8 +61,23 @@ type VoucherServiceInterface interface {
 	ValidateAndApplyVoucher(ctx context.Context, code string, userID uuid.UUID, subtotal decimal.Decimal, paymentMethod string) (*model.Voucher, decimal.Decimal, error)
 	// IncrementUsedCount + RecordUsageLog: gọi lúc đơn hàng HOÀN TẤT (không phải lúc tạo đơn)
 	// — cùng thời điểm CouponRepository.IncrementUsageCount/CreateUsage trước đây được gọi.
+	//
+	// H2-05 (review vòng 3): IncrementUsedCount hiện KHÔNG còn được gọi ở completeOrderFulfillment
+	// nữa (used_count giờ được "reserve" (tăng) ngay lúc TẠO đơn — xem ReserveVoucherUsage —
+	// để chặn oversell khi nhiều đơn "pending" cùng tồn tại chưa ai hoàn tất). Giữ nguyên method
+	// này trong interface (không xoá) vì có thể còn dùng cho thao tác thủ công/tương lai; chỉ
+	// đổi ĐIỂM GỌI trong luồng order.
 	IncrementUsedCount(ctx context.Context, voucherID uuid.UUID) error
 	RecordUsageLog(ctx context.Context, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error
+	// ReserveVoucherUsage / ReleaseVoucherUsage (H2-05, review vòng 3): tăng/giảm used_count
+	// bằng UPDATE có điều kiện chạy TRÊN "tx" được truyền vào (không phải trên vs.vr — connection
+	// gốc) để tham gia CÙNG một database transaction với việc tạo/hủy đơn hàng — xem
+	// OrderService.CreateOrder (reserve lúc tạo đơn) và OrderService.CancelOrder /
+	// PaymentService.CheckAndProcessPayment (release khi đơn bị hủy/mã thanh toán hết hạn).
+	// Dùng CÙNG điều kiện chống race đã có ở IncrementUsedCount (usage_limit <= 0 OR used_count
+	// < usage_limit), không viết lại logic mới.
+	ReserveVoucherUsage(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) error
+	ReleaseVoucherUsage(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) error
 
 	// User Voucher (Bookmark/Save)
 	SaveVoucher(ctx context.Context, userID uuid.UUID, req *dto.SaveVoucherRequest) (*model.UserVoucher, error)
@@ -409,30 +430,44 @@ func (vs *VoucherService) CalculateDiscountAmount(voucher *model.Voucher, orderA
 	return discountAmount, nil
 }
 
-// calculateVoucherDiscountDecimal (item 24, review web) tính discount bằng decimal.Decimal —
-// bản decimal-native của CalculateDiscountAmount (vốn dùng int64, phù hợp cho luồng xu) để
-// khớp với subtotal decimal.Decimal mà order_service.go đang dùng. Công thức PHẢI khớp đúng
-// calculateVoucherDiscount phía web (voucher-input.tsx): dùng discount_unit/discount_method/
-// max_discount_money/min_purchase_money của model.Voucher, clamp về subtotal, không âm.
+// calculateVoucherDiscountDecimal (item 24 vòng 2b, H2-01/H2-02 review vòng 3) tính discount
+// bằng decimal.Decimal — bản decimal-native của CalculateDiscountAmount (vốn dùng int64, phù
+// hợp cho luồng xu) để khớp với subtotal decimal.Decimal mà order_service.go đang dùng. Công
+// thức PHẢI khớp ĐÚNG calculateVoucherDiscount phía web (voucher.service.ts):
+//
+//  1. discount_unit phải là MONEY — web chặn CẢ HAI method (PERCENT lẫn FIXED) ngay từ đầu
+//     hàm, TRƯỚC khi xét discount_method. H2-01 (review vòng 3): bản Go trước đây chỉ kiểm
+//     DiscountUnit ở nhánh FIXED, nhánh PERCENT không kiểm gì — voucher POINT+PERCENT vẫn áp
+//     và giảm tiền thật dù web đã từ chối, tạo lệch hợp đồng backend/web.
+//  2. PERCENT: subtotal * percent / 100, clamp bằng max_discount_money (chỉ khi cap > 0).
+//     FIXED (mọi method khác PERCENT): dùng thẳng discount_amount_money.
+//  3. H2-02 (review vòng 3): web dùng Math.floor(discount) TRƯỚC khi clamp về subtotal — bản
+//     Go trước đây giữ nguyên phần thập phân của decimal.Decimal, nên với subtotal lẻ (vd
+//     199.999 × 10% = 19.999,9) số tiền backend trừ khác số web hiển thị. Dùng Floor().
 func calculateVoucherDiscountDecimal(voucher *model.Voucher, subtotal decimal.Decimal) decimal.Decimal {
-	discount := decimal.Zero
+	// (1) discount_unit phải là MONEY cho CẢ HAI method — khớp thứ tự kiểm của web.
+	if voucher.DiscountUnit != model.DiscountUnitMoney {
+		return decimal.Zero
+	}
 
+	discount := decimal.Zero
 	switch voucher.DiscountMethod {
-	case model.DiscountMethodFixed:
-		if voucher.DiscountUnit == model.DiscountUnitMoney && voucher.DiscountAmountMoney != nil {
-			discount = *voucher.DiscountAmountMoney
-		}
-		// DiscountUnitPoint (giảm giá bằng điểm) không áp dụng cho luồng đơn hàng tiền mặt
-		// (order_service.go) — chỉ MONEY mới có ý nghĩa ở đây.
 	case model.DiscountMethodPercent:
 		if voucher.DiscountPercent != nil {
 			discount = subtotal.Mul(*voucher.DiscountPercent).Div(decimal.NewFromInt(100))
-			if voucher.MaxDiscountMoney != nil && discount.GreaterThan(*voucher.MaxDiscountMoney) {
+			if voucher.MaxDiscountMoney != nil && voucher.MaxDiscountMoney.GreaterThan(decimal.Zero) &&
+				discount.GreaterThan(*voucher.MaxDiscountMoney) {
 				discount = *voucher.MaxDiscountMoney
 			}
 		}
+	default: // FIXED — khớp nhánh "else" của web (mọi method không phải PERCENT)
+		if voucher.DiscountAmountMoney != nil {
+			discount = *voucher.DiscountAmountMoney
+		}
 	}
 
+	// (3) Floor TRƯỚC khi clamp về subtotal/0 — đúng thứ tự web: Math.max(0, Math.min(Math.floor(discount), subtotal)).
+	discount = discount.Floor()
 	if discount.GreaterThan(subtotal) {
 		discount = subtotal
 	}
@@ -462,6 +497,12 @@ func (vs *VoucherService) ValidateAndApplyVoucher(ctx context.Context, code stri
 	}
 	if voucher.EndDate != nil && now.After(*voucher.EndDate) {
 		return nil, decimal.Zero, ErrVoucherExpired
+	}
+
+	// H2-01: chặn hẳn voucher đổi bằng điểm (POINT) trước khi tính discount — khớp web, tránh
+	// trả về "áp dụng thành công, discount=0" gây hiểu nhầm mã hợp lệ.
+	if voucher.DiscountUnit != model.DiscountUnitMoney {
+		return nil, decimal.Zero, ErrVoucherNotMoneyUnit
 	}
 
 	if voucher.MinPurchaseMoney != nil && subtotal.LessThan(*voucher.MinPurchaseMoney) {
@@ -502,6 +543,29 @@ func (vs *VoucherService) ValidateAndApplyVoucher(ctx context.Context, code stri
 // IncrementUsedCount — xem comment interface.
 func (vs *VoucherService) IncrementUsedCount(ctx context.Context, voucherID uuid.UUID) error {
 	return vs.vr.IncrementUsedCount(ctx, voucherID)
+}
+
+// ReserveVoucherUsage — xem comment interface. Chạy trực tiếp trên "tx" (không qua vs.vr, vốn
+// luôn cầm connection gốc) để lời gọi này tham gia đúng transaction của caller.
+func (vs *VoucherService) ReserveVoucherUsage(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) error {
+	result := tx.WithContext(ctx).Model(&model.Voucher{}).
+		Where("id = ? AND (usage_limit <= 0 OR used_count < usage_limit)", voucherID).
+		Update("used_count", gorm.Expr("used_count + 1"))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrVoucherUsageLimitExceeded
+	}
+	return nil
+}
+
+// ReleaseVoucherUsage — hoàn lại 1 lượt used_count đã reserve khi đơn hàng bị hủy/hết hạn trước
+// khi hoàn tất. Điều kiện "used_count > 0" tránh giảm xuống âm nếu bị gọi trùng lặp.
+func (vs *VoucherService) ReleaseVoucherUsage(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) error {
+	return tx.WithContext(ctx).Model(&model.Voucher{}).
+		Where("id = ? AND used_count > 0", voucherID).
+		Update("used_count", gorm.Expr("used_count - 1")).Error
 }
 
 // RecordUsageLog — xem comment interface. Tự tra lại voucher.Code (VoucherLog.VoucherCode

@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -275,12 +274,21 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 	}
 
 	// Save order and items in transaction
+	//
+	// H2-06 (review vòng 3): TRƯỚC ĐÂY chỉ txRepo.Create(order) chạy trong transaction —
+	// s.orderItemRepo/s.orderHistoryRepo dùng CONNECTION GỐC (không phải tx), nên lỗi ở bất kỳ
+	// bước nào sau order_items/history KHÔNG rollback được order đã insert. Dựng orderItemRepo/
+	// orderHistoryRepo TX-BOUND qua txRepo.TxDB() để toàn bộ order + order_items + history +
+	// voucher used_count + (đơn 0đ) fulfillment CÙNG rollback nếu bất kỳ bước nào lỗi.
 	err = s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
+		txDB := txRepo.TxDB()
+
 		if err := txRepo.Create(order); err != nil {
 			return err
 		}
 
-		if err := s.orderItemRepo.CreateBatch(items); err != nil {
+		orderItemRepoTx := repository.NewOrderItemRepository(txDB)
+		if err := orderItemRepoTx.CreateBatch(items); err != nil {
 			return err
 		}
 
@@ -298,8 +306,33 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 			ToStatus:   status,
 			Reason:     reason,
 		}
-		if err := s.orderHistoryRepo.Create(history); err != nil {
+		orderHistoryRepoTx := repository.NewOrderStatusHistoryRepository(txDB)
+		if err := orderHistoryRepoTx.Create(history); err != nil {
 			return err
+		}
+
+		// H2-05 (review vòng 3): reserve used_count NGAY khi tạo đơn (áp dụng cho MỌI đơn có
+		// voucher, không chỉ đơn 0đ) — trước đây chỉ tăng lúc đơn HOÀN TẤT
+		// (completeOrderFulfillment), để hở khoảng trống: nhiều đơn "pending" cùng lúc dùng
+		// chung 1 voucher có thể vượt usage_limit vì chưa ai bị trừ lúc tạo đơn. Hoàn lại ở
+		// CancelOrder khi đơn bị hủy trước khi hoàn tất (và ở CheckAndProcessPayment khi mã
+		// thanh toán hết hạn — M2-02).
+		if voucher != nil {
+			if err := s.voucherService.ReserveVoucherUsage(ctx, txDB, voucher.ID); err != nil {
+				return err
+			}
+		}
+
+		// H2-03 (review vòng 3): đơn 0đ (khóa miễn phí/voucher giảm 100%) hoàn tất fulfillment
+		// (enrollment + total_students) NGAY TRONG transaction này — lỗi ở đây rollback TOÀN BỘ
+		// (order, items, history, voucher reserve) thay vì để lại đơn "completed" không có
+		// enrollment như trước (fulfillment TRƯỚC ĐÂY chạy sau khi transaction đã commit).
+		if isFreeOrder {
+			enrollmentRepoTx := repository.NewEnrollmentRepository(txDB)
+			courseRepoTx := repository.NewCourseRepository(txDB)
+			if err := completeOrderFulfillment(ctx, enrollmentRepoTx, courseRepoTx, s.voucherService, items, order); err != nil {
+				return err
+			}
 		}
 
 		return nil
@@ -326,14 +359,9 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 		}
 	}
 
-	// item 14: đơn 0đ tạo enrollment NGAY (không cần chờ CheckAndProcessPayment vì không có
-	// giao dịch ngân hàng nào cho đơn 0đ) — dùng ĐÚNG hàm dùng chung với CheckAndProcessPayment
-	// (completeOrderFulfillment, payment_service.go), không copy logic.
-	if isFreeOrder {
-		if err := completeOrderFulfillment(ctx, s.enrollmentRepo, s.voucherService, items, order); err != nil {
-			return nil, err
-		}
-	}
+	// item 14/H2-03: fulfillment cho đơn 0đ giờ chạy BÊN TRONG transaction phía trên (cùng
+	// order/items/history/voucher-reserve) — xem comment "H2-03" ở khối WithTransaction. Không
+	// còn gọi completeOrderFulfillment ở đây (ngoài transaction) nữa.
 
 	return s.toOrderResponse(order, items), nil
 }
@@ -425,12 +453,19 @@ func (s *OrderService) CancelOrder(ctx context.Context, userID, orderID uuid.UUI
 	oldStatus := order.Status
 
 	return s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
-		// Update status
-		if err := txRepo.UpdateStatusWithTx(&gorm.DB{}, orderID, "cancelled"); err != nil {
+		txDB := txRepo.TxDB()
+
+		// H2-06 (review vòng 3, phát hiện phụ khi sửa item 4/H2-05): TRƯỚC ĐÂY gọi
+		// txRepo.UpdateStatusWithTx(&gorm.DB{}, ...) — truyền một *gorm.DB RỖNG (chưa từng mở
+		// connection/Statement) thay vì tx thật của transaction, khiến UPDATE này chạy trên một
+		// gorm.DB vô hiệu thay vì tham gia transaction (hoặc lỗi thẳng). Sửa bằng UpdateStatus
+		// (method đã tự dùng txRepo.db — chính là *gorm.DB của tx — không cần tham số tx rời).
+		if err := txRepo.UpdateStatus(orderID, "cancelled"); err != nil {
 			return err
 		}
 
-		// Create history
+		// Create history — cùng lý do H2-06: dùng bản TX-BOUND thay vì s.orderHistoryRepo
+		// (connection gốc) để history cùng rollback với UpdateStatus nếu bước dưới lỗi.
 		history := &model.OrderStatusHistory{
 			ID:         uuid.New(),
 			CreatedAt:  time.Now(),
@@ -439,7 +474,20 @@ func (s *OrderService) CancelOrder(ctx context.Context, userID, orderID uuid.UUI
 			ToStatus:   "cancelled",
 			Reason:     reason,
 		}
-		return s.orderHistoryRepo.Create(history)
+		orderHistoryRepoTx := repository.NewOrderStatusHistoryRepository(txDB)
+		if err := orderHistoryRepoTx.Create(history); err != nil {
+			return err
+		}
+
+		// H2-05: hoàn lại used_count đã reserve lúc tạo đơn (nếu đơn có áp voucher) — đơn bị
+		// hủy trước khi hoàn tất không được giữ chỗ voucher nữa.
+		if order.VoucherID != nil {
+			if err := s.voucherService.ReleaseVoucherUsage(ctx, txDB, *order.VoucherID); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	})
 }
 

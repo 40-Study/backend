@@ -17,7 +17,10 @@ type LessonContentServiceInterface interface {
 	UpdateContent(ctx context.Context, contentID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateLessonContentDTO) (*dto.LessonContentResponseDTO, error)
 	DeleteContent(ctx context.Context, contentID, actorUserID uuid.UUID, isAdmin bool) error
 	GetContentsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]dto.LessonContentResponseDTO, error)
-	ReorderContents(ctx context.Context, lessonID uuid.UUID, req dto.ReorderDTO) error
+	// ReorderContents (M2-03, review vòng 3): thêm actorUserID/isAdmin — trước đây hàm này chỉ
+	// validateLesson (kiểm TỒN TẠI), không kiểm CHỦ SỞ HỮU, khác với mọi CRUD content khác
+	// (Create/Update/Delete đều gọi requireContentLessonOwnerOrAdmin/requireLessonCourseOwnerOrAdmin).
+	ReorderContents(ctx context.Context, lessonID uuid.UUID, actorUserID uuid.UUID, isAdmin bool, req dto.ReorderDTO) error
 }
 
 type LessonContentService struct {
@@ -217,8 +220,19 @@ func (s *LessonContentService) DeleteContent(ctx context.Context, contentID, act
 	return s.lessonRepo.DeleteContent(ctx, contentID)
 }
 
-func (s *LessonContentService) ReorderContents(ctx context.Context, lessonID uuid.UUID, req dto.ReorderDTO) error {
-	if err := s.validateLesson(ctx, lessonID); err != nil {
+// ReorderContents (M2-03, review vòng 3): trước đây chỉ validateLesson (bài học có tồn tại
+// không) — bất kỳ giảng viên/user đăng nhập nào biết lessonID đều sắp xếp lại được nội dung bài
+// học của khóa học người khác. Load lesson trực tiếp (thay vì chỉ check Exists) + kiểm chủ sở
+// hữu bằng requireLessonCourseOwnerOrAdmin, khớp CreateContent.
+func (s *LessonContentService) ReorderContents(ctx context.Context, lessonID uuid.UUID, actorUserID uuid.UUID, isAdmin bool, req dto.ReorderDTO) error {
+	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
+	if err != nil {
+		return err
+	}
+	if lesson == nil {
+		return errors.New("lesson not found")
+	}
+	if err := requireLessonCourseOwnerOrAdmin(ctx, s.sectionRepo, s.courseRepo, lesson, actorUserID, isAdmin); err != nil {
 		return err
 	}
 

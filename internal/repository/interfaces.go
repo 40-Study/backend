@@ -23,6 +23,8 @@ type OrderRepositoryInterface interface {
 	Update(order *model.Order) error
 	Delete(id uuid.UUID) error
 	WithTransaction(fn func(repo *OrderRepository) error) error
+	// TxDB (H2-06, review vòng 3): xem comment tại OrderRepository.TxDB (order_repository.go).
+	TxDB() *gorm.DB
 	GetForUpdate(tx *gorm.DB, id uuid.UUID) (*model.Order, error)
 	UpdateStatusWithTx(tx *gorm.DB, orderID uuid.UUID, status string) error
 	CheckOrderNumberExists(orderNumber string) (bool, error)

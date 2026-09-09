@@ -381,6 +381,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 			repos.PaymentEvent,
 			repos.OrderStatusHistory,
 			repos.Enrollment,
+			repos.Course,
 			repos.Coupon,
 			voucherSvc,
 			transactionSvc,

@@ -247,7 +247,13 @@ type UserVoucher struct {
 	// phải tự gọi thêm GET /vouchers/:id (route admin-only, user thường bị 403) cho TỪNG
 	// voucher để lấy chi tiết. Bỏ json:"-" + Preload("Voucher") ở GetUserVouchers
 	// (voucher_repository.go) để trả sẵn chi tiết voucher trong 1 lần gọi.
-	Voucher Voucher `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"voucher,omitempty"`
+	//
+	// M2-04 (review vòng 3): đổi sang CON TRỎ *Voucher — omitempty trên struct-value KHÔNG BAO
+	// GIỜ có tác dụng trong encoding/json (struct value không bao giờ "empty" dù mọi field đều
+	// zero-value), nên khi Preload("Voucher") thất bại/voucher đã bị xoá, field này vẫn serialize
+	// thành {"voucher": {"id":"00000000-...", ...toàn zero-value}} thay vì bị lược bỏ/null như
+	// tên field "omitempty" ngụ ý — client dễ nhầm zero-UUID là voucher thật.
+	Voucher *Voucher `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"voucher,omitempty"`
 }
 
 func (UserVoucher) TableName() string {

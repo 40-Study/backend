@@ -159,7 +159,20 @@ func (h *LessonContentHandler) ReorderContents(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.ReorderContents(c.Context(), lessonID, req); err != nil {
+	// M2-03 (review vòng 3): trước đây route này không đọc user_id gì cả — thêm actorUserID/
+	// isAdmin để service kiểm chủ sở hữu, khớp pattern UpdateContent/DeleteContent phía trên.
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	if err := h.service.ReorderContents(c.Context(), lessonID, userID, isAdmin, req); err != nil {
+		if status := lessonContentErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to reorder contents", "error": err.Error(),
 		})

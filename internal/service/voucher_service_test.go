@@ -7,20 +7,26 @@ import (
 	"study.com/v1/internal/model"
 )
 
-// TestCalculateVoucherDiscountDecimal (item 24, review web vòng 1) — pin lại công thức tính
-// discount PHẢI khớp calculateVoucherDiscount phía web (voucher-input.tsx): dùng
-// discount_unit/discount_method/max_discount_money, clamp về subtotal, không âm.
+// TestCalculateVoucherDiscountDecimal (item 24 vòng 2b, H2-01/H2-02 review vòng 3) — pin lại
+// công thức tính discount PHẢI khớp calculateVoucherDiscount phía web
+// (web/src/services/voucher.service.ts): discount_unit phải MONEY cho CẢ HAI method (không
+// chỉ FIXED), Math.floor(discount) TRƯỚC khi clamp về subtotal/0, max_discount_money chỉ áp
+// khi > 0. Các case dưới đây đối chiếu TRỰC TIẾP với logic web đã đọc trong review vòng 3.
 func TestCalculateVoucherDiscountDecimal(t *testing.T) {
 	money := func(v string) *decimal.Decimal {
 		d := decimal.RequireFromString(v)
 		return &d
 	}
+	percent := func(v string) *decimal.Decimal {
+		d := decimal.RequireFromString(v)
+		return &d
+	}
 
 	tests := []struct {
-		name    string
-		voucher *model.Voucher
+		name     string
+		voucher  *model.Voucher
 		subtotal decimal.Decimal
-		want    string
+		want     string
 	}{
 		{
 			name: "FIXED MONEY - giam dung so tien",
@@ -43,30 +49,37 @@ func TestCalculateVoucherDiscountDecimal(t *testing.T) {
 			want:     "200000",
 		},
 		{
-			name: "PERCENT khong vuot max",
+			name: "PERCENT MONEY khong vuot max",
 			voucher: &model.Voucher{
-				DiscountMethod: model.DiscountMethodPercent,
-				DiscountPercent: func() *decimal.Decimal {
-					d := decimal.RequireFromString("10")
-					return &d
-				}(),
+				DiscountMethod:   model.DiscountMethodPercent,
+				DiscountUnit:     model.DiscountUnitMoney,
+				DiscountPercent:  percent("10"),
 				MaxDiscountMoney: money("100000"),
 			},
 			subtotal: decimal.RequireFromString("200000"),
 			want:     "20000", // 10% of 200000 = 20000, under cap
 		},
 		{
-			name: "PERCENT vuot max_discount_money -> clamp",
+			name: "PERCENT MONEY vuot max_discount_money -> clamp",
 			voucher: &model.Voucher{
-				DiscountMethod: model.DiscountMethodPercent,
-				DiscountPercent: func() *decimal.Decimal {
-					d := decimal.RequireFromString("50")
-					return &d
-				}(),
+				DiscountMethod:   model.DiscountMethodPercent,
+				DiscountUnit:     model.DiscountUnitMoney,
+				DiscountPercent:  percent("50"),
 				MaxDiscountMoney: money("30000"),
 			},
 			subtotal: decimal.RequireFromString("200000"),
 			want:     "30000", // 50% of 200000 = 100000, capped to 30000
+		},
+		{
+			name: "H2-01: PERCENT + DiscountUnitPoint -> 0 (khong duoc ap dung, khop web)",
+			voucher: &model.Voucher{
+				DiscountMethod:   model.DiscountMethodPercent,
+				DiscountUnit:     model.DiscountUnitPoint,
+				DiscountPercent:  percent("50"),
+				MaxDiscountMoney: money("1000000"),
+			},
+			subtotal: decimal.RequireFromString("200000"),
+			want:     "0", // truoc H2-01: se ra 100000 (SAI, web tu choi hoan toan)
 		},
 		{
 			name: "DiscountUnitPoint (FIXED) khong ap dung cho don hang tien mat -> 0",
@@ -77,6 +90,27 @@ func TestCalculateVoucherDiscountDecimal(t *testing.T) {
 			},
 			subtotal: decimal.RequireFromString("200000"),
 			want:     "0",
+		},
+		{
+			name: "H2-02: PERCENT tren subtotal le -> Floor truoc khi clamp",
+			voucher: &model.Voucher{
+				DiscountMethod:  model.DiscountMethodPercent,
+				DiscountUnit:    model.DiscountUnitMoney,
+				DiscountPercent: percent("10"),
+			},
+			subtotal: decimal.RequireFromString("199999"),
+			want:     "19999", // 199999 * 10% = 19999.9 -> floor = 19999 (khong phai 19999.9)
+		},
+		{
+			name: "max_discount_money = 0 (khong gioi han) -> khong clamp",
+			voucher: &model.Voucher{
+				DiscountMethod:   model.DiscountMethodPercent,
+				DiscountUnit:     model.DiscountUnitMoney,
+				DiscountPercent:  percent("50"),
+				MaxDiscountMoney: money("0"),
+			},
+			subtotal: decimal.RequireFromString("200000"),
+			want:     "100000", // cap=0 nghia la khong gioi han, khop web "if (cap > 0)"
 		},
 	}
 

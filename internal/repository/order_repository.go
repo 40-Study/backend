@@ -141,6 +141,16 @@ func (r *OrderRepository) WithTransaction(fn func(repo *OrderRepository) error) 
 	})
 }
 
+// TxDB (H2-06, review vòng 3): trả về *gorm.DB gốc của repo — bên trong closure của
+// WithTransaction, r.db chính là *gorm.DB của transaction (không phải connection gốc). Dùng để
+// dựng các repo khác (OrderItem/OrderStatusHistory/Enrollment/Course) THAM GIA CÙNG transaction
+// này thay vì chạy trên connection gốc sau khi transaction đã commit — đóng lỗ hổng "chỉ có
+// bảng orders được bọc transaction, các bảng còn lại (order_items, history, enrollment,
+// voucher used_count) chạy rời rạc" đã nêu trong báo cáo review vòng 3 (H2-06).
+func (r *OrderRepository) TxDB() *gorm.DB {
+	return r.db
+}
+
 // RecordBankTransactionUsage (M-06, audit 260909 vòng 2): ghi nhận 1 bank_transaction_id đã
 // được dùng để xác nhận thanh toán — gọi bên trong closure của WithTransaction (r.db lúc đó
 // là *gorm.DB của transaction, không phải connection gốc) để việc chống-replay và việc chuyển

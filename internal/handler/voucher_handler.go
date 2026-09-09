@@ -315,19 +315,14 @@ func (h *VoucherHandler) SaveVoucher(c *fiber.Ctx) error {
 
 // UnsaveVoucher - DELETE /api/v1/vouchers/:id/save
 func (h *VoucherHandler) UnsaveVoucher(c *fiber.Ctx) error {
-	userIDStr := c.Locals("user_id")
-	if userIDStr == nil {
+	// B2-01 (review vòng 2/2b): cùng lỗi panic `.(string)` như SaveVoucher trước khi sửa —
+	// AuthMiddleware set thẳng uuid.UUID vào Locals("user_id"), không phải string. Route này
+	// bị bỏ sót khi sửa SaveVoucher ở vòng 2a. Dùng lại getAuthUserID (đã dùng ở SaveVoucher).
+	userID, ok := getAuthUserID(c)
+	if !ok {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
 			"message": "Unauthorized",
-		})
-	}
-
-	userID, err := uuid.Parse(userIDStr.(string))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_USER",
-			"message": "Invalid user ID",
 		})
 	}
 
@@ -354,19 +349,14 @@ func (h *VoucherHandler) UnsaveVoucher(c *fiber.Ctx) error {
 
 // GetUserSavedVouchers - GET /api/v1/vouchers/me
 func (h *VoucherHandler) GetUserSavedVouchers(c *fiber.Ctx) error {
-	userIDStr := c.Locals("user_id")
-	if userIDStr == nil {
+	// B2-01 (review vòng 2/2b): cùng lỗi panic `.(string)` như SaveVoucher, bỏ sót ở vòng 2a.
+	// Endpoint này là đầu ra chính của mục 27 (vòng 2b) — panic khiến "/my-vouchers" 500 với
+	// MỌI user đã đăng nhập, phủ nhận luôn tác dụng của Preload("Voucher") vừa thêm.
+	userID, ok := getAuthUserID(c)
+	if !ok {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
 			"message": "Unauthorized",
-		})
-	}
-
-	userID, err := uuid.Parse(userIDStr.(string))
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_USER",
-			"message": "Invalid user ID",
 		})
 	}
 

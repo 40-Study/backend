@@ -6,23 +6,39 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 )
 
 // fakeEnrollmentRepoForFulfillment là fake tối thiểu cho EnrollmentRepositoryInterface, chỉ
-// override GetByUserAndCourse + Create — đủ cho completeOrderFulfillment.
+// override GetByUserAndCourseUnscoped + RestoreAndReactivate + Create — đủ cho
+// completeOrderFulfillment sau khi sửa H2-04 (review vòng 3): hàm giờ dùng bản Unscoped +
+// RestoreAndReactivate cho trường hợp mua lại khóa đã unenroll, khớp EnrollmentService.Enroll.
 type fakeEnrollmentRepoForFulfillment struct {
 	repository.EnrollmentRepositoryInterface
-	existing map[uuid.UUID]bool // courseID -> đã enroll
-	created  []uuid.UUID        // courseID đã Create
+	activeExisting  map[uuid.UUID]bool      // courseID -> đang enroll active (chưa soft-delete)
+	deletedExisting map[uuid.UUID]uuid.UUID // courseID -> enrollmentID đã bị soft-delete
+	created         []uuid.UUID             // courseID đã Create (enroll lần đầu)
+	restored        []uuid.UUID             // enrollmentID đã RestoreAndReactivate
 }
 
-func (f *fakeEnrollmentRepoForFulfillment) GetByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error) {
-	if f.existing[courseID] {
+func (f *fakeEnrollmentRepoForFulfillment) GetByUserAndCourseUnscoped(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error) {
+	if f.activeExisting[courseID] {
 		return &model.Enrollment{UserID: userID, CourseID: courseID}, nil
 	}
+	if id, ok := f.deletedExisting[courseID]; ok {
+		e := &model.Enrollment{UserID: userID, CourseID: courseID}
+		e.ID = id
+		e.DeletedAt = gorm.DeletedAt{Valid: true}
+		return e, nil
+	}
 	return nil, nil
+}
+
+func (f *fakeEnrollmentRepoForFulfillment) RestoreAndReactivate(ctx context.Context, id uuid.UUID, updates map[string]interface{}) error {
+	f.restored = append(f.restored, id)
+	return nil
 }
 
 func (f *fakeEnrollmentRepoForFulfillment) Create(ctx context.Context, enrollment *model.Enrollment) error {
@@ -30,20 +46,28 @@ func (f *fakeEnrollmentRepoForFulfillment) Create(ctx context.Context, enrollmen
 	return nil
 }
 
-// fakeVoucherServiceForFulfillment là fake tối thiểu cho VoucherServiceInterface, chỉ override
-// IncrementUsedCount + RecordUsageLog — đủ cho completeOrderFulfillment.
-type fakeVoucherServiceForFulfillment struct {
-	VoucherServiceInterface
-	incrementedVoucherID uuid.UUID
-	incrementCalled      bool
-	loggedDiscount       decimal.Decimal
-	logCalled            bool
+// fakeCourseRepoForFulfillment là fake tối thiểu cho CourseRepositoryInterface, chỉ override
+// IncrementTotalStudents (H2-04, review vòng 3) — completeOrderFulfillment TRƯỚC ĐÂY không hề
+// gọi hàm này, khiến courses.total_students sai lệch với số enrollment thật.
+type fakeCourseRepoForFulfillment struct {
+	repository.CourseRepositoryInterface
+	incrementedCourseIDs []uuid.UUID
+	incrementedDeltas    []int
 }
 
-func (f *fakeVoucherServiceForFulfillment) IncrementUsedCount(ctx context.Context, voucherID uuid.UUID) error {
-	f.incrementCalled = true
-	f.incrementedVoucherID = voucherID
+func (f *fakeCourseRepoForFulfillment) IncrementTotalStudents(ctx context.Context, courseID uuid.UUID, delta int) error {
+	f.incrementedCourseIDs = append(f.incrementedCourseIDs, courseID)
+	f.incrementedDeltas = append(f.incrementedDeltas, delta)
 	return nil
+}
+
+// fakeVoucherServiceForFulfillment là fake tối thiểu cho VoucherServiceInterface, chỉ override
+// RecordUsageLog — đủ cho completeOrderFulfillment sau khi sửa H2-05 (review vòng 3):
+// IncrementUsedCount KHÔNG còn được gọi ở đây nữa (used_count giờ reserve lúc tạo đơn).
+type fakeVoucherServiceForFulfillment struct {
+	VoucherServiceInterface
+	loggedDiscount decimal.Decimal
+	logCalled      bool
 }
 
 func (f *fakeVoucherServiceForFulfillment) RecordUsageLog(ctx context.Context, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error {
@@ -52,59 +76,112 @@ func (f *fakeVoucherServiceForFulfillment) RecordUsageLog(ctx context.Context, v
 	return nil
 }
 
-// TestCompleteOrderFulfillment (item 14, review vòng 1) — pin lại hợp đồng của hàm dùng chung
-// CheckAndProcessPayment VÀ nhánh đơn 0đ tự hoàn tất: tạo enrollment cho course CHƯA enroll,
-// bỏ qua course ĐÃ enroll, và chỉ ghi nhận usage voucher khi order.VoucherID != nil.
+// TestCompleteOrderFulfillment (item 14, review vòng 1; H2-04/H2-05 review vòng 3) — pin lại hợp
+// đồng của hàm dùng chung CheckAndProcessPayment VÀ nhánh đơn 0đ tự hoàn tất:
+//   - Course CHƯA từng enroll -> Create + IncrementTotalStudents(+1).
+//   - Course đã enroll ACTIVE -> bỏ qua hoàn toàn, không Create/Restore/Increment.
+//   - Course đã unenroll (soft-delete) -> RestoreAndReactivate + IncrementTotalStudents(+1)
+//     (KHÔNG Create — tránh vi phạm unique index idx_user_course, H2-04).
+//   - Chỉ ghi RecordUsageLog khi order.VoucherID != nil (KHÔNG còn gọi IncrementUsedCount ở
+//     đây nữa — H2-05, used_count reserve lúc tạo đơn).
 func TestCompleteOrderFulfillment(t *testing.T) {
 	userID := uuid.New()
 	orderID := uuid.New()
-	courseAlreadyEnrolled := uuid.New()
+	courseActiveEnrolled := uuid.New()
+	courseUnenrolledBefore := uuid.New()
+	unenrolledEntryID := uuid.New()
 	courseNotEnrolled := uuid.New()
 	voucherID := uuid.New()
 
-	t.Run("tao enrollment cho course chua enroll, bo qua course da enroll", func(t *testing.T) {
+	t.Run("course chua enroll -> Create + tang total_students", func(t *testing.T) {
 		enrollmentRepo := &fakeEnrollmentRepoForFulfillment{
-			existing: map[uuid.UUID]bool{courseAlreadyEnrolled: true},
+			activeExisting:  map[uuid.UUID]bool{},
+			deletedExisting: map[uuid.UUID]uuid.UUID{},
 		}
-		items := []model.OrderItem{
-			{CourseID: courseAlreadyEnrolled},
-			{CourseID: courseNotEnrolled},
-		}
+		courseRepo := &fakeCourseRepoForFulfillment{}
+		items := []model.OrderItem{{CourseID: courseNotEnrolled}}
 		order := &model.Order{ID: orderID, UserID: userID}
 
-		if err := completeOrderFulfillment(context.Background(), enrollmentRepo, nil, items, order); err != nil {
+		if err := completeOrderFulfillment(context.Background(), enrollmentRepo, courseRepo, nil, items, order); err != nil {
 			t.Fatalf("completeOrderFulfillment() unexpected error: %v", err)
 		}
 
 		if len(enrollmentRepo.created) != 1 || enrollmentRepo.created[0] != courseNotEnrolled {
-			t.Errorf("expected only courseNotEnrolled to be created, got %v", enrollmentRepo.created)
+			t.Errorf("expected Create called for courseNotEnrolled, got %v", enrollmentRepo.created)
+		}
+		if len(courseRepo.incrementedCourseIDs) != 1 || courseRepo.incrementedCourseIDs[0] != courseNotEnrolled || courseRepo.incrementedDeltas[0] != 1 {
+			t.Errorf("expected IncrementTotalStudents(+1) called for courseNotEnrolled, got ids=%v deltas=%v", courseRepo.incrementedCourseIDs, courseRepo.incrementedDeltas)
+		}
+	})
+
+	t.Run("course da enroll active -> bo qua hoan toan", func(t *testing.T) {
+		enrollmentRepo := &fakeEnrollmentRepoForFulfillment{
+			activeExisting:  map[uuid.UUID]bool{courseActiveEnrolled: true},
+			deletedExisting: map[uuid.UUID]uuid.UUID{},
+		}
+		courseRepo := &fakeCourseRepoForFulfillment{}
+		items := []model.OrderItem{{CourseID: courseActiveEnrolled}}
+		order := &model.Order{ID: orderID, UserID: userID}
+
+		if err := completeOrderFulfillment(context.Background(), enrollmentRepo, courseRepo, nil, items, order); err != nil {
+			t.Fatalf("completeOrderFulfillment() unexpected error: %v", err)
+		}
+
+		if len(enrollmentRepo.created) != 0 || len(enrollmentRepo.restored) != 0 {
+			t.Errorf("expected no Create/RestoreAndReactivate for already-active enrollment, got created=%v restored=%v", enrollmentRepo.created, enrollmentRepo.restored)
+		}
+		if len(courseRepo.incrementedCourseIDs) != 0 {
+			t.Errorf("expected NO total_students increment for already-active enrollment, got %v", courseRepo.incrementedCourseIDs)
+		}
+	})
+
+	t.Run("H2-04: course da unenroll truoc do -> RestoreAndReactivate (khong Create), tang total_students", func(t *testing.T) {
+		enrollmentRepo := &fakeEnrollmentRepoForFulfillment{
+			activeExisting:  map[uuid.UUID]bool{},
+			deletedExisting: map[uuid.UUID]uuid.UUID{courseUnenrolledBefore: unenrolledEntryID},
+		}
+		courseRepo := &fakeCourseRepoForFulfillment{}
+		items := []model.OrderItem{{CourseID: courseUnenrolledBefore}}
+		order := &model.Order{ID: orderID, UserID: userID}
+
+		if err := completeOrderFulfillment(context.Background(), enrollmentRepo, courseRepo, nil, items, order); err != nil {
+			t.Fatalf("completeOrderFulfillment() unexpected error: %v", err)
+		}
+
+		if len(enrollmentRepo.created) != 0 {
+			t.Errorf("expected NO Create (would violate idx_user_course), got %v", enrollmentRepo.created)
+		}
+		if len(enrollmentRepo.restored) != 1 || enrollmentRepo.restored[0] != unenrolledEntryID {
+			t.Errorf("expected RestoreAndReactivate called with id=%v, got %v", unenrolledEntryID, enrollmentRepo.restored)
+		}
+		if len(courseRepo.incrementedCourseIDs) != 1 || courseRepo.incrementedCourseIDs[0] != courseUnenrolledBefore {
+			t.Errorf("expected IncrementTotalStudents(+1) called for restored course, got %v", courseRepo.incrementedCourseIDs)
 		}
 	})
 
 	t.Run("khong co VoucherID -> khong goi voucherService", func(t *testing.T) {
-		enrollmentRepo := &fakeEnrollmentRepoForFulfillment{existing: map[uuid.UUID]bool{}}
+		enrollmentRepo := &fakeEnrollmentRepoForFulfillment{activeExisting: map[uuid.UUID]bool{}, deletedExisting: map[uuid.UUID]uuid.UUID{}}
+		courseRepo := &fakeCourseRepoForFulfillment{}
 		voucherSvc := &fakeVoucherServiceForFulfillment{}
 		order := &model.Order{ID: orderID, UserID: userID, VoucherID: nil}
 
-		if err := completeOrderFulfillment(context.Background(), enrollmentRepo, voucherSvc, nil, order); err != nil {
+		if err := completeOrderFulfillment(context.Background(), enrollmentRepo, courseRepo, voucherSvc, nil, order); err != nil {
 			t.Fatalf("completeOrderFulfillment() unexpected error: %v", err)
 		}
-		if voucherSvc.incrementCalled || voucherSvc.logCalled {
+		if voucherSvc.logCalled {
 			t.Errorf("expected voucherService NOT called when order.VoucherID is nil")
 		}
 	})
 
-	t.Run("co VoucherID -> tang used_count va ghi log dung discount", func(t *testing.T) {
-		enrollmentRepo := &fakeEnrollmentRepoForFulfillment{existing: map[uuid.UUID]bool{}}
+	t.Run("H2-05: co VoucherID -> CHI ghi log (khong tang used_count o day nua)", func(t *testing.T) {
+		enrollmentRepo := &fakeEnrollmentRepoForFulfillment{activeExisting: map[uuid.UUID]bool{}, deletedExisting: map[uuid.UUID]uuid.UUID{}}
+		courseRepo := &fakeCourseRepoForFulfillment{}
 		voucherSvc := &fakeVoucherServiceForFulfillment{}
 		discount := decimal.RequireFromString("50000")
 		order := &model.Order{ID: orderID, UserID: userID, VoucherID: &voucherID, DiscountAmount: discount}
 
-		if err := completeOrderFulfillment(context.Background(), enrollmentRepo, voucherSvc, nil, order); err != nil {
+		if err := completeOrderFulfillment(context.Background(), enrollmentRepo, courseRepo, voucherSvc, nil, order); err != nil {
 			t.Fatalf("completeOrderFulfillment() unexpected error: %v", err)
-		}
-		if !voucherSvc.incrementCalled || voucherSvc.incrementedVoucherID != voucherID {
-			t.Errorf("expected IncrementUsedCount called with voucherID=%v, got called=%v id=%v", voucherID, voucherSvc.incrementCalled, voucherSvc.incrementedVoucherID)
 		}
 		if !voucherSvc.logCalled || !voucherSvc.loggedDiscount.Equal(discount) {
 			t.Errorf("expected RecordUsageLog called with discount=%s, got called=%v amount=%s", discount, voucherSvc.logCalled, voucherSvc.loggedDiscount)

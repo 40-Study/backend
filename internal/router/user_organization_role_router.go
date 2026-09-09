@@ -37,10 +37,17 @@ func SetupUserOrganizationRoleRoutes(
 	// Các route theo :organization_id có org trong path → dùng RequireOrgPermission để đối
 	// chiếu active_org_id (JWT) với đúng tổ chức đang thao tác, tránh ORG_OWNER của tổ chức A
 	// dùng quyền của mình để xem thành viên tổ chức B.
-	organizations := api.Group("/organizations", authMiddleware)
+	//
+	// M2-01 (review vòng 3): TRƯỚC ĐÂY api.Group("/organizations", authMiddleware) — cùng lỗi
+	// group.Use() khớp PREFIX "/organizations" như H-01 (xem comment ở "/users" phía trên) —
+	// đè luôn lên 2 route CÔNG KHAI GET /organizations và GET /organizations/:id đăng ký ở
+	// organization_router.go (SetupOrganizationRoutes), bắt cả 2 phải đăng nhập dù handler
+	// (GetAllOrganizations/GetOrganization) không hề đòi user_id. Gỡ authMiddleware khỏi group,
+	// gắn trực tiếp vào 2 route quản trị thành viên bên dưới.
+	organizations := api.Group("/organizations")
 	{
 		orgGroup := organizations.Group("/:organization_id")
-		orgGroup.Get("/members", permChecker.RequireOrgPermission("organization_id", "ORG_MEMBERS_MANAGE"), userOrgRoleHandler.GetOrganizationMembers)
-		orgGroup.Get("/roles/:role_id/users", permChecker.RequireOrgPermission("organization_id", "ORG_MEMBERS_MANAGE"), userOrgRoleHandler.GetUsersWithOrgRole)
+		orgGroup.Get("/members", authMiddleware, permChecker.RequireOrgPermission("organization_id", "ORG_MEMBERS_MANAGE"), userOrgRoleHandler.GetOrganizationMembers)
+		orgGroup.Get("/roles/:role_id/users", authMiddleware, permChecker.RequireOrgPermission("organization_id", "ORG_MEMBERS_MANAGE"), userOrgRoleHandler.GetUsersWithOrgRole)
 	}
 }
