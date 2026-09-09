@@ -363,26 +363,24 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Analytics:  analyticsSvc,
 
 		// ===== Order & Payment =====
+		// M3-09 (review vòng 3b, bổ sung vòng 4): NewOrderService/NewPaymentService không còn
+		// nhận couponRepo/enrollmentRepo/orderHistoryRepo (Order) hay courseRepo/orderItemRepo/
+		// couponRepo (Payment) — cả 2 hàm dựng bản tx-bound của các repo này tại chỗ (từ
+		// txRepo.TxDB()) mỗi khi cần, không đọc field ambient nữa. Xem comment tại
+		// NewOrderService/NewPaymentService (order_service.go/payment_service.go).
 		Order: service.NewOrderService(
 			repos.Order,
 			repos.OrderItem,
-			repos.Coupon,
 			repos.Course,
-			repos.Enrollment,
-
 			repos.CartItem,
-			repos.OrderStatusHistory,
 			repos.IdempotencyKey,
 			voucherSvc,
 		),
 		Payment: service.NewPaymentService(
 			repos.Order,
-			repos.OrderItem,
 			repos.PaymentEvent,
 			repos.OrderStatusHistory,
 			repos.Enrollment,
-			repos.Course,
-			repos.Coupon,
 			voucherSvc,
 			transactionSvc,
 		),

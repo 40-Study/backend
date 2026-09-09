@@ -49,43 +49,35 @@ type OrderServiceInterface interface {
 type OrderService struct {
 	orderRepo          repository.OrderRepositoryInterface
 	orderItemRepo      repository.OrderItemRepositoryInterface
-	couponRepo         repository.CouponRepositoryInterface
 	courseRepo         repository.CourseRepositoryInterface
-	enrollmentRepo     repository.EnrollmentRepositoryInterface
 	cartRepo           repository.CartItemRepositoryInterface
-	orderHistoryRepo   repository.OrderStatusHistoryRepositoryInterface
 	idempotencyKeyRepo repository.IdempotencyKeyRepositoryInterface
 	// voucherService (item 24, review web vòng 1): CreateOrder validate/áp mã giảm giá qua
-	// bảng vouchers thay vì coupons — xem comment tại couponRepo field bên dưới và tại
-	// model.Order.VoucherID.
+	// bảng vouchers thay vì coupons.
 	voucherService VoucherServiceInterface
 }
 
-// couponRepo (DEPRECATED — item 24, review web vòng 1): giữ lại field/tham số này CHỈ để
-// tương thích interface cũ (không dùng để validate/áp coupon nữa trong CreateOrder — xem
-// voucherService). Bảng "coupons" không còn route/handler nào tạo dữ liệu (đã grep xác nhận
-// zero caller của CreateCoupon trong toàn bộ internal/), trong khi "vouchers" mới là bảng web
-// thực sự dùng (GET /vouchers/code/:code, voucher-input.tsx). Không xóa hẳn field/bảng ở đây
-// để tránh phá vỡ dữ liệu đơn hàng CŨ đã tạo trước khi sửa (order.CouponID vẫn đọc được).
+// M3-09 (review vòng 3b, bổ sung vòng 4): TRƯỚC ĐÂY NewOrderService còn nhận couponRepo/
+// enrollmentRepo/orderHistoryRepo — cả 3 đã 0 lần được đọc trong order_service.go (grep xác
+// nhận): couponRepo bỏ hẳn sau khi CompleteOrder (dùng flow coupon cũ) bị xóa ở vòng 3b;
+// enrollmentRepo (bare, không tx-bound) cùng số phận — mọi thao tác enrollment giờ đi qua
+// enrollmentRepoTx dựng từ txDB (H2-06/H2-03, vòng 3); orderHistoryRepo (bare) tương tự — mọi
+// ghi history giờ đi qua orderHistoryRepoTx. Giữ lại field/tham số DEAD chỉ để "tương thích" là
+// mầm mống nhầm lẫn cho người đọc sau (tưởng còn được dùng) — xóa hẳn khỏi cả struct lẫn
+// constructor, cập nhật app/services.go cùng lượt.
 func NewOrderService(
 	orderRepo repository.OrderRepositoryInterface,
 	orderItemRepo repository.OrderItemRepositoryInterface,
-	couponRepo repository.CouponRepositoryInterface,
 	courseRepo repository.CourseRepositoryInterface,
-	enrollmentRepo repository.EnrollmentRepositoryInterface,
 	cartRepo repository.CartItemRepositoryInterface,
-	orderHistoryRepo repository.OrderStatusHistoryRepositoryInterface,
 	idempotencyKeyRepo repository.IdempotencyKeyRepositoryInterface,
 	voucherService VoucherServiceInterface,
 ) *OrderService {
 	return &OrderService{
 		orderRepo:          orderRepo,
 		orderItemRepo:      orderItemRepo,
-		couponRepo:         couponRepo,
 		courseRepo:         courseRepo,
-		enrollmentRepo:     enrollmentRepo,
 		cartRepo:           cartRepo,
-		orderHistoryRepo:   orderHistoryRepo,
 		idempotencyKeyRepo: idempotencyKeyRepo,
 		voucherService:     voucherService,
 	}

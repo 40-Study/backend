@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -36,9 +37,18 @@ type PaymentServiceInterface interface {
 }
 
 type PaymentService struct {
-	orderRepo        repository.OrderRepositoryInterface
-	orderItemRepo    repository.OrderItemRepositoryInterface
+	orderRepo repository.OrderRepositoryInterface
+	// paymentEventRepo (M3-09, review vòng 3b/4): xác nhận 0 lần đọc trong payment_service.go
+	// (grep) NHƯNG không nằm trong danh sách team-lead yêu cầu dọn ở vòng 4 (chỉ nêu courseRepo/
+	// orderItemRepo/couponRepo) — có thể dành cho tính năng webhook/payment-event sắp tới. GIỮ
+	// LẠI, không tự ý xóa; ghi nhận trong báo cáo để team-lead quyết định riêng.
 	paymentEventRepo repository.PaymentEventRepositoryInterface
+	// orderHistoryRepo (M3-08, bổ sung vòng 4): field này TRƯỚC ĐÂY chỉ dùng ở CreatePaymentIntent
+	// (đã đổi sang orderHistoryRepoTx trong transaction — xem M3-08) nên gần như dead — NHƯNG có
+	// công dụng THẬT MỚI ở đây: ghi order_status_history "fulfillment_failed" NGOÀI transaction
+	// đã rollback khi completeOrderFulfillment lỗi (đánh đổi rollback, chỉ đạo team-lead vòng 4)
+	// — chủ đích PHẢI dùng connection gốc (không phải tx vừa rollback) nên field bare này vẫn
+	// cần thiết, KHÔNG xóa dù M3-09 gợi ý dọn field chết.
 	orderHistoryRepo repository.OrderStatusHistoryRepositoryInterface
 	// enrollmentRepo (item 14, dọn dẹp phụ khi tách completeOrderFulfillment dùng chung):
 	// TRƯỚC ĐÂY khai kiểu interface{} rồi type-assert bằng interface ẩn danh mỗi lần dùng
@@ -46,34 +56,30 @@ type PaymentService struct {
 	// implement đúng repository.EnrollmentRepositoryInterface (xem app/services.go). Đổi
 	// sang kiểu cụ thể để completeOrderFulfillment (dùng chung với OrderService.CreateOrder,
 	// đơn 0đ) không phải type-assert lại.
-	enrollmentRepo repository.EnrollmentRepositoryInterface
-	// courseRepo (H2-04, review vòng 3): completeOrderFulfillment cần tăng total_students khi
-	// tạo/khôi phục enrollment — trước đây hàm này hoàn toàn không đụng tới total_students.
-	courseRepo         repository.CourseRepositoryInterface
-	couponRepo         repository.CouponRepositoryInterface
+	enrollmentRepo     repository.EnrollmentRepositoryInterface
 	voucherService     VoucherServiceInterface
 	transactionService TransactionServiceInterface
 }
 
+// M3-09 (review vòng 3b, bổ sung vòng 4): TRƯỚC ĐÂY NewPaymentService còn nhận courseRepo/
+// orderItemRepo/couponRepo — cả 3 đã 0 lần được đọc qua field bare (grep xác nhận): courseRepo vì
+// completeOrderFulfillment luôn dùng courseRepoTx dựng mới từ txDB (H2-06, vòng 3), không phải
+// field s.courseRepo; orderItemRepo/couponRepo tương tự đã chuyển hẳn sang orderItemRepoTx (tx-
+// bound) và flow voucher (couponRepo chưa từng dùng ở PaymentService, chỉ khai theo interface cũ).
+// Xóa hẳn khỏi cả struct lẫn constructor, cập nhật app/services.go cùng lượt.
 func NewPaymentService(
 	orderRepo repository.OrderRepositoryInterface,
-	orderItemRepo repository.OrderItemRepositoryInterface,
 	paymentEventRepo repository.PaymentEventRepositoryInterface,
 	orderHistoryRepo repository.OrderStatusHistoryRepositoryInterface,
 	enrollmentRepo repository.EnrollmentRepositoryInterface,
-	courseRepo repository.CourseRepositoryInterface,
-	couponRepo repository.CouponRepositoryInterface,
 	voucherService VoucherServiceInterface,
 	transactionService TransactionServiceInterface,
 ) *PaymentService {
 	return &PaymentService{
 		orderRepo:          orderRepo,
-		orderItemRepo:      orderItemRepo,
 		paymentEventRepo:   paymentEventRepo,
 		orderHistoryRepo:   orderHistoryRepo,
 		enrollmentRepo:     enrollmentRepo,
-		courseRepo:         courseRepo,
-		couponRepo:         couponRepo,
 		voucherService:     voucherService,
 		transactionService: transactionService,
 	}
@@ -194,20 +200,31 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 	// item 25 (review web vòng 1): lưu payment code + expiry vào order NGAY trong bước này —
 	// xem comment tại OrderRepository.UpdatePaymentCode để biết lý do (trước đây chỉ set status,
 	// mã thanh toán chỉ tồn tại trong response, không tra lại được).
-	if err := s.orderRepo.UpdatePaymentCode(orderID, paymentCode, expiresAt); err != nil {
+	//
+	// M3-08 (review vòng 3b, bổ sung vòng 4): TRƯỚC ĐÂY UpdatePaymentCode và history.Create là
+	// 2 lệnh ghi RỜI RẠC — history.Create() còn KHÔNG kiểm lỗi trả về (không cả "_ ="), nên nếu
+	// ghi history lỗi giữa chừng, order đã chuyển "processing" (mã thanh toán đã lưu) nhưng
+	// order_status_history thiếu bản ghi audit trail, không ai biết đơn "processing" từ đâu. Gộp
+	// vào MỘT transaction: lỗi ở bước nào rollback CẢ HAI, không để order "processing" mồ côi
+	// history.
+	err = s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
+		if err := txRepo.UpdatePaymentCode(orderID, paymentCode, expiresAt); err != nil {
+			return err
+		}
+		history := &model.OrderStatusHistory{
+			ID:         uuid.New(),
+			CreatedAt:  time.Now(),
+			OrderID:    orderID,
+			FromStatus: oldStatus,
+			ToStatus:   "processing",
+			Reason:     "Payment initiated",
+		}
+		orderHistoryRepoTx := repository.NewOrderStatusHistoryRepository(txRepo.TxDB())
+		return orderHistoryRepoTx.Create(history)
+	})
+	if err != nil {
 		return nil, err
 	}
-
-	// Create status history
-	history := &model.OrderStatusHistory{
-		ID:         uuid.New(),
-		CreatedAt:  time.Now(),
-		OrderID:    orderID,
-		FromStatus: oldStatus,
-		ToStatus:   "processing",
-		Reason:     "Payment initiated",
-	}
-	s.orderHistoryRepo.Create(history)
 
 	// Build response
 	resp := &dto.PaymentIntentResponse{
@@ -405,6 +422,39 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 	})
 
 	if err != nil {
+		if errors.Is(err, ErrPaymentAlreadyDone) {
+			// KHÔNG phải "tiền mất dấu vết" — unique constraint bank_transaction_usages (M-06)
+			// đã chặn ĐÚNG như thiết kế vì một request khác đã xử lý giao dịch ngân hàng này
+			// rồi. Không cảnh báo ops cho trường hợp benign này.
+			return nil, err
+		}
+
+		// Đánh đổi rollback (bổ sung vòng 4, chỉ đạo team-lead): lỗi ở đây (thường gặp nhất là
+		// completeOrderFulfillment — enrollment/total_students/voucher log) khiến TOÀN BỘ
+		// transaction rollback, kể cả RecordBankTransactionUsage/UpdatePaymentInfo vừa ghi ở
+		// TRÊN trong CÙNG transaction — dù NGƯỜI DÙNG ĐÃ THẬT SỰ CHUYỂN TIỀN (result.TransactionID
+		// là giao dịch ngân hàng có thật, đã amount-match ở trên). Sau rollback, DB không còn
+		// dấu vết nào của lần chuyển khoản này — nếu chỉ im lặng trả lỗi (hành vi cũ), ops không
+		// cách nào biết để đối soát thủ công. Log CẢNH BÁO với prefix cố định "[PAYMENT-ALERT]"
+		// (để ops grep log được) + ghi 1 dòng order_status_history "fulfillment_failed" NGOÀI
+		// transaction đã rollback (best-effort qua s.orderHistoryRepo — connection gốc, không
+		// phải tx vừa rollback) để có dấu vết trace ngay trong chính bảng order_status_histories
+		// của đơn, không chỉ nằm trong log file. Nếu chính bước ghi fallback này cũng lỗi, chỉ
+		// log thêm — KHÔNG che lỗi gốc.
+		log.Printf("[PAYMENT-ALERT] order=%s tx=%s amount=%s err=%v", orderID, result.TransactionID, result.Amount, err)
+		fallbackHistory := &model.OrderStatusHistory{
+			ID:         uuid.New(),
+			CreatedAt:  time.Now(),
+			OrderID:    orderID,
+			FromStatus: oldStatus,
+			ToStatus:   "fulfillment_failed",
+			Reason: fmt.Sprintf(
+				"Payment transaction %s received (amount %s matched) but order fulfillment failed and the whole transaction rolled back — needs manual reconciliation: %v",
+				result.TransactionID, result.Amount, err),
+		}
+		if histErr := s.orderHistoryRepo.Create(fallbackHistory); histErr != nil {
+			log.Printf("[PAYMENT-ALERT] order=%s tx=%s failed to write fallback fulfillment_failed history: %v", orderID, result.TransactionID, histErr)
+		}
 		return nil, err
 	}
 
