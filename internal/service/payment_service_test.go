@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -260,4 +262,95 @@ func TestRecordFulfillmentFailureAlert(t *testing.T) {
 			t.Fatalf("expected Create to still be attempted once, got %d calls", len(historyRepo.created))
 		}
 	})
+}
+
+// fakePaymentCodeUpdater (B-02/B-03, review vòng 5) — fake tối thiểu cho interface hẹp
+// paymentCodeUpdater. Từ B-03, UpdatePaymentCode thật là UPDATE CÓ ĐIỀU KIỆN — trên DryRun DB,
+// RowsAffected LUÔN = 0 nên gọi hàm thật trên DryRun giờ LUÔN trả ErrOrderConflict, không còn
+// cách nào chạm tới bước ghi history để test riêng nhánh đó qua DryRun được nữa. Fake này tách
+// hẳn 2 mối lo: hành vi CONDITIONAL UPDATE thật (đã test riêng ở
+// order_repository_test.go) và hành vi "history lỗi thì có trả lỗi không" (test ở đây).
+type fakePaymentCodeUpdater struct {
+	err error
+}
+
+func (f *fakePaymentCodeUpdater) UpdatePaymentCode(orderID uuid.UUID, paymentCode string, expiredAt time.Time) error {
+	return f.err
+}
+
+// TestUpdatePaymentCodeAndHistoryTx_HistoryErrorPropagates (B-02, review vòng 5) — pin lại: nếu
+// ghi order_status_history lỗi (fake orderHistoryRepo trả lỗi), updatePaymentCodeAndHistoryTx
+// PHẢI trả lỗi đó ra ngoài — KHÔNG được nuốt (đúng lớp lỗi M3-08 gốc: history.Create() TRƯỚC ĐÂY
+// không hề kiểm lỗi trả về, "_ =" hay return đều không có).
+func TestUpdatePaymentCodeAndHistoryTx_HistoryErrorPropagates(t *testing.T) {
+	txRepo := &fakePaymentCodeUpdater{}
+	historyRepo := &fakeOrderHistoryRepoForAlert{createErr: errors.New("history insert failed")}
+
+	err := updatePaymentCodeAndHistoryTx(txRepo, historyRepo, uuid.New(), "PAY123456", time.Now().Add(24*time.Hour), "pending")
+	if err == nil {
+		t.Fatal("expected error to propagate when orderHistoryRepo.Create fails, got nil (đúng lớp lỗi M3-08 — nuốt lỗi)")
+	}
+	if len(historyRepo.created) != 1 {
+		t.Errorf("expected Create to have been attempted exactly once, got %d calls", len(historyRepo.created))
+	}
+}
+
+// TestUpdatePaymentCodeAndHistoryTx_UpdateCodeErrorPropagates (B-02/B-03, review vòng 5) — nhánh
+// còn lại: nếu UpdatePaymentCode lỗi (vd ErrOrderConflict — race giữa 2 request tạo intent đồng
+// thời, B-03), history KHÔNG được ghi (Create không được gọi) và lỗi trả về nguyên vẹn.
+func TestUpdatePaymentCodeAndHistoryTx_UpdateCodeErrorPropagates(t *testing.T) {
+	txRepo := &fakePaymentCodeUpdater{err: repository.ErrOrderConflict}
+	historyRepo := &fakeOrderHistoryRepoForAlert{}
+
+	err := updatePaymentCodeAndHistoryTx(txRepo, historyRepo, uuid.New(), "PAY123456", time.Now().Add(24*time.Hour), "pending")
+	if !errors.Is(err, repository.ErrOrderConflict) {
+		t.Fatalf("expected ErrOrderConflict to propagate, got %v", err)
+	}
+	if len(historyRepo.created) != 0 {
+		t.Errorf("expected history.Create NOT to be called when UpdatePaymentCode fails, got %d calls", len(historyRepo.created))
+	}
+}
+
+// TestUpdatePaymentCodeAndHistoryTx_Success — nhánh thành công (cả 2 bước không lỗi), và history
+// được tạo với ToStatus="processing" đúng như CreatePaymentIntent mong đợi.
+func TestUpdatePaymentCodeAndHistoryTx_Success(t *testing.T) {
+	txRepo := &fakePaymentCodeUpdater{}
+	historyRepo := &fakeOrderHistoryRepoForAlert{}
+	orderID := uuid.New()
+
+	err := updatePaymentCodeAndHistoryTx(txRepo, historyRepo, orderID, "PAY123456", time.Now().Add(24*time.Hour), "pending")
+	if err != nil {
+		t.Fatalf("expected nil error on success path, got %v", err)
+	}
+	if len(historyRepo.created) != 1 {
+		t.Fatalf("expected exactly 1 history row created, got %d", len(historyRepo.created))
+	}
+	h := historyRepo.created[0]
+	if h.OrderID != orderID || h.ToStatus != "processing" || h.FromStatus != "pending" {
+		t.Errorf("unexpected history content: %+v", h)
+	}
+}
+
+// TestShouldAlertFulfillmentFailure (B-01, review vòng 4b/5) — pin lại 2 nhánh của hàm THUẦN
+// shouldAlertFulfillmentFailure: benign DUY NHẤT là ErrPaymentAlreadyDone (false — không cảnh
+// báo), MỌI lỗi khác (kể cả lỗi được wrap qua %w) đều phải cảnh báo (true), và nil không cảnh
+// báo (không có lỗi thì không có gì để cảnh báo — nhánh biên, khớp early-return trong hàm).
+func TestShouldAlertFulfillmentFailure(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil -> khong canh bao", nil, false},
+		{"ErrPaymentAlreadyDone (benign) -> khong canh bao", ErrPaymentAlreadyDone, false},
+		{"ErrPaymentAlreadyDone wrap qua %w -> van la benign", fmt.Errorf("check tx: %w", ErrPaymentAlreadyDone), false},
+		{"loi khac (vd tu completeOrderFulfillment) -> PHAI canh bao", errors.New("enrollment insert failed"), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldAlertFulfillmentFailure(tt.err); got != tt.want {
+				t.Errorf("shouldAlertFulfillmentFailure(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
 }

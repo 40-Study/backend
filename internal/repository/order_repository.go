@@ -107,13 +107,45 @@ func (r *OrderRepository) GetByUserIDAndStatus(userID uuid.UUID, status string) 
 // payment_transaction_id (tạm dùng để lưu payment code lúc đang processing — sẽ bị
 // UpdatePaymentInfo ghi đè bằng transaction ID THẬT của ngân hàng khi thanh toán xong, đúng ý
 // nghĩa cột này sau khi hoàn tất) và payment_code_expired_at trong CÙNG một UPDATE.
-func (r *OrderRepository) UpdatePaymentCode(orderID uuid.UUID, paymentCode string, expiredAt time.Time) error {
+// buildUpdatePaymentCodeQuery (B-03, review vòng 5) — tách phần XÂY câu UPDATE có điều kiện ra
+// khỏi phần map RowsAffected -> error, cùng mẫu buildUpdatePaymentInfoQuery/
+// buildReserveVoucherUsageQuery, để test DryRun gọi được ĐÚNG hàm sản xuất thật.
+func (r *OrderRepository) buildUpdatePaymentCodeQuery(orderID uuid.UUID, paymentCode string, expiredAt time.Time) *gorm.DB {
 	updates := map[string]interface{}{
 		"status":                  "processing",
 		"payment_transaction_id":  paymentCode,
 		"payment_code_expired_at": expiredAt,
 	}
-	return r.db.Model(&model.Order{}).Where("id = ?", orderID).Updates(updates).Error
+	// B-03 (review vòng 5): UPDATE CÓ ĐIỀU KIỆN thay vì vô điều kiện như trước — 2 request tạo
+	// payment intent đồng thời cho CÙNG 1 đơn (double-click, 2 tab) trước đây có thể cùng đọc
+	// order.Status="pending" (guard đọc TRƯỚC transaction ở CreatePaymentIntent), rồi cả hai
+	// cùng UPDATE thành công, sinh 2 mã thanh toán khác nhau cho cùng 1 đơn — mã sau ghi đè mã
+	// trước, người dùng nhìn thấy mã KHÁC với mã họ vừa được cấp ở request đầu. Cho phép UPDATE
+	// khi: (1) đơn đang "pending" (tạo intent lần đầu), HOẶC (2) đơn đã "processing" NHƯNG CHƯA
+	// có payment_transaction_id (trạng thái biên phòng thủ — về lý thuyết không nên xảy ra vì
+	// chính UPDATE này luôn set cả status lẫn code CÙNG lúc, nhưng nếu có dữ liệu cũ/thao tác tay
+	// sai lệch thì vẫn cho sửa được thay vì kẹt cứng). Đơn "processing" ĐÃ CÓ code (dù còn hạn
+	// hay hết hạn) hoặc cancelled/expired/completed/failed đều KHÔNG khớp WHERE này — request
+	// thua cuộc đua nhận RowsAffected=0 -> ErrOrderConflict (xem UpdatePaymentCode).
+	return r.db.Model(&model.Order{}).
+		Where("id = ? AND (status = 'pending' OR (status = 'processing' AND (payment_transaction_id IS NULL OR payment_transaction_id = '')))", orderID).
+		Updates(updates)
+}
+
+// UpdatePaymentCode - Update payment info khi tạo payment intent. Trả ErrOrderConflict nếu đơn
+// không còn ở trạng thái hợp lệ để tạo/ghi đè payment code (xem comment
+// buildUpdatePaymentCodeQuery) — CreatePaymentIntent tự xử lý nhánh "đã có code còn hạn" TRƯỚC
+// khi gọi hàm này (đọc order.PaymentCodeExpiredAt để trả lại code cũ), nên ErrOrderConflict ở
+// đây chỉ còn xảy ra khi có RACE THẬT giữa 2 request đồng thời.
+func (r *OrderRepository) UpdatePaymentCode(orderID uuid.UUID, paymentCode string, expiredAt time.Time) error {
+	result := r.buildUpdatePaymentCodeQuery(orderID, paymentCode, expiredAt)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrOrderConflict
+	}
+	return nil
 }
 
 // buildUpdatePaymentInfoQuery (M-02, review vòng 5) — tách phần XÂY câu UPDATE có điều kiện ra

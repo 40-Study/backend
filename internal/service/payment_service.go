@@ -38,11 +38,13 @@ type PaymentServiceInterface interface {
 
 type PaymentService struct {
 	orderRepo repository.OrderRepositoryInterface
-	// paymentEventRepo (M3-09, review vòng 3b/4): xác nhận 0 lần đọc trong payment_service.go
-	// (grep) NHƯNG không nằm trong danh sách team-lead yêu cầu dọn ở vòng 4 (chỉ nêu courseRepo/
-	// orderItemRepo/couponRepo) — có thể dành cho tính năng webhook/payment-event sắp tới. GIỮ
-	// LẠI, không tự ý xóa; ghi nhận trong báo cáo để team-lead quyết định riêng.
-	paymentEventRepo repository.PaymentEventRepositoryInterface
+	// paymentEventRepo (M3-09, review vòng 3b/4; XÓA ở Minor, review vòng 4b/5): TRƯỚC ĐÂY giữ
+	// lại vì chưa có quyết định rõ ràng ("có thể dành cho tính năng webhook/payment-event sắp
+	// tới"). Grep lại lần nữa (2026-09-09, vòng 5 bổ sung) vẫn xác nhận 0 lần đọc — team-lead
+	// quyết định XÓA hẳn thay vì tiếp tục giữ field chết. Nếu tính năng webhook/payment-event
+	// thật sự cần đến sau này, thêm lại field + tham số constructor ở đúng thời điểm đó (YAGNI —
+	// không giữ field rỗng "phòng khi cần").
+	//
 	// orderHistoryRepo (M3-08, bổ sung vòng 4): field này TRƯỚC ĐÂY chỉ dùng ở CreatePaymentIntent
 	// (đã đổi sang orderHistoryRepoTx trong transaction — xem M3-08) nên gần như dead — NHƯNG có
 	// công dụng THẬT MỚI ở đây: ghi order_status_history "fulfillment_failed" NGOÀI transaction
@@ -61,15 +63,15 @@ type PaymentService struct {
 	transactionService TransactionServiceInterface
 }
 
-// M3-09 (review vòng 3b, bổ sung vòng 4): TRƯỚC ĐÂY NewPaymentService còn nhận courseRepo/
-// orderItemRepo/couponRepo — cả 3 đã 0 lần được đọc qua field bare (grep xác nhận): courseRepo vì
-// completeOrderFulfillment luôn dùng courseRepoTx dựng mới từ txDB (H2-06, vòng 3), không phải
-// field s.courseRepo; orderItemRepo/couponRepo tương tự đã chuyển hẳn sang orderItemRepoTx (tx-
-// bound) và flow voucher (couponRepo chưa từng dùng ở PaymentService, chỉ khai theo interface cũ).
-// Xóa hẳn khỏi cả struct lẫn constructor, cập nhật app/services.go cùng lượt.
+// M3-09 (review vòng 3b, bổ sung vòng 4; Minor vòng 4b/5 xóa nốt paymentEventRepo): TRƯỚC ĐÂY
+// NewPaymentService còn nhận courseRepo/orderItemRepo/couponRepo — cả 3 đã 0 lần được đọc qua
+// field bare (grep xác nhận): courseRepo vì completeOrderFulfillment luôn dùng courseRepoTx dựng
+// mới từ txDB (H2-06, vòng 3), không phải field s.courseRepo; orderItemRepo/couponRepo tương tự
+// đã chuyển hẳn sang orderItemRepoTx (tx-bound) và flow voucher (couponRepo chưa từng dùng ở
+// PaymentService, chỉ khai theo interface cũ). paymentEventRepo xóa SAU (vòng 5 bổ sung, quyết
+// định team-lead) — cùng lý do 0 lần đọc, chỉ khác là ban đầu giữ lại chờ quyết định riêng.
 func NewPaymentService(
 	orderRepo repository.OrderRepositoryInterface,
-	paymentEventRepo repository.PaymentEventRepositoryInterface,
 	orderHistoryRepo repository.OrderStatusHistoryRepositoryInterface,
 	enrollmentRepo repository.EnrollmentRepositoryInterface,
 	voucherService VoucherServiceInterface,
@@ -77,7 +79,6 @@ func NewPaymentService(
 ) *PaymentService {
 	return &PaymentService{
 		orderRepo:          orderRepo,
-		paymentEventRepo:   paymentEventRepo,
 		orderHistoryRepo:   orderHistoryRepo,
 		enrollmentRepo:     enrollmentRepo,
 		voucherService:     voucherService,
@@ -186,7 +187,22 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 		return nil, ErrOrderForbidden
 	}
 
-	// Verify order is in correct state
+	// B-03 (review vòng 5): đơn đã "processing" NHƯNG payment code hiện tại CÒN HẠN — trả lại
+	// đúng code CŨ thay vì sinh mã MỚI. TRƯỚC ĐÂY guard "order.Status != pending" chặn HẲN
+	// nhánh này (trả ErrInvalidStateTransition) — user bấm "thanh toán" 2 lần liên tiếp (double-
+	// click, hoặc mở 2 tab) hoặc app crash rồi mở lại trang thanh toán sẽ bị lỗi dù payment
+	// intent vẫn còn dùng được, phải quay lại giỏ hàng tạo đơn mới hoàn toàn không cần thiết.
+	// Idempotent theo đúng ý nghĩa: cùng orderID, cùng trạng thái "đang chờ thanh toán còn hạn"
+	// -> trả về CÙNG payment intent, không tạo thêm bản ghi/mã nào mới.
+	if order.Status == "processing" && order.PaymentTransactionID != nil && *order.PaymentTransactionID != "" &&
+		order.PaymentCodeExpiredAt != nil && time.Now().Before(*order.PaymentCodeExpiredAt) {
+		return s.buildPaymentIntentResponse(order, *order.PaymentTransactionID, *order.PaymentCodeExpiredAt, paymentMethod), nil
+	}
+
+	// Verify order is in correct state — "pending" là nhánh DUY NHẤT còn lại được phép tạo intent
+	// MỚI (processing với code CÒN HẠN đã trả ở nhánh trên; processing với code HẾT HẠN hoặc
+	// KHÔNG có code, cancelled/expired/completed/failed đều rơi vào đây -> lỗi, đúng ý "đã
+	// cancelled/expired -> lỗi" của B-03).
 	if order.Status != "pending" {
 		return nil, ErrInvalidStateTransition
 	}
@@ -208,27 +224,23 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 	// vào MỘT transaction: lỗi ở bước nào rollback CẢ HAI, không để order "processing" mồ côi
 	// history.
 	err = s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
-		if err := txRepo.UpdatePaymentCode(orderID, paymentCode, expiresAt); err != nil {
-			return err
-		}
-		history := &model.OrderStatusHistory{
-			ID:         uuid.New(),
-			CreatedAt:  time.Now(),
-			OrderID:    orderID,
-			FromStatus: oldStatus,
-			ToStatus:   "processing",
-			Reason:     "Payment initiated",
-		}
 		orderHistoryRepoTx := repository.NewOrderStatusHistoryRepository(txRepo.TxDB())
-		return orderHistoryRepoTx.Create(history)
+		return updatePaymentCodeAndHistoryTx(txRepo, orderHistoryRepoTx, orderID, paymentCode, expiresAt, oldStatus)
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Build response
+	return s.buildPaymentIntentResponse(order, paymentCode, expiresAt, paymentMethod), nil
+}
+
+// buildPaymentIntentResponse (B-03, review vòng 5) — tách phần dựng response ra khỏi
+// CreatePaymentIntent để dùng CHUNG cho cả 2 nhánh: tạo intent MỚI (paymentCode vừa sinh) và trả
+// lại intent CŨ còn hạn (paymentCode đọc từ order.PaymentTransactionID) — không copy lại logic
+// QR/bank-transfer 2 lần.
+func (s *PaymentService) buildPaymentIntentResponse(order *model.Order, paymentCode string, expiresAt time.Time, paymentMethod string) *dto.PaymentIntentResponse {
 	resp := &dto.PaymentIntentResponse{
-		OrderID:     orderID,
+		OrderID:     order.ID,
 		PaymentCode: paymentCode,
 		Amount:      order.TotalAmount,
 		Currency:    order.Currency,
@@ -248,7 +260,42 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 		}
 	}
 
-	return resp, nil
+	return resp
+}
+
+// paymentCodeUpdater — interface HẸP, chỉ đúng 1 method updatePaymentCodeAndHistoryTx cần từ
+// txRepo. *repository.OrderRepository implement interface này tự nhiên (Go structural typing),
+// không cần đổi gì ở call site thật (CreatePaymentIntent vẫn truyền thẳng *repository.OrderRepository
+// từ WithTransaction). Lý do tách interface riêng (B-03, review vòng 5 — sửa SAU khi B-02 đã
+// viết xong): UpdatePaymentCode đổi thành UPDATE CÓ ĐIỀU KIỆN (buildUpdatePaymentCodeQuery) —
+// trên DryRun DB, RowsAffected LUÔN = 0 (không có kết nối thật để Exec), nên gọi
+// txRepo.UpdatePaymentCode(...) THẬT trên DryRun giờ LUÔN trả ErrOrderConflict, làm hỏng test
+// B-02 (không bao giờ chạm tới bước ghi history được nữa để test riêng nhánh đó). Tách interface
+// hẹp để fake được BƯỚC NÀY độc lập — hành vi CONDITIONAL UPDATE thật của UpdatePaymentCode đã
+// có test riêng (TestUpdatePaymentCode_ConditionalGuard/_ReturnsErrOrderConflictOnZeroRows,
+// order_repository_test.go), không cần lặp lại ở đây.
+type paymentCodeUpdater interface {
+	UpdatePaymentCode(orderID uuid.UUID, paymentCode string, expiredAt time.Time) error
+}
+
+// updatePaymentCodeAndHistoryTx (B-02, review vòng 5) — tách THÂN CLOSURE của
+// CreatePaymentIntent's WithTransaction ra hàm riêng, NHẬN interface
+// repository.OrderStatusHistoryRepositoryInterface cho orderHistoryRepo (thay vì tự dựng
+// repository.NewOrderStatusHistoryRepository(txRepo.TxDB()) BÊN TRONG closure như trước) để test
+// bằng fake — mô phỏng "ghi history lỗi -> hàm phải trả lỗi, KHÔNG nuốt" mà không cần DB thật.
+func updatePaymentCodeAndHistoryTx(txRepo paymentCodeUpdater, orderHistoryRepo repository.OrderStatusHistoryRepositoryInterface, orderID uuid.UUID, paymentCode string, expiresAt time.Time, oldStatus string) error {
+	if err := txRepo.UpdatePaymentCode(orderID, paymentCode, expiresAt); err != nil {
+		return err
+	}
+	history := &model.OrderStatusHistory{
+		ID:         uuid.New(),
+		CreatedAt:  time.Now(),
+		OrderID:    orderID,
+		FromStatus: oldStatus,
+		ToStatus:   "processing",
+		Reason:     "Payment initiated",
+	}
+	return orderHistoryRepo.Create(history)
 }
 
 // CheckAndProcessPayment - Check transaction via gRPC and process if found
@@ -422,7 +469,7 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 	})
 
 	if err != nil {
-		if errors.Is(err, ErrPaymentAlreadyDone) {
+		if !shouldAlertFulfillmentFailure(err) {
 			// KHÔNG phải "tiền mất dấu vết" — unique constraint bank_transaction_usages (M-06)
 			// đã chặn ĐÚNG như thiết kế vì một request khác đã xử lý giao dịch ngân hàng này
 			// rồi. Không cảnh báo ops cho trường hợp benign này.
@@ -472,6 +519,21 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 // order_status_history "fulfillment_failed" NGOÀI transaction đã rollback (best-effort, dùng
 // connection gốc s.orderHistoryRepo). Lỗi ở chính bước ghi fallback này chỉ log thêm, KHÔNG che
 // lỗi gốc (fulfillErr vẫn được caller trả về nguyên vẹn).
+// shouldAlertFulfillmentFailure (B-01, review vòng 4b/5) — tách riêng phần QUYẾT ĐỊNH "có nên
+// cảnh báo ops hay không" thành 1 hàm THUẦN (pure — chỉ nhận error, trả bool, không side-effect)
+// khỏi nhánh `if err != nil` của CheckAndProcessPayment — trước đây quyết định này ẩn trong 1
+// điều kiện if lồng trực tiếp trong hàm lớn, không tách được ra để test độc lập. Benign DUY NHẤT:
+// ErrPaymentAlreadyDone (unique constraint bank_transaction_usages, M-06 — một request KHÁC đã
+// xử lý ĐÚNG giao dịch ngân hàng này rồi, không phải "tiền mất dấu vết"). MỌI lỗi khác (thường
+// gặp nhất: completeOrderFulfillment lỗi giữa chừng — enrollment/total_students/voucher log)
+// đều PHẢI cảnh báo, vì giao dịch ngân hàng đã amount-match THẬT nhưng transaction rollback hết.
+func shouldAlertFulfillmentFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	return !errors.Is(err, ErrPaymentAlreadyDone)
+}
+
 func (s *PaymentService) recordFulfillmentFailureAlert(orderID uuid.UUID, oldStatus, bankTxID, amount string, fulfillErr error) {
 	log.Printf("[PAYMENT-ALERT] order=%s tx=%s amount=%s err=%v", orderID, bankTxID, amount, fulfillErr)
 	fallbackHistory := &model.OrderStatusHistory{

@@ -376,9 +376,12 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 			repos.IdempotencyKey,
 			voucherSvc,
 		),
+		// paymentEventRepo (Minor, review vòng 4b/5): xóa hẳn khỏi tham số NewPaymentService —
+		// grep xác nhận 0 lần đọc, quyết định team-lead. repos.PaymentEvent vẫn tồn tại trong
+		// Repositories (có thể dùng cho tính năng khác sau này), chỉ không còn truyền vào
+		// PaymentService nữa.
 		Payment: service.NewPaymentService(
 			repos.Order,
-			repos.PaymentEvent,
 			repos.OrderStatusHistory,
 			repos.Enrollment,
 			voucherSvc,
