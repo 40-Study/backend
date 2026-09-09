@@ -13,13 +13,14 @@ func SetupSystemRoleRoutes(
 	cfg *config.Config,
 	systemRoleHandler *handler.SystemRoleHandler,
 	redis *redis.Client,
+	permChecker *middleware.PermissionChecker,
 ) {
 	// Public route: allow clients to list system roles without auth
 	systemRolesPublic := api.Group("/system-roles")
 	systemRolesPublic.Get("/", systemRoleHandler.GetAllSystemRoles)
 
-	// Protected routes: require auth for all other operations
-	systemRoles := api.Group("/system-roles", middleware.AuthMiddleware(cfg, redis))
+	// Protected routes: require auth + quyền quản trị RBAC hệ thống cho mọi thao tác ghi.
+	systemRoles := api.Group("/system-roles", middleware.AuthMiddleware(cfg, redis), permChecker.RequirePermissions("ROLES_MANAGE_SYSTEM"))
 	{
 		systemRoles.Post("/", systemRoleHandler.CreateSystemRole)
 		systemRoles.Get("/:id", systemRoleHandler.GetSystemRole)

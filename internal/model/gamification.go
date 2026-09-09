@@ -73,8 +73,8 @@ func (PointRule) TableName() string {
 type DailyCheckin struct {
 	ID           uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	CreatedAt    time.Time `json:"created_at"`
-	UserID       uuid.UUID `gorm:"type:uuid;not null" json:"user_id"`
-	CheckinDate  time.Time `gorm:"type:date;not null" json:"checkin_date"`
+	UserID       uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_checkin_user_date,priority:1" json:"user_id"`
+	CheckinDate  time.Time `gorm:"type:date;not null;uniqueIndex:idx_checkin_user_date,priority:2" json:"checkin_date"`
 	StreakCount  int       `gorm:"default:1" json:"streak_count"` // Số ngày liên tiếp tính đến ngày này
 	PointsEarned int       `gorm:"default:0" json:"points_earned"`
 	BonusEarned  int       `gorm:"default:0" json:"bonus_earned"` // Bonus từ streak

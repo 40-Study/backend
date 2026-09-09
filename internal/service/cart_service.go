@@ -101,6 +101,7 @@ func (s *CartService) GetCart(ctx context.Context, userID uuid.UUID) (*dto.CartL
 
 	return &dto.CartListResponseDTO{
 		Items:     responseItems,
+		Total:     totalPrice,
 		TotalItem: len(responseItems),
 	}, nil
 }
@@ -136,16 +137,16 @@ func (s *CartService) toCartItemResponseDTO(item *model.CartItem, course *model.
 			Title:             course.Title,
 			Slug:              course.Slug,
 			ThumbnailURL:      getStringPointer(course.ThumbnailURL),
-			Price:             course.Price.String(),
+			Price:             course.Price,
 			Level:             course.Level,
 			TotalDurationMins: course.TotalDurationMins,
 			TotalLessons:      course.TotalLessons,
-			AverageRating:     course.AverageRating.String(),
+			AverageRating:     course.AverageRating,
 			TotalStudents:     course.TotalStudents,
 		}
 
 		if course.DiscountPrice != nil {
-			resp.Course.DiscountPrice = course.DiscountPrice.String()
+			resp.Course.DiscountPrice = course.DiscountPrice
 		}
 
 		// Get instructor name

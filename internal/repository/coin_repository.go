@@ -85,7 +85,17 @@ func (r *CoinWalletRepository) GetOrCreate(ctx context.Context, userID uuid.UUID
 	return newWallet, nil
 }
 
+// WithTransaction chạy fn trong 1 DB transaction, trả về *gorm.DB đã bind transaction
+// để caller (service layer) tự khoá dòng (SELECT ... FOR UPDATE) và ghi ledger atomic
+// cùng với thay đổi số dư ví. Rollback tự động nếu fn trả lỗi.
+func (r *CoinWalletRepository) WithTransaction(fn func(tx *gorm.DB) error) error {
+	return r.db.Transaction(fn)
+}
+
 func (r *CoinWalletRepository) AddBalance(ctx context.Context, walletID uuid.UUID, amount int64) error {
+	if amount <= 0 {
+		return errors.New("amount xu cộng vào ví phải > 0")
+	}
 	return r.db.WithContext(ctx).Model(&model.UserCoinWallet{}).
 		Where("id = ?", walletID).
 		Updates(map[string]interface{}{
@@ -95,6 +105,9 @@ func (r *CoinWalletRepository) AddBalance(ctx context.Context, walletID uuid.UUI
 }
 
 func (r *CoinWalletRepository) SubtractBalance(ctx context.Context, walletID uuid.UUID, amount int64) error {
+	if amount <= 0 {
+		return errors.New("amount xu trừ khỏi ví phải > 0")
+	}
 	result := r.db.WithContext(ctx).Model(&model.UserCoinWallet{}).
 		Where("id = ? AND balance >= ?", walletID, amount).
 		Updates(map[string]interface{}{

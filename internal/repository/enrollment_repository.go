@@ -14,6 +14,11 @@ import (
 type EnrollmentRepositoryInterface interface {
 	Create(ctx context.Context, enrollment *model.Enrollment) error
 	GetByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error)
+	// GetByUserAndCourseUnscoped giống GetByUserAndCourse nhưng bao gồm cả bản ghi đã soft-delete
+	// (dùng để phát hiện re-enroll sau khi Unenroll — xem C-06 audit 260909).
+	GetByUserAndCourseUnscoped(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error)
+	// Restore khôi phục một enrollment đã soft-delete (deleted_at = NULL).
+	Restore(ctx context.Context, id uuid.UUID) error
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Enrollment, error)
 	GetDetailByID(ctx context.Context, id uuid.UUID) (*model.Enrollment, error)
 	GetByUserID(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]model.Enrollment, int64, error)
@@ -58,6 +63,28 @@ func (r *EnrollmentRepository) GetByUserAndCourse(ctx context.Context, userID, c
 		return nil, err
 	}
 	return &enrollment, nil
+}
+
+// GetByUserAndCourseUnscoped tìm enrollment kể cả đã soft-delete (Unscoped) — dùng để phân
+// biệt "chưa từng enroll" với "đã unenroll trước đó" khi xử lý re-enroll (C-06).
+func (r *EnrollmentRepository) GetByUserAndCourseUnscoped(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error) {
+	var enrollment model.Enrollment
+	err := r.db.WithContext(ctx).
+		Unscoped().
+		Where("user_id = ? AND course_id = ?", userID, courseID).
+		First(&enrollment).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &enrollment, nil
+}
+
+// Restore khôi phục enrollment đã soft-delete (deleted_at = NULL).
+func (r *EnrollmentRepository) Restore(ctx context.Context, id uuid.UUID) error {
+	return r.db.WithContext(ctx).Unscoped().Model(&model.Enrollment{}).Where("id = ?", id).Update("deleted_at", nil).Error
 }
 
 func (r *EnrollmentRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Enrollment, error) {

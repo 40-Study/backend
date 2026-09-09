@@ -22,7 +22,8 @@ func SetupEnrollmentRoutes(
 		courses.Post("/:courseId/enroll", auth, enrollmentHandler.Enroll)
 		courses.Delete("/:courseId/enroll", auth, enrollmentHandler.Unenroll)
 		courses.Get("/:courseId/enrollments", auth, enrollmentHandler.GetCourseEnrollments)
-		courses.Get("/:courseId/enrollments/debug", auth, enrollmentHandler.DebugCourseEnrollments)
+		// L-04 (audit 260909): endpoint debug (lộ enrollment đã soft-delete + PII, không giới
+		// hạn chỉ giảng viên khóa học) đã gỡ khỏi router — không nên tồn tại ở production.
 	}
 
 	// My enrollments

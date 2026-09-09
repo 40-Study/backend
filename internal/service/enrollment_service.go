@@ -12,6 +12,10 @@ import (
 	"study.com/v1/internal/repository"
 )
 
+// ErrPaymentRequired: C-06 (audit 260909) — trước đây Enroll ghi danh được khóa trả phí mà
+// không kiểm tra course.Price/IsFree hay đơn hàng đã thanh toán. Handler map lỗi này sang 402.
+var ErrPaymentRequired = errors.New("payment required for this course")
+
 type EnrollmentServiceInterface interface {
 	Enroll(ctx context.Context, userID, courseID uuid.UUID) (*dto.EnrollmentResponseDTO, error)
 	Unenroll(ctx context.Context, userID, courseID uuid.UUID) error
@@ -41,20 +45,47 @@ func NewEnrollmentService(
 }
 
 func (s *EnrollmentService) Enroll(ctx context.Context, userID, courseID uuid.UUID) (*dto.EnrollmentResponseDTO, error) {
-	exists, err := s.courseRepo.Exists(ctx, courseID)
+	course, err := s.courseRepo.GetByID(ctx, courseID)
 	if err != nil {
 		return nil, err
 	}
-	if !exists {
+	if course == nil {
 		return nil, errors.New("course not found")
 	}
+	// C-06: endpoint tự-ghi-danh chỉ dành cho khóa MIỄN PHÍ. Khóa trả phí phải đi qua
+	// payment_service.CheckAndProcessPayment (lane khác) sau khi đơn hàng completed.
+	if !course.IsFree && course.Price.GreaterThan(decimal.Zero) {
+		return nil, ErrPaymentRequired
+	}
 
-	existing, err := s.enrollmentRepo.GetByUserAndCourse(ctx, userID, courseID)
+	// Dùng bản Unscoped để phân biệt "chưa từng enroll" với "đã unenroll trước đó" — trước
+	// đây GetByUserAndCourse (có scope mặc định, loại soft-delete) khiến re-enroll sau khi
+	// Unenroll bị lỗi unique constraint (idx_user_course) vì bản ghi cũ vẫn còn trong DB.
+	existing, err := s.enrollmentRepo.GetByUserAndCourseUnscoped(ctx, userID, courseID)
 	if err != nil {
 		return nil, err
 	}
-	if existing != nil {
+	if existing != nil && !existing.DeletedAt.Valid {
 		return nil, errors.New("already enrolled in this course")
+	}
+
+	if existing != nil && existing.DeletedAt.Valid {
+		// Re-enroll: khôi phục bản ghi cũ thay vì INSERT mới (tránh vi phạm unique index),
+		// đồng thời reset tiến trình học về trạng thái ban đầu.
+		if err := s.enrollmentRepo.Restore(ctx, existing.ID); err != nil {
+			return nil, err
+		}
+		existing.EnrolledAt = time.Now()
+		existing.CompletedAt = nil
+		existing.LastAccessedAt = nil
+		existing.ProgressPercent = decimal.Zero
+		if err := s.enrollmentRepo.Update(ctx, existing); err != nil {
+			return nil, err
+		}
+		if err := s.courseRepo.IncrementTotalStudents(ctx, courseID, 1); err != nil {
+			return nil, err
+		}
+		return s.toEnrollmentResponseDTO(existing), nil
 	}
 
 	enrollment := &model.Enrollment{
@@ -64,6 +95,9 @@ func (s *EnrollmentService) Enroll(ctx context.Context, userID, courseID uuid.UU
 	}
 
 	if err := s.enrollmentRepo.Create(ctx, enrollment); err != nil {
+		return nil, err
+	}
+	if err := s.courseRepo.IncrementTotalStudents(ctx, courseID, 1); err != nil {
 		return nil, err
 	}
 
@@ -79,7 +113,10 @@ func (s *EnrollmentService) Unenroll(ctx context.Context, userID, courseID uuid.
 		return errors.New("not enrolled in this course")
 	}
 
-	return s.enrollmentRepo.Delete(ctx, enrollment.ID)
+	if err := s.enrollmentRepo.Delete(ctx, enrollment.ID); err != nil {
+		return err
+	}
+	return s.courseRepo.IncrementTotalStudents(ctx, courseID, -1)
 }
 
 func (s *EnrollmentService) GetMyEnrollments(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.EnrollmentListResponseDTO, error) {

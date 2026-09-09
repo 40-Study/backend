@@ -186,6 +186,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		repos.Submission,
 		assignmentSvc,
 		repos.TestCase,
+		repos.Schedule,
 		resources.Redis,
 		resources.Config,
 	)
@@ -335,7 +336,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Cart:          service.NewCartService(repos.CartItem, repos.Course, repos.Enrollment),
 		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag),
 		Section:       service.NewSectionService(repos.Section, repos.Course),
-		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, service.NewUploadService(resources.MinioClient, resources.Config)),
+		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, repos.Course, service.NewUploadService(resources.MinioClient, resources.Config)),
 		LessonContent: service.NewLessonContentService(repos.Lesson, service.NewUploadService(resources.MinioClient, resources.Config), uploadSvc),
 		Enrollment:    service.NewEnrollmentService(repos.Enrollment, repos.Course, repos.Lesson),
 
@@ -402,13 +403,13 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Quiz: service.NewQuizService(repos.Quiz, resources.Redis),
 
 		// ===== Grade (Redis cache) =====
-		Grade: service.NewGradeService(repos.Grade, resources.Redis),
+		Grade: service.NewGradeService(repos.Grade, repos.Class, resources.Redis),
 
 		// ===== Exercise (RabbitMQ for code execution + Redis cache) =====
 		Exercise: service.NewExerciseService(repos.Exercise, resources.Redis, resources.RabbitMQ),
 
 		// ===== Review (Redis cache for ratings) =====
-		Review: service.NewReviewService(repos.Review, resources.Redis),
+		Review: service.NewReviewService(repos.Review, repos.Course, resources.Redis),
 
 		// ===== Certificate (RabbitMQ for PDF generation) =====
 		Certificate: service.NewCertificateService(
@@ -422,11 +423,17 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Report: service.NewReportService(repos.Report),
 
 		// ===== Coin =====
+		// C4: CoinService cần transactionSvc để VerifyPurchase xác minh giao dịch
+		// ngân hàng thật trước khi cộng xu (không tự cộng theo lời gọi của user).
+		// coinTxSvc chỉ gán khi transactionSvc thực sự khác nil: gán trực tiếp con
+		// trỏ *service.TransactionService (kể cả khi nil) vào interface sẽ tạo ra
+		// "typed nil" khiến check `== nil` phía trong CoinService không còn đúng.
 		Coin: service.NewCoinService(
 			repos.CoinWallet,
 			repos.CoinTransaction,
 			repos.CoinPackage,
 			repos.CoinPurchase,
+			coinTransactionServiceOrNil(transactionSvc),
 		),
 
 		// ===== Group =====
@@ -473,4 +480,17 @@ func initTransactionService(cfg *config.Config) *service.TransactionService {
 
 	log.Println("Transaction service (gRPC) initialized successfully")
 	return transactionSvc
+}
+
+// coinTransactionServiceOrNil chuyển *service.TransactionService (con trỏ cụ thể,
+// có thể nil khi gRPC service không khởi tạo được) sang interface một cách an
+// toàn. Gán trực tiếp 1 con trỏ nil vào biến interface sẽ tạo ra "typed nil"
+// (interface khác nil dù giá trị bên trong là nil) khiến `s.transactionService
+// == nil` bên trong CoinService không còn phát hiện được — hàm này tránh bẫy đó
+// bằng cách chỉ gán khi con trỏ thực sự khác nil.
+func coinTransactionServiceOrNil(svc *service.TransactionService) service.TransactionServiceInterface {
+	if svc == nil {
+		return nil
+	}
+	return svc
 }

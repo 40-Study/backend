@@ -29,11 +29,13 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	auth.Post("/register/request", otpRateLimiter, authHandler.RequestRegister)
 	auth.Post("/register", authRateLimiter, authHandler.Register)
 	auth.Post("/login", authRateLimiter, authHandler.Login)
-	auth.Post("/select-role", authHandler.SelectRole)
+	// M-03 (audit 260909): select-role/refresh-token trước đây không rate-limit dù chạm
+	// Redis/DB và cấp token — select-role còn là bề mặt khai thác của C-01.
+	auth.Post("/select-role", authRateLimiter, authHandler.SelectRole)
 	auth.Get("/system-roles", authHandler.GetSystemRoleOptions)
 	auth.Post("/reset-password/request", otpRateLimiter, authHandler.RequestPasswordReset)
 	auth.Post("/reset-password", authRateLimiter, authHandler.ResetPassword)
-	auth.Post("/refresh-token", authHandler.RefreshToken)
+	auth.Post("/refresh-token", authRateLimiter, authHandler.RefreshToken)
 
 	// Protected routes
 	auth.Use(middleware.AuthMiddleware(cfg, redis))

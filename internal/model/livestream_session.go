@@ -88,7 +88,7 @@ type ChatMessage struct {
 	IsPinned  bool       `gorm:"default:false" json:"is_pinned"`
 	IsDeleted bool       `gorm:"default:false" json:"is_deleted"`
 	DeletedAt *time.Time `gorm:"type:timestamp" json:"deleted_at,omitempty"`
-	DeletedBy *uuid.UUID `gorm:"type:uuid" json:"deleted_by,omitempty"`
+	DeletedBy *uuid.UUID `gorm:"type:uuid;index" json:"deleted_by,omitempty"`
 	ParentID  *uuid.UUID `gorm:"type:uuid;index" json:"parent_id,omitempty"`
 
 	Session *LivestreamSession `gorm:"foreignKey:SessionID" json:"-"`

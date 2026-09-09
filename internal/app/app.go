@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/google/uuid"
 	"study.com/v1/internal/database/seeds"
 	"study.com/v1/internal/middleware"
@@ -123,6 +124,11 @@ func New() (*App, error) {
 
 	fiberApp := fiber.New()
 
+	// H-02 (audit 260909): trước đây không có recover middleware nên bất kỳ panic nào
+	// (vd nil pointer dereference ở H-01) đều làm sập kết nối thay vì trả 500 có log.
+	// Phải đứng TRƯỚC mọi route khác.
+	fiberApp.Use(recover.New(recover.Config{EnableStackTrace: true}))
+
 	allowedOrigins := resources.Config.AllowedOrigins
 	if allowedOrigins == "" {
 		allowedOrigins = "http://localhost:3000"
@@ -138,9 +144,14 @@ func New() (*App, error) {
 	auth := middleware.AuthMiddleware(resources.Config, resources.Redis)
 	fiberApp.Get("/api/ws", auth, socketHandler.HandleWebSocket)
 
+	// C-02 (audit 260909): PermissionChecker triển khai thật cho RequirePermissions (trước
+	// đây là no-op không dùng ở đâu). Dùng chung các repository RBAC đã có sẵn trong repos.
+	permChecker := middleware.NewPermissionChecker(repos.UserSystemRole, repos.SystemRole, repos.UserOrganizationRole, repos.Role)
+
 	router.SetupAllRoutes(
 		fiberApp,
 		resources.Config,
+		permChecker,
 
 		// ===== Auth & Role =====
 		handlers.Auth,

@@ -14,7 +14,10 @@ func SetupOrderRoutes(api fiber.Router,
 	redis *redis.Client) {
 	orders := api.Group("/orders")
 
-	authMiddleware := middleware.AuthMiddleware(nil, nil)
+	// H-01 (audit 260909): AuthMiddleware(nil, nil) khiến utils.ParseToken truy cập
+	// cfg.JWTSecret trên cfg == nil -> nil pointer dereference, panic mọi request có token.
+	// cfg/redis đã có sẵn trong tham số hàm nhưng không được dùng — sửa lại cho đúng.
+	authMiddleware := middleware.AuthMiddleware(cfg, redis)
 	orders.Post("/", authMiddleware, orderHandler.CreateOrder)
 	orders.Get("/me", authMiddleware, orderHandler.GetUserOrders)
 	orders.Get("/:id", authMiddleware, orderHandler.GetOrder)

@@ -23,13 +23,13 @@ const (
 // VideoUpload - Model lưu trạng thái upload session trong PostgreSQL
 // Hỗ trợ resume cross-device và track progress
 type VideoUpload struct {
-	ID           uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	ID           uuid.UUID `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	UserID       uuid.UUID `json:"user_id" gorm:"type:uuid;not null;index"`
 	ResourceID   uuid.UUID `json:"resource_id" gorm:"type:uuid;not null;index"`    // ID của resource liên kết (ví dụ: blog post, product)
 	ResourceType string    `json:"resource_type" gorm:"type:varchar(50);not null"` // Loại resource: 'video', 'blog', 'product'
 
 	// Dữ liệu upload session
-	S3UploadKey string `json:"s3_upload_key" gorm:"type:varchar(255);not null;unique_index;column:s3_upload_key"` // S3 MultipartUpload ID (uploadKey từ MinIO)
+	S3UploadKey string `json:"s3_upload_key" gorm:"type:varchar(255);not null;uniqueIndex;column:s3_upload_key"` // S3 MultipartUpload ID (uploadKey từ MinIO)
 	ObjectKey   string `json:"object_key" gorm:"type:varchar(500);not null"`                                      // S3 object key (path trong bucket)
 	Bucket      string `json:"bucket" gorm:"type:varchar(100);not null"`                                          // MinIO bucket name
 

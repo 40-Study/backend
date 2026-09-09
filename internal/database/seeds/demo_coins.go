@@ -5,18 +5,19 @@ import (
 	"log"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"study.com/v1/internal/model"
 )
 
 // demoCoinPackages là catalog gói xu bán trên trang /coins.
 var demoCoinPackages = []model.CoinPackage{
-	{Name: "Gói Khởi Động", CoinAmount: 100, BonusAmount: 0, Price: 20000,
+	{Name: "Gói Khởi Động", CoinAmount: 100, BonusAmount: 0, Price: decimal.NewFromInt(20000),
 		Description: ptr("100 xu — dùng thử các tính năng gợi ý và mở khoá bài học."), SortOrder: 1},
-	{Name: "Gói Phổ Thông", CoinAmount: 500, BonusAmount: 50, Price: 90000, DiscountPercent: 10,
+	{Name: "Gói Phổ Thông", CoinAmount: 500, BonusAmount: 50, Price: decimal.NewFromInt(90000), DiscountPercent: 10,
 		Description: ptr("500 xu + tặng 50 xu. Lựa chọn phổ biến nhất."), IsFeatured: true, SortOrder: 2},
-	{Name: "Gói Chăm Chỉ", CoinAmount: 1200, BonusAmount: 200, Price: 200000, DiscountPercent: 15,
+	{Name: "Gói Chăm Chỉ", CoinAmount: 1200, BonusAmount: 200, Price: decimal.NewFromInt(200000), DiscountPercent: 15,
 		Description: ptr("1.200 xu + tặng 200 xu, đủ dùng cả học kỳ."), SortOrder: 3},
-	{Name: "Gói Học Kỳ", CoinAmount: 3000, BonusAmount: 700, Price: 450000, DiscountPercent: 20,
+	{Name: "Gói Học Kỳ", CoinAmount: 3000, BonusAmount: 700, Price: decimal.NewFromInt(450000), DiscountPercent: 20,
 		Description: ptr("3.000 xu + tặng 700 xu — tiết kiệm nhất cho người học dài hạn."), SortOrder: 4},
 }
 

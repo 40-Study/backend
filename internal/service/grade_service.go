@@ -27,9 +27,9 @@ type GradeServiceInterface interface {
 	// Grade
 	CreateGrade(ctx context.Context, classID, gradedBy uuid.UUID, req dto.CreateGradeDTO) (*dto.GradeResponseDTO, error)
 	GetGradesByClass(ctx context.Context, classID uuid.UUID) (*dto.GradeBookDTO, error)
-	GetStudentGrades(ctx context.Context, classID, studentID uuid.UUID) ([]dto.GradeResponseDTO, error)
+	GetStudentGrades(ctx context.Context, classID, studentID, requesterID uuid.UUID) ([]dto.GradeResponseDTO, error)
 	UpdateGrade(ctx context.Context, id, gradedBy uuid.UUID, req dto.UpdateGradeDTO) (*dto.GradeResponseDTO, error)
-	DeleteGrade(ctx context.Context, id uuid.UUID) error
+	DeleteGrade(ctx context.Context, id, actorUserID uuid.UUID) error
 	BulkCreateGrades(ctx context.Context, classID, gradedBy uuid.UUID, req dto.BulkCreateGradesDTO) ([]dto.GradeResponseDTO, error)
 
 	// FinalGrade
@@ -43,13 +43,31 @@ type GradeServiceInterface interface {
 	GetMyGradesByClass(ctx context.Context, studentID, classID uuid.UUID) ([]dto.GradeResponseDTO, error)
 }
 
+// ErrNotClassTeacher: C-13 (audit 260909) — trước đây CreateGrade/UpdateGrade/DeleteGrade
+// chỉ dùng user_id để ghi GradedBy, không kiểm tra người gọi có thực sự dạy lớp đó không.
+var ErrNotClassTeacher = errors.New("forbidden: not the teacher of this class")
+
 type GradeService struct {
-	repo  repository.GradeRepositoryInterface
-	redis *redis.Client
+	repo      repository.GradeRepositoryInterface
+	classRepo repository.ClassRepositoryInterface
+	redis     *redis.Client
 }
 
-func NewGradeService(repo repository.GradeRepositoryInterface, redis *redis.Client) *GradeService {
-	return &GradeService{repo: repo, redis: redis}
+func NewGradeService(repo repository.GradeRepositoryInterface, classRepo repository.ClassRepositoryInterface, redis *redis.Client) *GradeService {
+	return &GradeService{repo: repo, classRepo: classRepo, redis: redis}
+}
+
+// requireClassTeacher dùng lại pattern TeacherCanManageSession (schedule_service.go) — chỉ
+// giáo viên đã được gán vào lớp (teacher_classes) mới được thao tác điểm của lớp đó.
+func (s *GradeService) requireClassTeacher(ctx context.Context, classID, teacherID uuid.UUID) error {
+	allowed, err := s.classRepo.TeacherClassExists(ctx, classID, teacherID)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrNotClassTeacher
+	}
+	return nil
 }
 
 const (
@@ -178,6 +196,10 @@ func (s *GradeService) ReorderGradeColumns(ctx context.Context, classID uuid.UUI
 // ============================================================================
 
 func (s *GradeService) CreateGrade(ctx context.Context, classID, gradedBy uuid.UUID, req dto.CreateGradeDTO) (*dto.GradeResponseDTO, error) {
+	if err := s.requireClassTeacher(ctx, classID, gradedBy); err != nil {
+		return nil, err
+	}
+
 	studentID, err := uuid.Parse(req.StudentID)
 	if err != nil {
 		return nil, errors.New("invalid student_id")
@@ -296,7 +318,14 @@ func (s *GradeService) GetGradesByClass(ctx context.Context, classID uuid.UUID) 
 	return result, nil
 }
 
-func (s *GradeService) GetStudentGrades(ctx context.Context, classID, studentID uuid.UUID) ([]dto.GradeResponseDTO, error) {
+func (s *GradeService) GetStudentGrades(ctx context.Context, classID, studentID, requesterID uuid.UUID) ([]dto.GradeResponseDTO, error) {
+	// C-13: chỉ chính học sinh đó hoặc giáo viên của lớp mới được xem điểm.
+	if requesterID != studentID {
+		if err := s.requireClassTeacher(ctx, classID, requesterID); err != nil {
+			return nil, err
+		}
+	}
+
 	grades, err := s.repo.GetGradesByStudentAndClass(ctx, studentID, classID)
 	if err != nil {
 		return nil, err
@@ -313,6 +342,9 @@ func (s *GradeService) UpdateGrade(ctx context.Context, id, gradedBy uuid.UUID, 
 	grade, err := s.repo.GetGradeByID(ctx, id)
 	if err != nil || grade == nil {
 		return nil, errors.New("grade not found")
+	}
+	if err := s.requireClassTeacher(ctx, grade.ClassID, gradedBy); err != nil {
+		return nil, err
 	}
 
 	if req.Score != nil {
@@ -341,10 +373,13 @@ func (s *GradeService) UpdateGrade(ctx context.Context, id, gradedBy uuid.UUID, 
 	return s.mapGradeToDTO(grade), nil
 }
 
-func (s *GradeService) DeleteGrade(ctx context.Context, id uuid.UUID) error {
+func (s *GradeService) DeleteGrade(ctx context.Context, id, actorUserID uuid.UUID) error {
 	grade, err := s.repo.GetGradeByID(ctx, id)
 	if err != nil || grade == nil {
 		return errors.New("grade not found")
+	}
+	if err := s.requireClassTeacher(ctx, grade.ClassID, actorUserID); err != nil {
+		return err
 	}
 
 	if err := s.repo.DeleteGrade(ctx, id); err != nil {
@@ -506,7 +541,7 @@ func (s *GradeService) GetMyGrades(ctx context.Context, studentID uuid.UUID) ([]
 }
 
 func (s *GradeService) GetMyGradesByClass(ctx context.Context, studentID, classID uuid.UUID) ([]dto.GradeResponseDTO, error) {
-	return s.GetStudentGrades(ctx, classID, studentID)
+	return s.GetStudentGrades(ctx, classID, studentID, studentID)
 }
 
 // ============================================================================

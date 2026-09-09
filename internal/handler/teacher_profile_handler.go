@@ -23,6 +23,17 @@ func NewTeacherProfileHandler(service service.TeacherProfileServiceInterface) *T
 	return &TeacherProfileHandler{service: service}
 }
 
+// teacherProfileForbiddenResponse ánh xạ ErrNotTeacherProfileOwner (C-05) sang HTTP 403.
+func teacherProfileForbiddenResponse(c *fiber.Ctx, err error) bool {
+	if err == service.ErrNotTeacherProfileOwner {
+		_ = c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"message": "You are not the owner of this teacher profile",
+		})
+		return true
+	}
+	return false
+}
+
 func (h *TeacherProfileHandler) CreateTeacherProfile(c *fiber.Ctx) error {
 	var req dto.CreateTeacherProfileDTO
 	if err := c.BodyParser(&req); err != nil {
@@ -31,6 +42,15 @@ func (h *TeacherProfileHandler) CreateTeacherProfile(c *fiber.Ctx) error {
 			"error":   err.Error(),
 		})
 	}
+
+	// C-05 (audit 260909): không tin user_id từ body — ép theo user đang đăng nhập.
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	req.UserID = userID
 
 	profile, err := h.service.CreateTeacherProfile(c.Context(), req)
 	if err != nil {
@@ -98,6 +118,13 @@ func (h *TeacherProfileHandler) UpdateTeacherProfile(c *fiber.Ctx) error {
 		})
 	}
 
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
 	var req dto.UpdateTeacherProfileDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -106,8 +133,11 @@ func (h *TeacherProfileHandler) UpdateTeacherProfile(c *fiber.Ctx) error {
 		})
 	}
 
-	profile, err := h.service.UpdateTeacherProfile(c.Context(), id, req)
+	profile, err := h.service.UpdateTeacherProfile(c.Context(), id, userID, req)
 	if err != nil {
+		if teacherProfileForbiddenResponse(c, err) {
+			return nil
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update teacher profile",
 			"error":   err.Error(),
@@ -129,9 +159,19 @@ func (h *TeacherProfileHandler) DeleteTeacherProfile(c *fiber.Ctx) error {
 		})
 	}
 
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
 	hardDelete := c.QueryBool("hard_delete", false)
 
-	if err := h.service.DeleteTeacherProfile(c.Context(), id, hardDelete); err != nil {
+	if err := h.service.DeleteTeacherProfile(c.Context(), id, userID, hardDelete); err != nil {
+		if teacherProfileForbiddenResponse(c, err) {
+			return nil
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete teacher profile",
 			"error":   err.Error(),

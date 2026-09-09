@@ -18,12 +18,31 @@ func NewSectionHandler(service service.SectionServiceInterface) *SectionHandler 
 	return &SectionHandler{service: service}
 }
 
+// sectionForbiddenResponse ánh xạ ErrNotSectionCourseOwner (C-12) sang HTTP 403; trả false
+// khi lỗi không phải lỗi quyền để handler tiếp tục xử lý theo nhánh 400 hiện có.
+func sectionForbiddenResponse(c *fiber.Ctx, err error) bool {
+	if err == service.ErrNotSectionCourseOwner {
+		_ = c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"message": "You are not the instructor of this course",
+		})
+		return true
+	}
+	return false
+}
+
 func (h *SectionHandler) CreateSection(c *fiber.Ctx) error {
 	courseID, err := uuid.Parse(c.Params("course_id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid course ID",
 			"error":   err.Error(),
+		})
+	}
+
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
 		})
 	}
 
@@ -42,8 +61,11 @@ func (h *SectionHandler) CreateSection(c *fiber.Ctx) error {
 		})
 	}
 
-	section, err := h.service.CreateSection(c.Context(), courseID, req)
+	section, err := h.service.CreateSection(c.Context(), courseID, userID, req)
 	if err != nil {
+		if sectionForbiddenResponse(c, err) {
+			return nil
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create section",
 			"error":   err.Error(),
@@ -121,6 +143,13 @@ func (h *SectionHandler) UpdateSection(c *fiber.Ctx) error {
 		})
 	}
 
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
 	var req dto.UpdateSectionDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -136,8 +165,11 @@ func (h *SectionHandler) UpdateSection(c *fiber.Ctx) error {
 		})
 	}
 
-	section, err := h.service.UpdateSection(c.Context(), courseID, sectionID, req)
+	section, err := h.service.UpdateSection(c.Context(), courseID, sectionID, userID, req)
 	if err != nil {
+		if sectionForbiddenResponse(c, err) {
+			return nil
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update section",
 			"error":   err.Error(),
@@ -167,7 +199,17 @@ func (h *SectionHandler) DeleteSection(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteSection(c.Context(), courseID, sectionID); err != nil {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	if err := h.service.DeleteSection(c.Context(), courseID, sectionID, userID); err != nil {
+		if sectionForbiddenResponse(c, err) {
+			return nil
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete section",
 			"error":   err.Error(),

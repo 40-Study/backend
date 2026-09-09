@@ -53,7 +53,7 @@ type Conversation struct {
 	Type          ConversationType `gorm:"type:varchar(20);not null" json:"type"`
 	GroupID       *uuid.UUID       `gorm:"type:uuid;uniqueIndex" json:"group_id,omitempty"`
 	Name          *string          `gorm:"type:varchar(200)" json:"name,omitempty"`
-	LastMessageID *uuid.UUID       `gorm:"type:uuid" json:"last_message_id,omitempty"`
+	LastMessageID *uuid.UUID       `gorm:"type:uuid;index" json:"last_message_id,omitempty"`
 	LastMessageAt *time.Time       `json:"last_message_at,omitempty"`
 	MessageCount  int64            `gorm:"default:0" json:"message_count"`
 
@@ -76,7 +76,7 @@ func (Conversation) TableName() string {
 type ConversationParticipant struct {
 	BaseModel
 	ConversationID    uuid.UUID  `gorm:"type:uuid;not null;uniqueIndex:idx_conv_participant_unique,priority:1" json:"conversation_id"`
-	UserID            uuid.UUID  `gorm:"type:uuid;not null;uniqueIndex:idx_conv_participant_unique,priority:2" json:"user_id"`
+	UserID            uuid.UUID  `gorm:"type:uuid;not null;index;uniqueIndex:idx_conv_participant_unique,priority:2" json:"user_id"`
 	LastReadMessageID *uuid.UUID `gorm:"type:uuid" json:"last_read_message_id,omitempty"`
 	LastReadAt        *time.Time `json:"last_read_at,omitempty"`
 	UnreadCount       int        `gorm:"default:0" json:"unread_count"`
@@ -113,7 +113,7 @@ type Message struct {
 	IsEdited       bool           `gorm:"default:false" json:"is_edited"`
 	EditedAt       *time.Time     `json:"edited_at,omitempty"`
 	IsPinned       bool           `gorm:"default:false" json:"is_pinned"`
-	PinnedBy       *uuid.UUID     `gorm:"type:uuid" json:"pinned_by,omitempty"`
+	PinnedBy       *uuid.UUID     `gorm:"type:uuid;index" json:"pinned_by,omitempty"`
 	PinnedAt       *time.Time     `json:"pinned_at,omitempty"`
 
 	// Relationships

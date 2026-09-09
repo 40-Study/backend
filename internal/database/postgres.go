@@ -49,7 +49,7 @@ func Migrate(db *gorm.DB) error {
 		}
 	}
 
-	return db.AutoMigrate(
+	if err := db.AutoMigrate(
 		// ===== 1. Base Tables (độc lập) =====
 		&model.Organization{},
 
@@ -81,6 +81,12 @@ func Migrate(db *gorm.DB) error {
 		&model.LessonVideo{},
 		&model.LessonArticle{},
 		&model.LessonAttachment{},
+
+		// ===== 5b. Course Exercises & Content Progress (phụ thuộc User, Course, LessonContent) =====
+		&model.CourseExercise{},
+		&model.ExerciseTestCase{},
+		&model.ExerciseSubmission{},
+		&model.ContentProgress{},
 
 		// ===== 6. Enrollment & Progress (phụ thuộc User, Course) =====
 		&model.Enrollment{},
@@ -147,7 +153,7 @@ func Migrate(db *gorm.DB) error {
 		&model.Class{},
 		&model.TeacherClass{},
 		&model.StudentClass{},
-				&model.Attendance{},
+		&model.Attendance{},
 
 		// ===== 18. Notifications (phụ thuộc User) =====
 		&model.Notification{},
@@ -211,7 +217,16 @@ func Migrate(db *gorm.DB) error {
 
 		// ===== 27. Personal Calendar Events (phụ thuộc User) =====
 		&model.PersonalEvent{},
-	)
+	); err != nil {
+		return err
+	}
+
+	// Chạy các câu SQL idempotent SAU AutoMigrate để sửa index/constraint mà
+	// AutoMigrate không tự sửa được (đổi tên/xoá index sai, partial index cho
+	// bảng soft-delete, CHECK constraint mới trên bảng đã có dữ liệu). Xem
+	// migrations.go — thay thế tạm thời cho tới khi có công cụ migration
+	// versioned thật (golang-migrate/goose/atlas).
+	return RunPostMigrations(db)
 }
 
 func Close(db *gorm.DB) error {

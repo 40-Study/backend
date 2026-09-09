@@ -10,12 +10,16 @@ import (
 	"study.com/v1/internal/repository"
 )
 
+// ErrNotSectionCourseOwner dùng chung cho mọi thao tác ghi section — chỉ giảng viên sở hữu
+// khóa học cha (course.InstructorID) mới được tạo/sửa/xóa section (C-12).
+var ErrNotSectionCourseOwner = errors.New("forbidden: not the owner")
+
 type SectionServiceInterface interface {
-	CreateSection(ctx context.Context, courseID uuid.UUID, req dto.CreateSectionDTO) (*dto.SectionResponseDTO, error)
+	CreateSection(ctx context.Context, courseID, actorUserID uuid.UUID, req dto.CreateSectionDTO) (*dto.SectionResponseDTO, error)
 	GetAllSections(ctx context.Context, courseID uuid.UUID) ([]dto.SectionResponseDTO, error)
 	GetSectionByID(ctx context.Context, sectionID uuid.UUID) (*dto.SectionResponseDTO, error)
-	UpdateSection(ctx context.Context, courseID, sectionID uuid.UUID, req dto.UpdateSectionDTO) (*dto.SectionResponseDTO, error)
-	DeleteSection(ctx context.Context, courseID, sectionID uuid.UUID) error
+	UpdateSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID, req dto.UpdateSectionDTO) (*dto.SectionResponseDTO, error)
+	DeleteSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID) error
 	ReorderSections(ctx context.Context, courseID uuid.UUID, req dto.ReorderDTO) error
 }
 
@@ -45,8 +49,24 @@ func (s *SectionService) validateCourse(ctx context.Context, courseID uuid.UUID)
 	return nil
 }
 
-func (s *SectionService) CreateSection(ctx context.Context, courseID uuid.UUID, req dto.CreateSectionDTO) (*dto.SectionResponseDTO, error) {
-	if err := s.validateCourse(ctx, courseID); err != nil {
+// validateCourseOwnership giống validateCourse nhưng còn kiểm tra actorUserID có phải
+// giảng viên sở hữu course hay không (C-12) — dùng cho mọi thao tác GHI trên section.
+func (s *SectionService) validateCourseOwnership(ctx context.Context, courseID, actorUserID uuid.UUID) error {
+	course, err := s.courseRepo.GetByID(ctx, courseID)
+	if err != nil {
+		return err
+	}
+	if course == nil {
+		return errors.New("course not found")
+	}
+	if course.InstructorID != actorUserID {
+		return ErrNotSectionCourseOwner
+	}
+	return nil
+}
+
+func (s *SectionService) CreateSection(ctx context.Context, courseID, actorUserID uuid.UUID, req dto.CreateSectionDTO) (*dto.SectionResponseDTO, error) {
+	if err := s.validateCourseOwnership(ctx, courseID, actorUserID); err != nil {
 		return nil, err
 	}
 	// Determine display order
@@ -113,8 +133,8 @@ func (s *SectionService) GetSectionByID(ctx context.Context, sectionID uuid.UUID
 	return s.toSectionResponseDTO(section, lessons), nil
 }
 
-func (s *SectionService) UpdateSection(ctx context.Context, courseID, sectionID uuid.UUID, req dto.UpdateSectionDTO) (*dto.SectionResponseDTO, error) {
-	if err := s.validateCourse(ctx, courseID); err != nil {
+func (s *SectionService) UpdateSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID, req dto.UpdateSectionDTO) (*dto.SectionResponseDTO, error) {
+	if err := s.validateCourseOwnership(ctx, courseID, actorUserID); err != nil {
 		return nil, err
 	}
 
@@ -156,8 +176,8 @@ func (s *SectionService) UpdateSection(ctx context.Context, courseID, sectionID 
 	return s.toSectionResponseDTO(section, lessons), nil
 }
 
-func (s *SectionService) DeleteSection(ctx context.Context, courseID, sectionID uuid.UUID) error {
-	if err := s.validateCourse(ctx, courseID); err != nil {
+func (s *SectionService) DeleteSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID) error {
+	if err := s.validateCourseOwnership(ctx, courseID, actorUserID); err != nil {
 		return err
 	}
 

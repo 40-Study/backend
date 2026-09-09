@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
@@ -37,28 +39,15 @@ var (
 	ErrUploadFailed       = errors.New("upload failed")         // Lỗi khi upload lên MinIO (network, permission, bucket không tồn tại, etc.)
 )
 
-// allowedImageTypes là whitelist các MIME type hình ảnh được phép upload
-// Dùng map[string]bool thay vì slice để tra cứu O(1) thay vì O(n)
-// Lý do cần whitelist: Bảo mật - tránh upload file độc hại, shell script giả mạo image
-var allowedImageTypes = map[string]bool{
-	"image/jpeg":    true, // JPEG - format phổ biến nhất cho ảnh
-	"image/jpg":     true, // Alias của JPEG (một số browser gửi jpg thay vì jpeg)
-	"image/png":     true, // PNG - hỗ trợ transparency, phổ biến cho logo, icon
-	"image/gif":     true, // GIF - hỗ trợ animation
-	"image/webp":    true, // WebP - format mới, nén tốt hơn JPEG/PNG
-	"image/svg+xml": true, // SVG - vector graphics, scale không mất chất lượng
-}
-
-// allowedVideoTypes là whitelist các MIME type video được phép upload
-// Tương tự image, dùng map để tra cứu nhanh và đảm bảo bảo mật
-var allowedVideoTypes = map[string]bool{
-	"video/mp4":        true, // MP4 - format phổ biến nhất, hỗ trợ rộng rãi
-	"video/mpeg":       true, // MPEG - format cũ nhưng vẫn được dùng
-	"video/quicktime":  true, // MOV - format của Apple QuickTime
-	"video/x-msvideo":  true, // AVI - format của Microsoft
-	"video/webm":       true, // WebM - format mở, tối ưu cho web
-	"video/x-matroska": true, // MKV - container linh hoạt, chất lượng cao
-}
+// H-12 (audit 260909): whitelist theo tên MIME cụ thể (map[string]bool) đã bị bỏ — validate
+// bây giờ dựa trên prefix "image/"/"video/" của MIME đã SNIFF bằng magic bytes
+// (xem sniffContentType() + validateAndGetBucket()), không còn tin Content-Type header của
+// client. Lý do bỏ exact-match map: http.DetectContentType không phân biệt được các định dạng
+// container dùng chung magic bytes (MOV/M4V sniff giống MP4; MKV sniff giống WebM) nên so khớp
+// chính xác từng tên MIME sẽ reject nhầm file hợp lệ. Riêng "image/svg+xml" bị loại hẳn khỏi
+// danh sách được chấp nhận: SVG là XML thuần nên không sniff ra được prefix "image/", và SVG
+// còn là vector stored-XSS kinh điển nếu bucket MinIO public-read (SVG cho phép nhúng
+// <script>). Muốn hỗ trợ lại SVG phải sanitize nội dung trước khi lưu, không chỉ dựa MIME.
 
 // UploadServiceInterface định nghĩa contract của upload service
 // Lý do dùng interface: Dễ mock khi test, dễ swap implementation, follow SOLID principles
@@ -103,30 +92,54 @@ func (s *UploadService) constructFileURL(bucket, objectName string) string {
 		protocol, s.cfg.MinioHost, s.cfg.MinioPort, bucket, objectName)
 }
 
-// validateAndGetBucket validate MIME type và trả về loại file + bucket tương ứng
-// Mục đích: Tách biệt images và videos vào 2 bucket khác nhau để dễ quản lý
-// Return: fileType ("image"|"video"), bucket name, error nếu không hợp lệ
-func (s *UploadService) validateAndGetBucket(contentType string) (fileType string, bucket string, err error) {
-	// Chuẩn hóa content type: lowercase + trim space
-	// Lý do: "Image/JPEG" vs "image/jpeg" vs " image/jpeg " đều là 1
-	ct := strings.ToLower(strings.TrimSpace(contentType))
+// sniffContentType đọc 512 byte đầu của file để xác định MIME type THẬT bằng magic bytes
+// (http.DetectContentType), thay vì tin theo Content-Type header do client tự khai báo.
+//
+// H-12 (audit 260909): trước đây whitelist chỉ so file.Header.Get("Content-Type") — client
+// tự đặt header "image/jpeg" cho một file bất kỳ (kể cả .exe/.html) là qua được validate.
+func sniffContentType(file *multipart.FileHeader) (string, error) {
+	src, err := file.Open()
+	if err != nil {
+		return "", fmt.Errorf("cannot open file: %w", err)
+	}
+	defer src.Close()
 
-	// Check xem có phải image không, nếu đúng trả về bucket images
-	if allowedImageTypes[ct] {
+	buf := make([]byte, 512)
+	n, err := src.Read(buf)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("cannot read file: %w", err)
+	}
+	return http.DetectContentType(buf[:n]), nil
+}
+
+// validateAndGetBucket validate MIME type (đã sniff bằng magic bytes) và trả về loại file +
+// bucket tương ứng. Mục đích: Tách biệt images và videos vào 2 bucket khác nhau để dễ quản lý.
+// Return: fileType ("image"|"video"), bucket name, error nếu không hợp lệ.
+//
+// H-12 (audit 260909): so theo PREFIX "image/"/"video/" của MIME đã sniff thay vì so khớp
+// chính xác từng tên MIME trong whitelist cũ. Lý do: http.DetectContentType không phân biệt
+// được các định dạng container dùng chung magic bytes — MOV/M4V sniff ra cùng "video/mp4" như
+// MP4, MKV sniff ra cùng "video/webm" như WebM — so khớp chính xác sẽ reject nhầm file hợp lệ.
+// Vẫn chặn được đúng lỗ hổng gốc: file thực thi/HTML/script không thể sniff ra prefix
+// image/video dù client tự khai Content-Type giả trong header.
+func (s *UploadService) validateAndGetBucket(sniffedContentType string) (fileType string, bucket string, err error) {
+	ct := strings.ToLower(strings.TrimSpace(sniffedContentType))
+
+	if strings.HasPrefix(ct, "image/") {
 		return "image", s.cfg.MinioBucketImages, nil
 	}
-	// Check xem có phải video không, nếu đúng trả về bucket videos
-	if allowedVideoTypes[ct] {
+	if strings.HasPrefix(ct, "video/") {
 		return "video", s.cfg.MinioBucketVideos, nil
 	}
-	// Nếu không phải image cũng không phải video -> reject
 	return "", "", ErrFileTypeNotAllowed
 }
 
 // uploadToMinio thực hiện việc upload file lên MinIO storage
 // Đây là helper method chứa logic upload thực sự, được gọi bởi các method public
+// contentType: MIME type đã được sniff bằng magic bytes ở caller (KHÔNG lấy lại từ header ở
+// đây nữa — header do client tự khai, không đáng tin, xem sniffContentType()).
 // Return: objectName (path trên MinIO), URL (để client truy cập), error nếu có
-func (s *UploadService) uploadToMinio(ctx context.Context, file *multipart.FileHeader, bucket, folder string) (objectName string, url string, err error) {
+func (s *UploadService) uploadToMinio(ctx context.Context, file *multipart.FileHeader, bucket, folder, contentType string) (objectName string, url string, err error) {
 	// Mở file để đọc content
 	// file.Open() trả về multipart.File (implement io.Reader)
 	src, err := file.Open()
@@ -150,9 +163,6 @@ func (s *UploadService) uploadToMinio(ctx context.Context, file *multipart.FileH
 		uuid.NewString(),                // UUID v4 random
 		ext,
 	)
-
-	// Lấy và chuẩn hóa content type từ header của file
-	contentType := strings.ToLower(strings.TrimSpace(file.Header.Get("Content-Type")))
 
 	// Upload file lên MinIO bằng PutObject API
 	// ctx: để handle timeout/cancellation
@@ -188,16 +198,22 @@ func (s *UploadService) Upload(ctx context.Context, file *multipart.FileHeader, 
 		return nil, ErrFileRequired
 	}
 
+	// H-12: sniff MIME type thật bằng magic bytes, không tin Content-Type header của client.
+	sniffed, err := sniffContentType(file)
+	if err != nil {
+		return nil, err
+	}
+
 	// Validate MIME type và xác định bucket phù hợp (images hoặc videos)
 	// Nếu MIME type không hợp lệ, trả về ErrFileTypeNotAllowed
-	fileType, bucket, err := s.validateAndGetBucket(file.Header.Get("Content-Type"))
+	fileType, bucket, err := s.validateAndGetBucket(sniffed)
 	if err != nil {
 		return nil, err
 	}
 
 	// Thực hiện upload file lên MinIO
 	// Nhận về objectName (path trên MinIO) và URL (để truy cập)
-	objectName, url, err := s.uploadToMinio(ctx, file, bucket, folder)
+	objectName, url, err := s.uploadToMinio(ctx, file, bucket, folder, sniffed)
 	if err != nil {
 		return nil, err
 	}
@@ -222,16 +238,20 @@ func (s *UploadService) UploadImage(ctx context.Context, file *multipart.FileHea
 	if file == nil {
 		return nil, ErrFileRequired
 	}
-	// Lấy và chuẩn hóa content type
-	ct := strings.ToLower(strings.TrimSpace(file.Header.Get("Content-Type")))
+	// H-12: sniff MIME type thật bằng magic bytes thay vì tin Content-Type header.
+	sniffed, err := sniffContentType(file)
+	if err != nil {
+		return nil, err
+	}
+	ct := strings.ToLower(strings.TrimSpace(sniffed))
 	// Check strict: chỉ chấp nhận image, reject mọi thứ khác (kể cả video)
 	// Lý do cần check riêng: Một số endpoint chỉ cho phép image (avatar, logo, etc.)
-	if !allowedImageTypes[ct] {
+	if !strings.HasPrefix(ct, "image/") {
 		return nil, ErrFileTypeNotAllowed
 	}
 
 	// Upload vào bucket images (không cần validate nữa vì đã check ở trên)
-	objectName, url, err := s.uploadToMinio(ctx, file, s.cfg.MinioBucketImages, folder)
+	objectName, url, err := s.uploadToMinio(ctx, file, s.cfg.MinioBucketImages, folder, sniffed)
 	if err != nil {
 		return nil, err
 	}
@@ -254,16 +274,20 @@ func (s *UploadService) UploadVideo(ctx context.Context, file *multipart.FileHea
 	if file == nil {
 		return nil, ErrFileRequired
 	}
-	// Lấy và chuẩn hóa content type
-	ct := strings.ToLower(strings.TrimSpace(file.Header.Get("Content-Type")))
+	// H-12: sniff MIME type thật bằng magic bytes thay vì tin Content-Type header.
+	sniffed, err := sniffContentType(file)
+	if err != nil {
+		return nil, err
+	}
+	ct := strings.ToLower(strings.TrimSpace(sniffed))
 	// Check strict: chỉ chấp nhận video, reject mọi thứ khác (kể cả image)
 	// Lý do: Endpoint video có thể cần xử lý riêng (transcoding, thumbnail generation, etc.)
-	if !allowedVideoTypes[ct] {
+	if !strings.HasPrefix(ct, "video/") {
 		return nil, ErrFileTypeNotAllowed
 	}
 
 	// Upload vào bucket videos (không cần validate nữa vì đã check ở trên)
-	objectName, url, err := s.uploadToMinio(ctx, file, s.cfg.MinioBucketVideos, folder)
+	objectName, url, err := s.uploadToMinio(ctx, file, s.cfg.MinioBucketVideos, folder, sniffed)
 	if err != nil {
 		return nil, err
 	}
@@ -293,6 +317,12 @@ func (s *UploadService) DeleteByURL(ctx context.Context, fileURL string) error {
 	}
 	// parts[3] là bucket name ("images" hoặc "videos")
 	bucket := parts[3]
+	// C-14 (audit 260909): client kiểm soát toàn bộ URL (kể cả bucket) qua query param,
+	// nếu không whitelist thì có thể trỏ RemoveObject sang bucket bất kỳ trên MinIO.
+	// Chỉ cho phép xóa trong 2 bucket mà service này quản lý.
+	if bucket != s.cfg.MinioBucketImages && bucket != s.cfg.MinioBucketVideos {
+		return fmt.Errorf("bucket not allowed: %s", bucket)
+	}
 	// parts[4:] là các phần của objectName ("products", "2024", "12", "20", "abc.jpg")
 	// Join lại với "/" để được objectName đầy đủ: "products/2024/12/20/abc.jpg"
 	objectName := strings.Join(parts[4:], "/")

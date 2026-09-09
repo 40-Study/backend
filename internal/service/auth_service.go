@@ -208,11 +208,13 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 	}
 
 	// ===== 9. Send OTP via email (ASYNC) =====
-	go func() {
+	// M-05: bọc bằng SafeGo — panic khi gửi mail (vd cấu hình SMTP thiếu) không được recover
+	// trước đây có thể làm sập cả server.
+	utils.SafeGo(func() {
 		if err := utils.SendRegisterOTP(s.cfg, req.Email, otp); err != nil {
 			log.Printf("[WARN] Failed to send register OTP email to %s: %v", req.Email, err)
 		}
-	}()
+	})
 
 	return nil
 }
@@ -940,6 +942,10 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldRefreshToken string) 
 	if err != nil {
 		return nil, errors.New("invalid or expired refresh token")
 	}
+	// H-03: từ chối access token bị dùng để refresh (chỉ chấp nhận đúng refresh token).
+	if claims.TokenType != utils.TokenTypeRefresh {
+		return nil, errors.New("invalid token type: expected refresh token")
+	}
 
 	// ===== 2. Check user_version (for logout all) =====
 	userVersionKey := constants.KeyUserVersion(claims.UserID.String())
@@ -1352,11 +1358,12 @@ func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) er
 	}
 
 	// ===== 6. Send OTP via email (ASYNC) =====
-	go func() {
+	// M-05: bọc bằng SafeGo — xem giải thích ở RequestRegister.
+	utils.SafeGo(func() {
 		if err := utils.SendResetPasswordOTP(s.cfg, email, otp); err != nil {
 			log.Printf("[WARN] Failed to send password reset email to %s: %v", email, err)
 		}
-	}()
+	})
 
 	return nil
 }
@@ -1500,6 +1507,18 @@ func (s *AuthService) buildUnifiedRoles(ctx context.Context, userID uuid.UUID) (
 	return roles, nil
 }
 
+// selfServiceSystemRoles là allowlist các system role được phép TỰ CẤP khi user chọn role
+// lần đầu (đăng ký xong, chưa có UserSystemRole nào) — khớp với 2 role không cần duyệt
+// thủ công trong data/roles.json. Mọi role khác (kể cả TEACHER) phải do SYSTEM_ADMIN gán.
+var selfServiceSystemRoles = map[string]bool{
+	"STUDENT": true,
+	"PARENT":  true,
+}
+
+func isSelfServiceSystemRole(roleName string) bool {
+	return selfServiceSystemRoles[roleName]
+}
+
 // SelectRole selects a role during login flow (using session_token)
 func (s *AuthService) SelectRole(ctx context.Context, req dto.SelectRoleRequestDto) (*dto.SelectRoleResponseDto, error) {
 	// 1. Get pending login from Redis
@@ -1552,8 +1571,14 @@ func (s *AuthService) SelectRole(ctx context.Context, req dto.SelectRoleRequestD
 				RoleName:    systemRole.Name,
 				DisplayName: systemRole.Name,
 			}
-		} else {
-			// Chưa có → tạo mới
+		} else if isSelfServiceSystemRole(systemRole.Name) {
+			// C-01 (audit 260909): trước đây nhánh này tự cấp BẤT KỲ system role nào
+			// (kể cả admin) cho user gọi API — vì GetAllSystemRoles là route public nên
+			// attacker chỉ cần lấy UUID role admin rồi gọi SelectRole là leo quyền thành công.
+			// Chỉ còn tự-cấp cho các role self-service của luồng đăng ký lần đầu
+			// (STUDENT/PARENT theo data/roles.json); mọi role khác (kể cả TEACHER) phải được
+			// SYSTEM_ADMIN gán qua POST /api/users/:user_id/system-roles (đã gate bằng
+			// permission ROLES_MANAGE_SYSTEM).
 			newUserRole := &model.UserSystemRole{
 				UserID:       userID,
 				SystemRoleID: roleID,
@@ -1570,6 +1595,8 @@ func (s *AuthService) SelectRole(ctx context.Context, req dto.SelectRoleRequestD
 				RoleName:    systemRole.Name,
 				DisplayName: systemRole.Name,
 			}
+		} else {
+			return nil, errors.New("user does not have this system role")
 		}
 	} else if req.RoleType == "organization" {
 		// Validate: role_id = Role.ID, organization_id = Organization.ID

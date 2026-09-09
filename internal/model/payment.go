@@ -11,8 +11,9 @@ import (
 
 type Order struct {
 	ID                   uuid.UUID       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	CreatedAt            time.Time       `gorm:"autoCreateTime" json:"created_at"`
-	UserID               uuid.UUID       `gorm:"type:uuid;not null;index" json:"user_id"`
+	CreatedAt            time.Time       `gorm:"autoCreateTime;index:idx_orders_user_created,priority:2,sort:desc" json:"created_at"`
+	UpdatedAt            time.Time       `gorm:"autoUpdateTime" json:"updated_at"`
+	UserID               uuid.UUID       `gorm:"type:uuid;not null;index;index:idx_orders_user_created,priority:1" json:"user_id"`
 	OrderNumber          string          `gorm:"type:varchar(50);uniqueIndex;not null" json:"order_number"`
 	Subtotal             decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"subtotal"`
 	DiscountAmount       decimal.Decimal `gorm:"type:decimal(12,2);default:0" json:"discount_amount"`
@@ -42,7 +43,7 @@ type OrderItem struct {
 	ID             uuid.UUID       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	CreatedAt      time.Time       `json:"created_at"`
 	OrderID        uuid.UUID       `gorm:"type:uuid;not null;index" json:"order_id"`
-	CourseID       uuid.UUID       `gorm:"type:uuid;not null" json:"course_id"`
+	CourseID       uuid.UUID       `gorm:"type:uuid;not null;index" json:"course_id"`
 	Price          decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"price"`
 	DiscountAmount decimal.Decimal `gorm:"type:decimal(12,2);default:0" json:"discount_amount"`
 	FinalPrice     decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"final_price"`
@@ -240,7 +241,7 @@ type VoucherApplicability struct {
 	ID             uuid.UUID            `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	VoucherID      uuid.UUID            `gorm:"type:uuid;not null;index" json:"voucher_id"`
 	ApplicableType VoucherApplicableType `gorm:"type:varchar(20);not null" json:"applicable_type"`
-	ApplicableID   uuid.UUID            `gorm:"type:uuid;not null" json:"applicable_id"`
+	ApplicableID   uuid.UUID            `gorm:"type:uuid;not null;index" json:"applicable_id"`
 
 	CreatedAt time.Time `json:"created_at"`
 

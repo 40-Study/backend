@@ -16,7 +16,7 @@ type Enrollment struct {
 	ProgressPercent decimal.Decimal `gorm:"type:decimal(5,2);default:0;column:progress_percentage" json:"progress_percentage"`
 	CompletedAt     *time.Time      `json:"completed_at,omitempty"`
 	LastAccessedAt  *time.Time      `json:"last_accessed_at,omitempty"`
-	CertificateID   *uuid.UUID      `gorm:"type:uuid" json:"certificate_id,omitempty"`
+	CertificateID   *uuid.UUID      `gorm:"type:uuid;index" json:"certificate_id,omitempty"`
 
 	// Relationships
 	User           User             `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`

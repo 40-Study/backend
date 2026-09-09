@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"gorm.io/datatypes"
 )
 
@@ -52,7 +53,7 @@ type UserCoinWallet struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	UserID      uuid.UUID `gorm:"type:uuid;uniqueIndex;not null" json:"user_id"`
-	Balance     int64     `gorm:"not null;default:0" json:"balance"`
+	Balance     int64     `gorm:"not null;default:0;check:chk_coin_wallet_balance_nonneg,balance >= 0" json:"balance"`
 	TotalEarned int64     `gorm:"not null;default:0" json:"total_earned"`
 	TotalSpent  int64     `gorm:"not null;default:0" json:"total_spent"`
 
@@ -101,14 +102,14 @@ type CoinPackage struct {
 	BaseModel
 	Name            string  `gorm:"type:varchar(100);not null" json:"name"`
 	Description     *string `gorm:"type:text" json:"description,omitempty"`
-	CoinAmount      int64   `gorm:"not null" json:"coin_amount"`
-	BonusAmount     int64   `gorm:"default:0" json:"bonus_amount"`
-	Price           float64 `gorm:"type:decimal(12,2);not null" json:"price"`
-	Currency        string  `gorm:"type:varchar(3);default:'VND'" json:"currency"`
-	DiscountPercent int     `gorm:"default:0" json:"discount_percent"`
-	IsFeatured      bool    `gorm:"default:false" json:"is_featured"`
-	IsActive        bool    `gorm:"default:true" json:"is_active"`
-	SortOrder       int     `gorm:"default:0" json:"sort_order"`
+	CoinAmount      int64           `gorm:"not null" json:"coin_amount"`
+	BonusAmount     int64           `gorm:"default:0" json:"bonus_amount"`
+	Price           decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"price"`
+	Currency        string          `gorm:"type:varchar(3);default:'VND'" json:"currency"`
+	DiscountPercent int             `gorm:"default:0" json:"discount_percent"`
+	IsFeatured      bool            `gorm:"default:false" json:"is_featured"`
+	IsActive        bool            `gorm:"default:true" json:"is_active"`
+	SortOrder       int             `gorm:"default:0" json:"sort_order"`
 }
 
 func (CoinPackage) TableName() string {
@@ -128,7 +129,7 @@ type CoinPurchase struct {
 	PackageID        *uuid.UUID         `gorm:"type:uuid" json:"package_id,omitempty"`
 	CoinAmount       int64              `gorm:"not null" json:"coin_amount"`
 	BonusAmount      int64              `gorm:"default:0" json:"bonus_amount"`
-	Price            float64            `gorm:"type:decimal(12,2);not null" json:"price"`
+	Price            decimal.Decimal    `gorm:"type:decimal(12,2);not null" json:"price"`
 	Currency         string             `gorm:"type:varchar(3);default:'VND'" json:"currency"`
 	Status           CoinPurchaseStatus `gorm:"type:varchar(20);default:'PENDING'" json:"status"`
 	PaymentMethod    *string            `gorm:"type:varchar(50)" json:"payment_method,omitempty"`

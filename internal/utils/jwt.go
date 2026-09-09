@@ -9,12 +9,23 @@ import (
 	"study.com/v1/internal/config"
 )
 
+// H-03 (audit 260909): access token và refresh token trước đây dùng chung struct claims,
+// chỉ khác ExpiresAt — không có trường phân biệt loại token. AuthMiddleware và RefreshToken
+// đều gọi ParseToken như nhau nên một refresh token (sống 7 ngày) có thể dùng thẳng làm Bearer
+// access token, vô hiệu hóa access-expiry 15 phút. Thêm TokenType để 2 chỗ đó tự chối token
+// sai loại.
+const (
+	TokenTypeAccess  = "access"
+	TokenTypeRefresh = "refresh"
+)
+
 type Claims struct {
 	UserID      uuid.UUID  `json:"user_id"`
 	DeviceID    uuid.UUID  `json:"device_id"`
 	ActiveRole  string     `json:"active_role"`
 	ActiveOrgID *uuid.UUID `json:"active_org_id,omitempty"`
 	UserVersion int64      `json:"user_version"`
+	TokenType   string     `json:"token_type"`
 	jwt.RegisteredClaims
 }
 
@@ -25,6 +36,7 @@ func GenerateTokens(cfg *config.Config, userID uuid.UUID, deviceID uuid.UUID, ac
 		ActiveRole:  activeRole,
 		ActiveOrgID: activeOrgID,
 		UserVersion: userVersion,
+		TokenType:   TokenTypeAccess,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(cfg.JWTAccessExpiration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -42,6 +54,7 @@ func GenerateTokens(cfg *config.Config, userID uuid.UUID, deviceID uuid.UUID, ac
 		ActiveRole:  activeRole,
 		ActiveOrgID: activeOrgID,
 		UserVersion: userVersion,
+		TokenType:   TokenTypeRefresh,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(cfg.JWTRefreshExpiration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

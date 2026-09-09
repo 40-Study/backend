@@ -47,7 +47,7 @@ type Course struct {
 	InstructorID      uuid.UUID        `gorm:"type:uuid;not null;index" json:"instructor_id"`
 	CategoryID        *uuid.UUID       `gorm:"type:uuid;index" json:"category_id,omitempty"`
 	Title             string           `gorm:"type:varchar(255);not null" json:"title"`
-	Slug              string           `gorm:"type:varchar(255);uniqueIndex;not null" json:"slug"`
+	Slug              string           `gorm:"type:varchar(255);uniqueIndex:idx_courses_slug;not null" json:"slug"`
 	ShortDescription  *string          `gorm:"type:varchar(500)" json:"short_description,omitempty"`
 	Description       *string          `gorm:"type:text" json:"description,omitempty"`
 	ThumbnailURL      *string          `gorm:"type:varchar(500);column:thumbnail_url" json:"thumbnail_url,omitempty"`
@@ -60,7 +60,7 @@ type Course struct {
 	TotalDurationMins int              `gorm:"default:0;column:total_duration_minutes" json:"total_duration_minutes"`
 	TotalLessons      int              `gorm:"default:0" json:"total_lessons"`
 	TotalStudents     int              `gorm:"default:0" json:"total_students"`
-	AverageRating     decimal.Decimal  `gorm:"type:decimal(2,1);default:0;index" json:"average_rating"`
+	AverageRating     decimal.Decimal  `gorm:"type:decimal(3,2);default:0;index;check:chk_course_avg_rating_range,average_rating >= 0 AND average_rating <= 5" json:"average_rating"`
 	TotalReviews      int              `gorm:"default:0" json:"total_reviews"`
 	Requirements      pq.StringArray   `gorm:"type:text[]" json:"requirements"`
 	Objectives        pq.StringArray   `gorm:"type:text[]" json:"objectives"`

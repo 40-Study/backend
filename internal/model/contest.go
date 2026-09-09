@@ -66,7 +66,7 @@ const (
 type Contest struct {
 	BaseModel
 	Title            string        `gorm:"type:varchar(255);not null" json:"title"`
-	Slug             string        `gorm:"type:varchar(255);uniqueIndex;not null" json:"slug"`
+	Slug             string        `gorm:"type:varchar(255);uniqueIndex:idx_contests_slug;not null" json:"slug"`
 	Description      *string       `gorm:"type:text" json:"description,omitempty"`
 	BannerURL        *string       `gorm:"type:varchar(500);column:banner_url" json:"banner_url,omitempty"`
 	Type             ContestType   `gorm:"type:varchar(20);not null;check:type IN ('CODING','QUIZ','MIXED')" json:"type"`
@@ -134,7 +134,7 @@ type ContestParticipant struct {
 	ID         uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	CreatedAt  time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	ContestID  uuid.UUID  `gorm:"type:uuid;not null;uniqueIndex:idx_contest_participant_unique,priority:1" json:"contest_id"`
-	UserID     uuid.UUID  `gorm:"type:uuid;not null;uniqueIndex:idx_contest_participant_unique,priority:2" json:"user_id"`
+	UserID     uuid.UUID  `gorm:"type:uuid;not null;index;uniqueIndex:idx_contest_participant_unique,priority:2" json:"user_id"`
 	TotalScore int        `gorm:"default:0" json:"total_score"`
 	Rank       *int       `json:"rank,omitempty"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`

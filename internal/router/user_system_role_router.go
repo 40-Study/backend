@@ -13,19 +13,19 @@ func SetupUserSystemRoleRoutes(
 	cfg *config.Config,
 	userSystemRoleHandler *handler.UserSystemRoleHandler,
 	redis *redis.Client,
+	permChecker *middleware.PermissionChecker,
 ) {
-	//User Routes (Authenticated) 
+	//User Routes (Authenticated)
 	// GET /me/system-roles - Lấy system roles của chính mình
 	me := api.Group("/me")
 	me.Use(middleware.AuthMiddleware(cfg, redis))
 	me.Get("/system-roles", userSystemRoleHandler.GetMySystemRoles)
 
-	// ============ Admin Routes (Authenticated + TODO: Permission check) ============
+	// ============ Admin Routes (Authenticated + ROLES_MANAGE_SYSTEM) ============
 	// User system role management
 	users := api.Group("/users")
 	users.Use(middleware.AuthMiddleware(cfg, redis))
-	// TODO: Add permission middleware for admin-only access
-	// users.Use(middleware.RequirePermission("manage_user_roles"))
+	users.Use(permChecker.RequirePermissions("ROLES_MANAGE_SYSTEM"))
 
 	// GET /users/:user_id/system-roles - Lấy system roles của user
 	users.Get("/:user_id/system-roles", userSystemRoleHandler.GetUserSystemRoles)
@@ -39,7 +39,7 @@ func SetupUserSystemRoleRoutes(
 	// ============ System Role User Management ============
 	systemRoles := api.Group("/system-roles")
 	systemRoles.Use(middleware.AuthMiddleware(cfg, redis))
-	// TODO: Add permission middleware for admin-only access
+	systemRoles.Use(permChecker.RequirePermissions("ROLES_MANAGE_SYSTEM"))
 
 	// GET /system-roles/:system_role_id/users - Lấy users theo system role
 	systemRoles.Get("/:system_role_id/users", userSystemRoleHandler.GetUsersBySystemRole)
