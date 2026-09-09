@@ -244,14 +244,23 @@ func (s *CoinService) VerifyPurchase(ctx context.Context, userID, purchaseID uui
 	// C3/C4: cộng xu + ghi ledger + đánh dấu purchase completed atomic trong 1
 	// transaction, có khoá dòng ví để tránh race condition.
 	err = s.walletRepo.WithTransaction(func(tx *gorm.DB) error {
-		// H-10 (audit 260909 vòng 2): check "purchase.Status != Pending" ở trên đọc TRƯỚC
-		// khi vào transaction — 2 request verify song song cho CÙNG purchaseID đều đọc được
-		// Pending, cùng đi tới đây. Khoá ví (lockOrCreateWalletTx) chỉ serialize được write
-		// vào CÙNG 1 ví, không ngăn request thứ 2 (đang cầm bản Go struct purchase.Status
-		// còn "Pending" từ trước khi vào tx) cộng xu lần nữa sau khi request 1 đã commit.
-		// Chặn bằng UPDATE có điều kiện (mẫu M-07 dùng cho voucher) + kiểm tra RowsAffected:
-		// request thắng cuộc mới đổi được status, request thua RowsAffected=0 -> rollback
-		// toàn bộ transaction (không cộng xu, không tạo ledger).
+		// H-10 (audit 260909 vòng 2) = H-07 (review vòng 1, cùng một lỗ hổng): check
+		// "purchase.Status != Pending" ở trên đọc TRƯỚC khi vào transaction — 2 request
+		// verify song song cho CÙNG purchaseID đều đọc được Pending, cùng đi tới đây. Khoá
+		// ví (lockOrCreateWalletTx) chỉ serialize được write vào CÙNG 1 ví, không ngăn
+		// request thứ 2 (đang cầm bản Go struct purchase.Status còn "Pending" từ trước khi
+		// vào tx) cộng xu lần nữa sau khi request 1 đã commit.
+		//
+		// Cách chặn: UPDATE có điều kiện (mẫu M-07 dùng cho voucher) + kiểm tra RowsAffected,
+		// TƯƠNG ĐƯƠNG "SELECT ... FOR UPDATE rồi kiểm tra status" mà review đề xuất — cả hai
+		// đều dựa vào row-level lock của Postgres: statement UPDATE tự khoá đúng dòng đang sửa
+		// trong lúc thực thi, request thứ 2 phải CHỜ request 1 commit rồi mới đánh giá lại
+		// WHERE (READ COMMITTED), lúc đó status đã là Completed nên WHERE không khớp nữa ->
+		// RowsAffected=0. Dùng UPDATE trực tiếp thay vì SELECT...FOR UPDATE + UPDATE riêng vì
+		// gộp được "khoá + kiểm tra + chuyển trạng thái" vào đúng MỘT statement, không có
+		// khoảng hở giữa lúc đọc SELECT và lúc UPDATE: request thắng cuộc mới đổi được status,
+		// request thua RowsAffected=0 -> rollback toàn bộ transaction (không cộng xu, không
+		// tạo ledger).
 		guard := tx.Model(&model.CoinPurchase{}).
 			Where("id = ? AND status = ?", purchaseID, model.CoinPurchasePending).
 			Update("status", model.CoinPurchaseCompleted)
@@ -594,43 +603,74 @@ func (s *CoinService) DeletePackage(ctx context.Context, id uuid.UUID) error {
 	return s.packageRepo.Delete(ctx, id)
 }
 
+// AdminAdjust (C-08 vòng 2 + M-04/23c review vòng 1): trước round-2, đổi số dư và ghi ledger
+// là 2 lệnh RỜI (không transaction), lỗi ghi ledger bị nuốt (`_ = ...Create(...)`). Round 2 đã
+// sửa phần nuốt lỗi + thêm ActorID, nhưng CHƯA bọc transaction — nếu update balance thành công
+// mà Create ledger lỗi (network/DB drop giữa chừng), số dư đã đổi nhưng KHÔNG có log kiểm
+// toán, không rollback được. Giờ bọc toàn bộ (khoá ví qua lockOrCreateWalletTx, đổi số dư,
+// đọc lại balance, ghi ledger) trong CÙNG một s.walletRepo.WithTransaction, đúng pattern đã
+// dùng cho SendGift/VerifyPurchase — lỗi bất kỳ bước nào sẽ rollback toàn bộ, không để lại
+// trạng thái nửa vời.
 func (s *CoinService) AdminAdjust(ctx context.Context, actorID uuid.UUID, req dto.AdminAdjustCoinRequest) (*dto.CoinWalletResponse, error) {
-	wallet, err := s.walletRepo.GetOrCreate(ctx, req.UserID)
+	var wallet model.UserCoinWallet
+
+	err := s.walletRepo.WithTransaction(func(tx *gorm.DB) error {
+		w, err := lockOrCreateWalletTx(tx, req.UserID)
+		if err != nil {
+			return err
+		}
+
+		switch {
+		case req.Amount > 0:
+			if err := tx.Model(&model.UserCoinWallet{}).Where("id = ?", w.ID).
+				Updates(map[string]interface{}{
+					"balance":      gorm.Expr("balance + ?", req.Amount),
+					"total_earned": gorm.Expr("total_earned + ?", req.Amount),
+				}).Error; err != nil {
+				return err
+			}
+		case req.Amount < 0:
+			result := tx.Model(&model.UserCoinWallet{}).
+				Where("id = ? AND balance >= ?", w.ID, -req.Amount).
+				Updates(map[string]interface{}{
+					"balance":     gorm.Expr("balance - ?", -req.Amount),
+					"total_spent": gorm.Expr("total_spent + ?", -req.Amount),
+				})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return errors.New("insufficient balance")
+			}
+		}
+
+		if err := tx.First(w, "id = ?", w.ID).Error; err != nil {
+			return err
+		}
+		wallet = *w
+
+		// C-08 (audit 260909 vòng 2): AdminAdjust trước đây không nhận actorID nên không thể
+		// truy vết ai đã chỉnh số dư của user nào — chỉ ghi lại UserID (chủ ví), không ghi ai
+		// thực hiện. Ghi actorID vào cột riêng (ActorID) để không lẫn với ReferenceID (vốn mang
+		// nghĩa "id thực thể liên quan"). Lỗi ghi ledger trước đây bị nuốt (`_ = ...Create(...)`)
+		// — số dư đã đổi nhưng có thể không có log — nay trả lỗi thay vì nuốt.
+		txEntry := &model.CoinTransaction{
+			WalletID:     wallet.ID,
+			UserID:       req.UserID,
+			ActorID:      &actorID,
+			Type:         model.CoinTxAdminAdjust,
+			Amount:       req.Amount,
+			BalanceAfter: wallet.Balance,
+			Description:  &req.Description,
+		}
+		if err := tx.Create(txEntry).Error; err != nil {
+			return fmt.Errorf("failed to record admin adjust audit log: %w", err)
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	if req.Amount > 0 {
-		if err := s.walletRepo.AddBalance(ctx, wallet.ID, req.Amount); err != nil {
-			return nil, err
-		}
-	} else if req.Amount < 0 {
-		if err := s.walletRepo.SubtractBalance(ctx, wallet.ID, -req.Amount); err != nil {
-			return nil, err
-		}
-	}
-
-	wallet, err = s.walletRepo.GetByUserID(ctx, req.UserID)
-	if err != nil {
-		return nil, err
-	}
-
-	// C-08 (audit 260909 vòng 2): AdminAdjust trước đây không nhận actorID nên không thể
-	// truy vết ai đã chỉnh số dư của user nào — chỉ ghi lại UserID (chủ ví), không ghi ai
-	// thực hiện. Ghi actorID vào cột riêng (ActorID) để không lẫn với ReferenceID (vốn mang
-	// nghĩa "id thực thể liên quan"). Lỗi ghi ledger trước đây bị nuốt (`_ = ...Create(...)`)
-	// — số dư đã đổi nhưng có thể không có log — nay trả lỗi thay vì nuốt.
-	txEntry := &model.CoinTransaction{
-		WalletID:     wallet.ID,
-		UserID:       req.UserID,
-		ActorID:      &actorID,
-		Type:         model.CoinTxAdminAdjust,
-		Amount:       req.Amount,
-		BalanceAfter: wallet.Balance,
-		Description:  &req.Description,
-	}
-	if err := s.txRepo.Create(ctx, txEntry); err != nil {
-		return nil, fmt.Errorf("failed to record admin adjust audit log: %w", err)
 	}
 
 	return &dto.CoinWalletResponse{

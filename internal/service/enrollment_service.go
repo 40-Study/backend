@@ -54,7 +54,15 @@ func (s *EnrollmentService) Enroll(ctx context.Context, userID, courseID uuid.UU
 	}
 	// C-06: endpoint tự-ghi-danh chỉ dành cho khóa MIỄN PHÍ. Khóa trả phí phải đi qua
 	// payment_service.CheckAndProcessPayment (lane khác) sau khi đơn hàng completed.
-	if !course.IsFree && course.Price.GreaterThan(decimal.Zero) {
+	//
+	// M-02/23b (review vòng 1): TRƯỚC ĐÂY điều kiện là "!course.IsFree && Price > 0" (AND) —
+	// hai cột IsFree/Price độc lập, không có ràng buộc DB nào bắt chúng nhất quán, nên dữ liệu
+	// IsFree=true nhưng Price>0 (hoàn toàn có thể xảy ra) sẽ ghi danh MIỄN PHÍ một khóa trả
+	// phí. Bỏ hẳn nhánh IsFree khỏi điều kiện — chỉ dựa vào MỘT nguồn sự thật duy nhất là
+	// Price (decimal.Decimal, không phải con trỏ nên không có rủi ro nil): khóa được coi là
+	// miễn phí khi và chỉ khi Price.IsZero(). Không tin cột IsFree cho quyết định enroll-trực-
+	// tiếp-hay-không nữa (IsFree vẫn có thể dùng để hiển thị UI, không phải nguồn sự thật).
+	if !course.Price.IsZero() {
 		return nil, ErrPaymentRequired
 	}
 
@@ -72,16 +80,27 @@ func (s *EnrollmentService) Enroll(ctx context.Context, userID, courseID uuid.UU
 	if existing != nil && existing.DeletedAt.Valid {
 		// Re-enroll: khôi phục bản ghi cũ thay vì INSERT mới (tránh vi phạm unique index),
 		// đồng thời reset tiến trình học về trạng thái ban đầu.
-		if err := s.enrollmentRepo.Restore(ctx, existing.ID); err != nil {
+		//
+		// H-02 (review vòng 1): TRƯỚC ĐÂY gọi Restore() (đặt deleted_at=NULL) rồi gọi tiếp
+		// enrollmentRepo.Update(existing) — Update dùng db.Save(), mà "existing" là struct đã
+		// load TRƯỚC khi Restore chạy nên vẫn giữ DeletedAt.Valid=true trong bộ nhớ; Save() ghi
+		// đè NGUYÊN struct (kể cả deleted_at cũ) → enrollment bị soft-delete lại NGAY LẬP TỨC dù
+		// API trả 200 "đã ghi danh". Sửa: gộp restore + reset field vào MỘT UPDATE bằng map,
+		// không đi qua struct đã stale.
+		now := time.Now()
+		updates := map[string]interface{}{
+			"enrolled_at":         now,
+			"completed_at":        nil,
+			"last_accessed_at":    nil,
+			"progress_percentage": decimal.Zero,
+		}
+		if err := s.enrollmentRepo.RestoreAndReactivate(ctx, existing.ID, updates); err != nil {
 			return nil, err
 		}
-		existing.EnrolledAt = time.Now()
+		existing.EnrolledAt = now
 		existing.CompletedAt = nil
 		existing.LastAccessedAt = nil
 		existing.ProgressPercent = decimal.Zero
-		if err := s.enrollmentRepo.Update(ctx, existing); err != nil {
-			return nil, err
-		}
 		if err := s.courseRepo.IncrementTotalStudents(ctx, courseID, 1); err != nil {
 			return nil, err
 		}

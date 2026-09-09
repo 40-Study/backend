@@ -40,8 +40,15 @@ type PaymentService struct {
 	orderItemRepo      repository.OrderItemRepositoryInterface
 	paymentEventRepo   repository.PaymentEventRepositoryInterface
 	orderHistoryRepo   repository.OrderStatusHistoryRepositoryInterface
-	enrollmentRepo     interface{}
+	// enrollmentRepo (item 14, dọn dẹp phụ khi tách completeOrderFulfillment dùng chung):
+	// TRƯỚC ĐÂY khai kiểu interface{} rồi type-assert bằng interface ẩn danh mỗi lần dùng
+	// (xem git blame CheckAndProcessPayment cũ) — không cần thiết vì repos.Enrollment luôn
+	// implement đúng repository.EnrollmentRepositoryInterface (xem app/services.go). Đổi
+	// sang kiểu cụ thể để completeOrderFulfillment (dùng chung với OrderService.CreateOrder,
+	// đơn 0đ) không phải type-assert lại.
+	enrollmentRepo     repository.EnrollmentRepositoryInterface
 	couponRepo         repository.CouponRepositoryInterface
+	voucherService     VoucherServiceInterface
 	transactionService TransactionServiceInterface
 }
 
@@ -50,8 +57,9 @@ func NewPaymentService(
 	orderItemRepo repository.OrderItemRepositoryInterface,
 	paymentEventRepo repository.PaymentEventRepositoryInterface,
 	orderHistoryRepo repository.OrderStatusHistoryRepositoryInterface,
-	enrollmentRepo interface{},
+	enrollmentRepo repository.EnrollmentRepositoryInterface,
 	couponRepo repository.CouponRepositoryInterface,
+	voucherService VoucherServiceInterface,
 	transactionService TransactionServiceInterface,
 ) *PaymentService {
 	return &PaymentService{
@@ -61,8 +69,56 @@ func NewPaymentService(
 		orderHistoryRepo:   orderHistoryRepo,
 		enrollmentRepo:     enrollmentRepo,
 		couponRepo:         couponRepo,
+		voucherService:     voucherService,
 		transactionService: transactionService,
 	}
+}
+
+// completeOrderFulfillment (item 14, review vòng 1 — "gọi đúng logic tạo enrollment đang dùng
+// ở CheckAndProcessPayment, tách thành hàm dùng chung, không copy"): tạo enrollment cho từng
+// course trong đơn (bỏ qua nếu đã enroll), và ghi nhận usage voucher (nếu có) — increment
+// used_count + tạo VoucherLog. Dùng chung cho CheckAndProcessPayment (đơn trả phí, sau khi
+// khớp giao dịch ngân hàng) VÀ nhánh đơn 0đ tự hoàn tất trong OrderService.CreateOrder.
+//
+// H-07 (báo cáo vòng 2, mục "chưa làm", vẫn còn nguyên — KHÔNG mở rộng sửa ở đây): khối này
+// chạy SAU KHI order status đã cập nhật xong (ở CheckAndProcessPayment) — nếu enrollment tạo
+// lỗi giữa chừng, order đã "completed" nhưng có thể thiếu enrollment cho vài course. Đây là gap
+// kiến trúc Unit-of-Work đã biết từ trước, không phải lỗi mới của lần sửa này.
+func completeOrderFulfillment(
+	ctx context.Context,
+	enrollmentRepo repository.EnrollmentRepositoryInterface,
+	voucherService VoucherServiceInterface,
+	items []model.OrderItem,
+	order *model.Order,
+) error {
+	for _, item := range items {
+		existingEnrollment, checkErr := enrollmentRepo.GetByUserAndCourse(ctx, order.UserID, item.CourseID)
+		if checkErr == nil && existingEnrollment != nil {
+			continue // Already enrolled
+		}
+
+		enrollment := &model.Enrollment{
+			UserID:     order.UserID,
+			CourseID:   item.CourseID,
+			EnrolledAt: time.Now(),
+		}
+		if err := enrollmentRepo.Create(ctx, enrollment); err != nil {
+			return fmt.Errorf("failed to create enrollment for course %s: %w", item.CourseID, err)
+		}
+	}
+
+	// item 24: voucher usage (bảng vouchers) thay cho coupon usage (bảng coupons đã bỏ —
+	// xem comment VoucherID/CouponID tại model.Order).
+	if order.VoucherID != nil && voucherService != nil {
+		if err := voucherService.IncrementUsedCount(ctx, *order.VoucherID); err != nil {
+			return fmt.Errorf("failed to increment voucher usage: %w", err)
+		}
+		if err := voucherService.RecordUsageLog(ctx, *order.VoucherID, order.UserID, order.ID, order.DiscountAmount); err != nil {
+			return fmt.Errorf("failed to record voucher usage log: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderID uuid.UUID, isAdmin bool, paymentMethod string) (*dto.PaymentIntentResponse, error) {
@@ -85,10 +141,14 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 
 	// Generate payment code
 	paymentCode := s.generatePaymentCode()
+	expiresAt := time.Now().Add(24 * time.Hour)
 
 	// Update order to processing status
 	oldStatus := order.Status
-	if err := s.orderRepo.UpdateStatus(orderID, "processing"); err != nil {
+	// item 25 (review web vòng 1): lưu payment code + expiry vào order NGAY trong bước này —
+	// xem comment tại OrderRepository.UpdatePaymentCode để biết lý do (trước đây chỉ set status,
+	// mã thanh toán chỉ tồn tại trong response, không tra lại được).
+	if err := s.orderRepo.UpdatePaymentCode(orderID, paymentCode, expiresAt); err != nil {
 		return nil, err
 	}
 
@@ -109,7 +169,7 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 		PaymentCode: paymentCode,
 		Amount:      order.TotalAmount,
 		Currency:    order.Currency,
-		ExpiredAt:   time.Now().Add(24 * time.Hour), // 24 hours expiry
+		ExpiredAt:   expiresAt,
 	}
 
 	// Generate QR content for QR transfer
@@ -252,50 +312,12 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 	// được trả về (visible) thay vì biến mất. LƯU Ý: đây chỉ đóng phần "lỗi bị nuốt", KHÔNG
 	// đóng H-07 (toàn bộ khối này vẫn chưa cùng transaction với UpdatePaymentInfo/history phía
 	// trên — đó là thay đổi kiến trúc Unit-of-Work lớn hơn, xem "chưa làm" trong báo cáo).
+	//
+	// item 14: logic tạo enrollment + ghi usage voucher tách thành completeOrderFulfillment
+	// (dùng chung với nhánh đơn 0đ tự hoàn tất trong OrderService.CreateOrder).
 	if s.enrollmentRepo != nil {
-		enrollmentRepo, ok := s.enrollmentRepo.(interface {
-			GetByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error)
-			Create(ctx context.Context, enrollment *model.Enrollment) error
-		})
-		if !ok {
-			return nil, errors.New("enrollmentRepo does not implement required interface")
-		}
-
-		for _, item := range items {
-			// Check if already enrolled
-			existingEnrollment, checkErr := enrollmentRepo.GetByUserAndCourse(ctx, order.UserID, item.CourseID)
-			if checkErr == nil && existingEnrollment != nil {
-				continue // Already enrolled
-			}
-
-			// Create enrollment
-			enrollment := &model.Enrollment{
-				UserID:     order.UserID,
-				CourseID:   item.CourseID,
-				EnrolledAt: time.Now(),
-			}
-			if err := enrollmentRepo.Create(ctx, enrollment); err != nil {
-				return nil, fmt.Errorf("failed to create enrollment for course %s: %w", item.CourseID, err)
-			}
-		}
-
-		// Update coupon usage if applicable
-		if order.CouponID != nil {
-			if err := s.couponRepo.IncrementUsageCount(*order.CouponID); err != nil {
-				return nil, fmt.Errorf("failed to increment coupon usage: %w", err)
-			}
-
-			usage := &model.CouponUsage{
-				ID:             uuid.New(),
-				CreatedAt:      time.Now(),
-				CouponID:       *order.CouponID,
-				UserID:         order.UserID,
-				OrderID:        orderID,
-				DiscountAmount: order.DiscountAmount,
-			}
-			if err := s.couponRepo.CreateUsage(usage); err != nil {
-				return nil, fmt.Errorf("failed to create coupon usage record: %w", err)
-			}
+		if err := completeOrderFulfillment(ctx, s.enrollmentRepo, s.voucherService, items, order); err != nil {
+			return nil, err
 		}
 	}
 

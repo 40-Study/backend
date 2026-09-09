@@ -19,6 +19,10 @@ type EnrollmentRepositoryInterface interface {
 	GetByUserAndCourseUnscoped(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error)
 	// Restore khôi phục một enrollment đã soft-delete (deleted_at = NULL).
 	Restore(ctx context.Context, id uuid.UUID) error
+	// RestoreAndReactivate (H-02, review vòng 1): gộp restore (deleted_at = NULL) và reset các
+	// field tiến trình học vào ĐÚNG MỘT câu UPDATE, tránh lỗi Save() ghi đè deleted_at cũ khi
+	// re-enroll — xem comment tại EnrollmentService.Enroll để biết bối cảnh đầy đủ.
+	RestoreAndReactivate(ctx context.Context, id uuid.UUID, updates map[string]interface{}) error
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Enrollment, error)
 	GetDetailByID(ctx context.Context, id uuid.UUID) (*model.Enrollment, error)
 	GetByUserID(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]model.Enrollment, int64, error)
@@ -85,6 +89,16 @@ func (r *EnrollmentRepository) GetByUserAndCourseUnscoped(ctx context.Context, u
 // Restore khôi phục enrollment đã soft-delete (deleted_at = NULL).
 func (r *EnrollmentRepository) Restore(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).Unscoped().Model(&model.Enrollment{}).Where("id = ?", id).Update("deleted_at", nil).Error
+}
+
+// RestoreAndReactivate (H-02, review vòng 1): trước đây service gọi Restore() rồi gọi tiếp
+// Update() (db.Save()) trên struct đã load TRƯỚC Restore — struct đó vẫn giữ DeletedAt cũ
+// trong bộ nhớ, nên Save() ghi đè lại đúng giá trị deleted_at vừa xóa, vô hiệu hóa Restore().
+// Gộp restore + set field vào MỘT lệnh Updates() duy nhất (map, không qua struct) để tránh
+// hoàn toàn vấn đề stale-in-memory-field.
+func (r *EnrollmentRepository) RestoreAndReactivate(ctx context.Context, id uuid.UUID, updates map[string]interface{}) error {
+	updates["deleted_at"] = nil
+	return r.db.WithContext(ctx).Unscoped().Model(&model.Enrollment{}).Where("id = ?", id).Updates(updates).Error
 }
 
 func (r *EnrollmentRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Enrollment, error) {

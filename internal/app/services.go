@@ -128,6 +128,11 @@ type Services struct {
 
 func InitServices(resources *Resources, repos *Repositories, notifier *socket.Notifier) *Services {
 	transactionSvc := initTransactionService(resources.Config)
+	// voucherSvc khởi tạo SỚM (trước Order/Payment) vì item 24 (review web vòng 1) cần
+	// OrderService/PaymentService dùng voucherSvc.ValidateAndApplyVoucher/IncrementUsedCount/
+	// RecordUsageLog thay cho couponRepo — bảng coupons không còn route/handler nào tạo dữ
+	// liệu (đã grep xác nhận), bảng vouchers mới là bảng web thực sự dùng.
+	voucherSvc := service.NewVoucherService(repos.Voucher, repos.User)
 
 	var videoQueue *rabbitmq_queue.VideoQueueSetup
 	if resources.RabbitMQ != nil {
@@ -187,6 +192,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		assignmentSvc,
 		repos.TestCase,
 		repos.Schedule,
+		repos.Class,
 		resources.Redis,
 		resources.Config,
 	)
@@ -337,7 +343,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag),
 		Section:       service.NewSectionService(repos.Section, repos.Course),
 		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, repos.Course, service.NewUploadService(resources.MinioClient, resources.Config)),
-		LessonContent: service.NewLessonContentService(repos.Lesson, service.NewUploadService(resources.MinioClient, resources.Config), uploadSvc),
+		LessonContent: service.NewLessonContentService(repos.Lesson, repos.Section, repos.Course, service.NewUploadService(resources.MinioClient, resources.Config), uploadSvc),
 		Enrollment:    service.NewEnrollmentService(repos.Enrollment, repos.Course, repos.Lesson),
 
 		// ===== Upload & Video =====
@@ -367,6 +373,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 			repos.CartItem,
 			repos.OrderStatusHistory,
 			repos.IdempotencyKey,
+			voucherSvc,
 		),
 		Payment: service.NewPaymentService(
 			repos.Order,
@@ -375,10 +382,11 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 			repos.OrderStatusHistory,
 			repos.Enrollment,
 			repos.Coupon,
+			voucherSvc,
 			transactionSvc,
 		),
 		TransactionService: transactionSvc,
-		Voucher:            service.NewVoucherService(repos.Voucher, repos.User),
+		Voucher:            voucherSvc,
 
 		// ===== Gamification =====
 		Achievement: service.NewAchievementService(repos.Achievement),

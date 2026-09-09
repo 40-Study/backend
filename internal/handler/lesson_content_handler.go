@@ -4,16 +4,27 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
 
 type LessonContentHandler struct {
-	service service.LessonContentServiceInterface
+	service     service.LessonContentServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewLessonContentHandler(service service.LessonContentServiceInterface) *LessonContentHandler {
-	return &LessonContentHandler{service: service}
+func NewLessonContentHandler(service service.LessonContentServiceInterface, permChecker *middleware.PermissionChecker) *LessonContentHandler {
+	return &LessonContentHandler{service: service, permChecker: permChecker}
+}
+
+// lessonContentErrorStatus (H-05, review vòng 1): ánh xạ ErrNotLessonCourseOwner (dùng chung
+// với Lesson, xem lesson_handler.go) sang 403.
+func lessonContentErrorStatus(err error) int {
+	if err == service.ErrNotLessonCourseOwner {
+		return fiber.StatusForbidden
+	}
+	return 0
 }
 
 func (h *LessonContentHandler) CreateContent(c *fiber.Ctx) error {
@@ -44,9 +55,13 @@ func (h *LessonContentHandler) CreateContent(c *fiber.Ctx) error {
 			"message": "Unauthorized",
 		})
 	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
 
-	content, err := h.service.CreateContent(c.Context(), lessonID, userID, req)
+	content, err := h.service.CreateContent(c.Context(), lessonID, userID, isAdmin, req)
 	if err != nil {
+		if status := lessonContentErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create content", "error": err.Error(),
 		})
@@ -99,8 +114,19 @@ func (h *LessonContentHandler) UpdateContent(c *fiber.Ctx) error {
 		})
 	}
 
-	content, err := h.service.UpdateContent(c.Context(), contentID, req)
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	content, err := h.service.UpdateContent(c.Context(), contentID, userID, isAdmin, req)
 	if err != nil {
+		if status := lessonContentErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update content", "error": err.Error(),
 		})
@@ -152,7 +178,18 @@ func (h *LessonContentHandler) DeleteContent(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteContent(c.Context(), contentID); err != nil {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	if err := h.service.DeleteContent(c.Context(), contentID, userID, isAdmin); err != nil {
+		if status := lessonContentErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete content", "error": err.Error(),
 		})

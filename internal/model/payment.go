@@ -25,12 +25,25 @@ type Order struct {
 	PaymentGateway       *string         `gorm:"type:varchar(30)" json:"payment_gateway,omitempty"`
 	PaymentTransactionID *string         `gorm:"type:varchar(255)" json:"payment_transaction_id,omitempty"`
 	PaidAt               *time.Time      `json:"paid_at,omitempty"`
-	CouponID             *uuid.UUID      `gorm:"type:uuid" json:"coupon_id,omitempty"`
-	Notes                *string         `gorm:"type:text" json:"notes,omitempty"`
+	// CouponID (DEPRECATED — item 24, review web vòng 1): bảng "coupons" không còn route/
+	// handler nào tạo dữ liệu (đã grep xác nhận zero caller của CreateCoupon), chỉ giữ cột này
+	// để đọc dữ liệu đơn hàng CŨ đã tạo trước khi sửa. Đơn hàng MỚI dùng VoucherID.
+	CouponID *uuid.UUID `gorm:"type:uuid" json:"coupon_id,omitempty"`
+	// VoucherID (item 24): mã giảm giá áp dụng cho đơn — trỏ vào bảng "vouchers" (bảng web
+	// thực sự dùng qua GET /vouchers/code/:code), thay cho CouponID ở trên.
+	VoucherID *uuid.UUID `gorm:"type:uuid;index" json:"voucher_id,omitempty"`
+	// PaymentCodeExpiredAt (item 25, review web vòng 1): thời điểm mã thanh toán
+	// (PaymentTransactionID, dùng tạm để lưu payment code lúc status=processing — xem comment
+	// tại payment_service.go CreatePaymentIntent) hết hạn. Trước đây không có cột nào lưu expiry
+	// của payment intent — DTO tự tính "now + 24h" mỗi lần render, không khớp thời điểm THẬT sự
+	// đã tạo payment intent.
+	PaymentCodeExpiredAt *time.Time `json:"payment_code_expired_at,omitempty"`
+	Notes                *string    `gorm:"type:text" json:"notes,omitempty"`
 
 	// Relationships
 	User        User         `gorm:"foreignKey:UserID" json:"-"`
 	Coupon      *Coupon      `gorm:"foreignKey:CouponID" json:"-"`
+	Voucher     *Voucher     `gorm:"foreignKey:VoucherID" json:"-"`
 	Items       []OrderItem  `gorm:"foreignKey:OrderID;constraint:OnDelete:CASCADE" json:"-"`
 	CouponUsage *CouponUsage `gorm:"foreignKey:OrderID" json:"-"`
 }
@@ -228,8 +241,13 @@ type UserVoucher struct {
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// Relationships
-	User    User    `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
-	Voucher Voucher `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"-"`
+	User User `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
+	// Voucher (item 27, review web vòng 1): TRƯỚC ĐÂY có json:"-" nên GET /vouchers/me chỉ
+	// trả {id, user_id, voucher_id, source, saved_at, notes} — trang /my-vouchers phía web
+	// phải tự gọi thêm GET /vouchers/:id (route admin-only, user thường bị 403) cho TỪNG
+	// voucher để lấy chi tiết. Bỏ json:"-" + Preload("Voucher") ở GetUserVouchers
+	// (voucher_repository.go) để trả sẵn chi tiết voucher trong 1 lần gọi.
+	Voucher Voucher `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"voucher,omitempty"`
 }
 
 func (UserVoucher) TableName() string {

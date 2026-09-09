@@ -17,11 +17,34 @@ import (
 type UserOrganizationRoleServiceInterface interface {
 	GetMyOrgRoles(ctx context.Context, userID uuid.UUID, orgID *uuid.UUID) ([]dto.UserOrgRoleResponseDTO, error)
 	GetUserOrgRoles(ctx context.Context, userID uuid.UUID, status string) ([]dto.UserOrgRoleResponseDTO, error)
-	AssignOrgRolesToUser(ctx context.Context, userID uuid.UUID, req dto.AssignOrgRolesToUserDTO, grantedBy uuid.UUID) ([]dto.UserOrgRoleResponseDTO, error)
-	RevokeOrgRoleFromUser(ctx context.Context, userID, orgRoleID, revokedBy uuid.UUID) error
+	AssignOrgRolesToUser(ctx context.Context, userID uuid.UUID, req dto.AssignOrgRolesToUserDTO, grantedBy uuid.UUID, activeOrgID *uuid.UUID, isAdmin bool) ([]dto.UserOrgRoleResponseDTO, error)
+	RevokeOrgRoleFromUser(ctx context.Context, userID, orgRoleID, revokedBy uuid.UUID, activeOrgID *uuid.UUID, isAdmin bool) error
 	GetUsersWithOrgRoleByRoleID(ctx context.Context, roleID uuid.UUID, page, pageSize int, status string) (*dto.UserOrgRoleListResponseDTO, error)
 	GetOrganizationMembers(ctx context.Context, organizationID uuid.UUID, page, pageSize int, status string) (*dto.UserOrgRoleListResponseDTO, error)
 	GetUsersWithOrgRole(ctx context.Context, roleID, organizationID uuid.UUID, page, pageSize int, status string) (*dto.UsersWithOrgRoleResponseDTO, error)
+}
+
+// ErrOrgRoleForbidden (H-01 residual, review vòng 1): route POST/DELETE
+// "/users/:user_id/org-roles" chỉ có :user_id trên URL, organization_id nằm trong BODY
+// (AssignOrgRolesToUserDTO) nên router không thể dùng RequireOrgPermission (middleware đó
+// đọc org từ path param). Trước fix, route chỉ gate bằng permission "ORG_MEMBERS_MANAGE"
+// (không so active_org_id) — một ORG_OWNER của tổ chức A gán/gỡ được org role cho user ở
+// tổ chức B miễn org B cũng thấy ORG_OWNER đó có permission ORG_MEMBERS_MANAGE (permission
+// hệ thống không gắn theo tổ chức cụ thể). Chặn ở tầng service: so req.OrganizationID (hoặc
+// organization_id của bản ghi đang thao tác) với active_org_id trong JWT; SYSTEM_ADMIN
+// (isAdmin=true, đã xác định qua SYSTEM_SETTINGS_MANAGE) được bỏ qua.
+var ErrOrgRoleForbidden = errors.New("forbidden: organization does not match your active organization")
+
+// requireOrgMatch (H-01 residual): admin bỏ qua kiểm tra; còn lại bắt buộc targetOrgID khớp
+// đúng activeOrgID trong JWT.
+func requireOrgMatch(targetOrgID uuid.UUID, activeOrgID *uuid.UUID, isAdmin bool) error {
+	if isAdmin {
+		return nil
+	}
+	if activeOrgID == nil || targetOrgID != *activeOrgID {
+		return ErrOrgRoleForbidden
+	}
+	return nil
 }
 
 type UserOrganizationRoleService struct {
@@ -103,7 +126,12 @@ func (s *UserOrganizationRoleService) GetUserOrgRoles(ctx context.Context, userI
 }
 
 // AssignOrgRolesToUser gan organization roles cho user
-func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, userID uuid.UUID, req dto.AssignOrgRolesToUserDTO, grantedBy uuid.UUID) ([]dto.UserOrgRoleResponseDTO, error) {
+func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, userID uuid.UUID, req dto.AssignOrgRolesToUserDTO, grantedBy uuid.UUID, activeOrgID *uuid.UUID, isAdmin bool) ([]dto.UserOrgRoleResponseDTO, error) {
+	// H-01 residual: organization_id đến từ body, không phải URL -> so với active_org_id ở đây.
+	if err := requireOrgMatch(req.OrganizationID, activeOrgID, isAdmin); err != nil {
+		return nil, err
+	}
+
 	// Kiem tra user ton tai
 	user, err := s.userRepo.FindUserByID(ctx, userID)
 	if err != nil {
@@ -215,7 +243,7 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 
 // RevokeOrgRoleFromUser thu hoi organization role tu user
 // Security: Increments user_version to invalidate existing JWT tokens immediately
-func (s *UserOrganizationRoleService) RevokeOrgRoleFromUser(ctx context.Context, userID, orgRoleID, revokedBy uuid.UUID) error {
+func (s *UserOrganizationRoleService) RevokeOrgRoleFromUser(ctx context.Context, userID, orgRoleID, revokedBy uuid.UUID, activeOrgID *uuid.UUID, isAdmin bool) error {
 	user, err := s.userRepo.FindUserByID(ctx, userID)
 	if err != nil {
 		return err
@@ -234,6 +262,12 @@ func (s *UserOrganizationRoleService) RevokeOrgRoleFromUser(ctx context.Context,
 
 	if userOrgRole.UserID != userID {
 		return errors.New("role assignment does not belong to this user")
+	}
+
+	// H-01 residual: :org_role_id trên URL không mang organization_id -> so
+	// userOrgRole.OrganizationID (đọc được sau khi FindByID) với active_org_id.
+	if err := requireOrgMatch(userOrgRole.OrganizationID, activeOrgID, isAdmin); err != nil {
+		return err
 	}
 
 	if userOrgRole.Status == model.UserOrgRoleStatusInactive {

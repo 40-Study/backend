@@ -12,6 +12,10 @@ import (
 
 var (
 	ErrVoucherNotFound = errors.New("voucher not found")
+	// ErrVoucherUsageExceeded (item 24, review web vòng 1): voucher.used_count đã chạm
+	// usage_limit — cùng khái niệm ErrCouponUsageExceeded (coupon_repository.go) nhưng cho
+	// bảng vouchers (bảng đang thực sự dùng, xem comment ở IncrementUsedCount).
+	ErrVoucherUsageExceeded = errors.New("voucher usage limit exceeded")
 )
 
 // DeletedMode - Mode for soft delete queries
@@ -35,6 +39,35 @@ func NewVoucherRepository(db *gorm.DB) *VoucherRepository {
 // CreateVoucher - Create new voucher
 func (r *VoucherRepository) CreateVoucher(ctx context.Context, voucher *model.Voucher) error {
 	return r.db.WithContext(ctx).Create(voucher).Error
+}
+
+// IncrementUsedCount (item 24/M-07, review web + review vòng 1): tăng used_count một cách an
+// toàn với race — cùng mẫu UPDATE có điều kiện + kiểm RowsAffected đã dùng cho
+// CouponRepository.IncrementUsageCount (M-07 audit 260909 vòng 2). Áp dụng cho bảng vouchers
+// vì đây mới là bảng web thực sự dùng (GET /vouchers/code/:code) — order_service.CreateOrder
+// giờ validate/áp mã giảm giá qua vouchers thay vì coupons (bảng coupons không còn route/handler
+// nào tạo dữ liệu, xem ghi chú "coupons deprecated" trong báo cáo).
+func (r *VoucherRepository) IncrementUsedCount(ctx context.Context, voucherID uuid.UUID) error {
+	result := r.db.WithContext(ctx).Model(&model.Voucher{}).
+		Where("id = ? AND (usage_limit <= 0 OR used_count < usage_limit)", voucherID).
+		Update("used_count", gorm.Expr("used_count + 1"))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrVoucherUsageExceeded
+	}
+	return nil
+}
+
+// CountUserVoucherUsage đếm số lần user đã DÙNG (action="used") voucher này — dùng để kiểm
+// usage_per_user trong ValidateAndApplyVoucher (voucher_service.go).
+func (r *VoucherRepository) CountUserVoucherUsage(ctx context.Context, userID, voucherID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.VoucherLog{}).
+		Where("user_id = ? AND voucher_id = ? AND action = ?", userID, voucherID, "used").
+		Count(&count).Error
+	return count, err
 }
 
 // GetVoucherByID - Get voucher by ID
@@ -207,7 +240,11 @@ func (r *VoucherRepository) GetUserVouchers(ctx context.Context, userID uuid.UUI
 		return nil, 0, err
 	}
 
-	if err := query.Offset(offset).Limit(limit).Order("saved_at DESC").Find(&userVouchers).Error; err != nil {
+	// item 27 (review web vòng 1): Preload chi tiết voucher trong CÙNG một query — trước đây
+	// trả về UserVoucher trơ (không có thông tin voucher), buộc FE gọi thêm GET /vouchers/:id
+	// (route admin-only) cho từng voucher để hiển thị /my-vouchers, mà user thường không có
+	// quyền gọi route đó.
+	if err := query.Preload("Voucher").Offset(offset).Limit(limit).Order("saved_at DESC").Find(&userVouchers).Error; err != nil {
 		return nil, 0, err
 	}
 

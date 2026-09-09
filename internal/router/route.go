@@ -90,7 +90,7 @@ func SetupAllRoutes(
 	SetupPermissionRoutes(api, cfg, permissionHandler, redis, permChecker)
 	SetupOrganizationRoutes(api, cfg, organizationHandler, redis, permChecker)
 	SetupProfileRoutes(api, cfg, profileHandler, redis)
-	SetupTeacherRoutes(api, cfg, teacherHandler, redis)
+	SetupTeacherRoutes(api, cfg, teacherHandler, redis, permChecker)
 	SetupTeacherProfileRoutes(api, cfg, teacherProfileHandler, redis)
 	SetupClassRoutes(api, cfg, classHandler, attendanceHandler, redis)
 	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis)

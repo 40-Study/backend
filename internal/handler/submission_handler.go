@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
@@ -20,11 +21,12 @@ type SubmissionHandlerInterface interface {
 }
 
 type SubmissionHandler struct {
-	svc service.SubmissionServiceInterface
+	svc         service.SubmissionServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewSubmissionHandler(svc service.SubmissionServiceInterface) *SubmissionHandler {
-	return &SubmissionHandler{svc: svc}
+func NewSubmissionHandler(svc service.SubmissionServiceInterface, permChecker *middleware.PermissionChecker) *SubmissionHandler {
+	return &SubmissionHandler{svc: svc, permChecker: permChecker}
 }
 
 // submissionErrorStatus ánh xạ ErrSubmissionForbidden (C-10) sang 403; trả 0 khi không nhận
@@ -91,18 +93,33 @@ func (h *SubmissionHandler) GetByID(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"data": submission})
 }
 
+// GetByAssignment (H-03): chỉ giáo viên sở hữu assignment (session hoặc class) hoặc admin
+// mới xem được toàn bộ bài nộp của một assignment — kiểm tra thực hiện ở service layer.
 func (h *SubmissionHandler) GetByAssignment(c *fiber.Ctx) error {
 	assignmentID, err := uuid.Parse(c.Params("assignmentId"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid assignment_id"})
 	}
 
+	requesterID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, requesterID)
+
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 
-	result, err := h.svc.GetByAssignment(c.Context(), assignmentID, page, pageSize)
+	result, err := h.svc.GetByAssignment(c.Context(), assignmentID, requesterID, isAdmin, page, pageSize)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		if status := submissionErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"error": err.Error()})
+		}
+		status := fiber.StatusInternalServerError
+		if err.Error() == "assignment not found" {
+			status = fiber.StatusNotFound
+		}
+		return c.Status(status).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	return c.JSON(result)

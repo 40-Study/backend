@@ -19,7 +19,7 @@ import (
 type GradeServiceInterface interface {
 	// GradeColumn
 	CreateGradeColumn(ctx context.Context, classID, actorUserID uuid.UUID, req dto.CreateGradeColumnDTO) (*dto.GradeColumnResponseDTO, error)
-	GetGradeColumns(ctx context.Context, classID uuid.UUID) ([]dto.GradeColumnResponseDTO, error)
+	GetGradeColumns(ctx context.Context, classID, actorUserID uuid.UUID) ([]dto.GradeColumnResponseDTO, error)
 	UpdateGradeColumn(ctx context.Context, classID, id, actorUserID uuid.UUID, req dto.UpdateGradeColumnDTO) (*dto.GradeColumnResponseDTO, error)
 	DeleteGradeColumn(ctx context.Context, classID, id, actorUserID uuid.UUID) error
 	ReorderGradeColumns(ctx context.Context, classID, actorUserID uuid.UUID, req dto.ReorderGradeColumnsDTO) error
@@ -34,7 +34,7 @@ type GradeServiceInterface interface {
 
 	// FinalGrade
 	CalculateFinalGrades(ctx context.Context, classID, actorUserID uuid.UUID) ([]dto.FinalGradeResponseDTO, error)
-	GetFinalGrades(ctx context.Context, classID uuid.UUID) ([]dto.FinalGradeResponseDTO, error)
+	GetFinalGrades(ctx context.Context, classID, actorUserID uuid.UUID) ([]dto.FinalGradeResponseDTO, error)
 	UpdateFinalGrade(ctx context.Context, classID, id, actorUserID uuid.UUID, req dto.UpdateFinalGradeDTO) (*dto.FinalGradeResponseDTO, error)
 	FinalizeFinalGrades(ctx context.Context, classID, userID uuid.UUID) error
 
@@ -113,7 +113,13 @@ func (s *GradeService) CreateGradeColumn(ctx context.Context, classID, actorUser
 	return s.mapColumnToDTO(col), nil
 }
 
-func (s *GradeService) GetGradeColumns(ctx context.Context, classID uuid.UUID) ([]dto.GradeColumnResponseDTO, error) {
+// GetGradeColumns (H-04 residual, review vòng 1): TRƯỚC ĐÂY không kiểm actorUserID -> mọi
+// user đã đăng nhập xem được cấu trúc cột điểm (tên cột, trọng số) của bất kỳ lớp nào. C-13
+// vòng 2 gate được CRUD cột điểm nhưng bỏ sót đúng route GET danh sách này.
+func (s *GradeService) GetGradeColumns(ctx context.Context, classID, actorUserID uuid.UUID) ([]dto.GradeColumnResponseDTO, error) {
+	if err := s.requireClassTeacher(ctx, classID, actorUserID); err != nil {
+		return nil, err
+	}
 	cols, err := s.repo.GetGradeColumnsByClassID(ctx, classID)
 	if err != nil {
 		return nil, err
@@ -501,7 +507,12 @@ func (s *GradeService) CalculateFinalGrades(ctx context.Context, classID, actorU
 	return results, nil
 }
 
-func (s *GradeService) GetFinalGrades(ctx context.Context, classID uuid.UUID) ([]dto.FinalGradeResponseDTO, error) {
+// GetFinalGrades (H-04 residual, review vòng 1): TRƯỚC ĐÂY không kiểm actorUserID -> rò rỉ
+// điểm tổng kết toàn lớp cho bất kỳ user nào đã đăng nhập. Cùng lỗ hổng như GetGradeColumns.
+func (s *GradeService) GetFinalGrades(ctx context.Context, classID, actorUserID uuid.UUID) ([]dto.FinalGradeResponseDTO, error) {
+	if err := s.requireClassTeacher(ctx, classID, actorUserID); err != nil {
+		return nil, err
+	}
 	fgs, err := s.repo.GetFinalGradesByClassID(ctx, classID)
 	if err != nil {
 		return nil, err

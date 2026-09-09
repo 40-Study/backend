@@ -57,8 +57,18 @@ type OrderService struct {
 	cartRepo           repository.CartItemRepositoryInterface
 	orderHistoryRepo   repository.OrderStatusHistoryRepositoryInterface
 	idempotencyKeyRepo repository.IdempotencyKeyRepositoryInterface
+	// voucherService (item 24, review web vòng 1): CreateOrder validate/áp mã giảm giá qua
+	// bảng vouchers thay vì coupons — xem comment tại couponRepo field bên dưới và tại
+	// model.Order.VoucherID.
+	voucherService VoucherServiceInterface
 }
 
+// couponRepo (DEPRECATED — item 24, review web vòng 1): giữ lại field/tham số này CHỈ để
+// tương thích interface cũ (không dùng để validate/áp coupon nữa trong CreateOrder — xem
+// voucherService). Bảng "coupons" không còn route/handler nào tạo dữ liệu (đã grep xác nhận
+// zero caller của CreateCoupon trong toàn bộ internal/), trong khi "vouchers" mới là bảng web
+// thực sự dùng (GET /vouchers/code/:code, voucher-input.tsx). Không xóa hẳn field/bảng ở đây
+// để tránh phá vỡ dữ liệu đơn hàng CŨ đã tạo trước khi sửa (order.CouponID vẫn đọc được).
 func NewOrderService(
 	orderRepo repository.OrderRepositoryInterface,
 	orderItemRepo repository.OrderItemRepositoryInterface,
@@ -68,6 +78,7 @@ func NewOrderService(
 	cartRepo repository.CartItemRepositoryInterface,
 	orderHistoryRepo repository.OrderStatusHistoryRepositoryInterface,
 	idempotencyKeyRepo repository.IdempotencyKeyRepositoryInterface,
+	voucherService VoucherServiceInterface,
 ) *OrderService {
 	return &OrderService{
 		orderRepo:          orderRepo,
@@ -78,6 +89,7 @@ func NewOrderService(
 		cartRepo:           cartRepo,
 		orderHistoryRepo:   orderHistoryRepo,
 		idempotencyKeyRepo: idempotencyKeyRepo,
+		voucherService:     voucherService,
 	}
 }
 
@@ -106,6 +118,22 @@ func (s *OrderService) isValidTransition(from, to string) bool {
 
 func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dto.CreateOrderRequest) (*dto.OrderResponse, error) {
 	var courseIDs []uuid.UUID
+	// selectedCourseIDs (item 26, review web vòng 1): khi client gửi kèm course_ids CÙNG với
+	// source="cart" (chọn một phần giỏ hàng để checkout thay vì cả giỏ), nhớ lại tập đã CHỌN
+	// để lúc dọn giỏ hàng chỉ xóa đúng các item này — trước đây CreateOrder BỎ QUA hoàn toàn
+	// req.CourseIDs khi source="cart" (luôn lấy TOÀN BỘ giỏ hàng), khiến UI hiện giá của vài
+	// khóa được chọn nhưng đơn tạo ra + số tiền chuyển khoản lại tính trên CẢ giỏ hàng.
+	var selectedCourseIDs []uuid.UUID
+	if len(req.CourseIDs) > 0 {
+		selectedCourseIDs = make([]uuid.UUID, 0, len(req.CourseIDs))
+		for _, idStr := range req.CourseIDs {
+			id, err := uuid.Parse(idStr)
+			if err != nil {
+				return nil, errors.New("invalid course id")
+			}
+			selectedCourseIDs = append(selectedCourseIDs, id)
+		}
+	}
 
 	if req.Source == "cart" {
 		cartItems, err := s.cartRepo.GetByUserID(ctx, userID)
@@ -113,18 +141,26 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 			return nil, err
 		}
 
-		courseIDs = make([]uuid.UUID, 0, len(cartItems))
-		for _, item := range cartItems {
-			courseIDs = append(courseIDs, item.CourseID)
+		if len(selectedCourseIDs) > 0 {
+			// Chỉ lấy các item trong giỏ TRÙNG với course_ids client chọn — không lấy cả giỏ.
+			selectedSet := make(map[uuid.UUID]bool, len(selectedCourseIDs))
+			for _, id := range selectedCourseIDs {
+				selectedSet[id] = true
+			}
+			courseIDs = make([]uuid.UUID, 0, len(selectedCourseIDs))
+			for _, item := range cartItems {
+				if selectedSet[item.CourseID] {
+					courseIDs = append(courseIDs, item.CourseID)
+				}
+			}
+		} else {
+			courseIDs = make([]uuid.UUID, 0, len(cartItems))
+			for _, item := range cartItems {
+				courseIDs = append(courseIDs, item.CourseID)
+			}
 		}
 	} else if req.Source == "buy_now" {
-		for _, idStr := range req.CourseIDs {
-			id, err := uuid.Parse(idStr)
-			if err != nil {
-				return nil, errors.New("invalid course id")
-			}
-			courseIDs = append(courseIDs, id)
-		}
+		courseIDs = selectedCourseIDs
 	} else {
 		return nil, errors.New("invalid source")
 	}
@@ -149,11 +185,15 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 		subtotal = subtotal.Add(price)
 	}
 
-	var coupon *model.Coupon
+	// item 24 (review web vòng 1): validate/áp mã giảm giá qua VOUCHERS thay vì COUPONS —
+	// bảng coupons không còn route/handler nào tạo dữ liệu (đã grep xác nhận), web tra mã bằng
+	// GET /vouchers/code/:code nên mã người dùng nhập luôn thuộc bảng vouchers. Giữ tên field
+	// DTO "coupon_code" để không phá tương thích ngược với web (web vẫn gửi coupon_code).
+	var voucher *model.Voucher
 	discountAmount := decimal.Zero
 
 	if req.CouponCode != "" {
-		coupon, discountAmount, err = s.couponRepo.ValidateCoupon(req.CouponCode, userID, courseIDs, subtotal)
+		voucher, discountAmount, err = s.voucherService.ValidateAndApplyVoucher(ctx, req.CouponCode, userID, subtotal, "")
 		if err != nil {
 			return nil, ErrCouponInvalid
 		}
@@ -171,6 +211,20 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 	// Generate order number
 	orderNumber := s.generateOrderNumber()
 
+	// item 14 (review vòng 1): đơn 0đ (khóa miễn phí, hoặc voucher giảm 100%) đánh dấu
+	// "completed" NGAY khi tạo — trước đây LUÔN đặt "pending" bất kể totalAmount, nhưng
+	// enrollment chỉ được tạo trong CheckAndProcessPayment sau khi có giao dịch ngân hàng
+	// khớp mã thanh toán, mà đơn 0đ không bao giờ có giao dịch ngân hàng nào cả -> học viên
+	// không bao giờ được ghi danh dù web đã điều hướng sang trang "thành công".
+	status := "pending"
+	var paidAt *time.Time
+	isFreeOrder := totalAmount.IsZero()
+	if isFreeOrder {
+		status = "completed"
+		now := time.Now()
+		paidAt = &now
+	}
+
 	// Create order
 	order := &model.Order{
 		ID:             uuid.New(),
@@ -181,13 +235,15 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 		TaxAmount:      taxAmount,
 		TotalAmount:    totalAmount,
 		Currency:       "VND",
-		Status:         "pending",
+		Status:         status,
+		PaidAt:         paidAt,
 		CouponID:       nil,
+		VoucherID:      nil,
 		Notes:          nil,
 	}
 
-	if coupon != nil {
-		order.CouponID = &coupon.ID
+	if voucher != nil {
+		order.VoucherID = &voucher.ID
 	}
 
 	if req.Note != "" {
@@ -228,14 +284,19 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 			return err
 		}
 
-		// Create status history
+		// Create status history — item 14: đơn 0đ ghi thẳng ToStatus="completed" (khớp
+		// order.Status vừa set ở trên), không phải "pending" cứng như trước.
+		reason := "Order created"
+		if isFreeOrder {
+			reason = "Free order auto-completed (0đ)"
+		}
 		history := &model.OrderStatusHistory{
 			ID:         uuid.New(),
 			CreatedAt:  time.Now(),
 			OrderID:    order.ID,
 			FromStatus: "",
-			ToStatus:   "pending",
-			Reason:     "Order created",
+			ToStatus:   status,
+			Reason:     reason,
 		}
 		if err := s.orderHistoryRepo.Create(history); err != nil {
 			return err
@@ -248,8 +309,28 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 		return nil, err
 	}
 
+	// item 26 (review web vòng 1): chỉ xóa khỏi giỏ hàng đúng các course ĐÃ CHỌN — trước đây
+	// luôn DeleteByUserID (xóa TOÀN BỘ giỏ) dù client chỉ chọn một phần. Không có course_ids
+	// (checkout cả giỏ, hành vi mặc định cũ) vẫn xóa toàn bộ như trước.
 	if req.Source == "cart" {
-		if err := s.cartRepo.DeleteByUserID(ctx, userID); err != nil {
+		if len(selectedCourseIDs) > 0 {
+			for _, courseID := range selectedCourseIDs {
+				if err := s.cartRepo.Delete(ctx, userID, courseID); err != nil {
+					return nil, err
+				}
+			}
+		} else {
+			if err := s.cartRepo.DeleteByUserID(ctx, userID); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	// item 14: đơn 0đ tạo enrollment NGAY (không cần chờ CheckAndProcessPayment vì không có
+	// giao dịch ngân hàng nào cho đơn 0đ) — dùng ĐÚNG hàm dùng chung với CheckAndProcessPayment
+	// (completeOrderFulfillment, payment_service.go), không copy logic.
+	if isFreeOrder {
+		if err := completeOrderFulfillment(ctx, s.enrollmentRepo, s.voucherService, items, order); err != nil {
 			return nil, err
 		}
 	}

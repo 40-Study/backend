@@ -32,7 +32,14 @@ func (h *OrganizationHandler) CreateOrganization(c *fiber.Ctx) error {
 		})
 	}
 
-	org, err := h.service.CreateOrganization(c.Context(), req)
+	creatorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || creatorUserID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	org, err := h.service.CreateOrganization(c.Context(), creatorUserID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create organization",

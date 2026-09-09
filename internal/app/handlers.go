@@ -129,7 +129,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		Role:                 handler.NewRoleHandler(services.Role, permChecker),
 		SystemRole:           handler.NewSystemRoleHandler(services.SystemRole),
 		UserSystemRole:       handler.NewUserSystemRoleHandler(services.UserSystemRole),
-		UserOrganizationRole: handler.NewUserOrganizationRoleHandler(services.UserOrganizationRole),
+		UserOrganizationRole: handler.NewUserOrganizationRoleHandler(services.UserOrganizationRole, permChecker),
 		Permission:           handler.NewPermissionHandler(services.Permission),
 
 		// ===== Organization & Profile =====
@@ -152,7 +152,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		CourseHandler: handler.NewCourseHandler(services.CourseService, permChecker),
 		Section:       handler.NewSectionHandler(services.Section, permChecker),
 		Lesson:        handler.NewLessonHandler(services.Lesson, permChecker),
-		LessonContent: handler.NewLessonContentHandler(services.LessonContent),
+		LessonContent: handler.NewLessonContentHandler(services.LessonContent, permChecker),
 		Enrollment:    handler.NewEnrollmentHandler(services.Enrollment),
 
 		// ===== Upload & Video =====
@@ -163,7 +163,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		// ===== Livestream Learning Platform =====
 		Livestream: handler.NewLivestreamHandler(services.Livestream),
 		Assignment: handler.NewAssignmentHandler(services.Assignment, services.Livekit),
-		Submission: handler.NewSubmissionHandler(services.Submission),
+		Submission: handler.NewSubmissionHandler(services.Submission, permChecker),
 		Chat:       handler.NewChatHandler(services.Chat),
 		Whiteboard: handler.NewWhiteboardHandler(services.Whiteboard, services.Livekit),
 		Analytics:  handler.NewAnalyticsHandler(services.Analytics),

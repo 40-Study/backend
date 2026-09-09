@@ -83,14 +83,22 @@ func (s *LessonService) checkSectionCourseOwnership(ctx context.Context, section
 // (di qua lesson.SectionID -> section.CourseID -> course.InstructorID). isAdmin (vòng 2, tính
 // sẵn ở handler qua PermissionChecker) cho phép SYSTEM_ADMIN override chủ sở hữu khi sửa/xóa.
 func (s *LessonService) checkLessonCourseOwnership(ctx context.Context, lesson *model.Lesson, actorUserID uuid.UUID, isAdmin bool) error {
-	section, err := s.sectionRepo.GetByID(ctx, lesson.SectionID)
+	return requireLessonCourseOwnerOrAdmin(ctx, s.sectionRepo, s.courseRepo, lesson, actorUserID, isAdmin)
+}
+
+// requireLessonCourseOwnerOrAdmin (H-05, review vòng 1): tách thành HÀM TỰ DO (không gắn với
+// *LessonService) để LessonContentService dùng chung logic kiểm tra chủ sở hữu này — trước đây
+// C-12 chỉ gate được Lesson (tạo/sửa/xóa), còn LessonContentService (nội dung BÊN TRONG lesson:
+// video, bài tập...) không kiểm gì cả, kể cả DeleteContent xóa cả video gốc trên MinIO.
+func requireLessonCourseOwnerOrAdmin(ctx context.Context, sectionRepo repository.SectionRepositoryInterface, courseRepo repository.CourseRepositoryInterface, lesson *model.Lesson, actorUserID uuid.UUID, isAdmin bool) error {
+	section, err := sectionRepo.GetByID(ctx, lesson.SectionID)
 	if err != nil {
 		return err
 	}
 	if section == nil {
 		return errors.New("section not found")
 	}
-	course, err := s.courseRepo.GetByID(ctx, section.CourseID)
+	course, err := courseRepo.GetByID(ctx, section.CourseID)
 	if err != nil {
 		return err
 	}

@@ -94,6 +94,23 @@ func (r *OrderRepository) UpdateStatus(orderID uuid.UUID, status string) error {
 	return r.db.Model(&model.Order{}).Where("id = ?", orderID).Update("status", status).Error
 }
 
+// UpdatePaymentCode (item 25, review web vòng 1): TRƯỚC ĐÂY CreatePaymentIntent chỉ gọi
+// UpdateStatus("processing") — mã thanh toán (paymentCode) sinh ra chỉ tồn tại trong response
+// trả về client, KHÔNG được lưu vào order. CheckAndProcessPayment/GetPaymentStatus sau đó đọc
+// order.PaymentTransactionID để lấy lại mã này thì luôn rỗng -> "payment code not found",
+// khiến nút "Tôi đã chuyển khoản" và vòng poll đều lỗi vĩnh viễn. Giờ set cả status,
+// payment_transaction_id (tạm dùng để lưu payment code lúc đang processing — sẽ bị
+// UpdatePaymentInfo ghi đè bằng transaction ID THẬT của ngân hàng khi thanh toán xong, đúng ý
+// nghĩa cột này sau khi hoàn tất) và payment_code_expired_at trong CÙNG một UPDATE.
+func (r *OrderRepository) UpdatePaymentCode(orderID uuid.UUID, paymentCode string, expiredAt time.Time) error {
+	updates := map[string]interface{}{
+		"status":                   "processing",
+		"payment_transaction_id":   paymentCode,
+		"payment_code_expired_at": expiredAt,
+	}
+	return r.db.Model(&model.Order{}).Where("id = ?", orderID).Updates(updates).Error
+}
+
 // UpdatePaymentInfo - Update payment information
 func (r *OrderRepository) UpdatePaymentInfo(orderID uuid.UUID, paymentMethod, paymentGateway, transactionID string, paidAt time.Time) error {
 	updates := map[string]interface{}{

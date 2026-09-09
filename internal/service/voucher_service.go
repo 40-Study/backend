@@ -20,6 +20,14 @@ var (
 	ErrVoucherMinPurchase    = errors.New("order does not meet minimum purchase requirement")
 	ErrVoucherPaymentNotAllow = errors.New("payment method is not accepted by voucher")
 	ErrInvalidNumeric        = errors.New("invalid numeric value")
+	// ErrVoucherUsageLimitExceeded/ErrVoucherPerUserLimitExceeded (item 24, review web +
+	// review vòng 1): dùng cho ValidateAndApplyVoucher — tương đương
+	// ErrCouponUsageExceeded/ErrCouponPerUserExceeded của coupon_repository.go, viết lại ở
+	// đây vì logic kiểm tra nằm ở service layer (đúng vị trí CalculateDiscountAmount hiện có),
+	// không phải repository layer như CouponRepository.
+	ErrVoucherUsageLimitExceeded   = errors.New("voucher usage limit exceeded")
+	ErrVoucherPerUserLimitExceeded = errors.New("voucher usage limit per user exceeded")
+	ErrVoucherNotFoundByCode       = errors.New("voucher not found")
 )
 
 type VoucherServiceInterface interface {
@@ -37,6 +45,18 @@ type VoucherServiceInterface interface {
 
 	// Apply voucher
 	ApplyVoucher(ctx context.Context, userID uuid.UUID, subTotal *int64, paymentMethod string, voucherCode string) (uuid.UUID, *string, error)
+
+	// ValidateAndApplyVoucher (item 24, review web + review vòng 1): kiểm tra đầy đủ điều
+	// kiện áp dụng (active, ngày hiệu lực, usage_limit, min_purchase, usage_per_user, payment
+	// method) rồi tính discount bằng decimal.Decimal — dùng thay CouponRepository.ValidateCoupon
+	// trong order_service.CreateOrder vì bảng coupons không còn được tạo dữ liệu qua route/
+	// handler nào (đã grep xác nhận). paymentMethod rỗng khi chưa biết ở bước tạo đơn (bỏ qua
+	// kiểm tra payment method trong trường hợp đó).
+	ValidateAndApplyVoucher(ctx context.Context, code string, userID uuid.UUID, subtotal decimal.Decimal, paymentMethod string) (*model.Voucher, decimal.Decimal, error)
+	// IncrementUsedCount + RecordUsageLog: gọi lúc đơn hàng HOÀN TẤT (không phải lúc tạo đơn)
+	// — cùng thời điểm CouponRepository.IncrementUsageCount/CreateUsage trước đây được gọi.
+	IncrementUsedCount(ctx context.Context, voucherID uuid.UUID) error
+	RecordUsageLog(ctx context.Context, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error
 
 	// User Voucher (Bookmark/Save)
 	SaveVoucher(ctx context.Context, userID uuid.UUID, req *dto.SaveVoucherRequest) (*model.UserVoucher, error)
@@ -387,6 +407,125 @@ func (vs *VoucherService) CalculateDiscountAmount(voucher *model.Voucher, orderA
 		return 0, errors.New("unknown discount method")
 	}
 	return discountAmount, nil
+}
+
+// calculateVoucherDiscountDecimal (item 24, review web) tính discount bằng decimal.Decimal —
+// bản decimal-native của CalculateDiscountAmount (vốn dùng int64, phù hợp cho luồng xu) để
+// khớp với subtotal decimal.Decimal mà order_service.go đang dùng. Công thức PHẢI khớp đúng
+// calculateVoucherDiscount phía web (voucher-input.tsx): dùng discount_unit/discount_method/
+// max_discount_money/min_purchase_money của model.Voucher, clamp về subtotal, không âm.
+func calculateVoucherDiscountDecimal(voucher *model.Voucher, subtotal decimal.Decimal) decimal.Decimal {
+	discount := decimal.Zero
+
+	switch voucher.DiscountMethod {
+	case model.DiscountMethodFixed:
+		if voucher.DiscountUnit == model.DiscountUnitMoney && voucher.DiscountAmountMoney != nil {
+			discount = *voucher.DiscountAmountMoney
+		}
+		// DiscountUnitPoint (giảm giá bằng điểm) không áp dụng cho luồng đơn hàng tiền mặt
+		// (order_service.go) — chỉ MONEY mới có ý nghĩa ở đây.
+	case model.DiscountMethodPercent:
+		if voucher.DiscountPercent != nil {
+			discount = subtotal.Mul(*voucher.DiscountPercent).Div(decimal.NewFromInt(100))
+			if voucher.MaxDiscountMoney != nil && discount.GreaterThan(*voucher.MaxDiscountMoney) {
+				discount = *voucher.MaxDiscountMoney
+			}
+		}
+	}
+
+	if discount.GreaterThan(subtotal) {
+		discount = subtotal
+	}
+	if discount.LessThan(decimal.Zero) {
+		discount = decimal.Zero
+	}
+	return discount
+}
+
+// ValidateAndApplyVoucher (item 24, review web + review vòng 1) — xem comment interface.
+func (vs *VoucherService) ValidateAndApplyVoucher(ctx context.Context, code string, userID uuid.UUID, subtotal decimal.Decimal, paymentMethod string) (*model.Voucher, decimal.Decimal, error) {
+	voucher, err := vs.vr.GetVoucherByCode(ctx, code)
+	if err != nil {
+		return nil, decimal.Zero, err
+	}
+	if voucher == nil {
+		return nil, decimal.Zero, ErrVoucherNotFoundByCode
+	}
+
+	if !voucher.IsActive {
+		return nil, decimal.Zero, ErrVoucherInactive
+	}
+
+	now := time.Now()
+	if voucher.StartDate != nil && now.Before(*voucher.StartDate) {
+		return nil, decimal.Zero, ErrVoucherNotStarted
+	}
+	if voucher.EndDate != nil && now.After(*voucher.EndDate) {
+		return nil, decimal.Zero, ErrVoucherExpired
+	}
+
+	if voucher.MinPurchaseMoney != nil && subtotal.LessThan(*voucher.MinPurchaseMoney) {
+		return nil, decimal.Zero, ErrVoucherMinPurchase
+	}
+
+	if voucher.UsageLimit > 0 && voucher.UsedCount >= voucher.UsageLimit {
+		return nil, decimal.Zero, ErrVoucherUsageLimitExceeded
+	}
+
+	if voucher.UsagePerUser > 0 {
+		userUsageCount, err := vs.vr.CountUserVoucherUsage(ctx, userID, voucher.ID)
+		if err != nil {
+			return nil, decimal.Zero, err
+		}
+		if userUsageCount >= int64(voucher.UsagePerUser) {
+			return nil, decimal.Zero, ErrVoucherPerUserLimitExceeded
+		}
+	}
+
+	if paymentMethod != "" && !voucher.AcceptAllPaymentMethods {
+		allowed := false
+		for _, m := range voucher.PaymentMethodsAccepted {
+			if m == paymentMethod {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return nil, decimal.Zero, ErrVoucherPaymentNotAllow
+		}
+	}
+
+	discount := calculateVoucherDiscountDecimal(voucher, subtotal)
+	return voucher, discount, nil
+}
+
+// IncrementUsedCount — xem comment interface.
+func (vs *VoucherService) IncrementUsedCount(ctx context.Context, voucherID uuid.UUID) error {
+	return vs.vr.IncrementUsedCount(ctx, voucherID)
+}
+
+// RecordUsageLog — xem comment interface. Tự tra lại voucher.Code (VoucherLog.VoucherCode
+// not-null) thay vì bắt caller truyền vào, tránh caller phải tự query/preload thêm. Amount
+// trong VoucherLog là int64 (không có phần thập phân với VND) nên dùng IntPart().
+func (vs *VoucherService) RecordUsageLog(ctx context.Context, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error {
+	voucher, err := vs.vr.GetVoucherByID(ctx, voucherID)
+	if err != nil {
+		return err
+	}
+	code := ""
+	if voucher != nil {
+		code = voucher.Code
+	}
+	log := &model.VoucherLog{
+		UserID:      userID,
+		VoucherID:   voucherID,
+		VoucherCode: code,
+		OrderID:     orderID,
+		OrderType:   "course_order",
+		Action:      "used",
+		Amount:      discountAmount.IntPart(),
+	}
+	return vs.vr.CreateVoucherLog(ctx, log)
 }
 
 // ============================================================

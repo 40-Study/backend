@@ -18,6 +18,7 @@ type OrderRepositoryInterface interface {
 	GetByUserID(userID uuid.UUID, page, limit int, status string) ([]model.Order, int64, error)
 	GetByUserIDAndStatus(userID uuid.UUID, status string) ([]model.Order, error)
 	UpdateStatus(orderID uuid.UUID, status string) error
+	UpdatePaymentCode(orderID uuid.UUID, paymentCode string, expiredAt time.Time) error
 	UpdatePaymentInfo(orderID uuid.UUID, paymentMethod, paymentGateway, transactionID string, paidAt time.Time) error
 	Update(order *model.Order) error
 	Delete(id uuid.UUID) error
