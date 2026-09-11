@@ -177,7 +177,10 @@ func (r *EnrollmentRepository) SumWatchedSecondsByEnrollmentIDs(ctx context.Cont
 	}
 	if err := r.db.WithContext(ctx).
 		Model(&model.LessonProgress{}).
-		Select("enrollment_id, COALESCE(SUM(video_watched_seconds), 0) AS total").
+		// ::bigint la BAT BUOC, khong phai trang tri: video_watched_seconds la bigint nen
+		// SUM() tra ve numeric, va viec scan numeric -> int cua Go phu thuoc vao driver.
+		// Ep kieu o SQL cho ket qua xac dinh.
+		Select("enrollment_id, COALESCE(SUM(video_watched_seconds), 0)::bigint AS total").
 		Where("enrollment_id IN ?", enrollmentIDs).
 		Group("enrollment_id").
 		Scan(&rows).Error; err != nil {

@@ -44,7 +44,9 @@ type EnrollmentListResponseDTO struct {
 type UpdateLessonProgressDTO struct {
 	Status           *string          `json:"status" validate:"omitempty,oneof=not_started in_progress completed"`
 	ProgressPercent  *decimal.Decimal `json:"progress_percentage"`
-	VideoWatchedSecs *int             `json:"video_watched_seconds"`
+	// min=0: truoc day khong co rang buoc nao — client gui -999999 duoc luu thang vao DB va
+	// lam chi so "thoi gian hoc" tren web am. Da tai hien duoc tren server that.
+	VideoWatchedSecs *int `json:"video_watched_seconds" validate:"omitempty,min=0"`
 }
 
 type LessonProgressResponseDTO struct {

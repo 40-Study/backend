@@ -261,7 +261,15 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		progress.ProgressPercent = *req.ProgressPercent
 	}
 	if req.VideoWatchedSecs != nil {
-		progress.VideoWatchedSecs = *req.VideoWatchedSecs
+		// Trinh phat gui VI TRI phat hien tai (currentTime), khong phai so giay cong don.
+		// Neu ghi de thang thi xem lai bai tu dau se GHI DE mot gia tri lon bang mot gia tri
+		// nho, va chi so "thoi gian hoc" tren web tu dung giam. Cot nay ten la
+		// video_watched_seconds nen ngu nghia dung la "da xem toi giay thu may" => chi tang.
+		// Vi tri tua-lai co cot rieng (last_position_seconds), khong dung cot nay, va web
+		// hien khong DOC cot nay o dau ca nen viec chi-tang khong pha tinh nang nao.
+		if *req.VideoWatchedSecs > progress.VideoWatchedSecs {
+			progress.VideoWatchedSecs = *req.VideoWatchedSecs
+		}
 	}
 	progress.LastAccessedAt = now
 
