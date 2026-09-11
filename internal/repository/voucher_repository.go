@@ -29,7 +29,10 @@ var (
 // bị coi là "hết lượt". Không đổi cột UsageLimit sang not null;default:0 ở lần sửa này — cần một
 // bước UPDATE backfill dữ liệu NULL hiện có trước khi ALTER TABLE ... NOT NULL, vượt phạm vi một
 // sửa an toàn <20 dòng (xem "chưa làm" trong báo cáo).
-const VoucherUsageAvailableCondition = "usage_limit IS NULL OR usage_limit <= 0 OR used_count < usage_limit"
+//
+// Đây là dạng SQL của quy ước model.VoucherUnlimitedUsage (0/âm = không giới hạn); phía Go dùng
+// Voucher.HasUsageLimit / IsUsageLimitReached. Đổi quy ước thì phải đổi CẢ HAI nơi.
+const VoucherUsageAvailableCondition ="usage_limit IS NULL OR usage_limit <= 0 OR used_count < usage_limit"
 
 // DeletedMode - Mode for soft delete queries
 type DeletedMode int

@@ -528,7 +528,7 @@ func (vs *VoucherService) ValidateAndApplyVoucher(ctx context.Context, code stri
 		return nil, decimal.Zero, ErrVoucherMinPurchase
 	}
 
-	if voucher.UsageLimit > 0 && voucher.UsedCount >= voucher.UsageLimit {
+	if voucher.IsUsageLimitReached() {
 		return nil, decimal.Zero, ErrVoucherUsageLimitExceeded
 	}
 
@@ -617,12 +617,11 @@ func (vs *VoucherService) ReleaseVoucherUsage(ctx context.Context, tx *gorm.DB, 
 // LockAndCheckUsagePerUser — xem comment interface. tx != nil BẮT BUỘC (gọi ngoài transaction
 // không có tác dụng khoá gì — LockVoucherForUpdate tự nhả lock ngay sau câu SQL đơn lẻ đó).
 func (vs *VoucherService) LockAndCheckUsagePerUser(ctx context.Context, tx *gorm.DB, voucher *model.Voucher, userID uuid.UUID) error {
-	if voucher.UsagePerUser <= 0 {
-		// usagePerUser <= 0: "không giới hạn số lượt/user" — GIỮ hành vi cũ (H3-01a, review
-		// vòng 4), chỉ khác là giờ có comment tường minh (I-02, review vòng 5, chỉ đạo team-lead:
-		// "usage_per_user = 0 nghĩa là không giới hạn — GIỮ, nhưng ghi comment rõ + test"). Admin
-		// vẫn có thể giới hạn TOÀN CỤC qua UsageLimit/ReserveVoucherUsage; usage_per_user chỉ
-		// kiểm soát riêng số lượt của TỪNG user, để 0/âm nghĩa "không kiểm soát riêng nữa".
+	if !voucher.HasPerUserLimit() {
+		// UsagePerUser = model.VoucherUnlimitedUsage (0/âm): không giới hạn số lượt cho từng user
+		// (quyết định sản phẩm 09/2026, pin bằng TestLockAndCheckUsagePerUser_ZeroMeansUnlimited).
+		// Admin vẫn có thể giới hạn TOÀN CỤC qua UsageLimit/ReserveVoucherUsage; usage_per_user
+		// chỉ kiểm soát riêng số lượt của TỪNG user.
 		return nil
 	}
 
@@ -839,7 +838,7 @@ func (vs *VoucherService) GetVoucherStats(ctx context.Context, voucherID uuid.UU
 	stats["voucher_id"] = voucher.ID
 	stats["voucher_code"] = voucher.Code
 	stats["voucher_name"] = voucher.Name
-	if voucher.UsageLimit != 0 {
+	if voucher.HasUsageLimit() {
 		stats["usage_limit"] = voucher.UsageLimit
 	}
 	return stats, nil

@@ -209,7 +209,7 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 
 	// Generate payment code
 	paymentCode := s.generatePaymentCode()
-	expiresAt := time.Now().Add(24 * time.Hour)
+	expiresAt := time.Now().Add(pendingOrderDefaultTTL) // cùng hạn giữ đơn, xem order_service.go
 
 	// Update order to processing status
 	oldStatus := order.Status

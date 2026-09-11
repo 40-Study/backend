@@ -209,10 +209,11 @@ type Voucher struct {
 	AcceptAllPaymentMethods bool     `gorm:"type:bool;default:true" json:"accept_all_payment_methods"`
 	PaymentMethodsAccepted  []string `gorm:"type:text[]" json:"payment_methods_accepted"`
 
-	// Usage limits
-	UsedCount    int32 `gorm:"type:int;default:0" json:"used_count"`
-	UsageLimit   int32 `gorm:"type:int" json:"usage_limit"`
-	UsagePerUser int32 `gorm:"type:int;default:1" json:"usage_per_user"`
+	// Usage limits — quy ước: 0 (hoặc âm) = KHÔNG giới hạn. Xem VoucherUnlimitedUsage và các
+	// helper HasUsageLimit / HasPerUserLimit / IsUsageLimitReached bên dưới; KHÔNG so sánh tay.
+	UsedCount    int32 `gorm:"type:int;default:0" json:"used_count"`               // số lượt đã dùng (toàn hệ thống)
+	UsageLimit   int32 `gorm:"type:int" json:"usage_limit"`                        // tổng số lượt toàn hệ thống; 0 = không giới hạn
+	UsagePerUser int32 `gorm:"type:int;default:1" json:"usage_per_user"`           // số lượt cho TỪNG user; 0 = không giới hạn
 
 	// Stacking
 	CanStack bool `gorm:"type:bool;default:false" json:"can_stack"`
@@ -237,6 +238,24 @@ type Voucher struct {
 
 func (Voucher) TableName() string {
 	return "vouchers"
+}
+
+// VoucherUnlimitedUsage là giá trị "không giới hạn" cho Voucher.UsageLimit và Voucher.UsagePerUser.
+// Quy ước duy nhất trong codebase: 0 (và mọi giá trị âm) = KHÔNG giới hạn; chỉ giá trị > 0 mới là
+// giới hạn thật. Mọi chỗ cần biết voucher còn lượt hay không PHẢI đi qua 3 helper bên dưới thay vì
+// viết tay `> 0` / `<= 0` / `!= 0` (đã từng lệch nhau 3 bản sao — xem
+// repository.VoucherUsageAvailableCondition, là dạng SQL của cùng quy ước này).
+const VoucherUnlimitedUsage int32 = 0
+
+// HasUsageLimit: voucher có giới hạn TỔNG số lượt dùng toàn hệ thống hay không.
+func (v *Voucher) HasUsageLimit() bool { return v.UsageLimit > VoucherUnlimitedUsage }
+
+// HasPerUserLimit: voucher có giới hạn số lượt dùng cho TỪNG user hay không.
+func (v *Voucher) HasPerUserLimit() bool { return v.UsagePerUser > VoucherUnlimitedUsage }
+
+// IsUsageLimitReached: đã dùng hết tổng số lượt. Luôn false khi không có giới hạn tổng.
+func (v *Voucher) IsUsageLimitReached() bool {
+	return v.HasUsageLimit() && v.UsedCount >= v.UsageLimit
 }
 
 // UserVoucher - User's saved/bookmarked voucher

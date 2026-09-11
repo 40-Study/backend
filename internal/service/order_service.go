@@ -127,11 +127,12 @@ func (s *OrderService) isValidTransition(from, to string) bool {
 	return false
 }
 
-// pendingOrderDefaultTTL (H3-01b, review vòng 4): hạn mặc định cho đơn "pending" CHƯA từng tạo
-// payment intent (payment_code_expired_at còn NULL) — dùng làm ngưỡng lazy-sweep trong
-// sweepExpiredHeldOrders. Khớp đúng hạn 24h đã dùng sẵn cho payment intent thật
-// (CreatePaymentIntent, payment_service.go) và cho ExpiresAt hiển thị ở toOrderResponse bên
-// dưới — không phát minh một con số mới, giữ nhất quán với quy ước đã có trong codebase.
+// pendingOrderDefaultTTL: thời gian một đơn chưa thanh toán còn được giữ (quyết định sản phẩm
+// 09/2026: 24h). Là NGUỒN DUY NHẤT cho 3 chỗ dùng cùng con số này, không viết tay `24 * time.Hour`
+// ở nơi khác:
+//   1. hạn của payment code khi tạo payment intent (CreatePaymentIntent, payment_service.go);
+//   2. ExpiresAt hiển thị cho đơn "pending" ở toOrderResponse bên dưới;
+//   3. ngưỡng lazy-sweep đơn "pending" chưa từng tạo intent (sweepExpiredHeldOrders, H3-01b).
 const pendingOrderDefaultTTL = 24 * time.Hour
 
 func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dto.CreateOrderRequest) (*dto.OrderResponse, error) {
@@ -701,9 +702,9 @@ func (s *OrderService) toOrderResponse(order *model.Order, items []model.OrderIt
 		CreatedAt:      now,
 	}
 
-	// Set expiration (24 hours for pending orders)
+	// Hạn giữ đơn "pending" — cùng nguồn với payment code và lazy-sweep (pendingOrderDefaultTTL)
 	if order.Status == "pending" {
-		expiresAt := now.Add(24 * time.Hour)
+		expiresAt := now.Add(pendingOrderDefaultTTL)
 		response.ExpiresAt = &expiresAt
 	}
 
