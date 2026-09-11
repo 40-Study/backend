@@ -19,6 +19,12 @@ type EnrollmentResponseDTO struct {
 	CourseSlug      string          `json:"course_slug,omitempty"`
 	CourseThumbnail *string         `json:"course_thumbnail,omitempty"`
 	CourseCategory  string          `json:"course_category,omitempty"`
+
+	// WatchedSeconds: tong so giay video da xem cua ghi danh nay, cong don tu
+	// lesson_progress.video_watched_seconds (du lieu that do trinh phat video ghi len qua
+	// PUT /lessons/:lessonId/progress). Truoc day web hardcode "1h 45m" o trang
+	// "Khoa hoc cua toi" vi khong co truong nay.
+	WatchedSeconds int `json:"watched_seconds"`
 }
 
 type EnrollmentDetailDTO struct {

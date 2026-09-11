@@ -151,9 +151,21 @@ func (s *EnrollmentService) GetMyEnrollments(ctx context.Context, userID uuid.UU
 		return nil, err
 	}
 
+	enrollmentIDs := make([]uuid.UUID, len(enrollments))
+	for i := range enrollments {
+		enrollmentIDs[i] = enrollments[i].ID
+	}
+	// Khong nuot loi: neu khong cong don duoc thoi gian xem thi tra loi that, vi web dung
+	// truong nay de hien thi chi so "thoi gian hoc" cho nguoi dung.
+	watchedByEnrollment, err := s.enrollmentRepo.SumWatchedSecondsByEnrollmentIDs(ctx, enrollmentIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	result := make([]dto.EnrollmentResponseDTO, len(enrollments))
 	for i := range enrollments {
 		d := s.toEnrollmentResponseDTO(&enrollments[i])
+		d.WatchedSeconds = watchedByEnrollment[enrollments[i].ID]
 		d.CourseTitle = enrollments[i].Course.Title
 		d.CourseSlug = enrollments[i].Course.Slug
 		d.CourseThumbnail = enrollments[i].Course.ThumbnailURL

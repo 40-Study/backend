@@ -41,6 +41,9 @@ type EnrollmentRepositoryInterface interface {
 	CountCompletedMandatory(ctx context.Context, enrollmentID uuid.UUID) (int64, error)
 	CountTotalMandatory(ctx context.Context, courseID uuid.UUID) (int64, error)
 	UpdateEnrollmentProgress(ctx context.Context, enrollmentID uuid.UUID, progress decimal.Decimal) error
+	// SumWatchedSecondsByEnrollmentIDs cong don video_watched_seconds theo tung enrollment
+	// bang DUNG MOT cau GROUP BY (tranh N+1 khi liet ke danh sach ghi danh).
+	SumWatchedSecondsByEnrollmentIDs(ctx context.Context, enrollmentIDs []uuid.UUID) (map[uuid.UUID]int, error)
 }
 
 type EnrollmentRepository struct {
@@ -159,6 +162,32 @@ func (r *EnrollmentRepository) GetByUserID(ctx context.Context, userID uuid.UUID
 	}
 
 	return enrollments, total, nil
+}
+
+// SumWatchedSecondsByEnrollmentIDs - xem ghi chu tren interface.
+func (r *EnrollmentRepository) SumWatchedSecondsByEnrollmentIDs(ctx context.Context, enrollmentIDs []uuid.UUID) (map[uuid.UUID]int, error) {
+	totals := make(map[uuid.UUID]int, len(enrollmentIDs))
+	if len(enrollmentIDs) == 0 {
+		return totals, nil
+	}
+
+	var rows []struct {
+		EnrollmentID uuid.UUID
+		Total        int
+	}
+	if err := r.db.WithContext(ctx).
+		Model(&model.LessonProgress{}).
+		Select("enrollment_id, COALESCE(SUM(video_watched_seconds), 0) AS total").
+		Where("enrollment_id IN ?", enrollmentIDs).
+		Group("enrollment_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		totals[row.EnrollmentID] = row.Total
+	}
+	return totals, nil
 }
 
 func (r *EnrollmentRepository) Delete(ctx context.Context, id uuid.UUID) error {
