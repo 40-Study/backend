@@ -33,6 +33,12 @@ func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 				"error": "Invalid or expired token",
 			})
 		}
+		// H-03: từ chối refresh token bị dùng làm Bearer access token.
+		if claims.TokenType != utils.TokenTypeAccess {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Invalid token type",
+			})
+		}
 
 		// ===== 3. Check user_version (for logout all) =====
 		userVersionKey := constants.KeyUserVersion(claims.UserID.String())
@@ -67,11 +73,5 @@ func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 		}
 
 		return c.Next()
-	}
-}
-
-func RequirePermissions(permissions ...string) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		return nil
 	}
 }

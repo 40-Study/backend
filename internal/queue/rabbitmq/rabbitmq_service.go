@@ -11,6 +11,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"study.com/v1/internal/config"
+	"study.com/v1/internal/utils"
 )
 
 /*
@@ -317,7 +318,10 @@ func (r *RabbitMQService) ConsumeMessages(
 		return err
 	}
 
-	go func() {
+	// M-05 (audit 260909 vòng 2): bọc SafeGo — panic trong handler(ctx, d.Body) của 1 message
+	// (business logic tuỳ consumer) trước đây sập cả process, kéo theo mọi queue/worker khác
+	// đang chạy chung. Sau recover, riêng consumer loop này dừng — vẫn tốt hơn sập cả server.
+	utils.SafeGo(func() {
 		for {
 			select {
 			case <-ctx.Done():
@@ -336,7 +340,7 @@ func (r *RabbitMQService) ConsumeMessages(
 				}
 			}
 		}
-	}()
+	})
 
 	return nil
 }

@@ -16,13 +16,14 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 type SubmissionServiceInterface interface {
 	Submit(ctx context.Context, req dto.CreateSubmissionDTO) (*model.Submission, error)
-	GetByID(ctx context.Context, id uuid.UUID) (*model.Submission, error)
-	GetByAssignment(ctx context.Context, assignmentID uuid.UUID, page, pageSize int) (*dto.SubmissionListDTO, error)
-	GetByUser(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.SubmissionListDTO, error)
+	GetByID(ctx context.Context, id, requesterID uuid.UUID) (*model.Submission, error)
+	GetByAssignment(ctx context.Context, assignmentID, requesterID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.SubmissionListDTO, error)
+	GetByUser(ctx context.Context, userID, requesterID uuid.UUID, page, pageSize int) (*dto.SubmissionListDTO, error)
 	GetUserSubmissionsForAssignment(ctx context.Context, assignmentID, userID uuid.UUID) ([]model.Submission, error)
 	RunCode(ctx context.Context, req dto.RunCodeDTO) (*dto.RunCodeResponseDTO, error)
 	RunCustomCode(ctx context.Context, req dto.RunCustomCodeDTO) (*dto.RunCodeResponseDTO, error)
@@ -127,10 +128,16 @@ func (c *HTTPJudge0Client) GetResult(ctx context.Context, token string) (*dto.Ju
 	return &result, nil
 }
 
+// ErrSubmissionForbidden: C-10 (audit 260909) — trước đây GetByID/GetByUser/GetMySubmissions
+// không kiểm tra quyền, cho phép đọc/liệt kê bài nộp (và điểm) của bất kỳ ai.
+var ErrSubmissionForbidden = errors.New("forbidden: not the owner")
+
 type SubmissionService struct {
 	repo          repository.SubmissionRepositoryInterface
 	assignmentSvc AssignmentServiceInterface
 	testCaseRepo  repository.TestCaseRepositoryInterface
+	scheduleRepo  repository.ScheduleRepositoryInterface
+	classRepo     repository.ClassRepositoryInterface
 	judge0Client  Judge0Client
 	redis         *redis.Client
 	cfg           *config.Config
@@ -140,6 +147,8 @@ func NewSubmissionService(
 	repo repository.SubmissionRepositoryInterface,
 	assignmentSvc AssignmentServiceInterface,
 	testCaseRepo repository.TestCaseRepositoryInterface,
+	scheduleRepo repository.ScheduleRepositoryInterface,
+	classRepo repository.ClassRepositoryInterface,
 	redis *redis.Client,
 	cfg *config.Config,
 ) *SubmissionService {
@@ -152,10 +161,49 @@ func NewSubmissionService(
 		repo:          repo,
 		assignmentSvc: assignmentSvc,
 		testCaseRepo:  testCaseRepo,
+		scheduleRepo:  scheduleRepo,
+		classRepo:     classRepo,
 		judge0Client:  NewHTTPJudge0Client(judge0URL),
 		redis:         redis,
 		cfg:           cfg,
 	}
+}
+
+// canManageAssignment (H-03, review vòng 1): kiểm tra requesterID có phải là giáo viên "sở
+// hữu" assignment hay không, dùng chung cho canAccessSubmission (GetByID) VÀ GetByAssignment.
+// Assignment có 2 nguồn ownership loại trừ nhau (assignment.go): SessionID (buổi live coding)
+// hoặc ClassID (bài tập về nhà/homework, SessionID nil) — kiểm cả hai, không chỉ SessionID
+// như canAccessSubmission cũ (đó chính là "nghịch lý" review nêu: giáo viên KHÔNG xem được
+// bài tập về nhà của học sinh qua đường hợp lệ, chỉ có lỗ hổng GetByAssignment không-check-gì
+// mới "chạy được"). isAdmin=true bỏ qua toàn bộ kiểm tra (SYSTEM_ADMIN kiểm duyệt).
+func (s *SubmissionService) canManageAssignment(ctx context.Context, assignment *model.Assignment, requesterID uuid.UUID, isAdmin bool) (bool, error) {
+	if isAdmin {
+		return true, nil
+	}
+	if assignment == nil {
+		return false, nil
+	}
+	if assignment.SessionID != nil {
+		return s.scheduleRepo.TeacherCanManageSession(ctx, *assignment.SessionID, requesterID)
+	}
+	if assignment.ClassID != nil {
+		return s.classRepo.TeacherClassExists(ctx, *assignment.ClassID, requesterID)
+	}
+	return false, nil
+}
+
+// canAccessSubmission cho phép: (1) chính chủ bài nộp, hoặc (2) giáo viên "sở hữu" assignment
+// (xem canManageAssignment). Trước đây chỉ kiểm SessionID -> giáo viên không xem được bài nộp
+// bài tập về nhà (ClassID) của chính lớp mình qua đường hợp lệ này.
+func (s *SubmissionService) canAccessSubmission(ctx context.Context, sub *model.Submission, requesterID uuid.UUID) (bool, error) {
+	if sub.UserID == requesterID {
+		return true, nil
+	}
+	assignment, err := s.assignmentSvc.GetByID(ctx, sub.AssignmentID, false)
+	if err != nil {
+		return false, err
+	}
+	return s.canManageAssignment(ctx, assignment, requesterID, false)
 }
 
 func (s *SubmissionService) Submit(ctx context.Context, req dto.CreateSubmissionDTO) (*model.Submission, error) {
@@ -193,9 +241,11 @@ func (s *SubmissionService) Submit(ctx context.Context, req dto.CreateSubmission
 		return nil, err
 	}
 
-	go func() {
+	// M-05 (audit 260909): bọc bằng SafeGo — panic khi chấm bài (vd lỗi parse JSON, Judge0
+	// timeout) không được recover trước đây có thể làm sập cả server.
+	utils.SafeGo(func() {
 		_ = s.ProcessSubmission(context.Background(), submission.ID)
-	}()
+	})
 
 	return submission, nil
 }
@@ -369,11 +419,41 @@ func (s *SubmissionService) processMultipleChoiceSubmission(ctx context.Context,
 	return s.repo.UpdateVerdictWithCode(ctx, submission.ID, verdict, 0, 0, correctCount, totalQuestions, string(resultJSON))
 }
 
-func (s *SubmissionService) GetByID(ctx context.Context, id uuid.UUID) (*model.Submission, error) {
-	return s.repo.GetByID(ctx, id)
+func (s *SubmissionService) GetByID(ctx context.Context, id, requesterID uuid.UUID) (*model.Submission, error) {
+	sub, err := s.repo.GetByID(ctx, id)
+	if err != nil || sub == nil {
+		return sub, err
+	}
+	allowed, err := s.canAccessSubmission(ctx, sub, requesterID)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrSubmissionForbidden
+	}
+	return sub, nil
 }
 
-func (s *SubmissionService) GetByAssignment(ctx context.Context, assignmentID uuid.UUID, page, pageSize int) (*dto.SubmissionListDTO, error) {
+// GetByAssignment (H-03, review vòng 1): TRƯỚC ĐÂY không nhận requesterID, không lọc gì —
+// bất kỳ user đã đăng nhập nào biết assignment_id đều đọc được TOÀN BỘ bài nộp (mã nguồn,
+// điểm) của mọi học sinh cho assignment đó. Giờ chỉ giáo viên "sở hữu" assignment (qua
+// canManageAssignment: session hoặc class) hoặc admin mới xem được danh sách này.
+func (s *SubmissionService) GetByAssignment(ctx context.Context, assignmentID, requesterID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.SubmissionListDTO, error) {
+	assignment, err := s.assignmentSvc.GetByID(ctx, assignmentID, false)
+	if err != nil {
+		return nil, err
+	}
+	if assignment == nil {
+		return nil, errors.New("assignment not found")
+	}
+	allowed, err := s.canManageAssignment(ctx, assignment, requesterID, isAdmin)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrSubmissionForbidden
+	}
+
 	submissions, total, err := s.repo.GetByAssignment(ctx, assignmentID, page, pageSize)
 	if err != nil {
 		return nil, err
@@ -392,7 +472,11 @@ func (s *SubmissionService) GetByAssignment(ctx context.Context, assignmentID uu
 	}, nil
 }
 
-func (s *SubmissionService) GetByUser(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.SubmissionListDTO, error) {
+func (s *SubmissionService) GetByUser(ctx context.Context, userID, requesterID uuid.UUID, page, pageSize int) (*dto.SubmissionListDTO, error) {
+	// C-10: chỉ chính chủ mới liệt kê được toàn bộ bài nộp của mình qua endpoint này.
+	if userID != requesterID {
+		return nil, ErrSubmissionForbidden
+	}
 	submissions, total, err := s.repo.GetByUser(ctx, userID, page, pageSize)
 	if err != nil {
 		return nil, err

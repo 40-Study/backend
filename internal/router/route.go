@@ -6,12 +6,14 @@ import (
 	"github.com/redis/go-redis/v9"
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
+	"study.com/v1/internal/middleware"
 	asynq_queue "study.com/v1/internal/queue/asynq"
 )
 
 func SetupAllRoutes(
 	app *fiber.App,
 	cfg *config.Config,
+	permChecker *middleware.PermissionChecker,
 	authHandler *handler.AuthHandler,
 	oauthHandler *handler.OAuthHandler,
 	roleHandler *handler.RoleHandler,
@@ -81,21 +83,21 @@ func SetupAllRoutes(
 	})
 
 	SetupAuthRoutes(api, cfg, authHandler, oauthHandler, redis)
-	SetupOrgRoleRoutes(api, cfg, roleHandler, redis)
-	SetupSystemRoleRoutes(api, cfg, systemRoleHandler, redis)
-	SetupUserSystemRoleRoutes(api, cfg, userSystemRoleHandler, redis)
-	SetupUserOrganizationRoleRoutes(api, cfg, userOrgRoleHandler, redis)
-	SetupPermissionRoutes(api, cfg, permissionHandler, redis)
-	SetupOrganizationRoutes(api, organizationHandler)
+	SetupOrgRoleRoutes(api, cfg, roleHandler, redis, permChecker)
+	SetupSystemRoleRoutes(api, cfg, systemRoleHandler, redis, permChecker)
+	SetupUserSystemRoleRoutes(api, cfg, userSystemRoleHandler, redis, permChecker)
+	SetupUserOrganizationRoleRoutes(api, cfg, userOrgRoleHandler, redis, permChecker)
+	SetupPermissionRoutes(api, cfg, permissionHandler, redis, permChecker)
+	SetupOrganizationRoutes(api, cfg, organizationHandler, redis, permChecker)
 	SetupProfileRoutes(api, cfg, profileHandler, redis)
-	SetupTeacherRoutes(api, cfg, teacherHandler, redis)
-	SetupTeacherProfileRoutes(api, teacherProfileHandler)
+	SetupTeacherRoutes(api, cfg, teacherHandler, redis, permChecker)
+	SetupTeacherProfileRoutes(api, cfg, teacherProfileHandler, redis)
 	SetupClassRoutes(api, cfg, classHandler, attendanceHandler, redis)
 	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis)
 	SetupCartRoutes(api, cfg, cartHandler, redis)
 	SetupCourseRoutes(api, cfg, courseHandler, sectionHandler, lessonHandler, lessonContentHandler, classHandler, classLessonContentHandler, attendanceHandler, redis)
 	SetupEnrollmentRoutes(api, cfg, enrollmentHandler, redis)
-	SetupUploadRoutes(api, cfg, uploadHandler, redis)
+	SetupUploadRoutes(api, cfg, uploadHandler, redis, permChecker)
 	SetupVideoUploadRoutes(api, videoHandler, cfg, redis)
 	SetupHLSRoutes(api, hlsHandler)
 	// New livestream learning platform routes
@@ -108,7 +110,7 @@ func SetupAllRoutes(
 
 	// Order & Payment routes
 	SetupOrderRoutes(api, cfg, orderHandler, redis)
-	SetupVoucherRoutes(api, cfg, voucherHandler, redis)
+	SetupVoucherRoutes(api, cfg, voucherHandler, redis, permChecker)
 
 	// Gamification routes
 	SetupAchievementRoutes(api, cfg, achievementHandler, redis)
@@ -152,7 +154,7 @@ func SetupAllRoutes(
 	SetupReportRoutes(api, cfg, reportHandler, redis)
 
 	// Coin routes
-	SetupCoinRoutes(api, cfg, coinHandler, redis)
+	SetupCoinRoutes(api, cfg, coinHandler, redis, permChecker)
 
 	// Group routes
 	SetupGroupRoutes(api, cfg, groupHandler, redis)

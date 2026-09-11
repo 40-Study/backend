@@ -4,16 +4,29 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
 
 type LessonHandler struct {
-	service service.LessonServiceInterface
+	service     service.LessonServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewLessonHandler(service service.LessonServiceInterface) *LessonHandler {
-	return &LessonHandler{service: service}
+func NewLessonHandler(service service.LessonServiceInterface, permChecker *middleware.PermissionChecker) *LessonHandler {
+	return &LessonHandler{service: service, permChecker: permChecker}
+}
+
+// lessonForbiddenResponse ánh xạ ErrNotLessonCourseOwner (C-12) sang HTTP 403.
+func lessonForbiddenResponse(c *fiber.Ctx, err error) bool {
+	if err == service.ErrNotLessonCourseOwner {
+		_ = c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"message": "You are not the instructor of this course",
+		})
+		return true
+	}
+	return false
 }
 
 func (h *LessonHandler) CreateLesson(c *fiber.Ctx) error {
@@ -22,6 +35,13 @@ func (h *LessonHandler) CreateLesson(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid section ID",
 			"error":   err.Error(),
+		})
+	}
+
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
 		})
 	}
 
@@ -40,8 +60,11 @@ func (h *LessonHandler) CreateLesson(c *fiber.Ctx) error {
 		})
 	}
 
-	lesson, err := h.service.CreateLesson(c.Context(), sectionID, req)
+	lesson, err := h.service.CreateLesson(c.Context(), sectionID, userID, req)
 	if err != nil {
+		if lessonForbiddenResponse(c, err) {
+			return nil
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create lesson",
 			"error":   err.Error(),
@@ -109,6 +132,13 @@ func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
 		})
 	}
 
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
 	var req dto.UpdateLessonDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -124,8 +154,12 @@ func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
 		})
 	}
 
-	lesson, err := h.service.UpdateLesson(c.Context(), lessonID, req)
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	lesson, err := h.service.UpdateLesson(c.Context(), lessonID, userID, isAdmin, req)
 	if err != nil {
+		if lessonForbiddenResponse(c, err) {
+			return nil
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update lesson",
 			"error":   err.Error(),
@@ -147,7 +181,18 @@ func (h *LessonHandler) DeleteLesson(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteLesson(c.Context(), lessonID); err != nil {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	if err := h.service.DeleteLesson(c.Context(), lessonID, userID, isAdmin); err != nil {
+		if lessonForbiddenResponse(c, err) {
+			return nil
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete lesson",
 			"error":   err.Error(),

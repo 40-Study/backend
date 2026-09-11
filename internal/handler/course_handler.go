@@ -6,16 +6,18 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
 
 type CourseHandler struct {
-	service service.CourseServiceInterface
+	service     service.CourseServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewCourseHandler(service service.CourseServiceInterface) *CourseHandler {
-	return &CourseHandler{service: service}
+func NewCourseHandler(service service.CourseServiceInterface, permChecker *middleware.PermissionChecker) *CourseHandler {
+	return &CourseHandler{service: service, permChecker: permChecker}
 }
 
 func (h *CourseHandler) CreateCourse(c *fiber.Ctx) error {
@@ -161,6 +163,14 @@ func (h *CourseHandler) UpdateCourse(c *fiber.Ctx) error {
 		})
 	}
 
+	// C-12: chỉ giảng viên sở hữu khóa học (hoặc sẽ được service từ chối) mới sửa được.
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
 	var req dto.UpdateCourseDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -176,8 +186,14 @@ func (h *CourseHandler) UpdateCourse(c *fiber.Ctx) error {
 		})
 	}
 
-	course, err := h.service.UpdateCourse(c.Context(), id, req)
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	course, err := h.service.UpdateCourse(c.Context(), id, userID, isAdmin, req)
 	if err != nil {
+		if err == service.ErrNotCourseOwner {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"message": "You are not the instructor of this course",
+			})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update course",
 			"error":   err.Error(),
@@ -199,7 +215,21 @@ func (h *CourseHandler) DeleteCourse(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteCourse(c.Context(), id); err != nil {
+	// C-12: chỉ giảng viên sở hữu khóa học mới xóa được.
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	if err := h.service.DeleteCourse(c.Context(), id, userID, isAdmin); err != nil {
+		if err == service.ErrNotCourseOwner {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"message": "You are not the instructor of this course",
+			})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete course",
 			"error":   err.Error(),

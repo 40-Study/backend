@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // ============================================================================
@@ -52,9 +53,9 @@ type CoinPackageResponse struct {
 	Description     *string   `json:"description,omitempty"`
 	CoinAmount      int64     `json:"coin_amount"`
 	BonusAmount     int64     `json:"bonus_amount"`
-	TotalCoins      int64     `json:"total_coins"`
-	Price           float64   `json:"price"`
-	Currency        string    `json:"currency"`
+	TotalCoins      int64           `json:"total_coins"`
+	Price           decimal.Decimal `json:"price"`
+	Currency        string          `json:"currency"`
 	DiscountPercent int       `json:"discount_percent"`
 	IsFeatured      bool      `json:"is_featured"`
 	SortOrder       int       `json:"sort_order"`
@@ -99,7 +100,7 @@ type CoinPurchaseResponse struct {
 	PackageID        *uuid.UUID `json:"package_id,omitempty"`
 	CoinAmount       int64      `json:"coin_amount"`
 	BonusAmount      int64      `json:"bonus_amount"`
-	Price            float64    `json:"price"`
+	Price            decimal.Decimal `json:"price"`
 	Currency         string     `json:"currency"`
 	Status           string     `json:"status"`
 	PaymentMethod    *string    `json:"payment_method,omitempty"`

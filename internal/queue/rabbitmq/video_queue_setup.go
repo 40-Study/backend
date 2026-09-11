@@ -8,6 +8,7 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"study.com/v1/internal/utils"
 )
 
 const (
@@ -370,7 +371,9 @@ func (v *VideoQueueSetup) StartVideoProcessingConsumer(ctx context.Context, hand
 
 	log.Println("Video processing consumer started. Waiting for messages...")
 
-	go func() {
+	// M-05 (audit 260909 vòng 2): bọc SafeGo — panic khi xử lý 1 message (parse JSON lỗi,
+	// handler lỗi runtime...) trước đây sập cả process thay vì chỉ dừng riêng consumer này.
+	utils.SafeGo(func() {
 		for {
 			select {
 			case <-ctx.Done():
@@ -403,12 +406,14 @@ func (v *VideoQueueSetup) StartVideoProcessingConsumer(ctx context.Context, hand
 						videoMsg.RetryCount++
 
 						// Re-publish with incremented retry count after delay
-						go func() {
+						// M-05 (audit 260909 vòng 2): bọc SafeGo — panic ở đây trước đây sập
+						// cả process (consumer chính đang chạy song song sẽ bị kéo theo).
+						utils.SafeGo(func() {
 							time.Sleep(time.Duration(RetryDelay) * time.Millisecond)
 							if retryErr := v.PublishVideoProcessingMessage(ctx, videoMsg); retryErr != nil {
 								log.Printf("Failed to retry video processing message: %v", retryErr)
 							}
-						}()
+						})
 					}
 
 					// Nack the current message (don't requeue since we're handling retry manually)
@@ -420,7 +425,7 @@ func (v *VideoQueueSetup) StartVideoProcessingConsumer(ctx context.Context, hand
 				}
 			}
 		}
-	}()
+	})
 
 	return nil
 }

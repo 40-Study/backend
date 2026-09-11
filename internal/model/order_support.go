@@ -52,8 +52,10 @@ func (PaymentEvent) TableName() string {
 type IdempotencyKey struct {
 	ID              uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	CreatedAt       time.Time  `json:"created_at"`
-	Key             string     `gorm:"type:varchar(255);not null" json:"key"`
-	Scope           string     `gorm:"type:varchar(50);not null" json:"scope"` // e.g., "create_order", "payment_intent"
+	// (scope, key) unique — là cơ chế chống 2 request đồng thời cùng key tạo 2 đơn
+	// (order_service.claimIdempotencyKey). Key đã được prefix user_id ở service.
+	Key             string     `gorm:"type:varchar(255);not null;uniqueIndex:idx_idempotency_scope_key,priority:2" json:"key"`
+	Scope           string     `gorm:"type:varchar(50);not null;uniqueIndex:idx_idempotency_scope_key,priority:1" json:"scope"` // e.g., "create_order", "payment_intent"
 	RequestHash     string     `gorm:"type:varchar(64);not null" json:"request_hash"`
 	ResponseCode    int        `gorm:"type:int" json:"response_code"`
 	ResponseBody    string     `gorm:"type:text" json:"response_body"`

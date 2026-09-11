@@ -16,6 +16,17 @@ func NewGradeHandler(service service.GradeServiceInterface) *GradeHandler {
 	return &GradeHandler{service: service}
 }
 
+// gradeErrorStatus ánh xạ lỗi phân quyền (C-13) sang HTTP status phù hợp; trả 0 khi không
+// nhận diện được (để caller giữ nguyên xử lý 400/500 hiện có).
+func gradeErrorStatus(err error) int {
+	switch err {
+	case service.ErrNotClassTeacher:
+		return fiber.StatusForbidden
+	default:
+		return 0
+	}
+}
+
 // ============================================================================
 // GRADE COLUMN
 // ============================================================================
@@ -26,6 +37,13 @@ func (h *GradeHandler) CreateGradeColumn(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid class ID",
 			"error":   err.Error(),
+		})
+	}
+
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
 		})
 	}
 
@@ -44,8 +62,11 @@ func (h *GradeHandler) CreateGradeColumn(c *fiber.Ctx) error {
 		})
 	}
 
-	column, err := h.service.CreateGradeColumn(c.Context(), classID, req)
+	column, err := h.service.CreateGradeColumn(c.Context(), classID, actorUserID, req)
 	if err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create grade column",
 			"error":   err.Error(),
@@ -67,8 +88,16 @@ func (h *GradeHandler) GetGradeColumns(c *fiber.Ctx) error {
 		})
 	}
 
-	columns, err := h.service.GetGradeColumns(c.Context(), classID)
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+
+	columns, err := h.service.GetGradeColumns(c.Context(), classID, actorUserID)
 	if err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve grade columns",
 			"error":   err.Error(),
@@ -98,6 +127,13 @@ func (h *GradeHandler) UpdateGradeColumn(c *fiber.Ctx) error {
 		})
 	}
 
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
 	var req dto.UpdateGradeColumnDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -113,8 +149,11 @@ func (h *GradeHandler) UpdateGradeColumn(c *fiber.Ctx) error {
 		})
 	}
 
-	column, err := h.service.UpdateGradeColumn(c.Context(), classID, id, req)
+	column, err := h.service.UpdateGradeColumn(c.Context(), classID, id, actorUserID, req)
 	if err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update grade column",
 			"error":   err.Error(),
@@ -144,7 +183,17 @@ func (h *GradeHandler) DeleteGradeColumn(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteGradeColumn(c.Context(), classID, id); err != nil {
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	if err := h.service.DeleteGradeColumn(c.Context(), classID, id, actorUserID); err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete grade column",
 			"error":   err.Error(),
@@ -165,6 +214,13 @@ func (h *GradeHandler) ReorderGradeColumns(c *fiber.Ctx) error {
 		})
 	}
 
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
 	var req dto.ReorderGradeColumnsDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -180,7 +236,10 @@ func (h *GradeHandler) ReorderGradeColumns(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.ReorderGradeColumns(c.Context(), classID, req); err != nil {
+	if err := h.service.ReorderGradeColumns(c.Context(), classID, actorUserID, req); err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to reorder grade columns",
 			"error":   err.Error(),
@@ -229,6 +288,9 @@ func (h *GradeHandler) CreateGrade(c *fiber.Ctx) error {
 
 	grade, err := h.service.CreateGrade(c.Context(), classID, gradedBy, req)
 	if err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create grade",
 			"error":   err.Error(),
@@ -250,8 +312,18 @@ func (h *GradeHandler) GetGradesByClass(c *fiber.Ctx) error {
 		})
 	}
 
-	gradeBook, err := h.service.GetGradesByClass(c.Context(), classID)
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	gradeBook, err := h.service.GetGradesByClass(c.Context(), classID, actorUserID)
 	if err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve grades",
 			"error":   err.Error(),
@@ -281,8 +353,18 @@ func (h *GradeHandler) GetStudentGrades(c *fiber.Ctx) error {
 		})
 	}
 
-	grades, err := h.service.GetStudentGrades(c.Context(), classID, studentID)
+	requesterID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	grades, err := h.service.GetStudentGrades(c.Context(), classID, studentID, requesterID)
 	if err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve student grades",
 			"error":   err.Error(),
@@ -321,6 +403,9 @@ func (h *GradeHandler) UpdateGrade(c *fiber.Ctx) error {
 
 	grade, err := h.service.UpdateGrade(c.Context(), id, gradedBy, req)
 	if err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update grade",
 			"error":   err.Error(),
@@ -342,7 +427,17 @@ func (h *GradeHandler) DeleteGrade(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteGrade(c.Context(), id); err != nil {
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	if err := h.service.DeleteGrade(c.Context(), id, actorUserID); err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete grade",
 			"error":   err.Error(),
@@ -412,8 +507,18 @@ func (h *GradeHandler) CalculateFinalGrades(c *fiber.Ctx) error {
 		})
 	}
 
-	finalGrades, err := h.service.CalculateFinalGrades(c.Context(), classID)
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	finalGrades, err := h.service.CalculateFinalGrades(c.Context(), classID, actorUserID)
 	if err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to calculate final grades",
 			"error":   err.Error(),
@@ -435,8 +540,16 @@ func (h *GradeHandler) GetFinalGrades(c *fiber.Ctx) error {
 		})
 	}
 
-	finalGrades, err := h.service.GetFinalGrades(c.Context(), classID)
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+
+	finalGrades, err := h.service.GetFinalGrades(c.Context(), classID, actorUserID)
 	if err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve final grades",
 			"error":   err.Error(),
@@ -466,6 +579,13 @@ func (h *GradeHandler) UpdateFinalGrade(c *fiber.Ctx) error {
 		})
 	}
 
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
 	var req dto.UpdateFinalGradeDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -474,8 +594,11 @@ func (h *GradeHandler) UpdateFinalGrade(c *fiber.Ctx) error {
 		})
 	}
 
-	finalGrade, err := h.service.UpdateFinalGrade(c.Context(), classID, id, req)
+	finalGrade, err := h.service.UpdateFinalGrade(c.Context(), classID, id, actorUserID, req)
 	if err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update final grade",
 			"error":   err.Error(),
@@ -505,6 +628,9 @@ func (h *GradeHandler) FinalizeFinalGrades(c *fiber.Ctx) error {
 	}
 
 	if err := h.service.FinalizeFinalGrades(c.Context(), classID, userID); err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to finalize grades",
 			"error":   err.Error(),

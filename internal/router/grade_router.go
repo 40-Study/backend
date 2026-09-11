@@ -23,9 +23,12 @@ func SetupGradeRoutes(
 	{
 		gradeColumns.Post("/", gradeHandler.CreateGradeColumn)
 		gradeColumns.Get("/", gradeHandler.GetGradeColumns)
+		// MEDIUM-11 (review vòng 3): Fiber khớp route theo THỨ TỰ ĐĂNG KÝ — PUT /reorder đăng ký
+		// SAU PUT /:id nên bị /:id "nuốt" (uuid.Parse("reorder") lỗi -> 400), cùng lớp lỗi với
+		// M2-01/H-01 (route tĩnh phải đăng ký TRƯỚC route tham số cùng prefix).
+		gradeColumns.Put("/reorder", gradeHandler.ReorderGradeColumns)
 		gradeColumns.Put("/:id", gradeHandler.UpdateGradeColumn)
 		gradeColumns.Delete("/:id", gradeHandler.DeleteGradeColumn)
-		gradeColumns.Put("/reorder", gradeHandler.ReorderGradeColumns)
 	}
 
 	// ============================================================================

@@ -6,6 +6,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
@@ -21,11 +22,12 @@ type UserOrganizationRoleHandlerInterface interface {
 }
 
 type UserOrganizationRoleHandler struct {
-	service service.UserOrganizationRoleServiceInterface
+	service     service.UserOrganizationRoleServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewUserOrganizationRoleHandler(service service.UserOrganizationRoleServiceInterface) *UserOrganizationRoleHandler {
-	return &UserOrganizationRoleHandler{service: service}
+func NewUserOrganizationRoleHandler(service service.UserOrganizationRoleServiceInterface, permChecker *middleware.PermissionChecker) *UserOrganizationRoleHandler {
+	return &UserOrganizationRoleHandler{service: service, permChecker: permChecker}
 }
 
 // GetMyOrgRoles lay organization roles cua chinh minh
@@ -130,7 +132,14 @@ func (h *UserOrganizationRoleHandler) AssignOrgRolesToUser(c *fiber.Ctx) error {
 		})
 	}
 
-	result, err := h.service.AssignOrgRolesToUser(c.Context(), userID, req, granterID)
+	// H-01 residual: organization_id nằm trong body, so với active_org_id ở tầng service.
+	var activeOrgID *uuid.UUID
+	if orgID, ok := c.Locals("active_org_id").(uuid.UUID); ok {
+		activeOrgID = &orgID
+	}
+	isAdmin := isAdminActor(c, h.permChecker, granterID)
+
+	result, err := h.service.AssignOrgRolesToUser(c.Context(), userID, req, granterID, activeOrgID, isAdmin)
 	if err != nil {
 		status := fiber.StatusInternalServerError
 		errMsg := err.Error()
@@ -141,6 +150,9 @@ func (h *UserOrganizationRoleHandler) AssignOrgRolesToUser(c *fiber.Ctx) error {
 		}
 		if strings.Contains(errMsg, "roles already assigned") {
 			status = fiber.StatusConflict
+		}
+		if errMsg == service.ErrOrgRoleForbidden.Error() {
+			status = fiber.StatusForbidden
 		}
 		return c.Status(status).JSON(fiber.Map{
 			"message": "Failed to assign organization roles to user",
@@ -180,7 +192,13 @@ func (h *UserOrganizationRoleHandler) RevokeOrgRoleFromUser(c *fiber.Ctx) error 
 		})
 	}
 
-	err = h.service.RevokeOrgRoleFromUser(c.Context(), userID, orgRoleID, revokerID)
+	var activeOrgID *uuid.UUID
+	if orgID, ok := c.Locals("active_org_id").(uuid.UUID); ok {
+		activeOrgID = &orgID
+	}
+	isAdmin := isAdminActor(c, h.permChecker, revokerID)
+
+	err = h.service.RevokeOrgRoleFromUser(c.Context(), userID, orgRoleID, revokerID, activeOrgID, isAdmin)
 	if err != nil {
 		status := fiber.StatusInternalServerError
 		errMsg := err.Error()
@@ -191,6 +209,9 @@ func (h *UserOrganizationRoleHandler) RevokeOrgRoleFromUser(c *fiber.Ctx) error 
 		}
 		if errMsg == "organization role already inactive for this user" {
 			status = fiber.StatusBadRequest
+		}
+		if errMsg == service.ErrOrgRoleForbidden.Error() {
+			status = fiber.StatusForbidden
 		}
 		return c.Status(status).JSON(fiber.Map{
 			"message": "Failed to revoke organization role",

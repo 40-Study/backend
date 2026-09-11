@@ -10,6 +10,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/shopspring/decimal"
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/database"
 	"study.com/v1/internal/database/seeds"
@@ -30,6 +31,9 @@ func validateSeedTarget(environment, mode string, allowProduction bool) error {
 }
 
 func main() {
+	// W3: đồng bộ với cmd/api/main.go — decimal.Decimal serialize thành JSON number.
+	decimal.MarshalJSONWithoutQuotes = true
+
 	// config.LoadConfig gọi flag.Parse nội bộ, nên khai báo cờ trước khi load.
 	mode := flag.String("mode", "full", "Chế độ seed: full (roles + demo data) hoặc base (chỉ roles/permissions)")
 	dataDir := flag.String("data", "./data", "Thư mục chứa roles.json và permissions/")

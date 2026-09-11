@@ -29,7 +29,7 @@ func (Class) TableName() string {
 type TeacherClass struct {
 	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	TeacherID  uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_teacher_class,priority:1;column:teacher_id"`
-	ClassID    uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_teacher_class,priority:2;column:class_id"`
+	ClassID    uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_teacher_class,priority:2;column:class_id"`
 	Role       string    `gorm:"type:varchar(20);default:'primary';not null" json:"role"` // primary, assistant
 	AssignedAt time.Time `gorm:"autoCreateTime;column:assigned_at" json:"assigned_at"`
 	CreatedAt  time.Time `gorm:"autoCreateTime" json:"created_at"`
@@ -45,8 +45,8 @@ func (TeacherClass) TableName() string {
 
 type StudentClass struct {
 	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	StudentID  uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_student_class,priority:1;column:student_id"`
-	ClassID    uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_student_class,priority:2;column:class_id"`
+	StudentID  uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_student_class_unique,priority:1;column:student_id"`
+	ClassID    uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_student_class_unique,priority:2;column:class_id"`
 	EnrolledAt time.Time `gorm:"autoCreateTime;column:enrolled_at" json:"enrolled_at"`
 	Status     string    `gorm:"type:varchar(20);default:'active';not null" json:"status"` // active, dropped, completed
 	CreatedAt  time.Time `gorm:"autoCreateTime" json:"created_at"`

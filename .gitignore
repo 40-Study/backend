@@ -8,8 +8,9 @@
 *.dll
 *.so
 *.dylib
-go.sum
-go.mod
+# M-09 (audit 260909): go.sum/go.mod đang được track (git ls-files có cả 2) nên KHÔNG được
+# gitignore — nếu ai lỡ "git rm --cached" theo gợi ý sai của .gitignore này thì build không
+# tái lập được nữa.
 
 # Test binary, built with `go test -c`
 *.test
@@ -50,4 +51,6 @@ docs/client_secret_*.json
 .env.prod
 
 # Runtime logs
-tmp/*.log
+# M-08 (audit 260909): chỉ chặn tmp/*.log trước đây nên backend-dev.log/backend-dev.err.log
+# ở thư mục gốc không được ignore, dễ bị "git add ." cuốn vào.
+*.log

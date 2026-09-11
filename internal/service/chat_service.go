@@ -11,6 +11,7 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 type ChatServiceInterface interface {
@@ -63,14 +64,16 @@ func (s *ChatService) SendMessage(ctx context.Context, req dto.SendChatMessageDT
 		return nil, err
 	}
 
-	go s.analyticsRepo.IncrementTotalMessages(ctx, sessionID)
+	// M-05 (audit 260909 vòng 2): bọc SafeGo — panic trong goroutine gửi tin nhắn (vd
+	// analyticsRepo/livekitSvc lỗi runtime) trước đây sập cả server, ảnh hưởng mọi session.
+	utils.SafeGo(func() { s.analyticsRepo.IncrementTotalMessages(ctx, sessionID) })
 
 	saved := message
 	if err != nil {
 		return nil, err
 	}
 
-	go func() {
+	utils.SafeGo(func() {
 		bg, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		session, err := s.livestreamRepo.GetByID(bg, sessionID)
@@ -94,7 +97,7 @@ func (s *ChatService) SendMessage(ctx context.Context, req dto.SendChatMessageDT
 			// Log but don't fail - chat is still saved to DB
 			fmt.Printf("livekit broadcast failed: %v\n", err)
 		}
-	}()
+	})
 
 	return saved, nil
 }

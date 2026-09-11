@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/google/uuid"
 	"study.com/v1/internal/database/seeds"
 	"study.com/v1/internal/middleware"
@@ -14,6 +15,7 @@ import (
 	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/router"
 	"study.com/v1/internal/socket"
+	"study.com/v1/internal/utils"
 )
 
 // defaultAuthorizer allows all authenticated users to subscribe to their own channels
@@ -61,6 +63,13 @@ func New() (*App, error) {
 	socketHandler := socket.NewHandler(hub, &defaultAuthorizer{})
 	repos := InitRepositories(resources.DB)
 
+	// C-02 (audit 260909): PermissionChecker triển khai thật cho RequirePermissions (trước
+	// đây là no-op không dùng ở đâu). Dùng chung các repository RBAC đã có sẵn trong repos.
+	// Tạo ở đây (trước InitHandlers) để C-12/H-11 (vòng 2) có thể tiêm vào CourseHandler/
+	// SectionHandler/LessonHandler/ClassHandler — các handler này cần permChecker để tính
+	// "actor có phải SYSTEM_ADMIN không" (override quyền owner/teacher).
+	permChecker := middleware.NewPermissionChecker(repos.UserSystemRole, repos.SystemRole, repos.UserOrganizationRole, repos.Role)
+
 	seeder := seeds.NewSeeder(resources.DB)
 	if err := seeder.SeedAll("./data"); err != nil {
 		log.Printf("Warning: seeder failed: %v", err)
@@ -74,7 +83,9 @@ func New() (*App, error) {
 		return err
 	}
 	asynq_queue.RegisterTasks(resources.Queue, notifier, repos.Class, repos.Enrollment, resources.Redis, livestreamStarter)
-	go resources.Queue.Start()
+	// M-05 (audit 260909 vòng 2): bọc SafeGo — goroutine chạy suốt vòng đời app, panic bên
+	// trong (vd lỗi kết nối Redis/asynq giữa chừng) trước đây sập cả process.
+	utils.SafeGo(func() { _ = resources.Queue.Start() })
 
 	// Inject RabbitMQ vào ParentInvitationService + setup queue + start worker
 	if resources.RabbitMQ != nil {
@@ -83,11 +94,11 @@ func New() (*App, error) {
 			log.Printf("Warning: Failed to setup invitation queues: %v", err)
 		} else {
 			invitationWorker := rabbitmq_queue.NewInvitationWorker(resources.RabbitMQ, resources.Config, services.Notification)
-			go func() {
+			utils.SafeGo(func() {
 				if err := invitationWorker.Start(context.Background()); err != nil {
 					log.Printf("Warning: Failed to start invitation worker: %v", err)
 				}
-			}()
+			})
 		}
 	}
 
@@ -107,21 +118,26 @@ func New() (*App, error) {
 
 	// Start video processing worker if available
 	if services.VideoProcessing != nil {
-		go func() {
+		utils.SafeGo(func() {
 			if err := services.VideoProcessing.StartWorker(context.Background()); err != nil {
 				log.Printf("Warning: Failed to start video processing worker: %v", err)
 			}
-		}()
-		go func() {
+		})
+		utils.SafeGo(func() {
 			if err := services.VideoProcessing.StartCleanupScheduler(context.Background()); err != nil {
 				log.Printf("Warning: Failed to start video cleanup scheduler: %v", err)
 			}
-		}()
+		})
 	}
 
-	handlers := InitHandlers(services, repos, resources.MinioWrapper, resources.Config)
+	handlers := InitHandlers(services, repos, resources.MinioWrapper, resources.Config, permChecker)
 
 	fiberApp := fiber.New()
+
+	// H-02 (audit 260909): trước đây không có recover middleware nên bất kỳ panic nào
+	// (vd nil pointer dereference ở H-01) đều làm sập kết nối thay vì trả 500 có log.
+	// Phải đứng TRƯỚC mọi route khác.
+	fiberApp.Use(recover.New(recover.Config{EnableStackTrace: true}))
 
 	allowedOrigins := resources.Config.AllowedOrigins
 	if allowedOrigins == "" {
@@ -141,6 +157,7 @@ func New() (*App, error) {
 	router.SetupAllRoutes(
 		fiberApp,
 		resources.Config,
+		permChecker,
 
 		// ===== Auth & Role =====
 		handlers.Auth,

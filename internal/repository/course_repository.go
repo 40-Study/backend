@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/utils"
@@ -21,6 +22,14 @@ type CourseRepositoryInterface interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	ReplaceTags(ctx context.Context, course *model.Course, tags []model.Tag) error
 	SlugExists(ctx context.Context, slug string) (bool, error)
+	// UpdateRatingStats (H6): ghi lại average_rating/total_reviews đã tính thật từ
+	// bảng reviews — method mới, KHÔNG sửa method cũ. Dùng bởi ReviewService sau
+	// khi tạo/xoá review để tránh derived-field drift (courses.average_rating từng
+	// chỉ được seeder ghi, không service nào cập nhật).
+	UpdateRatingStats(ctx context.Context, courseID uuid.UUID, avgRating decimal.Decimal, totalReviews int64) error
+	// IncrementTotalStudents (C-06 audit 260909): cộng/trừ courses.total_students bằng
+	// gorm.Expr (không đọc-sửa-ghi) khi enroll/unenroll — method mới, KHÔNG sửa method cũ.
+	IncrementTotalStudents(ctx context.Context, courseID uuid.UUID, delta int) error
 }
 
 type CourseFilterDBParams struct {
@@ -191,6 +200,25 @@ func (r *CourseRepository) SlugExists(ctx context.Context, slug string) (bool, e
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.Course{}).Where("slug = ?", slug).Count(&count).Error
 	return count > 0, err
+}
+
+// UpdateRatingStats (H6) ghi average_rating/total_reviews thật từ bảng reviews
+// vào courses, thay vì để 2 cột này đứng yên từ lúc seed.
+func (r *CourseRepository) UpdateRatingStats(ctx context.Context, courseID uuid.UUID, avgRating decimal.Decimal, totalReviews int64) error {
+	return r.db.WithContext(ctx).Model(&model.Course{}).
+		Where("id = ?", courseID).
+		Updates(map[string]interface{}{
+			"average_rating": avgRating,
+			"total_reviews":  totalReviews,
+		}).Error
+}
+
+// IncrementTotalStudents cộng/trừ total_students bằng gorm.Expr (SQL "total_students + ?")
+// thay vì đọc-sửa-ghi, tránh lost-update khi nhiều request enroll/unenroll đồng thời.
+func (r *CourseRepository) IncrementTotalStudents(ctx context.Context, courseID uuid.UUID, delta int) error {
+	return r.db.WithContext(ctx).Model(&model.Course{}).
+		Where("id = ?", courseID).
+		Update("total_students", gorm.Expr("total_students + ?", delta)).Error
 }
 
 func (r *CourseRepository) ReplaceTags(ctx context.Context, course *model.Course, tags []model.Tag) error {

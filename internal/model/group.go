@@ -64,7 +64,7 @@ type Group struct {
 	BaseModel
 	OrganizationID *uuid.UUID     `gorm:"type:uuid;index" json:"organization_id,omitempty"`
 	Name           string         `gorm:"type:varchar(200);not null" json:"name"`
-	Slug           string         `gorm:"type:varchar(200);not null;uniqueIndex" json:"slug"`
+	Slug           string         `gorm:"type:varchar(200);not null;uniqueIndex:idx_groups_slug" json:"slug"`
 	Description    *string        `gorm:"type:text" json:"description,omitempty"`
 	AvatarURL      *string        `gorm:"type:varchar(500)" json:"avatar_url,omitempty"`
 	CoverURL       *string        `gorm:"type:varchar(500)" json:"cover_url,omitempty"`
@@ -75,7 +75,7 @@ type Group struct {
 	ReferenceType  *string        `gorm:"type:varchar(50)" json:"reference_type,omitempty"`
 	ReferenceID    *uuid.UUID     `gorm:"type:uuid" json:"reference_id,omitempty"`
 	Settings       datatypes.JSON `gorm:"type:jsonb;default:'{}'" json:"settings"`
-	CreatedBy      uuid.UUID      `gorm:"type:uuid;not null" json:"created_by"`
+	CreatedBy      uuid.UUID      `gorm:"type:uuid;not null;index" json:"created_by"`
 
 	// Relationships
 	Organization *Organization   `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
@@ -96,7 +96,7 @@ func (Group) TableName() string {
 type GroupMember struct {
 	BaseModel
 	GroupID             uuid.UUID         `gorm:"type:uuid;not null;uniqueIndex:idx_group_member_unique,priority:1" json:"group_id"`
-	UserID              uuid.UUID         `gorm:"type:uuid;not null;uniqueIndex:idx_group_member_unique,priority:2" json:"user_id"`
+	UserID              uuid.UUID         `gorm:"type:uuid;not null;index;uniqueIndex:idx_group_member_unique,priority:2" json:"user_id"`
 	Role                GroupMemberRole   `gorm:"type:varchar(20);default:'MEMBER'" json:"role"`
 	Status              GroupMemberStatus `gorm:"type:varchar(20);default:'ACTIVE'" json:"status"`
 	Nickname            *string           `gorm:"type:varchar(100)" json:"nickname,omitempty"`

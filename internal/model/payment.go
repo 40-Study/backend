@@ -10,26 +10,49 @@ import (
 )
 
 type Order struct {
-	ID                   uuid.UUID       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	CreatedAt            time.Time       `gorm:"autoCreateTime" json:"created_at"`
-	UserID               uuid.UUID       `gorm:"type:uuid;not null;index" json:"user_id"`
-	OrderNumber          string          `gorm:"type:varchar(50);uniqueIndex;not null" json:"order_number"`
-	Subtotal             decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"subtotal"`
-	DiscountAmount       decimal.Decimal `gorm:"type:decimal(12,2);default:0" json:"discount_amount"`
-	TaxAmount            decimal.Decimal `gorm:"type:decimal(12,2);default:0" json:"tax_amount"`
-	TotalAmount          decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"total_amount"`
-	Currency             string          `gorm:"type:varchar(3);default:'VND'" json:"currency"`
-	Status               string          `gorm:"type:varchar(20);default:'pending';check:status IN ('pending', 'processing', 'completed', 'failed', 'refunded', 'cancelled');index" json:"status"`
-	PaymentMethod        *string         `gorm:"type:varchar(30)" json:"payment_method,omitempty"`
-	PaymentGateway       *string         `gorm:"type:varchar(30)" json:"payment_gateway,omitempty"`
-	PaymentTransactionID *string         `gorm:"type:varchar(255)" json:"payment_transaction_id,omitempty"`
-	PaidAt               *time.Time      `json:"paid_at,omitempty"`
-	CouponID             *uuid.UUID      `gorm:"type:uuid" json:"coupon_id,omitempty"`
-	Notes                *string         `gorm:"type:text" json:"notes,omitempty"`
+	ID             uuid.UUID       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	CreatedAt      time.Time       `gorm:"autoCreateTime;index:idx_orders_user_created,priority:2,sort:desc" json:"created_at"`
+	UpdatedAt      time.Time       `gorm:"autoUpdateTime" json:"updated_at"`
+	UserID         uuid.UUID       `gorm:"type:uuid;not null;index;index:idx_orders_user_created,priority:1" json:"user_id"`
+	OrderNumber    string          `gorm:"type:varchar(50);uniqueIndex;not null" json:"order_number"`
+	Subtotal       decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"subtotal"`
+	DiscountAmount decimal.Decimal `gorm:"type:decimal(12,2);default:0" json:"discount_amount"`
+	TaxAmount      decimal.Decimal `gorm:"type:decimal(12,2);default:0" json:"tax_amount"`
+	TotalAmount    decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"total_amount"`
+	Currency       string          `gorm:"type:varchar(3);default:'VND'" json:"currency"`
+	// Status (B3-01, review vòng 4; I-01, review vòng 5): TRƯỚC ĐÂY thiếu 'expired' trong CHECK —
+	// payment_service.go CheckAndProcessPayment (M2-02, vòng 3) chuyển đơn sang "expired" khi mã
+	// thanh toán hết hạn, nhưng UPDATE đó vi phạm CHECK constraint ở DB (chk_orders_status) →
+	// lỗi runtime 100%, đơn kẹt vĩnh viễn ở "processing", used_count không bao giờ được release.
+	// AutoMigrate KHÔNG tự nới rộng constraint đã tồn tại trên DB cũ — sửa tag ở đây CHƯA đủ,
+	// xem thêm RunPostMigrations (internal/database/migrations.go), SINH câu SQL constraint TỪ
+	// OrderStatuses (order_status.go, NGUỒN SỰ THẬT DUY NHẤT — SỬA DANH SÁCH Ở ĐÓ TRƯỚC, rồi
+	// cập nhật tag bên dưới cho khớp). Tag ở đây PHẢI khớp OrderStatuses cả hai chiều — pin bằng
+	// TestOrderStatusTagMatchesSSOT (internal/model/order_status_test.go).
+	Status               string     `gorm:"type:varchar(20);default:'pending';check:status IN ('pending', 'processing', 'completed', 'failed', 'refunded', 'cancelled', 'expired');index" json:"status"`
+	PaymentMethod        *string    `gorm:"type:varchar(30)" json:"payment_method,omitempty"`
+	PaymentGateway       *string    `gorm:"type:varchar(30)" json:"payment_gateway,omitempty"`
+	PaymentTransactionID *string    `gorm:"type:varchar(255)" json:"payment_transaction_id,omitempty"`
+	PaidAt               *time.Time `json:"paid_at,omitempty"`
+	// CouponID (DEPRECATED — item 24, review web vòng 1): bảng "coupons" không còn route/
+	// handler nào tạo dữ liệu (đã grep xác nhận zero caller của CreateCoupon), chỉ giữ cột này
+	// để đọc dữ liệu đơn hàng CŨ đã tạo trước khi sửa. Đơn hàng MỚI dùng VoucherID.
+	CouponID *uuid.UUID `gorm:"type:uuid" json:"coupon_id,omitempty"`
+	// VoucherID (item 24): mã giảm giá áp dụng cho đơn — trỏ vào bảng "vouchers" (bảng web
+	// thực sự dùng qua GET /vouchers/code/:code), thay cho CouponID ở trên.
+	VoucherID *uuid.UUID `gorm:"type:uuid;index" json:"voucher_id,omitempty"`
+	// PaymentCodeExpiredAt (item 25, review web vòng 1): thời điểm mã thanh toán
+	// (PaymentTransactionID, dùng tạm để lưu payment code lúc status=processing — xem comment
+	// tại payment_service.go CreatePaymentIntent) hết hạn. Trước đây không có cột nào lưu expiry
+	// của payment intent — DTO tự tính "now + 24h" mỗi lần render, không khớp thời điểm THẬT sự
+	// đã tạo payment intent.
+	PaymentCodeExpiredAt *time.Time `json:"payment_code_expired_at,omitempty"`
+	Notes                *string    `gorm:"type:text" json:"notes,omitempty"`
 
 	// Relationships
 	User        User         `gorm:"foreignKey:UserID" json:"-"`
 	Coupon      *Coupon      `gorm:"foreignKey:CouponID" json:"-"`
+	Voucher     *Voucher     `gorm:"foreignKey:VoucherID" json:"-"`
 	Items       []OrderItem  `gorm:"foreignKey:OrderID;constraint:OnDelete:CASCADE" json:"-"`
 	CouponUsage *CouponUsage `gorm:"foreignKey:OrderID" json:"-"`
 }
@@ -42,7 +65,7 @@ type OrderItem struct {
 	ID             uuid.UUID       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	CreatedAt      time.Time       `json:"created_at"`
 	OrderID        uuid.UUID       `gorm:"type:uuid;not null;index" json:"order_id"`
-	CourseID       uuid.UUID       `gorm:"type:uuid;not null" json:"course_id"`
+	CourseID       uuid.UUID       `gorm:"type:uuid;not null;index" json:"course_id"`
 	Price          decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"price"`
 	DiscountAmount decimal.Decimal `gorm:"type:decimal(12,2);default:0" json:"discount_amount"`
 	FinalPrice     decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"final_price"`
@@ -97,6 +120,7 @@ type CouponUsage struct {
 func (CouponUsage) TableName() string {
 	return "coupon_usages"
 }
+
 // OrderStatusHistory - Track status changes for orders
 type InstructorPayout struct {
 	BaseModel
@@ -130,7 +154,7 @@ func (InstructorPayout) TableName() string {
 type DiscountUnit string
 
 const (
-	DiscountUnitMoney  DiscountUnit = "MONEY"
+	DiscountUnitMoney DiscountUnit = "MONEY"
 	DiscountUnitPoint DiscountUnit = "POINT"
 )
 
@@ -154,28 +178,28 @@ const (
 	VoucherApplicableTypeCategory VoucherApplicableType = "CATEGORY"
 	VoucherApplicableTypeAll      VoucherApplicableType = "ALL"
 	VoucherApplicableTypeService  VoucherApplicableType = "SERVICE"
-	VoucherApplicableTypeBranch  VoucherApplicableType = "BRANCH"
+	VoucherApplicableTypeBranch   VoucherApplicableType = "BRANCH"
 )
 
 // Voucher - Main voucher model
 type Voucher struct {
-	ID          uuid.UUID       `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	Code        string          `gorm:"type:varchar(50);uniqueIndex;not null" json:"code"`
-	Name        string          `gorm:"type:varchar(255);not null" json:"name"`
-	Description string          `gorm:"type:text" json:"description"`
+	ID          uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	Code        string    `gorm:"type:varchar(50);uniqueIndex;not null" json:"code"`
+	Name        string    `gorm:"type:varchar(255);not null" json:"name"`
+	Description string    `gorm:"type:text" json:"description"`
 
 	// Discount configuration
-	DiscountUnit   DiscountUnit        `gorm:"type:varchar(20);not null" json:"discount_unit"`
-	DiscountMethod DiscountMethod       `gorm:"type:varchar(20);not null" json:"discount_method"`
+	DiscountUnit   DiscountUnit   `gorm:"type:varchar(20);not null" json:"discount_unit"`
+	DiscountMethod DiscountMethod `gorm:"type:varchar(20);not null" json:"discount_method"`
 
 	// Discount values - depending on unit and method
-	DiscountAmountMoney  *decimal.Decimal `gorm:"type:decimal(12,2)" json:"discount_amount_money,omitempty"`  // MONEY + FIXED
-	DiscountAmountPoints int32            `gorm:"type:int" json:"discount_amount_points,omitempty"`           // POINT + FIXED
-	DiscountPercent     *decimal.Decimal `gorm:"type:decimal(5,2)" json:"discount_percent,omitempty"`       // PERCENT
+	DiscountAmountMoney  *decimal.Decimal `gorm:"type:decimal(12,2)" json:"discount_amount_money,omitempty"` // MONEY + FIXED
+	DiscountAmountPoints int32            `gorm:"type:int" json:"discount_amount_points,omitempty"`          // POINT + FIXED
+	DiscountPercent      *decimal.Decimal `gorm:"type:decimal(5,2)" json:"discount_percent,omitempty"`       // PERCENT
 
 	// Max discount caps
-	MaxDiscountMoney  *decimal.Decimal `gorm:"type:decimal(12,2)" json:"max_discount_money,omitempty"`  // PERCENT + MONEY
-	MaxDiscountPoints int32            `gorm:"type:int" json:"max_discount_points,omitempty"`         // PERCENT + POINT
+	MaxDiscountMoney  *decimal.Decimal `gorm:"type:decimal(12,2)" json:"max_discount_money,omitempty"` // PERCENT + MONEY
+	MaxDiscountPoints int32            `gorm:"type:int" json:"max_discount_points,omitempty"`          // PERCENT + POINT
 
 	// Minimum purchase requirements
 	MinPurchaseMoney  *decimal.Decimal `gorm:"type:decimal(12,2)" json:"min_purchase_money,omitempty"`
@@ -185,10 +209,11 @@ type Voucher struct {
 	AcceptAllPaymentMethods bool     `gorm:"type:bool;default:true" json:"accept_all_payment_methods"`
 	PaymentMethodsAccepted  []string `gorm:"type:text[]" json:"payment_methods_accepted"`
 
-	// Usage limits
-	UsedCount   int32 `gorm:"type:int;default:0" json:"used_count"`
-	UsageLimit  int32 `gorm:"type:int" json:"usage_limit"`
-	UsagePerUser int32 `gorm:"type:int;default:1" json:"usage_per_user"`
+	// Usage limits — quy ước: 0 (hoặc âm) = KHÔNG giới hạn. Xem VoucherUnlimitedUsage và các
+	// helper HasUsageLimit / HasPerUserLimit / IsUsageLimitReached bên dưới; KHÔNG so sánh tay.
+	UsedCount    int32 `gorm:"type:int;default:0" json:"used_count"`               // số lượt đã dùng (toàn hệ thống)
+	UsageLimit   int32 `gorm:"type:int" json:"usage_limit"`                        // tổng số lượt toàn hệ thống; 0 = không giới hạn
+	UsagePerUser int32 `gorm:"type:int;default:1" json:"usage_per_user"`           // số lượt cho TỪNG user; 0 = không giới hạn
 
 	// Stacking
 	CanStack bool `gorm:"type:bool;default:false" json:"can_stack"`
@@ -208,27 +233,56 @@ type Voucher struct {
 
 	// Relationships
 	Applicabilities []VoucherApplicability `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"-"`
-	Logs           []VoucherLog            `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"-"`
+	Logs            []VoucherLog           `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 func (Voucher) TableName() string {
 	return "vouchers"
 }
 
+// VoucherUnlimitedUsage là giá trị "không giới hạn" cho Voucher.UsageLimit và Voucher.UsagePerUser.
+// Quy ước duy nhất trong codebase: 0 (và mọi giá trị âm) = KHÔNG giới hạn; chỉ giá trị > 0 mới là
+// giới hạn thật. Mọi chỗ cần biết voucher còn lượt hay không PHẢI đi qua 3 helper bên dưới thay vì
+// viết tay `> 0` / `<= 0` / `!= 0` (đã từng lệch nhau 3 bản sao — xem
+// repository.VoucherUsageAvailableCondition, là dạng SQL của cùng quy ước này).
+const VoucherUnlimitedUsage int32 = 0
+
+// HasUsageLimit: voucher có giới hạn TỔNG số lượt dùng toàn hệ thống hay không.
+func (v *Voucher) HasUsageLimit() bool { return v.UsageLimit > VoucherUnlimitedUsage }
+
+// HasPerUserLimit: voucher có giới hạn số lượt dùng cho TỪNG user hay không.
+func (v *Voucher) HasPerUserLimit() bool { return v.UsagePerUser > VoucherUnlimitedUsage }
+
+// IsUsageLimitReached: đã dùng hết tổng số lượt. Luôn false khi không có giới hạn tổng.
+func (v *Voucher) IsUsageLimitReached() bool {
+	return v.HasUsageLimit() && v.UsedCount >= v.UsageLimit
+}
+
 // UserVoucher - User's saved/bookmarked voucher
 type UserVoucher struct {
-	ID         uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	UserID     uuid.UUID  `gorm:"type:uuid;not null;index" json:"user_id"`
-	VoucherID  uuid.UUID  `gorm:"type:uuid;not null;index" json:"voucher_id"`
-	Source     string     `gorm:"type:varchar(50)" json:"source"` // manual, admin_grant, event_reward
-	SavedAt    time.Time  `gorm:"type:timestamp;not null" json:"saved_at"`
-	Notes      string     `gorm:"type:text" json:"notes"`
+	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	UserID    uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
+	VoucherID uuid.UUID `gorm:"type:uuid;not null;index" json:"voucher_id"`
+	Source    string    `gorm:"type:varchar(50)" json:"source"` // manual, admin_grant, event_reward
+	SavedAt   time.Time `gorm:"type:timestamp;not null" json:"saved_at"`
+	Notes     string    `gorm:"type:text" json:"notes"`
 
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// Relationships
-	User    User    `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
-	Voucher Voucher `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"-"`
+	User User `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
+	// Voucher (item 27, review web vòng 1): TRƯỚC ĐÂY có json:"-" nên GET /vouchers/me chỉ
+	// trả {id, user_id, voucher_id, source, saved_at, notes} — trang /my-vouchers phía web
+	// phải tự gọi thêm GET /vouchers/:id (route admin-only, user thường bị 403) cho TỪNG
+	// voucher để lấy chi tiết. Bỏ json:"-" + Preload("Voucher") ở GetUserVouchers
+	// (voucher_repository.go) để trả sẵn chi tiết voucher trong 1 lần gọi.
+	//
+	// M2-04 (review vòng 3): đổi sang CON TRỎ *Voucher — omitempty trên struct-value KHÔNG BAO
+	// GIỜ có tác dụng trong encoding/json (struct value không bao giờ "empty" dù mọi field đều
+	// zero-value), nên khi Preload("Voucher") thất bại/voucher đã bị xoá, field này vẫn serialize
+	// thành {"voucher": {"id":"00000000-...", ...toàn zero-value}} thay vì bị lược bỏ/null như
+	// tên field "omitempty" ngụ ý — client dễ nhầm zero-UUID là voucher thật.
+	Voucher *Voucher `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"voucher,omitempty"`
 }
 
 func (UserVoucher) TableName() string {
@@ -237,10 +291,10 @@ func (UserVoucher) TableName() string {
 
 // VoucherApplicability - Rules for where voucher can be applied
 type VoucherApplicability struct {
-	ID             uuid.UUID            `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	VoucherID      uuid.UUID            `gorm:"type:uuid;not null;index" json:"voucher_id"`
+	ID             uuid.UUID             `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	VoucherID      uuid.UUID             `gorm:"type:uuid;not null;index" json:"voucher_id"`
 	ApplicableType VoucherApplicableType `gorm:"type:varchar(20);not null" json:"applicable_type"`
-	ApplicableID   uuid.UUID            `gorm:"type:uuid;not null" json:"applicable_id"`
+	ApplicableID   uuid.UUID             `gorm:"type:uuid;not null;index" json:"applicable_id"`
 
 	CreatedAt time.Time `json:"created_at"`
 
@@ -254,14 +308,14 @@ func (VoucherApplicability) TableName() string {
 
 // VoucherLog - Audit trail for voucher usage
 type VoucherLog struct {
-	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	UserID     uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
-	VoucherID  uuid.UUID `gorm:"type:uuid;not null;index" json:"voucher_id"`
-	VoucherCode string   `gorm:"type:varchar(50);not null" json:"voucher_code"`
-	OrderID    uuid.UUID `gorm:"type:uuid;not null;index" json:"order_id"`
-	OrderType  string   `gorm:"type:varchar(50)" json:"order_type"`
-	Action     string   `gorm:"type:varchar(20);not null" json:"action"` // used, refunded
-	Amount     int64    `gorm:"type:bigint;not null" json:"amount"`      // Discount amount
+	ID          uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	UserID      uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
+	VoucherID   uuid.UUID `gorm:"type:uuid;not null;index" json:"voucher_id"`
+	VoucherCode string    `gorm:"type:varchar(50);not null" json:"voucher_code"`
+	OrderID     uuid.UUID `gorm:"type:uuid;not null;index" json:"order_id"`
+	OrderType   string    `gorm:"type:varchar(50)" json:"order_type"`
+	Action      string    `gorm:"type:varchar(20);not null" json:"action"` // used, refunded
+	Amount      int64     `gorm:"type:bigint;not null" json:"amount"`      // Discount amount
 
 	CreatedAt time.Time              `json:"created_at"`
 	Metadata  map[string]interface{} `gorm:"type:jsonb" json:"metadata,omitempty"`

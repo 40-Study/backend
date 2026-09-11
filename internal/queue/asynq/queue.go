@@ -9,6 +9,7 @@ import (
 
 	"github.com/hibiken/asynq"
 	"study.com/v1/internal/config"
+	"study.com/v1/internal/utils"
 )
 
 // ===================== Frequency =====================
@@ -167,11 +168,13 @@ func (q *Queue) Start() error {
 		})
 	})
 
-	go func() {
+	// M-05 (audit 260909 vòng 2): bọc SafeGo — panic trong scheduler (chạy suốt vòng đời
+	// app) trước đây sập cả process, ảnh hưởng mọi worker/queue khác đang chạy chung.
+	utils.SafeGo(func() {
 		if err := q.scheduler.Start(); err != nil {
 			log.Printf("[asynq] Scheduler error: %v", err)
 		}
-	}()
+	})
 
 	log.Println("[asynq] Starting worker server...")
 	return q.server.Start(q.mux)

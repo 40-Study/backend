@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -15,11 +16,29 @@ import (
 
 var (
 	ErrVoucherInactive        = errors.New("voucher is inactive")
-	ErrVoucherNotStarted     = errors.New("voucher is not started yet")
-	ErrVoucherExpired        = errors.New("voucher is expired")
-	ErrVoucherMinPurchase    = errors.New("order does not meet minimum purchase requirement")
+	ErrVoucherNotStarted      = errors.New("voucher is not started yet")
+	ErrVoucherExpired         = errors.New("voucher is expired")
+	ErrVoucherMinPurchase     = errors.New("order does not meet minimum purchase requirement")
 	ErrVoucherPaymentNotAllow = errors.New("payment method is not accepted by voucher")
-	ErrInvalidNumeric        = errors.New("invalid numeric value")
+	ErrInvalidNumeric         = errors.New("invalid numeric value")
+	// ErrVoucherUsageLimitExceeded/ErrVoucherPerUserLimitExceeded (item 24, review web +
+	// review vòng 1): dùng cho ValidateAndApplyVoucher — tương đương
+	// ErrCouponUsageExceeded/ErrCouponPerUserExceeded của coupon_repository.go, viết lại ở
+	// đây vì logic kiểm tra nằm ở service layer (đúng vị trí CalculateDiscountAmount hiện có),
+	// không phải repository layer như CouponRepository.
+	ErrVoucherUsageLimitExceeded   = errors.New("voucher usage limit exceeded")
+	ErrVoucherPerUserLimitExceeded = errors.New("voucher usage limit per user exceeded")
+	ErrVoucherNotFoundByCode       = errors.New("voucher not found")
+	// ErrVoucherNotMoneyUnit (H2-01, review vòng 3): voucher discount_unit != MONEY (đổi bằng
+	// điểm) không áp dụng được cho đơn hàng tiền mặt — web từ chối rõ ràng
+	// (errorMessage "Voucher này đổi bằng điểm..."), backend trước đây ÂM THẦM trả discount=0
+	// cho nhánh PERCENT (vẫn coi là "áp dụng thành công", chỉ là giảm 0đ) thay vì từ chối hẳn.
+	ErrVoucherNotMoneyUnit = errors.New("voucher is point-based, not applicable to cash payment")
+	// ErrVoucherNotApplicable (H3-03, review vòng 4): discount tính ra <= 0 (vd PERCENT trên
+	// subtotal quá nhỏ, Floor về 0; hoặc FIXED với discount_amount_money null/0) — khớp nhánh
+	// "discount <= 0" của web (voucher.service.ts), từ chối HẲN thay vì áp dụng "thành công"
+	// với giảm giá 0đ (tránh tiêu một lượt used_count vô ích — xem H2-05/H3-01).
+	ErrVoucherNotApplicable = errors.New("voucher is not applicable to this order (discount would be zero)")
 )
 
 type VoucherServiceInterface interface {
@@ -37,6 +56,47 @@ type VoucherServiceInterface interface {
 
 	// Apply voucher
 	ApplyVoucher(ctx context.Context, userID uuid.UUID, subTotal *int64, paymentMethod string, voucherCode string) (uuid.UUID, *string, error)
+
+	// ValidateAndApplyVoucher (item 24, review web + review vòng 1): kiểm tra đầy đủ điều
+	// kiện áp dụng (active, ngày hiệu lực, usage_limit, min_purchase, usage_per_user, payment
+	// method) rồi tính discount bằng decimal.Decimal — dùng thay CouponRepository.ValidateCoupon
+	// trong order_service.CreateOrder vì bảng coupons không còn được tạo dữ liệu qua route/
+	// handler nào (đã grep xác nhận). paymentMethod rỗng khi chưa biết ở bước tạo đơn (bỏ qua
+	// kiểm tra payment method trong trường hợp đó).
+	ValidateAndApplyVoucher(ctx context.Context, code string, userID uuid.UUID, subtotal decimal.Decimal, paymentMethod string) (*model.Voucher, decimal.Decimal, error)
+	// IncrementUsedCount + RecordUsageLog: gọi lúc đơn hàng HOÀN TẤT (không phải lúc tạo đơn)
+	// — cùng thời điểm CouponRepository.IncrementUsageCount/CreateUsage trước đây được gọi.
+	//
+	// H2-05 (review vòng 3): IncrementUsedCount hiện KHÔNG còn được gọi ở completeOrderFulfillment
+	// nữa (used_count giờ được "reserve" (tăng) ngay lúc TẠO đơn — xem ReserveVoucherUsage —
+	// để chặn oversell khi nhiều đơn "pending" cùng tồn tại chưa ai hoàn tất). Giữ nguyên method
+	// này trong interface (không xoá) vì có thể còn dùng cho thao tác thủ công/tương lai; chỉ
+	// đổi ĐIỂM GỌI trong luồng order.
+	IncrementUsedCount(ctx context.Context, voucherID uuid.UUID) error
+	RecordUsageLog(ctx context.Context, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error
+	// RecordUsageLogTx (H2-06, review vòng 3b): giống RecordUsageLog nhưng ghi VoucherLog TRÊN
+	// "tx" được truyền vào (nil => dùng connection gốc, hành vi giống RecordUsageLog) — cho phép
+	// completeOrderFulfillment tham gia CÙNG transaction với enrollment/total_students khi caller
+	// có sẵn transaction đang mở (CheckAndProcessPayment nhánh trả phí, CreateOrder nhánh 0đ).
+	RecordUsageLogTx(ctx context.Context, tx *gorm.DB, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error
+	// ReserveVoucherUsage / ReleaseVoucherUsage (H2-05, review vòng 3): tăng/giảm used_count
+	// bằng UPDATE có điều kiện chạy TRÊN "tx" được truyền vào (không phải trên vs.vr — connection
+	// gốc) để tham gia CÙNG một database transaction với việc tạo/hủy đơn hàng — xem
+	// OrderService.CreateOrder (reserve lúc tạo đơn) và OrderService.CancelOrder /
+	// PaymentService.CheckAndProcessPayment (release khi đơn bị hủy/mã thanh toán hết hạn).
+	// Dùng CÙNG điều kiện chống race đã có ở IncrementUsedCount (usage_limit <= 0 OR used_count
+	// < usage_limit), không viết lại logic mới.
+	ReserveVoucherUsage(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) error
+	ReleaseVoucherUsage(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) error
+	// LockAndCheckUsagePerUser (I-02, review vòng 5): khoá dòng voucher (SELECT ... FOR UPDATE)
+	// rồi mới đếm usage_per_user (CountUserVoucherUsage + CountUserHeldOrders) — PHẢI gọi TRONG
+	// transaction tạo đơn (tx khác nil), NGAY TRƯỚC ReserveVoucherUsage. Trước vòng 5, phần đếm
+	// này nằm trong ValidateAndApplyVoucher và chạy NGOÀI transaction — 2 request đồng thời của
+	// CÙNG user có thể cùng đọc heldCount cũ rồi cùng vượt qua (TOCTOU). usagePerUser <= 0 nghĩa
+	// là "không giới hạn số lượt/user" (voucher chỉ còn bị chặn bởi usage_limit TOÀN CỤC qua
+	// ReserveVoucherUsage) — bỏ qua khoá+đếm hẳn trong trường hợp này để không trả giá SELECT...
+	// FOR UPDATE vô ích trên voucher không giới hạn per-user.
+	LockAndCheckUsagePerUser(ctx context.Context, tx *gorm.DB, voucher *model.Voucher, userID uuid.UUID) error
 
 	// User Voucher (Bookmark/Save)
 	SaveVoucher(ctx context.Context, userID uuid.UUID, req *dto.SaveVoucherRequest) (*model.UserVoucher, error)
@@ -389,6 +449,238 @@ func (vs *VoucherService) CalculateDiscountAmount(voucher *model.Voucher, orderA
 	return discountAmount, nil
 }
 
+// calculateVoucherDiscountDecimal (item 24 vòng 2b, H2-01/H2-02 review vòng 3) tính discount
+// bằng decimal.Decimal — bản decimal-native của CalculateDiscountAmount (vốn dùng int64, phù
+// hợp cho luồng xu) để khớp với subtotal decimal.Decimal mà order_service.go đang dùng. Công
+// thức PHẢI khớp ĐÚNG calculateVoucherDiscount phía web (voucher.service.ts):
+//
+//  1. discount_unit phải là MONEY — web chặn CẢ HAI method (PERCENT lẫn FIXED) ngay từ đầu
+//     hàm, TRƯỚC khi xét discount_method. H2-01 (review vòng 3): bản Go trước đây chỉ kiểm
+//     DiscountUnit ở nhánh FIXED, nhánh PERCENT không kiểm gì — voucher POINT+PERCENT vẫn áp
+//     và giảm tiền thật dù web đã từ chối, tạo lệch hợp đồng backend/web.
+//  2. PERCENT: subtotal * percent / 100, clamp bằng max_discount_money (chỉ khi cap > 0).
+//     FIXED (mọi method khác PERCENT): dùng thẳng discount_amount_money.
+//  3. H2-02 (review vòng 3): web dùng Math.floor(discount) TRƯỚC khi clamp về subtotal — bản
+//     Go trước đây giữ nguyên phần thập phân của decimal.Decimal, nên với subtotal lẻ (vd
+//     199.999 × 10% = 19.999,9) số tiền backend trừ khác số web hiển thị. Dùng Floor().
+func calculateVoucherDiscountDecimal(voucher *model.Voucher, subtotal decimal.Decimal) decimal.Decimal {
+	// (1) discount_unit phải là MONEY cho CẢ HAI method — khớp thứ tự kiểm của web.
+	if voucher.DiscountUnit != model.DiscountUnitMoney {
+		return decimal.Zero
+	}
+
+	discount := decimal.Zero
+	switch voucher.DiscountMethod {
+	case model.DiscountMethodPercent:
+		if voucher.DiscountPercent != nil {
+			discount = subtotal.Mul(*voucher.DiscountPercent).Div(decimal.NewFromInt(100))
+			if voucher.MaxDiscountMoney != nil && voucher.MaxDiscountMoney.GreaterThan(decimal.Zero) &&
+				discount.GreaterThan(*voucher.MaxDiscountMoney) {
+				discount = *voucher.MaxDiscountMoney
+			}
+		}
+	default: // FIXED — khớp nhánh "else" của web (mọi method không phải PERCENT)
+		if voucher.DiscountAmountMoney != nil {
+			discount = *voucher.DiscountAmountMoney
+		}
+	}
+
+	// (3) Floor TRƯỚC khi clamp về subtotal/0 — đúng thứ tự web: Math.max(0, Math.min(Math.floor(discount), subtotal)).
+	discount = discount.Floor()
+	if discount.GreaterThan(subtotal) {
+		discount = subtotal
+	}
+	if discount.LessThan(decimal.Zero) {
+		discount = decimal.Zero
+	}
+	return discount
+}
+
+// ValidateAndApplyVoucher (item 24, review web + review vòng 1) — xem comment interface.
+func (vs *VoucherService) ValidateAndApplyVoucher(ctx context.Context, code string, userID uuid.UUID, subtotal decimal.Decimal, paymentMethod string) (*model.Voucher, decimal.Decimal, error) {
+	voucher, err := vs.vr.GetVoucherByCode(ctx, code)
+	if err != nil {
+		return nil, decimal.Zero, err
+	}
+	if voucher == nil {
+		return nil, decimal.Zero, ErrVoucherNotFoundByCode
+	}
+
+	if !voucher.IsActive {
+		return nil, decimal.Zero, ErrVoucherInactive
+	}
+
+	now := time.Now()
+	if voucher.StartDate != nil && now.Before(*voucher.StartDate) {
+		return nil, decimal.Zero, ErrVoucherNotStarted
+	}
+	if voucher.EndDate != nil && now.After(*voucher.EndDate) {
+		return nil, decimal.Zero, ErrVoucherExpired
+	}
+
+	// H2-01: chặn hẳn voucher đổi bằng điểm (POINT) trước khi tính discount — khớp web, tránh
+	// trả về "áp dụng thành công, discount=0" gây hiểu nhầm mã hợp lệ.
+	if voucher.DiscountUnit != model.DiscountUnitMoney {
+		return nil, decimal.Zero, ErrVoucherNotMoneyUnit
+	}
+
+	if voucher.MinPurchaseMoney != nil && subtotal.LessThan(*voucher.MinPurchaseMoney) {
+		return nil, decimal.Zero, ErrVoucherMinPurchase
+	}
+
+	if voucher.IsUsageLimitReached() {
+		return nil, decimal.Zero, ErrVoucherUsageLimitExceeded
+	}
+
+	// I-02 (review vòng 5): phần đếm usage_per_user (CountUserVoucherUsage + CountUserHeldOrders)
+	// TRƯỚC ĐÂY nằm ở đây (H3-01a, review vòng 4) — chạy NGOÀI transaction tạo đơn nên vẫn TOCTOU
+	// được: 2 request đồng thời của CÙNG user cùng đọc heldCount cũ rồi cùng vượt qua, trước khi
+	// bên nào kịp tạo đơn/reserve. Đã CHUYỂN HẲN vào LockAndCheckUsagePerUser (bên dưới) — gọi
+	// TRONG transaction tạo đơn, SAU khi đã SELECT ... FOR UPDATE khoá dòng voucher, để tuần tự
+	// hoá đúng 2 giao dịch đồng thời thay vì đọc song song không khoá. ValidateAndApplyVoucher từ
+	// đây chỉ còn làm các kiểm tra THUẦN (không phụ thuộc lock/đếm) để trả lỗi sớm cho UX — kết
+	// quả CHƯA phải quyết định cuối cùng cho usage_per_user, quyết định thật nằm ở
+	// LockAndCheckUsagePerUser bên trong transaction.
+
+	if paymentMethod != "" && !voucher.AcceptAllPaymentMethods {
+		allowed := false
+		for _, m := range voucher.PaymentMethodsAccepted {
+			if m == paymentMethod {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return nil, decimal.Zero, ErrVoucherPaymentNotAllow
+		}
+	}
+
+	discount := calculateVoucherDiscountDecimal(voucher, subtotal)
+	// H3-03 (review vòng 4): discount <= 0 phải bị TỪ CHỐI (khớp web voucher.service.ts:
+	// "if (discount <= 0) return { ok:false, ... }") — trước đây backend trả (voucher, 0, nil),
+	// tức "áp dụng thành công, giảm 0đ", khiến CreateOrder vẫn gán order.VoucherID + gọi
+	// ReserveVoucherUsage (H2-05), TIÊU MỘT LƯỢT used_count cho một mã không giảm được đồng
+	// nào (vd PERCENT 10% trên subtotal=5 → Floor(0.5)=0; hoặc FIXED với discount_amount_money
+	// null/0).
+	if discount.LessThanOrEqual(decimal.Zero) {
+		return nil, decimal.Zero, ErrVoucherNotApplicable
+	}
+	return voucher, discount, nil
+}
+
+// IncrementUsedCount — xem comment interface.
+func (vs *VoucherService) IncrementUsedCount(ctx context.Context, voucherID uuid.UUID) error {
+	return vs.vr.IncrementUsedCount(ctx, voucherID)
+}
+
+// ReserveVoucherUsage — xem comment interface. Chạy trực tiếp trên "tx" (không qua vs.vr, vốn
+// luôn cầm connection gốc) để lời gọi này tham gia đúng transaction của caller.
+//
+// M3-05 (review vòng 4): TRƯỚC ĐÂY copy tay chuỗi điều kiện "usage_limit <= 0 OR used_count <
+// usage_limit" thay vì gọi lại buildIncrementUsedCountQuery (repository.VoucherRepository) —
+// dùng repository.VoucherUsageAvailableCondition (hằng số dùng chung, cũng thêm "usage_limit IS
+// NULL" mà bản copy cũ thiếu) thay vì viết lại chuỗi, tránh lệch nhau lần nữa.
+// buildReserveVoucherUsageQuery (M3-06, review vòng 4): tách phần XÂY câu UPDATE ra khỏi phần
+// map RowsAffected -> error — cùng mẫu buildIncrementUsedCountQuery/buildRestoreAndReactivateQuery
+// đã dùng ở repository layer, để test DryRun (voucher_service_reserve_release_test.go) gọi được
+// ĐÚNG hàm sản xuất thật thay vì hand-roll lại câu query trong test.
+func (vs *VoucherService) buildReserveVoucherUsageQuery(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) *gorm.DB {
+	return tx.WithContext(ctx).Model(&model.Voucher{}).
+		Where("id = ? AND ("+repository.VoucherUsageAvailableCondition+")", voucherID).
+		Update("used_count", gorm.Expr("used_count + 1"))
+}
+
+func (vs *VoucherService) ReserveVoucherUsage(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) error {
+	result := vs.buildReserveVoucherUsageQuery(ctx, tx, voucherID)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrVoucherUsageLimitExceeded
+	}
+	return nil
+}
+
+// buildReleaseVoucherUsageQuery (M3-06, review vòng 4) — xem comment buildReserveVoucherUsageQuery.
+func (vs *VoucherService) buildReleaseVoucherUsageQuery(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) *gorm.DB {
+	return tx.WithContext(ctx).Model(&model.Voucher{}).
+		Where("id = ? AND used_count > 0", voucherID).
+		Update("used_count", gorm.Expr("used_count - 1"))
+}
+
+// ReleaseVoucherUsage — hoàn lại 1 lượt used_count đã reserve khi đơn hàng bị hủy/hết hạn trước
+// khi hoàn tất. Điều kiện "used_count > 0" tránh giảm xuống âm nếu bị gọi trùng lặp.
+func (vs *VoucherService) ReleaseVoucherUsage(ctx context.Context, tx *gorm.DB, voucherID uuid.UUID) error {
+	return vs.buildReleaseVoucherUsageQuery(ctx, tx, voucherID).Error
+}
+
+// LockAndCheckUsagePerUser — xem comment interface. tx != nil BẮT BUỘC (gọi ngoài transaction
+// không có tác dụng khoá gì — LockVoucherForUpdate tự nhả lock ngay sau câu SQL đơn lẻ đó).
+func (vs *VoucherService) LockAndCheckUsagePerUser(ctx context.Context, tx *gorm.DB, voucher *model.Voucher, userID uuid.UUID) error {
+	if !voucher.HasPerUserLimit() {
+		// UsagePerUser = model.VoucherUnlimitedUsage (0/âm): không giới hạn số lượt cho từng user
+		// (quyết định sản phẩm 09/2026, pin bằng TestLockAndCheckUsagePerUser_ZeroMeansUnlimited).
+		// Admin vẫn có thể giới hạn TOÀN CỤC qua UsageLimit/ReserveVoucherUsage; usage_per_user
+		// chỉ kiểm soát riêng số lượt của TỪNG user.
+		return nil
+	}
+
+	txVr := repository.NewVoucherRepository(tx)
+	if err := txVr.LockVoucherForUpdate(ctx, voucher.ID); err != nil {
+		return err
+	}
+	completedCount, err := txVr.CountUserVoucherUsage(ctx, userID, voucher.ID)
+	if err != nil {
+		return err
+	}
+	heldCount, err := txVr.CountUserHeldOrders(ctx, userID, voucher.ID)
+	if err != nil {
+		return err
+	}
+	if completedCount+heldCount >= int64(voucher.UsagePerUser) {
+		return ErrVoucherPerUserLimitExceeded
+	}
+	return nil
+}
+
+// RecordUsageLogTx — xem comment interface (RecordUsageLogTx/RecordUsageLog). Tự tra lại
+// voucher.Code (VoucherLog.VoucherCode not-null) thay vì bắt caller truyền vào, tránh caller
+// phải tự query/preload thêm. Amount trong VoucherLog là int64 (không có phần thập phân với
+// VND) nên dùng IntPart().
+//
+// H2-06 vòng 3b: "tx" != nil -> ghi VoucherLog TRÊN chính transaction đó (tham gia cùng
+// transaction với completeOrderFulfillment) — dùng cho CheckAndProcessPayment/CreateOrder khi đã
+// có sẵn transaction đang mở. "tx" == nil -> ghi qua vs.vr (connection gốc) như hành vi cũ.
+func (vs *VoucherService) RecordUsageLogTx(ctx context.Context, tx *gorm.DB, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error {
+	voucher, err := vs.vr.GetVoucherByID(ctx, voucherID)
+	if err != nil {
+		return err
+	}
+	code := ""
+	if voucher != nil {
+		code = voucher.Code
+	}
+	log := &model.VoucherLog{
+		UserID:      userID,
+		VoucherID:   voucherID,
+		VoucherCode: code,
+		OrderID:     orderID,
+		OrderType:   "course_order",
+		Action:      "used",
+		Amount:      discountAmount.IntPart(),
+	}
+	if tx != nil {
+		return tx.WithContext(ctx).Create(log).Error
+	}
+	return vs.vr.CreateVoucherLog(ctx, log)
+}
+
+// RecordUsageLog — giữ nguyên chữ ký cũ (không tx) cho tương thích ngược, ủy quyền thẳng tới
+// RecordUsageLogTx(ctx, nil, ...).
+func (vs *VoucherService) RecordUsageLog(ctx context.Context, voucherID, userID, orderID uuid.UUID, discountAmount decimal.Decimal) error {
+	return vs.RecordUsageLogTx(ctx, nil, voucherID, userID, orderID, discountAmount)
+}
+
 // ============================================================
 // USER VOUCHER (Bookmark/Save)
 // ============================================================
@@ -546,7 +838,7 @@ func (vs *VoucherService) GetVoucherStats(ctx context.Context, voucherID uuid.UU
 	stats["voucher_id"] = voucher.ID
 	stats["voucher_code"] = voucher.Code
 	stats["voucher_name"] = voucher.Name
-	if voucher.UsageLimit != 0 {
+	if voucher.HasUsageLimit() {
 		stats["usage_limit"] = voucher.UsageLimit
 	}
 	return stats, nil

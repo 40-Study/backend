@@ -12,30 +12,57 @@ import (
 )
 
 type LessonContentServiceInterface interface {
-	CreateContent(ctx context.Context, lessonID uuid.UUID, userID uuid.UUID, req dto.CreateLessonContentDTO) (*dto.LessonContentResponseDTO, error)
+	CreateContent(ctx context.Context, lessonID uuid.UUID, actorUserID uuid.UUID, isAdmin bool, req dto.CreateLessonContentDTO) (*dto.LessonContentResponseDTO, error)
 	GetContentByID(ctx context.Context, contentID uuid.UUID) (*dto.LessonContentResponseDTO, error)
-	UpdateContent(ctx context.Context, contentID uuid.UUID, req dto.UpdateLessonContentDTO) (*dto.LessonContentResponseDTO, error)
-	DeleteContent(ctx context.Context, contentID uuid.UUID) error
+	UpdateContent(ctx context.Context, contentID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateLessonContentDTO) (*dto.LessonContentResponseDTO, error)
+	DeleteContent(ctx context.Context, contentID, actorUserID uuid.UUID, isAdmin bool) error
 	GetContentsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]dto.LessonContentResponseDTO, error)
-	ReorderContents(ctx context.Context, lessonID uuid.UUID, req dto.ReorderDTO) error
+	// ReorderContents (M2-03, review vòng 3): thêm actorUserID/isAdmin — trước đây hàm này chỉ
+	// validateLesson (kiểm TỒN TẠI), không kiểm CHỦ SỞ HỮU, khác với mọi CRUD content khác
+	// (Create/Update/Delete đều gọi requireContentLessonOwnerOrAdmin/requireLessonCourseOwnerOrAdmin).
+	ReorderContents(ctx context.Context, lessonID uuid.UUID, actorUserID uuid.UUID, isAdmin bool, req dto.ReorderDTO) error
 }
 
 type LessonContentService struct {
 	lessonRepo         repository.LessonRepositoryInterface
+	sectionRepo        repository.SectionRepositoryInterface
+	courseRepo         repository.CourseRepositoryInterface
 	uploadService      UploadServiceInterface
 	videoUploadService VideoUploadServiceInterface
 }
 
 func NewLessonContentService(
 	lessonRepo repository.LessonRepositoryInterface,
+	sectionRepo repository.SectionRepositoryInterface,
+	courseRepo repository.CourseRepositoryInterface,
 	uploadService UploadServiceInterface,
 	videoUploadService VideoUploadServiceInterface,
 ) *LessonContentService {
 	return &LessonContentService{
 		lessonRepo:         lessonRepo,
+		sectionRepo:        sectionRepo,
+		courseRepo:         courseRepo,
 		uploadService:      uploadService,
 		videoUploadService: videoUploadService,
 	}
+}
+
+// requireContentLessonOwnerOrAdmin (H-05, review vòng 1): C-12 chỉ gate Lesson (tạo/sửa/xóa),
+// bỏ sót LessonContentService — UpdateContent/DeleteContent trước đây chỉ nhận contentID, user
+// bất kỳ đã đăng nhập sửa/xóa được nội dung khóa học của giảng viên khác, kể cả xóa video gốc
+// trên MinIO (không khôi phục được). Dùng LẠI đúng logic ownership của Lesson
+// (requireLessonCourseOwnerOrAdmin, lesson_service.go) thay vì viết lại — content không có
+// course_id trực tiếp nên phải load lesson trước (content.LessonID -> lesson.SectionID ->
+// section.CourseID -> course.InstructorID).
+func (s *LessonContentService) requireContentLessonOwnerOrAdmin(ctx context.Context, content *model.LessonContent, actorUserID uuid.UUID, isAdmin bool) error {
+	lesson, err := s.lessonRepo.GetByID(ctx, content.LessonID)
+	if err != nil {
+		return err
+	}
+	if lesson == nil {
+		return errors.New("lesson not found")
+	}
+	return requireLessonCourseOwnerOrAdmin(ctx, s.sectionRepo, s.courseRepo, lesson, actorUserID, isAdmin)
 }
 
 func (s *LessonContentService) validateLesson(ctx context.Context, lessonID uuid.UUID) error {
@@ -49,8 +76,15 @@ func (s *LessonContentService) validateLesson(ctx context.Context, lessonID uuid
 	return nil
 }
 
-func (s *LessonContentService) CreateContent(ctx context.Context, lessonID uuid.UUID, userID uuid.UUID, req dto.CreateLessonContentDTO) (*dto.LessonContentResponseDTO, error) {
-	if err := s.validateLesson(ctx, lessonID); err != nil {
+func (s *LessonContentService) CreateContent(ctx context.Context, lessonID uuid.UUID, actorUserID uuid.UUID, isAdmin bool, req dto.CreateLessonContentDTO) (*dto.LessonContentResponseDTO, error) {
+	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	if lesson == nil {
+		return nil, errors.New("lesson not found")
+	}
+	if err := requireLessonCourseOwnerOrAdmin(ctx, s.sectionRepo, s.courseRepo, lesson, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 
@@ -113,13 +147,16 @@ func (s *LessonContentService) GetContentsByLessonID(ctx context.Context, lesson
 	return result, nil
 }
 
-func (s *LessonContentService) UpdateContent(ctx context.Context, contentID uuid.UUID, req dto.UpdateLessonContentDTO) (*dto.LessonContentResponseDTO, error) {
+func (s *LessonContentService) UpdateContent(ctx context.Context, contentID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateLessonContentDTO) (*dto.LessonContentResponseDTO, error) {
 	content, err := s.lessonRepo.GetContentByID(ctx, contentID)
 	if err != nil {
 		return nil, err
 	}
 	if content == nil {
 		return nil, errors.New("content not found")
+	}
+	if err := s.requireContentLessonOwnerOrAdmin(ctx, content, actorUserID, isAdmin); err != nil {
+		return nil, err
 	}
 
 	if req.Type != nil {
@@ -151,13 +188,16 @@ func (s *LessonContentService) UpdateContent(ctx context.Context, contentID uuid
 	return s.toContentResponseDTO(content), nil
 }
 
-func (s *LessonContentService) DeleteContent(ctx context.Context, contentID uuid.UUID) error {
+func (s *LessonContentService) DeleteContent(ctx context.Context, contentID, actorUserID uuid.UUID, isAdmin bool) error {
 	content, err := s.lessonRepo.GetContentByID(ctx, contentID)
 	if err != nil {
 		return err
 	}
 	if content == nil {
 		return errors.New("content not found")
+	}
+	if err := s.requireContentLessonOwnerOrAdmin(ctx, content, actorUserID, isAdmin); err != nil {
+		return err
 	}
 
 	// Delete video upload and all associated files (original, HLS, thumbnail)
@@ -180,8 +220,19 @@ func (s *LessonContentService) DeleteContent(ctx context.Context, contentID uuid
 	return s.lessonRepo.DeleteContent(ctx, contentID)
 }
 
-func (s *LessonContentService) ReorderContents(ctx context.Context, lessonID uuid.UUID, req dto.ReorderDTO) error {
-	if err := s.validateLesson(ctx, lessonID); err != nil {
+// ReorderContents (M2-03, review vòng 3): trước đây chỉ validateLesson (bài học có tồn tại
+// không) — bất kỳ giảng viên/user đăng nhập nào biết lessonID đều sắp xếp lại được nội dung bài
+// học của khóa học người khác. Load lesson trực tiếp (thay vì chỉ check Exists) + kiểm chủ sở
+// hữu bằng requireLessonCourseOwnerOrAdmin, khớp CreateContent.
+func (s *LessonContentService) ReorderContents(ctx context.Context, lessonID uuid.UUID, actorUserID uuid.UUID, isAdmin bool, req dto.ReorderDTO) error {
+	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
+	if err != nil {
+		return err
+	}
+	if lesson == nil {
+		return errors.New("lesson not found")
+	}
+	if err := requireLessonCourseOwnerOrAdmin(ctx, s.sectionRepo, s.courseRepo, lesson, actorUserID, isAdmin); err != nil {
 		return err
 	}
 

@@ -10,6 +10,7 @@ jobs:
   go-backend:
     name: Build Go Backend
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -17,14 +18,22 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.25.0'
+          go-version-file: go.mod
           cache: true
 
       - name: Install dependencies
         run: go mod download
 
+      # Entrypoint là ./cmd/api (không có ./cmd/main.go — bước cũ fail từ 05/2026)
       - name: Build
-        run: go build -v -o study-be ./cmd/main.go
+        run: go build -v -o study-be ./cmd/api
+
+      - name: Vet
+        run: go vet ./...
+
+      # Test unit chạy trên DryRun/sqlmock, không cần Postgres
+      - name: Test
+        run: go test -count=1 ./...
 
   python-transaction-api:
     name: Build Python Transaction API

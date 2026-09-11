@@ -15,32 +15,42 @@ func SetupContestRoutes(api fiber.Router, cfg *config.Config, h *handler.Contest
 
 	// Public
 	contests.Get("/", h.ListContests)
+
+	// C-02 (review vòng 5→6): TRƯỚC ĐÂY dùng `authed := contests.Group(""); authed.Use(auth)` —
+	// Fiber giữ MỘT stack middleware PHẲNG theo TIỀN TỐ ("/contests"), không theo biến Go dùng để
+	// đăng ký route. `authed.Use(auth)` áp dụng cho MỌI route đăng ký SAU nó ở cùng tiền tố, KỂ CẢ
+	// route đăng ký qua biến `contests` (không phải `authed`) — nên `contests.Get("/:slug", ...)`
+	// dù cố tình đăng ký qua biến "public" vẫn bị auth chặn (public route trả 401). Đo bằng Fiber
+	// thật xác nhận đúng cơ chế này (xem báo cáo review vòng 5). Sửa: KHÔNG dùng group + Use() cho
+	// cặp route công khai/riêng tư xen kẽ này — gắn `auth` TRỰC TIẾP làm middleware tham số cho
+	// TỪNG route cần bảo vệ, "/:slug" không nhận middleware nào nên luôn công khai bất kể thứ tự
+	// đăng ký các route khác.
+	//
+	// I-04 (review vòng 4/5, vẫn giữ nguyên): "/me" PHẢI đăng ký TRƯỚC "/:slug" — cùng tiền tố,
+	// Fiber khớp theo THỨ TỰ ĐĂNG KÝ khi route tham số và route tĩnh cùng độ sâu, không tự ưu
+	// tiên tĩnh trước tham số (đã tự kiểm chứng cùng lớp lỗi ở quiz_router.go/grade_router.go).
+	contests.Get("/me", auth, h.GetMyContests)
+
+	// Public slug lookup — ĐĂNG KÝ SAU "/me" ở trên, KHÔNG có middleware auth (xem comment C-02).
 	contests.Get("/:slug", h.GetContest)
 
-	// Auth required
-	authed := contests.Group("")
-	authed.Use(auth)
-
-	// My contests
-	authed.Get("/me", h.GetMyContests)
-
 	// Contest CRUD
-	authed.Post("/", h.CreateContest)
-	authed.Put("/:id", h.UpdateContest)
-	authed.Delete("/:id", h.DeleteContest)
-	authed.Post("/:id/publish", h.PublishContest)
+	contests.Post("/", auth, h.CreateContest)
+	contests.Put("/:id", auth, h.UpdateContest)
+	contests.Delete("/:id", auth, h.DeleteContest)
+	contests.Post("/:id/publish", auth, h.PublishContest)
 
 	// Problems
-	authed.Get("/:id/problems", h.GetProblems)
-	authed.Post("/:id/problems", h.CreateProblem)
-	authed.Put("/:id/problems/:problemId", h.UpdateProblem)
-	authed.Delete("/:id/problems/:problemId", h.DeleteProblem)
+	contests.Get("/:id/problems", auth, h.GetProblems)
+	contests.Post("/:id/problems", auth, h.CreateProblem)
+	contests.Put("/:id/problems/:problemId", auth, h.UpdateProblem)
+	contests.Delete("/:id/problems/:problemId", auth, h.DeleteProblem)
 
 	// Participation
-	authed.Post("/:id/join", h.JoinContest)
-	authed.Get("/:id/leaderboard", h.GetLeaderboard)
+	contests.Post("/:id/join", auth, h.JoinContest)
+	contests.Get("/:id/leaderboard", auth, h.GetLeaderboard)
 
 	// Submissions
-	authed.Post("/:id/problems/:problemId/submit", h.SubmitAnswer)
-	authed.Get("/:id/submissions/me", h.GetMySubmissions)
+	contests.Post("/:id/problems/:problemId/submit", auth, h.SubmitAnswer)
+	contests.Get("/:id/submissions/me", auth, h.GetMySubmissions)
 }

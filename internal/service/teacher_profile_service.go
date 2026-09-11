@@ -10,12 +10,16 @@ import (
 	"study.com/v1/internal/repository"
 )
 
+// ErrNotTeacherProfileOwner: C-05 (audit 260909) — trước đây UpdateTeacherProfile/
+// DeleteTeacherProfile không kiểm tra ai gọi, ẩn danh cũng sửa/xóa được hồ sơ giáo viên bất kỳ.
+var ErrNotTeacherProfileOwner = errors.New("forbidden: not the owner")
+
 type TeacherProfileServiceInterface interface {
 	CreateTeacherProfile(ctx context.Context, req dto.CreateTeacherProfileDTO) (*dto.TeacherProfileResponseDTO, error)
 	GetAllTeacherProfiles(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.TeacherProfileListResponseDTO, error)
 	GetTeacherProfileByID(ctx context.Context, id uuid.UUID) (*dto.TeacherProfileResponseDTO, error)
-	UpdateTeacherProfile(ctx context.Context, id uuid.UUID, req dto.UpdateTeacherProfileDTO) (*dto.TeacherProfileResponseDTO, error)
-	DeleteTeacherProfile(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	UpdateTeacherProfile(ctx context.Context, id, actorUserID uuid.UUID, req dto.UpdateTeacherProfileDTO) (*dto.TeacherProfileResponseDTO, error)
+	DeleteTeacherProfile(ctx context.Context, id, actorUserID uuid.UUID, hardDelete bool) error
 }
 
 type TeacherProfileService struct {
@@ -88,13 +92,16 @@ func (s *TeacherProfileService) GetTeacherProfileByID(ctx context.Context, id uu
 	return toTeacherProfileResponseDTO(profile), nil
 }
 
-func (s *TeacherProfileService) UpdateTeacherProfile(ctx context.Context, id uuid.UUID, req dto.UpdateTeacherProfileDTO) (*dto.TeacherProfileResponseDTO, error) {
+func (s *TeacherProfileService) UpdateTeacherProfile(ctx context.Context, id, actorUserID uuid.UUID, req dto.UpdateTeacherProfileDTO) (*dto.TeacherProfileResponseDTO, error) {
 	profile, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if profile == nil {
 		return nil, errors.New("teacher profile not found")
+	}
+	if profile.UserID != actorUserID {
+		return nil, ErrNotTeacherProfileOwner
 	}
 
 	if req.Specialization != nil {
@@ -120,13 +127,16 @@ func (s *TeacherProfileService) UpdateTeacherProfile(ctx context.Context, id uui
 	return toTeacherProfileResponseDTO(profile), nil
 }
 
-func (s *TeacherProfileService) DeleteTeacherProfile(ctx context.Context, id uuid.UUID, hardDelete bool) error {
+func (s *TeacherProfileService) DeleteTeacherProfile(ctx context.Context, id, actorUserID uuid.UUID, hardDelete bool) error {
 	profile, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
 	if profile == nil {
 		return errors.New("teacher profile not found")
+	}
+	if profile.UserID != actorUserID {
+		return ErrNotTeacherProfileOwner
 	}
 	return s.repo.Delete(ctx, id, hardDelete)
 }

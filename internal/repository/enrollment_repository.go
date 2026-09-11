@@ -14,6 +14,15 @@ import (
 type EnrollmentRepositoryInterface interface {
 	Create(ctx context.Context, enrollment *model.Enrollment) error
 	GetByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error)
+	// GetByUserAndCourseUnscoped giống GetByUserAndCourse nhưng bao gồm cả bản ghi đã soft-delete
+	// (dùng để phát hiện re-enroll sau khi Unenroll — xem C-06 audit 260909).
+	GetByUserAndCourseUnscoped(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error)
+	// Restore khôi phục một enrollment đã soft-delete (deleted_at = NULL).
+	Restore(ctx context.Context, id uuid.UUID) error
+	// RestoreAndReactivate (H-02, review vòng 1): gộp restore (deleted_at = NULL) và reset các
+	// field tiến trình học vào ĐÚNG MỘT câu UPDATE, tránh lỗi Save() ghi đè deleted_at cũ khi
+	// re-enroll — xem comment tại EnrollmentService.Enroll để biết bối cảnh đầy đủ.
+	RestoreAndReactivate(ctx context.Context, id uuid.UUID, updates map[string]interface{}) error
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Enrollment, error)
 	GetDetailByID(ctx context.Context, id uuid.UUID) (*model.Enrollment, error)
 	GetByUserID(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]model.Enrollment, int64, error)
@@ -58,6 +67,45 @@ func (r *EnrollmentRepository) GetByUserAndCourse(ctx context.Context, userID, c
 		return nil, err
 	}
 	return &enrollment, nil
+}
+
+// GetByUserAndCourseUnscoped tìm enrollment kể cả đã soft-delete (Unscoped) — dùng để phân
+// biệt "chưa từng enroll" với "đã unenroll trước đó" khi xử lý re-enroll (C-06).
+func (r *EnrollmentRepository) GetByUserAndCourseUnscoped(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error) {
+	var enrollment model.Enrollment
+	err := r.db.WithContext(ctx).
+		Unscoped().
+		Where("user_id = ? AND course_id = ?", userID, courseID).
+		First(&enrollment).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &enrollment, nil
+}
+
+// Restore khôi phục enrollment đã soft-delete (deleted_at = NULL).
+func (r *EnrollmentRepository) Restore(ctx context.Context, id uuid.UUID) error {
+	return r.db.WithContext(ctx).Unscoped().Model(&model.Enrollment{}).Where("id = ?", id).Update("deleted_at", nil).Error
+}
+
+// RestoreAndReactivate (H-02, review vòng 1): trước đây service gọi Restore() rồi gọi tiếp
+// Update() (db.Save()) trên struct đã load TRƯỚC Restore — struct đó vẫn giữ DeletedAt cũ
+// trong bộ nhớ, nên Save() ghi đè lại đúng giá trị deleted_at vừa xóa, vô hiệu hóa Restore().
+// Gộp restore + set field vào MỘT lệnh Updates() duy nhất (map, không qua struct) để tránh
+// hoàn toàn vấn đề stale-in-memory-field.
+// buildRestoreAndReactivateQuery (M2-05, review vòng 3): tách phần XÂY câu UPDATE ra khỏi phần
+// đọc .Error, để test DryRun (enrollment_repository_test.go) gọi được ĐÚNG hàm sản xuất thật
+// thay vì hand-roll lại câu query trong test — xóa/sửa sai hàm này sẽ làm test đỏ.
+func (r *EnrollmentRepository) buildRestoreAndReactivateQuery(ctx context.Context, id uuid.UUID, updates map[string]interface{}) *gorm.DB {
+	updates["deleted_at"] = nil
+	return r.db.WithContext(ctx).Unscoped().Model(&model.Enrollment{}).Where("id = ?", id).Updates(updates)
+}
+
+func (r *EnrollmentRepository) RestoreAndReactivate(ctx context.Context, id uuid.UUID, updates map[string]interface{}) error {
+	return r.buildRestoreAndReactivateQuery(ctx, id, updates).Error
 }
 
 func (r *EnrollmentRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Enrollment, error) {

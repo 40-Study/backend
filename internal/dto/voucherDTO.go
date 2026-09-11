@@ -32,8 +32,8 @@ type CreateVoucherRequest struct {
 	AcceptAllPaymentMethods bool     `json:"accept_all_payment_methods"`
 	PaymentMethodsAccepted  []string `json:"payment_methods_accepted"`
 
-	UsageLimit              *int32   `json:"usage_limit" validate:"omitempty,min=0"`    // Tổng số lần dùng
-	UsagePerUser            *int32   `json:"usage_per_user" validate:"omitempty,min=0"` // Giới hạn per user
+	UsageLimit              *int32   `json:"usage_limit" validate:"omitempty,min=0"`    // Tổng số lượt toàn hệ thống; 0 = không giới hạn (model.VoucherUnlimitedUsage)
+	UsagePerUser            *int32   `json:"usage_per_user" validate:"omitempty,min=0"` // Số lượt cho từng user; 0 = không giới hạn (mặc định DB = 1)
 	CanStack                *bool    `json:"can_stack"`                                 // Có được dùng cùng voucher khác không
 
 	StartDate *time.Time `json:"start_date"`
@@ -55,8 +55,8 @@ type UpdateVoucherRequest struct {
 	MinPurchaseMoney  *float64 `json:"min_purchase_money" validate:"omitempty,min=0"`
 	MinPurchasePoints *int32   `json:"min_purchase_points" validate:"omitempty,min=0"`
 
-	UsageLimit   *int32 `json:"usage_limit" validate:"omitempty,min=0"`
-	UsagePerUser *int32 `json:"usage_per_user" validate:"omitempty,min=0"`
+	UsageLimit   *int32 `json:"usage_limit" validate:"omitempty,min=0"`    // 0 = không giới hạn (model.VoucherUnlimitedUsage)
+	UsagePerUser *int32 `json:"usage_per_user" validate:"omitempty,min=0"` // 0 = không giới hạn
 	CanStack     *bool  `json:"can_stack"`
 
 	StartDate *time.Time `json:"start_date"`

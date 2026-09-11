@@ -23,6 +23,12 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
+		// M-06 (audit 260909 vòng 2): TranslateError bật để GORM dịch lỗi vi phạm unique
+		// constraint của Postgres (SQLSTATE 23505) thành gorm.ErrDuplicatedKey — service layer
+		// (payment_service.go/coin_service.go) dùng errors.Is(err, gorm.ErrDuplicatedKey) để
+		// nhận diện "giao dịch ngân hàng đã được dùng rồi" (chống replay) mà không phải parse
+		// driver-specific error string.
+		TranslateError: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -49,7 +55,7 @@ func Migrate(db *gorm.DB) error {
 		}
 	}
 
-	return db.AutoMigrate(
+	if err := db.AutoMigrate(
 		// ===== 1. Base Tables (độc lập) =====
 		&model.Organization{},
 
@@ -81,6 +87,12 @@ func Migrate(db *gorm.DB) error {
 		&model.LessonVideo{},
 		&model.LessonArticle{},
 		&model.LessonAttachment{},
+
+		// ===== 5b. Course Exercises & Content Progress (phụ thuộc User, Course, LessonContent) =====
+		&model.CourseExercise{},
+		&model.ExerciseTestCase{},
+		&model.ExerciseSubmission{},
+		&model.ContentProgress{},
 
 		// ===== 6. Enrollment & Progress (phụ thuộc User, Course) =====
 		&model.Enrollment{},
@@ -147,7 +159,7 @@ func Migrate(db *gorm.DB) error {
 		&model.Class{},
 		&model.TeacherClass{},
 		&model.StudentClass{},
-				&model.Attendance{},
+		&model.Attendance{},
 
 		// ===== 18. Notifications (phụ thuộc User) =====
 		&model.Notification{},
@@ -189,6 +201,9 @@ func Migrate(db *gorm.DB) error {
 		&model.CoinTransaction{},
 		&model.CoinPackage{},
 		&model.CoinPurchase{},
+		// M-06 (audit 260909 vòng 2): bảng chống replay giao dịch ngân hàng, dùng chung cho
+		// order (payment_service.go) và coin purchase (coin_service.go).
+		&model.BankTransactionUsage{},
 
 		// ===== 24. Groups (phụ thuộc User, Organization) =====
 		&model.Group{},
@@ -211,7 +226,16 @@ func Migrate(db *gorm.DB) error {
 
 		// ===== 27. Personal Calendar Events (phụ thuộc User) =====
 		&model.PersonalEvent{},
-	)
+	); err != nil {
+		return err
+	}
+
+	// Chạy các câu SQL idempotent SAU AutoMigrate để sửa index/constraint mà
+	// AutoMigrate không tự sửa được (đổi tên/xoá index sai, partial index cho
+	// bảng soft-delete, CHECK constraint mới trên bảng đã có dữ liệu). Xem
+	// migrations.go — thay thế tạm thời cho tới khi có công cụ migration
+	// versioned thật (golang-migrate/goose/atlas).
+	return RunPostMigrations(db)
 }
 
 func Close(db *gorm.DB) error {

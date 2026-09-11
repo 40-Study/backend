@@ -80,6 +80,25 @@ func (Participant) TableName() string {
 	return "participants"
 }
 
+// ChatMessage (H8, data-model audit 260909; vòng 2 xử lý): trước đây khai thêm field
+// `DeletedAt *time.Time` — Go field-promotion rule khiến field CÙNG TÊN ở cấp ngoài (ở đây)
+// ĐÈ LÊN field `BaseModel.DeletedAt gorm.DeletedAt` (embedded, cấp trong), nên GORM không
+// còn nhận diện được model này có soft-delete convention (`gorm.DeletedAt`) nữa — Delete()
+// hoá thành HARD DELETE (xoá vĩnh viễn) và mọi query mặc định KHÔNG tự lọc bản ghi đã xoá,
+// dù cột DB `deleted_at` vẫn tồn tại. Cùng lúc còn `IsDeleted bool` xử lý thủ công ở
+// chat_message_repository.go (GetBySession/.../CountBySession tự thêm WHERE is_deleted=false)
+// — 2 cơ chế xoá chồng nhau, cơ chế GORM tự động thì bị vô hiệu hoá âm thầm.
+//
+// Đã kiểm tra caller (chat_service.go, chat_message_repository.go) trước khi xoá field này:
+//   - `Delete()` (hard-delete) trong repo KHÔNG được gọi ở bất kỳ đâu (chat_service.go chỉ
+//     gọi SoftDelete/GetByID/GetBySession/Pin/UnPin) — xoá field không đổi hành vi sống nào,
+//     chỉ khiến Delete() (nếu sau này có ai gọi) trở thành soft-delete ĐÚNG như tên hàm.
+//   - Không nơi nào đọc trực tiếp `.DeletedAt` của ChatMessage (`toResponseDTO` chỉ map
+//     ID/SessionID/UserID/UserName/Message/IsPinned/ParentID/CreatedAt).
+//   - `IsDeleted`/`DeletedBy` giữ nguyên — vẫn cần cho filter thủ công hiện có và audit "ai
+//     xoá"; GORM's tự động "deleted_at IS NULL" giờ cộng thêm vào các query hiện có là dư
+//     nhưng vô hại vì SoftDelete() luôn set `is_deleted`+`deleted_at` cùng lúc, atomic.
+//   - Cột DB `deleted_at` không đổi tên/kiểu — `gorm.DeletedAt` mặc định map đúng cột đó.
 type ChatMessage struct {
 	BaseModel
 	SessionID uuid.UUID  `gorm:"type:uuid;not null;index" json:"session_id"`
@@ -87,8 +106,7 @@ type ChatMessage struct {
 	Message   string     `gorm:"type:text;not null" json:"message"`
 	IsPinned  bool       `gorm:"default:false" json:"is_pinned"`
 	IsDeleted bool       `gorm:"default:false" json:"is_deleted"`
-	DeletedAt *time.Time `gorm:"type:timestamp" json:"deleted_at,omitempty"`
-	DeletedBy *uuid.UUID `gorm:"type:uuid" json:"deleted_by,omitempty"`
+	DeletedBy *uuid.UUID `gorm:"type:uuid;index" json:"deleted_by,omitempty"`
 	ParentID  *uuid.UUID `gorm:"type:uuid;index" json:"parent_id,omitempty"`
 
 	Session *LivestreamSession `gorm:"foreignKey:SessionID" json:"-"`

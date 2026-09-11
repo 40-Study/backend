@@ -208,11 +208,13 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 	}
 
 	// ===== 9. Send OTP via email (ASYNC) =====
-	go func() {
+	// M-05: bọc bằng SafeGo — panic khi gửi mail (vd cấu hình SMTP thiếu) không được recover
+	// trước đây có thể làm sập cả server.
+	utils.SafeGo(func() {
 		if err := utils.SendRegisterOTP(s.cfg, req.Email, otp); err != nil {
 			log.Printf("[WARN] Failed to send register OTP email to %s: %v", req.Email, err)
 		}
-	}()
+	})
 
 	return nil
 }
@@ -940,6 +942,10 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldRefreshToken string) 
 	if err != nil {
 		return nil, errors.New("invalid or expired refresh token")
 	}
+	// H-03: từ chối access token bị dùng để refresh (chỉ chấp nhận đúng refresh token).
+	if claims.TokenType != utils.TokenTypeRefresh {
+		return nil, errors.New("invalid token type: expected refresh token")
+	}
 
 	// ===== 2. Check user_version (for logout all) =====
 	userVersionKey := constants.KeyUserVersion(claims.UserID.String())
@@ -1352,11 +1358,12 @@ func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) er
 	}
 
 	// ===== 6. Send OTP via email (ASYNC) =====
-	go func() {
+	// M-05: bọc bằng SafeGo — xem giải thích ở RequestRegister.
+	utils.SafeGo(func() {
 		if err := utils.SendResetPasswordOTP(s.cfg, email, otp); err != nil {
 			log.Printf("[WARN] Failed to send password reset email to %s: %v", email, err)
 		}
-	}()
+	})
 
 	return nil
 }
@@ -1500,6 +1507,34 @@ func (s *AuthService) buildUnifiedRoles(ctx context.Context, userID uuid.UUID) (
 	return roles, nil
 }
 
+// selfServiceSystemRoles là allowlist DUY NHẤT (SSOT) các system role được phép TỰ CẤP,
+// dùng chung cho cả SelectRole (đăng nhập lần đầu) lẫn POST /auth/me/profiles (tạo thêm
+// profile sau này) — đúng tên trong data/roles.json.
+//
+// B-01 (review vòng 1, đã điều chỉnh theo quyết định cuối của team-lead 260909): ban đầu
+// chỉ mở STUDENT/PARENT, nhưng backend hiện KHÔNG có luồng duyệt hồ sơ giáo viên nào khác
+// (data/roles.json không có role TEACHER_APPLICANT) — nếu chặn luôn TEACHER thì việc đăng
+// ký làm giáo viên sẽ chết hẳn, không còn đường hợp lệ nào để lấy role TEACHER. Vì vậy mở
+// thêm TEACHER vào allowlist tự-cấp. ORG_OWNER và SYSTEM_ADMIN KHÔNG có trong allowlist —
+// hai role này chỉ được cấp qua route admin đã gate quyền
+// (POST /api/users/:user_id/system-roles, yêu cầu ROLES_MANAGE_SYSTEM).
+//
+// Luồng duyệt hồ sơ giáo viên (xác minh bằng cấp, hồ sơ...) trước khi cấp TEACHER là một
+// tính năng chưa tồn tại — ghi nhận là câu hỏi còn treo trong báo cáo, không làm ở đây.
+var selfServiceSystemRoles = map[string]bool{
+	"STUDENT": true,
+	"PARENT":  true,
+	"TEACHER": true,
+}
+
+// isSelfServiceSystemRole trả về true nếu roleName nằm trong allowlist tự-cấp. Đây là
+// checkpoint DUY NHẤT quyết định "user có được tự gán role này cho chính mình không" —
+// SelectRole, GetSystemRoleOptions và CreateProfile đều phải gọi hàm này, không được tự
+// định nghĩa allowlist/blocklist riêng (tránh lặp lại lỗ hổng B-01: hai nơi lệch nhau).
+func isSelfServiceSystemRole(roleName string) bool {
+	return selfServiceSystemRoles[roleName]
+}
+
 // SelectRole selects a role during login flow (using session_token)
 func (s *AuthService) SelectRole(ctx context.Context, req dto.SelectRoleRequestDto) (*dto.SelectRoleResponseDto, error) {
 	// 1. Get pending login from Redis
@@ -1552,8 +1587,14 @@ func (s *AuthService) SelectRole(ctx context.Context, req dto.SelectRoleRequestD
 				RoleName:    systemRole.Name,
 				DisplayName: systemRole.Name,
 			}
-		} else {
-			// Chưa có → tạo mới
+		} else if isSelfServiceSystemRole(systemRole.Name) {
+			// C-01 (audit 260909): trước đây nhánh này tự cấp BẤT KỲ system role nào
+			// (kể cả admin) cho user gọi API — vì GetAllSystemRoles là route public nên
+			// attacker chỉ cần lấy UUID role admin rồi gọi SelectRole là leo quyền thành công.
+			// Chỉ còn tự-cấp cho các role self-service của luồng đăng ký lần đầu
+			// (STUDENT/PARENT theo data/roles.json); mọi role khác (kể cả TEACHER) phải được
+			// SYSTEM_ADMIN gán qua POST /api/users/:user_id/system-roles (đã gate bằng
+			// permission ROLES_MANAGE_SYSTEM).
 			newUserRole := &model.UserSystemRole{
 				UserID:       userID,
 				SystemRoleID: roleID,
@@ -1570,6 +1611,8 @@ func (s *AuthService) SelectRole(ctx context.Context, req dto.SelectRoleRequestD
 				RoleName:    systemRole.Name,
 				DisplayName: systemRole.Name,
 			}
+		} else {
+			return nil, errors.New("user does not have this system role")
 		}
 	} else if req.RoleType == "organization" {
 		// Validate: role_id = Role.ID, organization_id = Organization.ID
@@ -1796,12 +1839,10 @@ func (s *AuthService) completeLoginUnified(
 
 // ========== PROFILE MANAGEMENT ==========
 
-// protectedRoles are roles that cannot be self-assigned via API
-var protectedRoles = map[string]bool{
-	"SYSTEM_ADMIN": true,
-}
-
-// GetSystemRoleOptions returns available system roles for creating profiles (excludes protected roles)
+// GetSystemRoleOptions returns available system roles for creating profiles.
+// B-01: chỉ trả về role nằm trong allowlist tự-cấp (isSelfServiceSystemRole) — trước đây
+// hàm này chỉ lọc theo protectedRoles={SYSTEM_ADMIN}, nên vẫn trả về ORG_OWNER, để lộ UUID
+// của role đó cho client rồi tự gán qua POST /auth/me/profiles (xem CreateProfile bên dưới).
 func (s *AuthService) GetSystemRoleOptions(ctx context.Context) ([]dto.SystemRoleOptionDto, error) {
 	roles, _, err := s.systemRoleRepo.GetAllSystemRoles(ctx, 1, 100, "", "active")
 	if err != nil {
@@ -1810,7 +1851,7 @@ func (s *AuthService) GetSystemRoleOptions(ctx context.Context) ([]dto.SystemRol
 
 	result := make([]dto.SystemRoleOptionDto, 0, len(roles))
 	for _, role := range roles {
-		if protectedRoles[role.Name] {
+		if !isSelfServiceSystemRole(role.Name) {
 			continue
 		}
 		var desc *string
@@ -1870,8 +1911,12 @@ func (s *AuthService) CreateProfile(ctx context.Context, userID uuid.UUID, req d
 		return nil, errors.New("system role not found")
 	}
 
-	// Block protected roles from being self-assigned
-	if protectedRoles[systemRole.Name] {
+	// B-01 (BLOCKER, review vòng 1): trước đây chỉ chặn đúng "SYSTEM_ADMIN"
+	// (protectedRoles), nên user thường tự gán được ORG_OWNER hoặc bất kỳ role nào khác
+	// qua route này — vô hiệu hóa hoàn toàn allowlist đã siết ở SelectRole (C-01).
+	// Giờ dùng chung isSelfServiceSystemRole (SSOT) với SelectRole: chỉ STUDENT/PARENT/
+	// TEACHER được tự cấp; ORG_OWNER/SYSTEM_ADMIN chỉ admin gán được.
+	if !isSelfServiceSystemRole(systemRole.Name) {
 		return nil, errors.New("this role cannot be self-assigned")
 	}
 

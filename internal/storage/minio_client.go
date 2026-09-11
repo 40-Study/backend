@@ -16,6 +16,7 @@ import (
 	"github.com/minio/minio-go/v7"                 // SDK chính của MinIO
 	"github.com/minio/minio-go/v7/pkg/credentials" // Xử lý credentials cho MinIO authentication
 	"study.com/v1/internal/config"                 // Cấu hình ứng dụng (host, port, credentials, bucket name, ...)
+	"study.com/v1/internal/utils"                  // M-05: SafeGo — bọc goroutine chống panic sập process
 )
 
 // MinioClientInterface định nghĩa interface cho các thao tác với MinIO
@@ -551,7 +552,10 @@ func (m *MinioClient) UploadHLSDirectory(ctx context.Context, localDir, videoID,
 
 	for i := 0; i < maxWorkers; i++ {
 		wg.Add(1)
-		go func() {
+		// M-05 (audit 260909 vòng 2): bọc SafeGo — panic trong 1 worker (vd lỗi PutObjectFromFile)
+		// trước đây sập cả process; defer wg.Done() vẫn nằm TRONG closure nên chạy trước khi
+		// SafeGo recover, wg.Wait() ở dưới không bị treo vĩnh viễn.
+		utils.SafeGo(func() {
 			defer wg.Done()
 			for job := range jobCh {
 				if uploadErr := m.PutObjectFromFile(ctx, bucket, job.objectKey, job.localPath, job.contentType); uploadErr != nil {
@@ -560,7 +564,7 @@ func (m *MinioClient) UploadHLSDirectory(ctx context.Context, localDir, videoID,
 				}
 				os.Remove(job.localPath)
 			}
-		}()
+		})
 	}
 
 	for _, job := range jobs {

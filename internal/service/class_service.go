@@ -15,8 +15,8 @@ type ClassServiceInterface interface {
 	CreateClass(ctx context.Context, req dto.CreateClassDTO) (*dto.ClassResponseDTO, error)
 	GetAllClasses(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.ClassListResponseDTO, error)
 	GetClassByID(ctx context.Context, id uuid.UUID) (*dto.ClassResponseDTO, error)
-	UpdateClass(ctx context.Context, id uuid.UUID, req dto.UpdateClassDTO) (*dto.ClassResponseDTO, error)
-	DeleteClass(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	UpdateClass(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateClassDTO) (*dto.ClassResponseDTO, error)
+	DeleteClass(ctx context.Context, id, actorUserID uuid.UUID, isAdmin, hardDelete bool) error
 	GetClassesByCourseID(ctx context.Context, courseID uuid.UUID) ([]dto.ClassResponseDTO, error)
 
 	AssignTeacherToClass(ctx context.Context, classID uuid.UUID, req dto.AssignTeacherDTO) (*dto.TeacherClassResponseDTO, error)
@@ -24,11 +24,35 @@ type ClassServiceInterface interface {
 	RemoveTeacherFromClass(ctx context.Context, classID, teacherID uuid.UUID) error
 	GetTeachersByClass(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.TeacherClassListResponseDTO, error)
 
-	EnrollStudentToClass(ctx context.Context, classID uuid.UUID, req dto.EnrollStudentDTO) (*dto.StudentClassResponseDTO, error)
-	RemoveStudentFromClass(ctx context.Context, classID, studentID uuid.UUID) error
-	GetStudentsByClass(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.StudentClassListResponseDTO, error)
+	EnrollStudentToClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, req dto.EnrollStudentDTO) (*dto.StudentClassResponseDTO, error)
+	RemoveStudentFromClass(ctx context.Context, classID, studentID, actorUserID uuid.UUID, isAdmin bool) error
+	GetStudentsByClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.StudentClassListResponseDTO, error)
 	GetMyClasses(ctx context.Context, teacherID uuid.UUID) ([]dto.ClassResponseDTO, error)
 	GetTeacherStudents(ctx context.Context, teacherID uuid.UUID, page, pageSize int) (*dto.TeacherStudentListResponseDTO, error)
+}
+
+// requireClassTeacherOrAdmin (H-11, audit 260909 vòng 2): UpdateClass/DeleteClass/
+// EnrollStudentToClass/RemoveStudentFromClass/GetStudentsByClass trước đây không kiểm tra
+// actor có liên quan gì tới lớp không — bất kỳ user đăng nhập nào cũng sửa/xóa lớp, thêm/xóa
+// học sinh, hoặc xem danh sách học sinh (rò rỉ email/tên) của LỚP BẤT KỲ.
+//
+// isAdmin được tính sẵn ở tầng handler (qua middleware.PermissionChecker, permission
+// "SYSTEM_SETTINGS_MANAGE") rồi truyền xuống — ClassService không tiêm PermissionChecker
+// trực tiếp vì đã có 2 instance ClassService khác nhau được khởi tạo trong app/services.go
+// (một cho teacherSvc, một cho Services.Class); tiêm permChecker vào constructor sẽ phải sửa
+// cả 2 nơi trong khi chỉ Services.Class thực sự cần dùng.
+func (s *ClassService) requireClassTeacherOrAdmin(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool) error {
+	if isAdmin {
+		return nil
+	}
+	allowed, err := s.classRepo.TeacherClassExists(ctx, classID, actorUserID)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrNotClassTeacher
+	}
+	return nil
 }
 
 type ClassService struct {
@@ -137,7 +161,11 @@ func (s *ClassService) GetClassByID(ctx context.Context, id uuid.UUID) (*dto.Cla
 	return s.toClassResponseDTO(ctx, class), nil
 }
 
-func (s *ClassService) UpdateClass(ctx context.Context, id uuid.UUID, req dto.UpdateClassDTO) (*dto.ClassResponseDTO, error) {
+func (s *ClassService) UpdateClass(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateClassDTO) (*dto.ClassResponseDTO, error) {
+	if err := s.requireClassTeacherOrAdmin(ctx, id, actorUserID, isAdmin); err != nil {
+		return nil, err
+	}
+
 	class, err := s.classRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -192,7 +220,11 @@ func (s *ClassService) UpdateClass(ctx context.Context, id uuid.UUID, req dto.Up
 	return s.toClassResponseDTO(ctx, class), nil
 }
 
-func (s *ClassService) DeleteClass(ctx context.Context, id uuid.UUID, hardDelete bool) error {
+func (s *ClassService) DeleteClass(ctx context.Context, id, actorUserID uuid.UUID, isAdmin, hardDelete bool) error {
+	if err := s.requireClassTeacherOrAdmin(ctx, id, actorUserID, isAdmin); err != nil {
+		return err
+	}
+
 	class, err := s.classRepo.GetByID(ctx, id)
 	if err != nil {
 		return err
@@ -396,7 +428,11 @@ func (s *ClassService) GetTeachersByClass(ctx context.Context, classID uuid.UUID
 
 // Student-Class
 
-func (s *ClassService) EnrollStudentToClass(ctx context.Context, classID uuid.UUID, req dto.EnrollStudentDTO) (*dto.StudentClassResponseDTO, error) {
+func (s *ClassService) EnrollStudentToClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, req dto.EnrollStudentDTO) (*dto.StudentClassResponseDTO, error) {
+	if err := s.requireClassTeacherOrAdmin(ctx, classID, actorUserID, isAdmin); err != nil {
+		return nil, err
+	}
+
 	// Check class exists
 	class, err := s.classRepo.GetByID(ctx, classID)
 	if err != nil {
@@ -445,7 +481,11 @@ func (s *ClassService) EnrollStudentToClass(ctx context.Context, classID uuid.UU
 	}, nil
 }
 
-func (s *ClassService) RemoveStudentFromClass(ctx context.Context, classID, studentID uuid.UUID) error {
+func (s *ClassService) RemoveStudentFromClass(ctx context.Context, classID, studentID, actorUserID uuid.UUID, isAdmin bool) error {
+	if err := s.requireClassTeacherOrAdmin(ctx, classID, actorUserID, isAdmin); err != nil {
+		return err
+	}
+
 	// Check class exists
 	class, err := s.classRepo.GetByID(ctx, classID)
 	if err != nil {
@@ -467,7 +507,13 @@ func (s *ClassService) RemoveStudentFromClass(ctx context.Context, classID, stud
 	return s.classRepo.RemoveStudent(ctx, classID, studentID)
 }
 
-func (s *ClassService) GetStudentsByClass(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.StudentClassListResponseDTO, error) {
+func (s *ClassService) GetStudentsByClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.StudentClassListResponseDTO, error) {
+	// H-11: danh sách học sinh (email, tên, avatar) chỉ cho giáo viên của lớp hoặc admin xem —
+	// tránh học sinh/giáo viên khác dò classID để lấy PII của học sinh lớp khác.
+	if err := s.requireClassTeacherOrAdmin(ctx, classID, actorUserID, isAdmin); err != nil {
+		return nil, err
+	}
+
 	// Check class exists
 	class, err := s.classRepo.GetByID(ctx, classID)
 	if err != nil {

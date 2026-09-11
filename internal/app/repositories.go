@@ -53,9 +53,16 @@ type Repositories struct {
 	Analytics   *repository.AnalyticsRepository
 
 	// ===== Order & Payment =====
+	// Coupon (Minor, review vòng 4b/5): TRƯỚC ĐÂY có field Coupon *repository.CouponRepository
+	// ở đây — grep xác nhận 0 nơi nhận (không service/handler nào nhận repos.Coupon làm tham số
+	// constructor, xem internal/app/services.go) từ khi voucher_service.go thay thế hoàn toàn
+	// luồng coupon cũ (item 24, review web vòng 1 — bảng coupons không còn route/handler nào tạo
+	// dữ liệu). Xóa field + dòng khởi tạo wiring chết này; KHÔNG xóa
+	// internal/repository/coupon_repository.go/CouponRepository (kiểu vẫn còn test riêng
+	// coupon_repository_test.go, có thể còn dùng cho migration/thao tác dữ liệu coupon cũ sau
+	// này — chỉ dọn phần WIRING chết theo đúng phạm vi được giao).
 	Order              *repository.OrderRepository
 	OrderItem          *repository.OrderItemRepository
-	Coupon             *repository.CouponRepository
 	Voucher            *repository.VoucherRepository
 	OrderStatusHistory *repository.OrderStatusHistoryRepository
 	PaymentEvent       *repository.PaymentEventRepository
@@ -76,7 +83,7 @@ type Repositories struct {
 	CoinPurchase    *repository.CoinPurchaseRepository
 
 	// ===== Group =====
-	Group           *repository.GroupRepository
+	Group            *repository.GroupRepository
 	GroupMember      *repository.GroupMemberRepository
 	GroupJoinRequest *repository.GroupJoinRequestRepository
 
@@ -182,7 +189,6 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		// ===== Order & Payment =====
 		Order:              repository.NewOrderRepository(db),
 		OrderItem:          repository.NewOrderItemRepository(db),
-		Coupon:             repository.NewCouponRepository(db),
 		Voucher:            repository.NewVoucherRepository(db),
 		OrderStatusHistory: repository.NewOrderStatusHistoryRepository(db),
 		PaymentEvent:       repository.NewPaymentEventRepository(db),
@@ -203,7 +209,7 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		CoinPurchase:    repository.NewCoinPurchaseRepository(db),
 
 		// ===== Group =====
-		Group:           repository.NewGroupRepository(db),
+		Group:            repository.NewGroupRepository(db),
 		GroupMember:      repository.NewGroupMemberRepository(db),
 		GroupJoinRequest: repository.NewGroupJoinRequestRepository(db),
 

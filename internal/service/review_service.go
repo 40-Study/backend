@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/shopspring/decimal"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -24,12 +26,40 @@ type ReviewServiceInterface interface {
 }
 
 type ReviewService struct {
-	repo  repository.ReviewRepositoryInterface
-	redis *redis.Client
+	repo       repository.ReviewRepositoryInterface
+	courseRepo repository.CourseRepositoryInterface
+	redis      *redis.Client
 }
 
-func NewReviewService(repo repository.ReviewRepositoryInterface, redis *redis.Client) *ReviewService {
-	return &ReviewService{repo: repo, redis: redis}
+func NewReviewService(repo repository.ReviewRepositoryInterface, courseRepo repository.CourseRepositoryInterface, redis *redis.Client) *ReviewService {
+	return &ReviewService{repo: repo, courseRepo: courseRepo, redis: redis}
+}
+
+// recomputeCourseRatingStats (H6) tính lại average_rating/total_reviews thật từ
+// bảng reviews rồi ghi vào courses, gọi sau mỗi lần tạo/xoá review để 2 cột này
+// không còn đứng yên từ lúc seed (derived-field drift). Lỗi chỉ log, không chặn
+// request review chính — đây là số liệu hiển thị phụ, không phải nguồn sự thật.
+func (s *ReviewService) recomputeCourseRatingStats(ctx context.Context, courseID uuid.UUID) {
+	if s.courseRepo == nil {
+		return
+	}
+	avg, err := s.repo.GetAverageRating(ctx, courseID)
+	if err != nil {
+		log.Printf("[WARN] recomputeCourseRatingStats: failed to get average rating for course %s: %v", courseID, err)
+		return
+	}
+	counts, err := s.repo.GetRatingCounts(ctx, courseID)
+	if err != nil {
+		log.Printf("[WARN] recomputeCourseRatingStats: failed to get rating counts for course %s: %v", courseID, err)
+		return
+	}
+	var total int64
+	for _, c := range counts {
+		total += c
+	}
+	if err := s.courseRepo.UpdateRatingStats(ctx, courseID, decimal.NewFromFloat(avg), total); err != nil {
+		log.Printf("[WARN] recomputeCourseRatingStats: failed to update course %s: %v", courseID, err)
+	}
 }
 
 const (
@@ -64,6 +94,7 @@ func (s *ReviewService) CreateReview(ctx context.Context, userID, courseID uuid.
 	}
 
 	s.invalidateRatingCache(ctx, courseID)
+	s.recomputeCourseRatingStats(ctx, courseID)
 
 	loaded, _ := s.repo.GetReviewByID(ctx, review.ID)
 	if loaded != nil {
@@ -184,6 +215,7 @@ func (s *ReviewService) UpdateReview(ctx context.Context, reviewID, userID uuid.
 	}
 
 	s.invalidateRatingCache(ctx, review.CourseID)
+	s.recomputeCourseRatingStats(ctx, review.CourseID)
 
 	helpfulCount, _ := s.repo.GetHelpfulCount(ctx, reviewID)
 	return s.mapReviewToDTO(review, helpfulCount, nil), nil
@@ -204,6 +236,7 @@ func (s *ReviewService) DeleteReview(ctx context.Context, reviewID, userID uuid.
 	}
 
 	s.invalidateRatingCache(ctx, courseID)
+	s.recomputeCourseRatingStats(ctx, courseID)
 	return nil
 }
 

@@ -58,7 +58,7 @@ type ClassSession struct {
 	Topic               *string            `gorm:"type:varchar(500)" json:"topic,omitempty"`
 	Notes               *string            `gorm:"type:text" json:"notes,omitempty"`
 	Materials           *string            `gorm:"type:jsonb" json:"materials,omitempty"`                // JSON array of materials
-	LivestreamSessionID *uuid.UUID         `gorm:"type:uuid" json:"livestream_session_id,omitempty"`     // Link toi livestream neu co
+	LivestreamSessionID *uuid.UUID         `gorm:"type:uuid;index" json:"livestream_session_id,omitempty"`     // Link toi livestream neu co
 	CancelledAt         *time.Time         `json:"cancelled_at,omitempty"`
 	CancelReason        *string            `gorm:"type:text" json:"cancel_reason,omitempty"`
 
@@ -90,7 +90,7 @@ const (
 type SessionAttendance struct {
 	ID               uuid.UUID        `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	SessionID        uuid.UUID        `gorm:"type:uuid;not null;uniqueIndex:idx_session_student,priority:1" json:"session_id"`
-	StudentID        uuid.UUID        `gorm:"type:uuid;not null;uniqueIndex:idx_session_student,priority:2" json:"student_id"`
+	StudentID        uuid.UUID        `gorm:"type:uuid;not null;index;uniqueIndex:idx_session_student,priority:2" json:"student_id"`
 	Status           AttendanceStatus `gorm:"type:varchar(20);not null;check:status IN ('present','absent','late','excused')" json:"status"`
 	CheckInTime      *time.Time       `json:"check_in_time,omitempty"`
 	CheckOutTime     *time.Time       `json:"check_out_time,omitempty"`

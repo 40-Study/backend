@@ -8,8 +8,8 @@ import (
 
 type Review struct {
 	BaseModel
-	UserID   uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
-	CourseID uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_user_course_review" json:"course_id"`
+	UserID   uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_user_course_review,priority:1" json:"user_id"`
+	CourseID uuid.UUID `gorm:"type:uuid;not null;index;uniqueIndex:idx_user_course_review,priority:2" json:"course_id"`
 	Rating   int       `gorm:"type:smallint;not null;check:rating >= 1 AND rating <= 5" json:"rating"`
 	Comment  *string   `gorm:"type:text" json:"comment,omitempty"`
 

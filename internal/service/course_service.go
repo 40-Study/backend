@@ -11,13 +11,17 @@ import (
 	"study.com/v1/internal/utils"
 )
 
+// ErrNotCourseOwner được handler ánh xạ sang HTTP 403 — dùng chung message với
+// pattern "forbidden: not the owner" đã có sẵn ở discussion_service.go/review_service.go.
+var ErrNotCourseOwner = errors.New("forbidden: not the owner")
+
 type CourseServiceInterface interface {
 	CreateCourse(ctx context.Context, req dto.CreateCourseDTO) (*dto.CourseResponseDTO, error)
 	GetAllCourses(ctx context.Context, params dto.CourseFilterParams) (*dto.CourseListResponseDTO, error)
 	GetCourseByID(ctx context.Context, id uuid.UUID) (*dto.CourseDetailDTO, error)
 	GetCourseBySlug(ctx context.Context, slug string) (*dto.CourseDetailDTO, error)
-	UpdateCourse(ctx context.Context, id uuid.UUID, req dto.UpdateCourseDTO) (*dto.CourseResponseDTO, error)
-	DeleteCourse(ctx context.Context, id uuid.UUID) error
+	UpdateCourse(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateCourseDTO) (*dto.CourseResponseDTO, error)
+	DeleteCourse(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool) error
 }
 
 type CourseService struct {
@@ -223,13 +227,20 @@ func (s *CourseService) GetCourseBySlug(ctx context.Context, slug string) (*dto.
 	return detail, nil
 }
 
-func (s *CourseService) UpdateCourse(ctx context.Context, id uuid.UUID, req dto.UpdateCourseDTO) (*dto.CourseResponseDTO, error) {
+func (s *CourseService) UpdateCourse(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateCourseDTO) (*dto.CourseResponseDTO, error) {
 	course, err := s.courseRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if course == nil {
 		return nil, errors.New("course not found")
+	}
+	// C-12 (audit 260909): trước đây bất kỳ user đăng nhập nào cũng UpdateCourse được khóa
+	// học của người khác vì service không nhận/so sánh userID với course.InstructorID.
+	// Vòng 2: cho phép SYSTEM_ADMIN override (isAdmin tính sẵn ở handler qua PermissionChecker)
+	// để kiểm duyệt/sửa khóa học vi phạm của giảng viên khác.
+	if course.InstructorID != actorUserID && !isAdmin {
+		return nil, ErrNotCourseOwner
 	}
 
 	if req.CategoryID != nil {
@@ -321,13 +332,18 @@ func (s *CourseService) UpdateCourse(ctx context.Context, id uuid.UUID, req dto.
 	return s.toCourseResponseDTO(course), nil
 }
 
-func (s *CourseService) DeleteCourse(ctx context.Context, id uuid.UUID) error {
+func (s *CourseService) DeleteCourse(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool) error {
 	course, err := s.courseRepo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
 	if course == nil {
 		return errors.New("course not found")
+	}
+	// C-12 (audit 260909): tương tự UpdateCourse — chỉ giảng viên tạo khóa học hoặc
+	// SYSTEM_ADMIN (vòng 2) mới được xóa.
+	if course.InstructorID != actorUserID && !isAdmin {
+		return ErrNotCourseOwner
 	}
 	return s.courseRepo.Delete(ctx, id)
 }

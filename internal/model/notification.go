@@ -14,7 +14,7 @@ type Notification struct {
 	Content          string     `gorm:"type:text;not null" json:"content"`
 	NotificationType string     `gorm:"type:varchar(30);not null;check:notification_type IN ('course_update', 'new_lesson', 'quiz_reminder', 'certificate_earned', 'payment_success', 'payment_failed', 'promotion', 'system', 'achievement', 'streak', 'point_earned')" json:"notification_type"`
 	ReferenceType    *string    `gorm:"type:varchar(30)" json:"reference_type,omitempty"`
-	ReferenceID      *uuid.UUID `gorm:"type:uuid" json:"reference_id,omitempty"`
+	ReferenceID      *uuid.UUID `gorm:"type:uuid;index" json:"reference_id,omitempty"`
 	IsRead           bool       `gorm:"default:false;index" json:"is_read"`
 	ReadAt           *time.Time `json:"read_at,omitempty"`
 

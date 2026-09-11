@@ -9,12 +9,15 @@ import (
 
 // ===== Order DTOs =====
 
+// M-01 (audit 260909 vòng 2): thêm validate tag cho Source (bắt buộc, chỉ 2 giá trị hợp lệ)
+// và CourseIDs (mỗi phần tử phải là UUID hợp lệ khi source=buy_now) — trước đây không có
+// tag nào nên ValidateStruct (nếu handler có gọi) cũng không kiểm tra được gì trên DTO này.
 type CreateOrderRequest struct {
-	Source      string   `json:"source"` // "cart" or "buy_now" 
-	CourseIDs   []string `json:"course_ids,omitempty"`
-	CouponCode  string   `json:"coupon_code,omitempty"`
-	Note        string   `json:"note,omitempty"`
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	Source         string   `json:"source" validate:"required,oneof=cart buy_now"` // "cart" or "buy_now"
+	CourseIDs      []string `json:"course_ids,omitempty" validate:"omitempty,dive,uuid"`
+	CouponCode     string   `json:"coupon_code,omitempty"`
+	Note           string   `json:"note,omitempty"`
+	IdempotencyKey string   `json:"idempotency_key,omitempty"`
 }
 
 type OrderResponse struct {
@@ -60,7 +63,7 @@ type CancelOrderRequest struct {
 // ===== Payment DTOs =====
 
 type CreatePaymentIntentRequest struct {
-	PaymentMethod string `json:"payment_method"` // "qr_transfer", "bank_transfer"
+	PaymentMethod  string `json:"payment_method" validate:"required,oneof=qr_transfer bank_transfer"`
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 

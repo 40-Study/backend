@@ -11,29 +11,36 @@ import (
 	"study.com/v1/internal/repository"
 )
 
+// ErrNotLessonCourseOwner dùng chung cho mọi thao tác ghi lesson — chỉ giảng viên sở hữu
+// khóa học cha (qua section -> course.InstructorID) mới được tạo/sửa/xóa lesson (C-12).
+var ErrNotLessonCourseOwner = errors.New("forbidden: not the owner")
+
 type LessonServiceInterface interface {
-	CreateLesson(ctx context.Context, sectionID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error)
+	CreateLesson(ctx context.Context, sectionID, actorUserID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error)
 	GetAllLessons(ctx context.Context, sectionID uuid.UUID) ([]dto.LessonResponseDTO, error)
 	GetLessonByID(ctx context.Context, lessonID uuid.UUID) (*dto.LessonResponseDTO, error)
-	UpdateLesson(ctx context.Context, lessonID uuid.UUID, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error)
-	DeleteLesson(ctx context.Context, lessonID uuid.UUID) error
+	UpdateLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error)
+	DeleteLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool) error
 	ReorderLessons(ctx context.Context, sectionID uuid.UUID, req dto.ReorderDTO) error
 }
 
 type LessonService struct {
 	lessonRepo    repository.LessonRepositoryInterface
 	sectionRepo   repository.SectionRepositoryInterface
+	courseRepo    repository.CourseRepositoryInterface
 	uploadService UploadServiceInterface
 }
 
 func NewLessonService(
 	lessonRepo repository.LessonRepositoryInterface,
 	sectionRepo repository.SectionRepositoryInterface,
+	courseRepo repository.CourseRepositoryInterface,
 	uploadService UploadServiceInterface,
 ) *LessonService {
 	return &LessonService{
 		lessonRepo:    lessonRepo,
 		sectionRepo:   sectionRepo,
+		courseRepo:    courseRepo,
 		uploadService: uploadService,
 	}
 }
@@ -49,8 +56,63 @@ func (s *LessonService) validateSection(ctx context.Context, sectionID uuid.UUID
 	return nil
 }
 
-func (s *LessonService) CreateLesson(ctx context.Context, sectionID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error) {
-	if err := s.validateSection(ctx, sectionID); err != nil {
+// checkSectionCourseOwnership tra ve section (neu ton tai) sau khi xac nhan actorUserID la
+// giang vien so huu course chua section do (qua section.CourseID -> course.InstructorID).
+func (s *LessonService) checkSectionCourseOwnership(ctx context.Context, sectionID, actorUserID uuid.UUID) (*model.Section, error) {
+	section, err := s.sectionRepo.GetByID(ctx, sectionID)
+	if err != nil {
+		return nil, err
+	}
+	if section == nil {
+		return nil, errors.New("section not found")
+	}
+	course, err := s.courseRepo.GetByID(ctx, section.CourseID)
+	if err != nil {
+		return nil, err
+	}
+	if course == nil {
+		return nil, errors.New("course not found")
+	}
+	if course.InstructorID != actorUserID {
+		return nil, ErrNotLessonCourseOwner
+	}
+	return section, nil
+}
+
+// checkLessonCourseOwnership giong checkSectionCourseOwnership nhung xuat phat tu lessonID
+// (di qua lesson.SectionID -> section.CourseID -> course.InstructorID). isAdmin (vòng 2, tính
+// sẵn ở handler qua PermissionChecker) cho phép SYSTEM_ADMIN override chủ sở hữu khi sửa/xóa.
+func (s *LessonService) checkLessonCourseOwnership(ctx context.Context, lesson *model.Lesson, actorUserID uuid.UUID, isAdmin bool) error {
+	return requireLessonCourseOwnerOrAdmin(ctx, s.sectionRepo, s.courseRepo, lesson, actorUserID, isAdmin)
+}
+
+// requireLessonCourseOwnerOrAdmin (H-05, review vòng 1): tách thành HÀM TỰ DO (không gắn với
+// *LessonService) để LessonContentService dùng chung logic kiểm tra chủ sở hữu này — trước đây
+// C-12 chỉ gate được Lesson (tạo/sửa/xóa), còn LessonContentService (nội dung BÊN TRONG lesson:
+// video, bài tập...) không kiểm gì cả, kể cả DeleteContent xóa cả video gốc trên MinIO.
+func requireLessonCourseOwnerOrAdmin(ctx context.Context, sectionRepo repository.SectionRepositoryInterface, courseRepo repository.CourseRepositoryInterface, lesson *model.Lesson, actorUserID uuid.UUID, isAdmin bool) error {
+	section, err := sectionRepo.GetByID(ctx, lesson.SectionID)
+	if err != nil {
+		return err
+	}
+	if section == nil {
+		return errors.New("section not found")
+	}
+	course, err := courseRepo.GetByID(ctx, section.CourseID)
+	if err != nil {
+		return err
+	}
+	if course == nil {
+		return errors.New("course not found")
+	}
+	if course.InstructorID != actorUserID && !isAdmin {
+		return ErrNotLessonCourseOwner
+	}
+	return nil
+}
+
+func (s *LessonService) CreateLesson(ctx context.Context, sectionID, actorUserID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error) {
+	if _, err := s.checkSectionCourseOwnership(ctx, sectionID, actorUserID); err != nil {
 		return nil, err
 	}
 
@@ -125,13 +187,16 @@ func (s *LessonService) GetLessonByID(ctx context.Context, lessonID uuid.UUID) (
 	return s.toLessonResponseDTO(lesson, contents), nil
 }
 
-func (s *LessonService) UpdateLesson(ctx context.Context, lessonID uuid.UUID, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error) {
+func (s *LessonService) UpdateLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error) {
 	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
 	if err != nil {
 		return nil, err
 	}
 	if lesson == nil {
 		return nil, errors.New("lesson not found")
+	}
+	if err := s.checkLessonCourseOwnership(ctx, lesson, actorUserID, isAdmin); err != nil {
+		return nil, err
 	}
 
 	if req.Title != nil {
@@ -162,13 +227,16 @@ func (s *LessonService) UpdateLesson(ctx context.Context, lessonID uuid.UUID, re
 	return s.toLessonResponseDTO(lesson, contents), nil
 }
 
-func (s *LessonService) DeleteLesson(ctx context.Context, lessonID uuid.UUID) error {
+func (s *LessonService) DeleteLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool) error {
 	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
 	if err != nil {
 		return err
 	}
 	if lesson == nil {
 		return errors.New("lesson not found")
+	}
+	if err := s.checkLessonCourseOwnership(ctx, lesson, actorUserID, isAdmin); err != nil {
+		return err
 	}
 
 	// Delete all content videos from MinIO before deleting lesson

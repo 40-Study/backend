@@ -85,8 +85,8 @@ func (GradeColumn) TableName() string {
 // FinalGrade - Diem tong ket cua hoc sinh trong lop
 type FinalGrade struct {
 	ID              uuid.UUID        `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	StudentID       uuid.UUID        `gorm:"type:uuid;not null;uniqueIndex:idx_student_class,priority:1" json:"student_id"`
-	ClassID         uuid.UUID        `gorm:"type:uuid;not null;uniqueIndex:idx_student_class,priority:2" json:"class_id"`
+	StudentID       uuid.UUID        `gorm:"type:uuid;not null;uniqueIndex:idx_final_grade_student_class,priority:1" json:"student_id"`
+	ClassID         uuid.UUID        `gorm:"type:uuid;not null;index;uniqueIndex:idx_final_grade_student_class,priority:2" json:"class_id"`
 	WeightedAverage decimal.Decimal  `gorm:"type:decimal(5,2)" json:"weighted_average"` // Diem trung binh co trong so
 	LetterGrade     *string          `gorm:"type:varchar(5)" json:"letter_grade,omitempty"` // A, B+, C, etc.
 	GPA             *decimal.Decimal `gorm:"type:decimal(3,2)" json:"gpa,omitempty"`        // 4.0 scale

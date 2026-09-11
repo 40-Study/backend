@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 )
 
@@ -25,11 +26,23 @@ type ClassHandlerInterface interface {
 }
 
 type ClassHandler struct {
-	service service.ClassServiceInterface
+	service     service.ClassServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewClassHandler(service service.ClassServiceInterface) *ClassHandler {
-	return &ClassHandler{service: service}
+func NewClassHandler(service service.ClassServiceInterface, permChecker *middleware.PermissionChecker) *ClassHandler {
+	return &ClassHandler{service: service, permChecker: permChecker}
+}
+
+// classErrorStatus ánh xạ lỗi phân quyền (H-11) sang HTTP status phù hợp; trả 0 khi không
+// nhận diện được (để caller giữ nguyên xử lý 400/500 hiện có) — cùng pattern gradeErrorStatus.
+func classErrorStatus(err error) int {
+	switch err {
+	case service.ErrNotClassTeacher:
+		return fiber.StatusForbidden
+	default:
+		return 0
+	}
 }
 
 func (h *ClassHandler) CreateClass(c *fiber.Ctx) error {
@@ -186,6 +199,14 @@ func (h *ClassHandler) UpdateClass(c *fiber.Ctx) error {
 		})
 	}
 
+	// H-11: chỉ giáo viên của lớp hoặc admin mới sửa được.
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
 	var req dto.UpdateClassDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -194,8 +215,12 @@ func (h *ClassHandler) UpdateClass(c *fiber.Ctx) error {
 		})
 	}
 
-	class, err := h.service.UpdateClass(c.Context(), id, req)
+	isAdmin := isAdminActor(c, h.permChecker, actorUserID)
+	class, err := h.service.UpdateClass(c.Context(), id, actorUserID, isAdmin, req)
 	if err != nil {
+		if status := classErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update class",
 			"error":   err.Error(),
@@ -217,9 +242,21 @@ func (h *ClassHandler) DeleteClass(c *fiber.Ctx) error {
 		})
 	}
 
+	// H-11: chỉ giáo viên của lớp hoặc admin mới xóa được.
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
 	hardDelete := c.QueryBool("hard_delete", false)
 
-	if err := h.service.DeleteClass(c.Context(), id, hardDelete); err != nil {
+	isAdmin := isAdminActor(c, h.permChecker, actorUserID)
+	if err := h.service.DeleteClass(c.Context(), id, actorUserID, isAdmin, hardDelete); err != nil {
+		if status := classErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete class",
 			"error":   err.Error(),
@@ -330,6 +367,14 @@ func (h *ClassHandler) EnrollStudentToClass(c *fiber.Ctx) error {
 		})
 	}
 
+	// H-11: chỉ giáo viên của lớp hoặc admin mới thêm học sinh được.
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
 	var req dto.EnrollStudentDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -338,8 +383,12 @@ func (h *ClassHandler) EnrollStudentToClass(c *fiber.Ctx) error {
 		})
 	}
 
-	sc, err := h.service.EnrollStudentToClass(c.Context(), classID, req)
+	isAdmin := isAdminActor(c, h.permChecker, actorUserID)
+	sc, err := h.service.EnrollStudentToClass(c.Context(), classID, actorUserID, isAdmin, req)
 	if err != nil {
+		if status := classErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to enroll student",
 			"error":   err.Error(),
@@ -369,7 +418,19 @@ func (h *ClassHandler) RemoveStudentFromClass(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.RemoveStudentFromClass(c.Context(), classID, studentID); err != nil {
+	// H-11: chỉ giáo viên của lớp hoặc admin mới xóa học sinh được.
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	isAdmin := isAdminActor(c, h.permChecker, actorUserID)
+	if err := h.service.RemoveStudentFromClass(c.Context(), classID, studentID, actorUserID, isAdmin); err != nil {
+		if status := classErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to remove student",
 			"error":   err.Error(),
@@ -390,11 +451,23 @@ func (h *ClassHandler) GetStudentsByClass(c *fiber.Ctx) error {
 		})
 	}
 
+	// H-11: danh sách học sinh (email/tên/avatar) chỉ cho giáo viên của lớp hoặc admin xem.
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 
-	students, err := h.service.GetStudentsByClass(c.Context(), classID, page, pageSize)
+	isAdmin := isAdminActor(c, h.permChecker, actorUserID)
+	students, err := h.service.GetStudentsByClass(c.Context(), classID, actorUserID, isAdmin, page, pageSize)
 	if err != nil {
+		if status := classErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve students",
 			"error":   err.Error(),

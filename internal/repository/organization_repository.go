@@ -11,6 +11,11 @@ import (
 
 type OrganizationRepositoryInterface interface {
 	CreateOrganization(ctx context.Context, org *model.Organization) error
+	// WithTransaction (23a, review vòng 1): cho phép service tạo Organization + Role
+	// ORG_OWNER + gán quyền + UserOrganizationRole cho người tạo trong CÙNG một transaction —
+	// nếu bước nào lỗi, org mới tạo cũng bị rollback (không để lại tổ chức "mồ côi" không ai
+	// quản lý được).
+	WithTransaction(ctx context.Context, fn func(tx *gorm.DB) error) error
 	GetOrganizationByID(ctx context.Context, id uuid.UUID) (*model.Organization, error)
 	GetOrganizationByName(ctx context.Context, name string) (*model.Organization, error)
 	GetAllOrganizations(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.Organization, int64, error)
@@ -29,6 +34,10 @@ func NewOrganizationRepository(db *gorm.DB) *OrganizationRepository {
 
 func (r *OrganizationRepository) CreateOrganization(ctx context.Context, org *model.Organization) error {
 	return r.db.WithContext(ctx).Create(org).Error
+}
+
+func (r *OrganizationRepository) WithTransaction(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	return r.db.WithContext(ctx).Transaction(fn)
 }
 
 func (r *OrganizationRepository) GetOrganizationByID(ctx context.Context, id uuid.UUID) (*model.Organization, error) {

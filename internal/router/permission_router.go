@@ -13,11 +13,14 @@ func SetupPermissionRoutes(
 	cfg *config.Config,
 	permissionHandler *handler.PermissionHandler,
 	redis *redis.Client,
+	permChecker *middleware.PermissionChecker,
 ) {
 	permissions := api.Group("/permissions", middleware.AuthMiddleware(cfg, redis))
 	{
+		// Đọc danh sách permission: chỉ cần đăng nhập (dùng để hiển thị UI phân quyền).
 		permissions.Get("/", permissionHandler.GetAllPermissions)
 		permissions.Get("/:id", permissionHandler.GetPermissionByID)
-		permissions.Put("/:id", permissionHandler.UpdatePermission)
+		// Sửa permission là thao tác quản trị RBAC hệ thống.
+		permissions.Put("/:id", permChecker.RequirePermissions("ROLES_MANAGE_SYSTEM"), permissionHandler.UpdatePermission)
 	}
 }
