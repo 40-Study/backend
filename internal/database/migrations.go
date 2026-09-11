@@ -170,6 +170,16 @@ func RunPostMigrations(db *gorm.DB) error {
 			`,
 		},
 		{
+			// Smoke test 11/09/2026 trên DB dev: vouchers.code unique THƯỜNG — admin xóa (mềm) một
+			// voucher rồi tạo lại cùng mã bị "duplicated key not allowed" vĩnh viễn. Cùng lớp H3.
+			name: "partial unique idx_vouchers_code on vouchers (H3)",
+			sql: `
+				DROP INDEX IF EXISTS idx_vouchers_code;
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_code
+					ON vouchers (code) WHERE deleted_at IS NULL;
+			`,
+		},
+		{
 			// C4: chặn số dư ví xu âm ở tầng DB — guard duy nhất trước đây chỉ nằm ở
 			// application code (SubtractBalance WHERE balance >= ?), có thể bị vô
 			// hiệu nếu code gọi sai tham số. Bọc DO $$ kiểm tra pg_constraint trước

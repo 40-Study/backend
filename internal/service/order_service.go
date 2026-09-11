@@ -3,14 +3,18 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -54,7 +58,6 @@ type OrderServiceInterface interface {
 	GetOrderByNumber(ctx context.Context, orderNumber string) (*dto.OrderResponse, error)
 	GetUserOrders(ctx context.Context, userID uuid.UUID, page, limit int, status string) (*dto.OrderListResponse, error)
 	CancelOrder(ctx context.Context, userID, orderID uuid.UUID, isAdmin bool, reason string) error
-	ValidateIdempotencyKey(ctx context.Context, scope, key string, requestHash string) (*dto.OrderResponse, bool, error)
 }
 
 type OrderService struct {
@@ -155,6 +158,19 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 		log.Printf("[ORDER-SWEEP-WARN] user=%s sweep đơn hết hạn lỗi (không chặn tạo đơn mới): %v", userID, err)
 	}
 
+	// Idempotency (smoke test 11/09/2026): TRƯỚC ĐÂY req.IdempotencyKey được nhận nhưng KHÔNG
+	// dùng ở đâu (ValidateIdempotencyKey cũ không có call site, bảng idempotency_keys luôn 0
+	// dòng) — gửi lại cùng key tạo ra 2 đơn khác nhau. Giờ: cùng (user, key) trong TTL → trả lại
+	// ĐÚNG đơn đã tạo; cùng key nhưng payload khác → ErrIdempotencyPayloadMismatch. Key được
+	// "claim" TRONG transaction tạo đơn (claimIdempotencyKey) nhờ unique index (scope, key) nên
+	// 2 request đồng thời cùng key chỉ có 1 đơn được commit.
+	requestHash := createOrderRequestHash(userID, req)
+	if replayed, err := s.findReplayedOrder(ctx, userID, req.IdempotencyKey, requestHash); err != nil {
+		return nil, err
+	} else if replayed != nil {
+		return replayed, nil
+	}
+
 	var courseIDs []uuid.UUID
 	// selectedCourseIDs (item 26, review web vòng 1): khi client gửi kèm course_ids CÙNG với
 	// source="cart" (chọn một phần giỏ hàng để checkout thay vì cả giỏ), nhớ lại tập đã CHỌN
@@ -217,10 +233,11 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 		return nil, ErrCourseNotFound
 	}
 
+	// Giá hiệu lực (khuyến mãi nếu có) — phải KHỚP tổng giỏ hàng (cart_service), xem
+	// Course.EffectivePrice. Smoke test 11/09: giỏ 499.000đ nhưng đơn tính 999.000đ.
 	subtotal := decimal.Zero
 	for _, course := range courses {
-		price := course.Price
-		subtotal = subtotal.Add(price)
+		subtotal = subtotal.Add(course.EffectivePrice())
 	}
 
 	// item 24 (review web vòng 1): validate/áp mã giảm giá qua VOUCHERS thay vì COUPONS —
@@ -298,7 +315,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 	// Create order items with price snapshot
 	items := make([]model.OrderItem, 0, len(courses))
 	for _, course := range courses {
-		price := course.Price
+		price := course.EffectivePrice()
 
 		item := model.OrderItem{
 			ID:             uuid.New(),
@@ -383,6 +400,13 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 			return err
 		}
 
+		// Claim idempotency key trong CÙNG transaction — lỗi/đụng key thì rollback cả đơn.
+		if req.IdempotencyKey != "" && s.idempotencyKeyRepo != nil {
+			if err := claimIdempotencyKey(txDB, userID, req.IdempotencyKey, requestHash, order.ID); err != nil {
+				return err
+			}
+		}
+
 		// H2-03 (review vòng 3): đơn 0đ (khóa miễn phí/voucher giảm 100%) hoàn tất fulfillment
 		// (enrollment + total_students) NGAY TRONG transaction này — lỗi ở đây rollback TOÀN BỘ
 		// (order, items, history, voucher reserve) thay vì để lại đơn "completed" không có
@@ -399,7 +423,21 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 	})
 
 	if err != nil {
+		// Thua cuộc đua cùng key: request kia đã commit đơn — trả lại đúng đơn đó thay vì lỗi.
+		if errors.Is(err, errIdempotencyKeyRace) {
+			if replayed, rerr := s.findReplayedOrder(ctx, userID, req.IdempotencyKey, requestHash); rerr == nil && replayed != nil {
+				return replayed, nil
+			}
+		}
 		return nil, err
+	}
+
+	// Gắn Course (chỉ trong bộ nhớ, SAU khi đã commit) để response có course_name — items được
+	// tạo theo đúng thứ tự courses ở trên.
+	for i := range items {
+		if i < len(courses) {
+			items[i].Course = courses[i]
+		}
 	}
 
 	// item 26 (review web vòng 1): chỉ xóa khỏi giỏ hàng đúng các course ĐÃ CHỌN — trước đây
@@ -593,38 +631,82 @@ func releaseOrderAndTransition(
 // completeOrderFulfillment TRƯỚC KHI được sửa ở vòng 3. Quyết định team-lead vòng 3b: xóa hẳn
 // thay vì sửa code chết. Luồng thật đi qua PaymentService.CheckAndProcessPayment.
 
-// ValidateIdempotencyKey - Check if request is idempotent
-func (s *OrderService) ValidateIdempotencyKey(ctx context.Context, scope, key string, requestHash string) (*dto.OrderResponse, bool, error) {
-	if key == "" {
-		return nil, false, nil
-	}
+// ===== Idempotency cho CreateOrder =====
+// Thay cho ValidateIdempotencyKey cũ (không có call site, ResponseBody không bao giờ được ghi).
+// Key lưu dạng "<user_id>:<key>" trong scope "create_order" để 2 user gửi trùng key không đụng
+// nhau; ResponseBody = order.ID để replay trả lại đúng đơn. TTL = pendingOrderDefaultTTL.
 
-	idemKey, err := s.idempotencyKeyRepo.GetByScopeAndKey(scope, key)
+const idempotencyScopeCreateOrder = "create_order"
+
+// errIdempotencyKeyRace: sentinel nội bộ — key đã bị request đồng thời khác claim (unique index
+// idx_idempotency_scope_key). CreateOrder bắt lỗi này để trả lại đơn của request thắng cuộc.
+var errIdempotencyKeyRace = errors.New("idempotency key already claimed by a concurrent request")
+
+func idempotencyScopedKey(userID uuid.UUID, key string) string {
+	return userID.String() + ":" + key
+}
+
+// createOrderRequestHash — hash payload để phát hiện "cùng key nhưng nội dung khác".
+func createOrderRequestHash(userID uuid.UUID, req dto.CreateOrderRequest) string {
+	ids := append([]string(nil), req.CourseIDs...)
+	sort.Strings(ids)
+	sum := sha256.Sum256([]byte(strings.Join([]string{userID.String(), req.Source, strings.Join(ids, ","), req.CouponCode}, "|")))
+	return hex.EncodeToString(sum[:])
+}
+
+// findReplayedOrder trả về đơn đã tạo trước đó cho (user, key) nếu key còn hạn; nil nếu chưa có
+// hoặc đã hết hạn; ErrIdempotencyPayloadMismatch nếu cùng key mà payload khác.
+func (s *OrderService) findReplayedOrder(ctx context.Context, userID uuid.UUID, key, requestHash string) (*dto.OrderResponse, error) {
+	if key == "" || s.idempotencyKeyRepo == nil {
+		return nil, nil
+	}
+	idem, err := s.idempotencyKeyRepo.GetByScopeAndKey(idempotencyScopeCreateOrder, idempotencyScopedKey(userID, key))
 	if err != nil {
 		if errors.Is(err, repository.ErrIdempotencyKeyNotFound) {
-			return nil, false, nil
+			return nil, nil
 		}
-		return nil, false, err
+		return nil, err
 	}
-
-	// Check if expired
-	if time.Now().After(idemKey.ExpiresAt) {
-		return nil, false, nil
+	if time.Now().After(idem.ExpiresAt) {
+		return nil, nil
 	}
-
-	// Check if request hash matches
-	if idemKey.RequestHash != requestHash {
-		return nil, false, ErrIdempotencyPayloadMismatch
+	if idem.RequestHash != requestHash {
+		return nil, ErrIdempotencyPayloadMismatch
 	}
-
-	// Return cached response if successful
-	if idemKey.ResponseCode >= 200 && idemKey.ResponseCode < 300 && idemKey.ResponseBody != "" {
-		// Parse response body to order response
-		// For simplicity, we return nil and let the handler reconstruct
-		return nil, true, nil
+	orderID, err := uuid.Parse(idem.ResponseBody)
+	if err != nil {
+		return nil, nil
 	}
+	return s.GetOrderByID(ctx, orderID, userID, false)
+}
 
-	return nil, true, nil
+// claimIdempotencyKey ghi key TRONG transaction tạo đơn. Key cũ đã hết hạn được dọn trước để
+// client có thể dùng lại key sau TTL; đụng unique index → errIdempotencyKeyRace.
+func claimIdempotencyKey(txDB *gorm.DB, userID uuid.UUID, key, requestHash string, orderID uuid.UUID) error {
+	scoped := idempotencyScopedKey(userID, key)
+	now := time.Now()
+	if err := txDB.Where("scope = ? AND key = ? AND expires_at < ?", idempotencyScopeCreateOrder, scoped, now).
+		Delete(&model.IdempotencyKey{}).Error; err != nil {
+		return err
+	}
+	rec := &model.IdempotencyKey{
+		ID:           uuid.New(),
+		CreatedAt:    now,
+		Key:          scoped,
+		Scope:        idempotencyScopeCreateOrder,
+		RequestHash:  requestHash,
+		ResponseCode: 201,
+		ResponseBody: orderID.String(),
+		ExpiresAt:    now.Add(pendingOrderDefaultTTL),
+		UserID:       &userID,
+	}
+	if err := repository.NewIdempotencyKeyRepository(txDB).Create(rec); err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			return errIdempotencyKeyRace
+		}
+		return err
+	}
+	return nil
 }
 
 // sweepExpiredHeldOrders (H3-01b, review vòng 4) — xem comment gọi ở đầu CreateOrder. Mỗi đơn
@@ -676,7 +758,7 @@ func (s *OrderService) toOrderResponse(order *model.Order, items []model.OrderIt
 		itemResponses = append(itemResponses, dto.OrderItemResponse{
 			ID:             item.ID,
 			CourseID:       item.CourseID,
-			CourseName:     "", // Will be populated if needed
+			CourseName:     item.Course.Title, // preload "Items.Course" ở repository; CreateOrder gắn tay
 			Price:          item.Price,
 			DiscountAmount: item.DiscountAmount,
 			FinalPrice:     item.FinalPrice,

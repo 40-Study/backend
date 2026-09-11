@@ -91,12 +91,8 @@ func (s *CartService) GetCart(ctx context.Context, userID uuid.UUID) (*dto.CartL
 		itemDTO := s.toCartItemResponseDTO(&items[i], course)
 		responseItems = append(responseItems, *itemDTO)
 
-		// Calculate total price (use discount price if available)
-		price := course.Price.InexactFloat64()
-		if course.DiscountPrice != nil {
-			price = course.DiscountPrice.InexactFloat64()
-		}
-		totalPrice += price
+		// Tổng giỏ hàng theo giá hiệu lực — CÙNG quy tắc với order_service (Course.EffectivePrice)
+		totalPrice += course.EffectivePrice().InexactFloat64()
 	}
 
 	return &dto.CartListResponseDTO{

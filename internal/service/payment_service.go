@@ -562,9 +562,22 @@ func (s *PaymentService) GetPaymentStatus(ctx context.Context, orderID, actorUse
 		return nil, ErrOrderForbidden
 	}
 
-	// If order is still processing, try to check transaction
+	// Đơn đang "processing": tranh thủ đối chiếu giao dịch ngân hàng. Smoke test 11/09: khi dịch
+	// vụ gRPC ngân hàng không chạy, route này TRẢ LỖI thay vì trạng thái — web poll 5s/lần sẽ hiện
+	// lỗi liên tục dù đơn vẫn bình thường. Lỗi đối chiếu chỉ ghi log và trả trạng thái hiện tại;
+	// riêng lỗi quyền/không tìm thấy vẫn trả về như cũ.
 	if order.Status == "processing" {
-		return s.CheckAndProcessPayment(ctx, orderID, actorUserID, isAdmin)
+		resp, checkErr := s.CheckAndProcessPayment(ctx, orderID, actorUserID, isAdmin)
+		if checkErr == nil {
+			return resp, nil
+		}
+		if errors.Is(checkErr, ErrOrderForbidden) || errors.Is(checkErr, ErrOrderNotFound) {
+			return nil, checkErr
+		}
+		log.Printf("[PAYMENT-STATUS] order=%s đối chiếu giao dịch lỗi, trả trạng thái hiện tại: %v", orderID, checkErr)
+		if refreshed, rerr := s.orderRepo.GetByID(orderID); rerr == nil {
+			order = refreshed
+		}
 	}
 
 	return &dto.PaymentStatusResponse{

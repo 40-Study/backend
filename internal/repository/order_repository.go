@@ -43,7 +43,7 @@ func (r *OrderRepository) Create(order *model.Order) error {
 // GetByID - Get order by ID
 func (r *OrderRepository) GetByID(id uuid.UUID) (*model.Order, error) {
 	var order model.Order
-	if err := r.db.Preload("Items").Preload("Coupon").First(&order, "id = ?", id).Error; err != nil {
+	if err := r.db.Preload("Items.Course").Preload("Coupon").First(&order, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrOrderNotFound
 		}
@@ -55,7 +55,7 @@ func (r *OrderRepository) GetByID(id uuid.UUID) (*model.Order, error) {
 // GetByOrderNumber - Get order by order number
 func (r *OrderRepository) GetByOrderNumber(orderNumber string) (*model.Order, error) {
 	var order model.Order
-	if err := r.db.Preload("Items").Preload("Coupon").First(&order, "order_number = ?", orderNumber).Error; err != nil {
+	if err := r.db.Preload("Items.Course").Preload("Coupon").First(&order, "order_number = ?", orderNumber).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrOrderNotFound
 		}
@@ -80,7 +80,7 @@ func (r *OrderRepository) GetByUserID(userID uuid.UUID, page, limit int, status 
 	}
 
 	offset := (page - 1) * limit
-	if err := query.Preload("Items").Preload("Coupon").
+	if err := query.Preload("Items.Course").Preload("Coupon").
 		Order("created_at DESC").
 		Offset(offset).Limit(limit).
 		Find(&orders).Error; err != nil {
@@ -93,7 +93,7 @@ func (r *OrderRepository) GetByUserID(userID uuid.UUID, page, limit int, status 
 // GetByUserIDAndStatus - Get orders by user ID and status
 func (r *OrderRepository) GetByUserIDAndStatus(userID uuid.UUID, status string) ([]model.Order, error) {
 	var orders []model.Order
-	if err := r.db.Preload("Items").Where("user_id = ? AND status = ?", userID, status).Find(&orders).Error; err != nil {
+	if err := r.db.Preload("Items.Course").Where("user_id = ? AND status = ?", userID, status).Find(&orders).Error; err != nil {
 		return nil, err
 	}
 	return orders, nil
