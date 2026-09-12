@@ -19,6 +19,12 @@ type EnrollmentResponseDTO struct {
 	CourseSlug      string          `json:"course_slug,omitempty"`
 	CourseThumbnail *string         `json:"course_thumbnail,omitempty"`
 	CourseCategory  string          `json:"course_category,omitempty"`
+
+	// WatchedSeconds: tong so giay video da xem cua ghi danh nay, cong don tu
+	// lesson_progress.video_watched_seconds (du lieu that do trinh phat video ghi len qua
+	// PUT /lessons/:lessonId/progress). Truoc day web hardcode "1h 45m" o trang
+	// "Khoa hoc cua toi" vi khong co truong nay.
+	WatchedSeconds int `json:"watched_seconds"`
 }
 
 type EnrollmentDetailDTO struct {
@@ -38,7 +44,13 @@ type EnrollmentListResponseDTO struct {
 type UpdateLessonProgressDTO struct {
 	Status           *string          `json:"status" validate:"omitempty,oneof=not_started in_progress completed"`
 	ProgressPercent  *decimal.Decimal `json:"progress_percentage"`
-	VideoWatchedSecs *int             `json:"video_watched_seconds"`
+	// min=0: truoc day khong co rang buoc nao — client gui -999999 duoc luu thang vao DB va
+	// lam chi so "thoi gian hoc" tren web am. Da tai hien duoc tren server that.
+	// max=86400 (24 gio): min=0 chan so am nhung khong chan gia tri rac. Cot nay chi TANG (xem
+	// UpdateLessonProgress), nen mot lan gui 2000000000 (~63 nam) se khong bao gio bi ghi de boi
+	// cac request nho hon nua => hong vinh vien "thoi gian hoc" tren web va
+	// total_study_time_minutes o trang ho so, chi sua duoc bang UPDATE tay trong DB.
+	VideoWatchedSecs *int `json:"video_watched_seconds" validate:"omitempty,min=0,max=86400"`
 }
 
 type LessonProgressResponseDTO struct {

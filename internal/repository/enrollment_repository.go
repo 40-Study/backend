@@ -16,6 +16,12 @@ type EnrollmentRepositoryInterface interface {
 	GetByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error)
 	// GetByUserAndCourseUnscoped giống GetByUserAndCourse nhưng bao gồm cả bản ghi đã soft-delete
 	// (dùng để phát hiện re-enroll sau khi Unenroll — xem C-06 audit 260909).
+	//
+	// HỢP ĐỒNG (review 260912, finding N1): bản ghi trả về ĐÃ Preload("LessonProgress"). Nhánh
+	// re-enroll của EnrollmentService.Enroll cộng dồn video_watched_seconds từ đây để trả về cùng
+	// con số với GET /my-enrollments — bỏ Preload đi thì enrollment.LessonProgress luôn nil và
+	// endpoint lặng lẽ trả watched_seconds = 0 dù client vừa xem xong. Caller nào chỉ cần biết
+	// bản ghi có deleted_at hay không thì vẫn dùng được như cũ.
 	GetByUserAndCourseUnscoped(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error)
 	// Restore khôi phục một enrollment đã soft-delete (deleted_at = NULL).
 	Restore(ctx context.Context, id uuid.UUID) error
@@ -37,10 +43,26 @@ type EnrollmentRepositoryInterface interface {
 
 	// LessonProgress
 	UpsertLessonProgress(ctx context.Context, progress *model.LessonProgress) error
+	// UpdateLessonProgressFields (review 260912, finding #2): UPDATE chỉ đúng các cột trong
+	// updates (map) cho bản ghi lesson_progress của (userID, lessonID) — đọc lại bản ghi SAU khi
+	// ghi. Trả về (nil, nil) khi không tìm thấy bản ghi nào để UPDATE.
+	//
+	// Trước đây đường ghi tiến trình dùng db.Save(progress): Save() ghi ĐÈ TOÀN BỘ struct, nên
+	// (a) một request đọc-trước-ghi-sau có thể hạ video_watched_seconds xuống, và (b) request đó
+	// có thể ghi đè luôn status/completed_at mà request song song vừa ghi — đúng lớp bug mà cột
+	// chỉ-tăng sinh ra để diệt. Ghi bằng map chỉ chạm đúng các cột được yêu cầu.
+	//
+	// watchedSeconds: khi khác nil, cột video_watched_seconds KHÔNG được set thẳng mà dùng
+	// GREATEST(video_watched_seconds, ?) ngay trong SQL, để phép max là nguyên tử ở tầng DB thay
+	// vì so sánh read-then-write ở Go (hai request song song vẫn có thể làm giá trị giảm).
+	UpdateLessonProgressFields(ctx context.Context, userID, lessonID uuid.UUID, updates map[string]interface{}, watchedSeconds *int) (*model.LessonProgress, error)
 	GetLessonProgress(ctx context.Context, userID, lessonID uuid.UUID) (*model.LessonProgress, error)
 	CountCompletedMandatory(ctx context.Context, enrollmentID uuid.UUID) (int64, error)
 	CountTotalMandatory(ctx context.Context, courseID uuid.UUID) (int64, error)
 	UpdateEnrollmentProgress(ctx context.Context, enrollmentID uuid.UUID, progress decimal.Decimal) error
+	// SumWatchedSecondsByEnrollmentIDs cong don video_watched_seconds theo tung enrollment
+	// bang DUNG MOT cau GROUP BY (tranh N+1 khi liet ke danh sach ghi danh).
+	SumWatchedSecondsByEnrollmentIDs(ctx context.Context, enrollmentIDs []uuid.UUID) (map[uuid.UUID]int, error)
 }
 
 type EnrollmentRepository struct {
@@ -71,11 +93,25 @@ func (r *EnrollmentRepository) GetByUserAndCourse(ctx context.Context, userID, c
 
 // GetByUserAndCourseUnscoped tìm enrollment kể cả đã soft-delete (Unscoped) — dùng để phân
 // biệt "chưa từng enroll" với "đã unenroll trước đó" khi xử lý re-enroll (C-06).
+//
+// Preload("LessonProgress") (review 260912, finding N1): nhánh re-enroll cần cộng dồn
+// video_watched_seconds để trả về ĐÚNG con số mà GET /my-enrollments trả cho cùng enrollment.
+// Trước đây hàm này không Preload, còn GORM không tự preload (model không có tag preload), nên
+// enrollment.LessonProgress luôn nil => endpoint trả watched_seconds = 0 trong khi danh sách trả
+// 5640 — hai con số mâu thuẫn cho cùng một ghi danh.
+//
+// Preload KHÔNG làm mất cờ Unscoped: GORM truyền Statement.Unscoped xuống query preload
+// (callbacks/preload.go:181, gorm v1.30.0 — bản đang dùng trong go.mod), nên các dòng
+// lesson_progress đã soft-delete vẫn được đọc. Đó chính là tập dòng mà
+// SumWatchedSecondsByEnrollmentIDs dùng cho GET /my-enrollments: câu GROUP BY thô ở đó không hề
+// có mệnh đề deleted_at, tức nó cũng bỏ qua soft-delete. Hai đường đọc vì vậy khớp nhau về ngữ
+// nghĩa, không chỉ khớp ở trường hợp thường gặp.
 func (r *EnrollmentRepository) GetByUserAndCourseUnscoped(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error) {
 	var enrollment model.Enrollment
 	err := r.db.WithContext(ctx).
 		Unscoped().
 		Where("user_id = ? AND course_id = ?", userID, courseID).
+		Preload("LessonProgress").
 		First(&enrollment).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -161,6 +197,35 @@ func (r *EnrollmentRepository) GetByUserID(ctx context.Context, userID uuid.UUID
 	return enrollments, total, nil
 }
 
+// SumWatchedSecondsByEnrollmentIDs - xem ghi chu tren interface.
+func (r *EnrollmentRepository) SumWatchedSecondsByEnrollmentIDs(ctx context.Context, enrollmentIDs []uuid.UUID) (map[uuid.UUID]int, error) {
+	totals := make(map[uuid.UUID]int, len(enrollmentIDs))
+	if len(enrollmentIDs) == 0 {
+		return totals, nil
+	}
+
+	var rows []struct {
+		EnrollmentID uuid.UUID
+		Total        int
+	}
+	if err := r.db.WithContext(ctx).
+		Model(&model.LessonProgress{}).
+		// ::bigint la BAT BUOC, khong phai trang tri: video_watched_seconds la bigint nen
+		// SUM() tra ve numeric, va viec scan numeric -> int cua Go phu thuoc vao driver.
+		// Ep kieu o SQL cho ket qua xac dinh.
+		Select("enrollment_id, COALESCE(SUM(video_watched_seconds), 0)::bigint AS total").
+		Where("enrollment_id IN ?", enrollmentIDs).
+		Group("enrollment_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		totals[row.EnrollmentID] = row.Total
+	}
+	return totals, nil
+}
+
 func (r *EnrollmentRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).Delete(&model.Enrollment{}, "id = ?", id).Error
 }
@@ -235,6 +300,57 @@ func (r *EnrollmentRepository) GetByCourseIDIncludeDeleted(ctx context.Context, 
 
 func (r *EnrollmentRepository) UpsertLessonProgress(ctx context.Context, progress *model.LessonProgress) error {
 	return r.db.WithContext(ctx).Save(progress).Error
+}
+
+// buildUpdateLessonProgressFieldsQuery (review 260912, finding #2) — tach phan XAY cau UPDATE ra
+// khoi phan doc .Error, theo dung pattern cua buildRestoreAndReactivateQuery: test DryRun
+// (enrollment_repository_test.go) goi duoc DUNG ham san xuat that va doc Statement.SQL, thay vi
+// hand-roll lai cau query trong test (xoa/sua sai ham nay se lam test do).
+func (r *EnrollmentRepository) buildUpdateLessonProgressFieldsQuery(
+	ctx context.Context,
+	userID, lessonID uuid.UUID,
+	updates map[string]interface{},
+	watchedSeconds *int,
+) *gorm.DB {
+	// Clone map truoc khi enrich: caller (service) co the dang giu va tai su dung map nay.
+	cols := make(map[string]interface{}, len(updates)+1)
+	for k, v := range updates {
+		cols[k] = v
+	}
+	if watchedSeconds != nil {
+		// GREATEST(...) chu khong phai gia tri tho: phep max phai la NGUYEN TU o tang DB. Doc row
+		// -> so sanh o Go -> ghi de (cach cu) khong nguyen tu: hai request song song cung doc 400,
+		// request 450 ghi truoc, request 430 ghi sau => DB con 430, dung bug can diet.
+		cols["video_watched_seconds"] = gorm.Expr("GREATEST(video_watched_seconds, ?)", *watchedSeconds)
+	}
+
+	// UpdateColumns (khong phai Updates): bo qua hook BeforeUpdate/UpdatedAt cua GORM nen map duoc
+	// dung NGUYEN VEN lam danh sach cot. Updates(map) cua GORM tu them updated_at => 2 nguon
+	// quyet dinh cot, kho kiem chung va khong ghi duoc updated_at khi caller KHONG yeu cau.
+	// updated_at vi vay la trach nhiem cua caller (service luon set).
+	return r.db.WithContext(ctx).
+		Model(&model.LessonProgress{}).
+		Where("user_id = ? AND lesson_id = ?", userID, lessonID).
+		UpdateColumns(cols)
+}
+
+func (r *EnrollmentRepository) UpdateLessonProgressFields(
+	ctx context.Context,
+	userID, lessonID uuid.UUID,
+	updates map[string]interface{},
+	watchedSeconds *int,
+) (*model.LessonProgress, error) {
+	res := r.buildUpdateLessonProgressFieldsQuery(ctx, userID, lessonID, updates, watchedSeconds)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		// Khong co ban ghi nao de UPDATE: KHONG tao moi o day (handler da tao qua UpsertLessonProgress).
+		// Tra (nil, nil) de service biet day la duong "ban ghi da bien mat giua hai buoc" va tra loi
+		// loi thay vi tra ve mot DTO mang gia tri chua he duoc ghi xuong DB.
+		return nil, nil
+	}
+	return r.GetLessonProgress(ctx, userID, lessonID)
 }
 
 func (r *EnrollmentRepository) GetLessonProgress(ctx context.Context, userID, lessonID uuid.UUID) (*model.LessonProgress, error) {

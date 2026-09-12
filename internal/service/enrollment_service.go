@@ -104,7 +104,16 @@ func (s *EnrollmentService) Enroll(ctx context.Context, userID, courseID uuid.UU
 		if err := s.courseRepo.IncrementTotalStudents(ctx, courseID, 1); err != nil {
 			return nil, err
 		}
-		return s.toEnrollmentResponseDTO(existing), nil
+		// Re-enroll vua reset tien do hoc tren bang enrollments, nhung KHONG xoa lesson_progress cu
+		// (cac dong do thuoc ban ghi enrollment duoc khoi phuc) — nguoi hoc quay lai van dang co
+		// 5640s da xem, tra 0 o day la noi doi.
+		//
+		// Con so nay chi that su cong don duoc vi GetByUserAndCourseUnscoped o tren Preload
+		// "LessonProgress" (review 260912, finding N1): bo Preload do di thi existing.LessonProgress
+		// luon nil, sumWatchedSeconds luon = 0, va endpoint tra mot con so MAU THUAN voi
+		// GET /my-enrollments cho cung ghi danh do — dung lop loi "comment noi mot dang, code lam
+		// mot neo" ma khong test nao bat duoc. Test khoa lai: TestEnroll_ReEnrollTraWatchedSecondsThat.
+		return setWatchedSeconds(s.toEnrollmentResponseDTO(existing), sumWatchedSeconds(existing.LessonProgress)), nil
 	}
 
 	enrollment := &model.Enrollment{
@@ -120,7 +129,9 @@ func (s *EnrollmentService) Enroll(ctx context.Context, userID, courseID uuid.UU
 		return nil, err
 	}
 
-	return s.toEnrollmentResponseDTO(enrollment), nil
+	// Ghi danh vua tao: chua the co ban ghi lesson_progress nao, nhung van gan tuong minh qua
+	// setWatchedSeconds de moi noi tao DTO deu di qua cung mot duong.
+	return setWatchedSeconds(s.toEnrollmentResponseDTO(enrollment), 0), nil
 }
 
 func (s *EnrollmentService) Unenroll(ctx context.Context, userID, courseID uuid.UUID) error {
@@ -151,9 +162,23 @@ func (s *EnrollmentService) GetMyEnrollments(ctx context.Context, userID uuid.UU
 		return nil, err
 	}
 
+	enrollmentIDs := make([]uuid.UUID, len(enrollments))
+	for i := range enrollments {
+		enrollmentIDs[i] = enrollments[i].ID
+	}
+	// Khong nuot loi: neu khong cong don duoc thoi gian xem thi tra loi that, vi web dung
+	// truong nay de hien thi chi so "thoi gian hoc" cho nguoi dung.
+	watchedByEnrollment, err := s.enrollmentRepo.SumWatchedSecondsByEnrollmentIDs(ctx, enrollmentIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	result := make([]dto.EnrollmentResponseDTO, len(enrollments))
 	for i := range enrollments {
-		d := s.toEnrollmentResponseDTO(&enrollments[i])
+		// Danh sach: mot cau GROUP BY duy nhat cho TAT CA ghi danh (chan N+1 — xem
+		// SumWatchedSecondsByEnrollmentIDs), khong dung sumWatchedSeconds() vi Course.LessonProgress
+		// khong duoc Preload o day.
+		d := setWatchedSeconds(s.toEnrollmentResponseDTO(&enrollments[i]), watchedByEnrollment[enrollments[i].ID])
 		d.CourseTitle = enrollments[i].Course.Title
 		d.CourseSlug = enrollments[i].Course.Slug
 		d.CourseThumbnail = enrollments[i].Course.ThumbnailURL
@@ -184,7 +209,9 @@ func (s *EnrollmentService) GetEnrollmentDetail(ctx context.Context, id uuid.UUI
 	}
 
 	detail := &dto.EnrollmentDetailDTO{
-		EnrollmentResponseDTO: *s.toEnrollmentResponseDTO(enrollment),
+		// GetDetailByID da Preload("LessonProgress") => cong don tu du lieu co san, khong them
+		// truy van nao (xem sumWatchedSeconds).
+		EnrollmentResponseDTO: *setWatchedSeconds(s.toEnrollmentResponseDTO(enrollment), sumWatchedSeconds(enrollment.LessonProgress)),
 	}
 	detail.CourseTitle = enrollment.Course.Title
 	detail.CourseThumbnail = enrollment.Course.ThumbnailURL
@@ -229,6 +256,9 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 
 	now := time.Now()
 
+	// Duong INSERT: ban ghi chua ton tai thi tao moi bang Save() nhu cu (khong co UPDATE de
+	// GREATEST() dua vao, va khong co gi de ghi de). Ban ghi DA ton tai thi di duong UPDATE
+	// nguyen tu ben duoi.
 	if progress == nil {
 		progress = &model.LessonProgress{
 			UserID:         userID,
@@ -237,31 +267,74 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 			Status:         "not_started",
 			LastAccessedAt: now,
 		}
+		if req.Status != nil {
+			progress.Status = *req.Status
+			if *req.Status == "completed" {
+				progress.CompletedAt = &now
+			}
+		}
+		if req.ProgressPercent != nil {
+			progress.ProgressPercent = *req.ProgressPercent
+		}
+		if req.VideoWatchedSecs != nil {
+			progress.VideoWatchedSecs = *req.VideoWatchedSecs
+		}
+		if err := s.enrollmentRepo.UpsertLessonProgress(ctx, progress); err != nil {
+			return nil, err
+		}
+		return s.finishLessonProgressUpdate(ctx, enrollment, progress)
 	}
 
+	// Trinh phat gui VI TRI phat hien tai (currentTime), khong phai so giay cong don.
+	// Neu ghi de thang thi xem lai bai tu dau se GHI DE mot gia tri lon bang mot gia tri
+	// nho, va chi so "thoi gian hoc" tren web tu dung giam. Cot nay ten la
+	// video_watched_seconds nen ngu nghia dung la "da xem toi giay thu may" => chi tang.
+	// Vi tri tua-lai co cot rieng (last_position_seconds), khong dung cot nay.
+	//
+	// Cac cot duoc ghi qua map nay: Save() cu ghi DE TOAN BO struct nen ghi de ca status/
+	// completed_at ma request song song vua ghi. Map duoi day CHI chua dung cac cot thuc su doi,
+	// va video_watched_seconds duoc day xuong SQL duoi dang GREATEST(...) de phep max la nguyen tu.
+	updates := map[string]interface{}{
+		"last_accessed_at": now,
+		// updated_at: UpdateColumns bo qua hook tu dong cua GORM nen phai set tuong minh, neu khong
+		// cot nay dung yen mai mai.
+		"updated_at": now,
+	}
 	if req.Status != nil {
-		progress.Status = *req.Status
+		updates["status"] = *req.Status
 		if *req.Status == "completed" && progress.CompletedAt == nil {
-			progress.CompletedAt = &now
+			updates["completed_at"] = now
 		}
 	}
 	if req.ProgressPercent != nil {
-		progress.ProgressPercent = *req.ProgressPercent
+		updates["progress_percentage"] = *req.ProgressPercent
 	}
-	if req.VideoWatchedSecs != nil {
-		progress.VideoWatchedSecs = *req.VideoWatchedSecs
-	}
-	progress.LastAccessedAt = now
 
-	if err := s.enrollmentRepo.UpsertLessonProgress(ctx, progress); err != nil {
+	// watchedSeconds duoc truyen RIENG chu khong nam trong map: gia tri cua no phai di qua
+	// GREATEST() trong cau UPDATE, khong duoc set tho.
+	var watchedSeconds *int
+	if req.VideoWatchedSecs != nil {
+		watchedSeconds = req.VideoWatchedSecs
+	}
+
+	updated, err := s.enrollmentRepo.UpdateLessonProgressFields(ctx, userID, lessonID, updates, watchedSeconds)
+	if err != nil {
 		return nil, err
 	}
+	if updated == nil {
+		// Bản ghi bi xoa giua luc doc va luc ghi — khong co dong nao duoc UPDATE. Tra loi that thay
+		// vi tra ve mot DTO mang gia tri chua he duoc ghi xuong DB.
+		return nil, errors.New("lesson progress not found")
+	}
 
-	// Recalculate enrollment progress
+	return s.finishLessonProgressUpdate(ctx, enrollment, updated)
+}
+
+// finishLessonProgressUpdate tinh lai tien do ghi danh va tra ve DTO cua ban ghi vua ghi.
+func (s *EnrollmentService) finishLessonProgressUpdate(ctx context.Context, enrollment *model.Enrollment, progress *model.LessonProgress) (*dto.LessonProgressResponseDTO, error) {
 	if err := s.recalculateProgress(ctx, enrollment); err != nil {
 		return nil, err
 	}
-
 	return s.toLessonProgressResponseDTO(progress), nil
 }
 
@@ -296,6 +369,31 @@ func (s *EnrollmentService) recalculateProgress(ctx context.Context, enrollment 
 	}
 
 	return nil
+}
+
+// setWatchedSeconds gan WatchedSeconds cho mot DTO ghi danh.
+//
+// Ly do ton tai (review 260912, finding #3): WatchedSeconds la `int` KHONG `omitempty`, nen MOI
+// noi tao EnrollmentResponseDTO deu phai gan. Truoc day chi GetMyEnrollments gan, con Enroll
+// (ca hai nhanh) va GetEnrollmentDetail tra ve 0 — client khong phan biet duoc "chua xem gi"
+// voi "endpoint nay khong tinh". Giu duong ghi nay o DUNG MOT cho de khong lap lai loi do.
+func setWatchedSeconds(d *dto.EnrollmentResponseDTO, seconds int) *dto.EnrollmentResponseDTO {
+	d.WatchedSeconds = seconds
+	return d
+}
+
+// sumWatchedSeconds cong don video_watched_seconds cua cac ban ghi tien do DA CO SAN trong bo nho.
+//
+// Dung cho endpoint chi tiet: GetDetailByID da Preload("LessonProgress") nen du lieu nam san
+// trong enrollment.LessonProgress — khong can them truy van nao, va cung khong vi pham chan N+1
+// (khong co vong lap tren nhieu ghi danh o day; endpoint danh sach VAN dung mot cau GROUP BY
+// duy nhat qua SumWatchedSecondsByEnrollmentIDs).
+func sumWatchedSeconds(progresses []model.LessonProgress) int {
+	total := 0
+	for i := range progresses {
+		total += progresses[i].VideoWatchedSecs
+	}
+	return total
 }
 
 func (s *EnrollmentService) toEnrollmentResponseDTO(enrollment *model.Enrollment) *dto.EnrollmentResponseDTO {
