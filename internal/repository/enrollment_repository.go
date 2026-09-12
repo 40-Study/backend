@@ -16,6 +16,12 @@ type EnrollmentRepositoryInterface interface {
 	GetByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error)
 	// GetByUserAndCourseUnscoped giống GetByUserAndCourse nhưng bao gồm cả bản ghi đã soft-delete
 	// (dùng để phát hiện re-enroll sau khi Unenroll — xem C-06 audit 260909).
+	//
+	// HỢP ĐỒNG (review 260912, finding N1): bản ghi trả về ĐÃ Preload("LessonProgress"). Nhánh
+	// re-enroll của EnrollmentService.Enroll cộng dồn video_watched_seconds từ đây để trả về cùng
+	// con số với GET /my-enrollments — bỏ Preload đi thì enrollment.LessonProgress luôn nil và
+	// endpoint lặng lẽ trả watched_seconds = 0 dù client vừa xem xong. Caller nào chỉ cần biết
+	// bản ghi có deleted_at hay không thì vẫn dùng được như cũ.
 	GetByUserAndCourseUnscoped(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error)
 	// Restore khôi phục một enrollment đã soft-delete (deleted_at = NULL).
 	Restore(ctx context.Context, id uuid.UUID) error
@@ -87,11 +93,25 @@ func (r *EnrollmentRepository) GetByUserAndCourse(ctx context.Context, userID, c
 
 // GetByUserAndCourseUnscoped tìm enrollment kể cả đã soft-delete (Unscoped) — dùng để phân
 // biệt "chưa từng enroll" với "đã unenroll trước đó" khi xử lý re-enroll (C-06).
+//
+// Preload("LessonProgress") (review 260912, finding N1): nhánh re-enroll cần cộng dồn
+// video_watched_seconds để trả về ĐÚNG con số mà GET /my-enrollments trả cho cùng enrollment.
+// Trước đây hàm này không Preload, còn GORM không tự preload (model không có tag preload), nên
+// enrollment.LessonProgress luôn nil => endpoint trả watched_seconds = 0 trong khi danh sách trả
+// 5640 — hai con số mâu thuẫn cho cùng một ghi danh.
+//
+// Preload KHÔNG làm mất cờ Unscoped: GORM truyền Statement.Unscoped xuống query preload
+// (callbacks/preload.go:181, gorm v1.30.0 — bản đang dùng trong go.mod), nên các dòng
+// lesson_progress đã soft-delete vẫn được đọc. Đó chính là tập dòng mà
+// SumWatchedSecondsByEnrollmentIDs dùng cho GET /my-enrollments: câu GROUP BY thô ở đó không hề
+// có mệnh đề deleted_at, tức nó cũng bỏ qua soft-delete. Hai đường đọc vì vậy khớp nhau về ngữ
+// nghĩa, không chỉ khớp ở trường hợp thường gặp.
 func (r *EnrollmentRepository) GetByUserAndCourseUnscoped(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error) {
 	var enrollment model.Enrollment
 	err := r.db.WithContext(ctx).
 		Unscoped().
 		Where("user_id = ? AND course_id = ?", userID, courseID).
+		Preload("LessonProgress").
 		First(&enrollment).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

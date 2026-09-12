@@ -104,8 +104,15 @@ func (s *EnrollmentService) Enroll(ctx context.Context, userID, courseID uuid.UU
 		if err := s.courseRepo.IncrementTotalStudents(ctx, courseID, 1); err != nil {
 			return nil, err
 		}
-		// Re-enroll vua reset tien do hoc, nhung khong xoa lesson_progress cu (no thuoc ban ghi
-		// enrollment duoc khoi phuc) — cong don tu bo nho thay vi tra 0 cho dung thuc te.
+		// Re-enroll vua reset tien do hoc tren bang enrollments, nhung KHONG xoa lesson_progress cu
+		// (cac dong do thuoc ban ghi enrollment duoc khoi phuc) — nguoi hoc quay lai van dang co
+		// 5640s da xem, tra 0 o day la noi doi.
+		//
+		// Con so nay chi that su cong don duoc vi GetByUserAndCourseUnscoped o tren Preload
+		// "LessonProgress" (review 260912, finding N1): bo Preload do di thi existing.LessonProgress
+		// luon nil, sumWatchedSeconds luon = 0, va endpoint tra mot con so MAU THUAN voi
+		// GET /my-enrollments cho cung ghi danh do — dung lop loi "comment noi mot dang, code lam
+		// mot neo" ma khong test nao bat duoc. Test khoa lai: TestEnroll_ReEnrollTraWatchedSecondsThat.
 		return setWatchedSeconds(s.toEnrollmentResponseDTO(existing), sumWatchedSeconds(existing.LessonProgress)), nil
 	}
 

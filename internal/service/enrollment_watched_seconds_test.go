@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
+	gormtests "gorm.io/gorm/utils/tests"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -33,6 +35,12 @@ type fakeEnrollmentRepoWatched struct {
 	upserted       *model.LessonProgress
 	courseID       uuid.UUID
 	enrollment     *model.Enrollment
+
+	// Duong re-enroll (review 260912, finding N1): ban ghi ma GetByUserAndCourseUnscoped tra ve,
+	// DA kem LessonProgress dung nhu hop dong cua repository that.
+	unscopedEnrollment *model.Enrollment
+	unscopedCalls      int
+	reactivateUpdates  map[string]interface{}
 
 	// Duong UPDATE nguyen tu (review 260912, finding #2): ghi lai DUNG nhung gi service truyen
 	// xuong, de khang dinh duoc HOP DONG giua service va repository.
@@ -60,6 +68,18 @@ func (f *fakeEnrollmentRepoWatched) GetCourseIDByLessonID(ctx context.Context, l
 
 func (f *fakeEnrollmentRepoWatched) GetByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error) {
 	return f.enrollment, nil
+}
+
+// GetByUserAndCourseUnscoped mo phong DUNG hop dong cua repository that: ban ghi tra ve da kem
+// LessonProgress (Preload) — xem comment tai EnrollmentRepository.GetByUserAndCourseUnscoped.
+func (f *fakeEnrollmentRepoWatched) GetByUserAndCourseUnscoped(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error) {
+	f.unscopedCalls++
+	return f.unscopedEnrollment, nil
+}
+
+func (f *fakeEnrollmentRepoWatched) RestoreAndReactivate(ctx context.Context, id uuid.UUID, updates map[string]interface{}) error {
+	f.reactivateUpdates = updates
+	return nil
 }
 
 func (f *fakeEnrollmentRepoWatched) GetLessonProgress(ctx context.Context, userID, lessonID uuid.UUID) (*model.LessonProgress, error) {
@@ -127,6 +147,29 @@ type fakeLessonRepoWatched struct {
 	repository.LessonRepositoryInterface
 }
 
+// fakeCourseRepoWatched: chi override hai method ma Enroll dung toi. Nhung interface de method them
+// sau nay khong lam vo file test; Enroll lai can courseRepo khac nil nen phai co mot stub that su.
+// GetByID tra ve khoa MIEN PHI (Price = 0) de Enroll khong dung o buoc kiem tra thanh toan.
+type fakeCourseRepoWatched struct {
+	repository.CourseRepositoryInterface
+	course         *model.Course
+	incrementCalls int
+}
+
+func (f *fakeCourseRepoWatched) GetByID(ctx context.Context, id uuid.UUID) (*model.Course, error) {
+	if f.course != nil {
+		return f.course, nil
+	}
+	c := &model.Course{}
+	c.ID = id
+	return c, nil
+}
+
+func (f *fakeCourseRepoWatched) IncrementTotalStudents(ctx context.Context, courseID uuid.UUID, delta int) error {
+	f.incrementCalls++
+	return nil
+}
+
 func (f *fakeLessonRepoWatched) GetByID(ctx context.Context, id uuid.UUID) (*model.Lesson, error) {
 	l := &model.Lesson{}
 	l.ID = id
@@ -176,6 +219,113 @@ func TestGetMyEnrollments_GanWatchedSecondsChoTungGhiDanh(t *testing.T) {
 	}
 	if len(repo.watchedCalls[0]) != 3 {
 		t.Errorf("loi goi mang %d id, mong doi 3", len(repo.watchedCalls[0]))
+	}
+}
+
+// Re-enroll (review 260912, finding N1) PHAI tra ve tong thoi gian xem THAT, khop voi
+// GET /my-enrollments.
+//
+// Truoc day GetByUserAndCourseUnscoped khong Preload("LessonProgress") nen existing.LessonProgress
+// luon nil => sumWatchedSeconds luon 0, trong khi comment ngay tren dong do khang dinh "cong don tu
+// bo nho ... cho dung thuc te". Kich ban that: hoc vien xem 5640s -> unenroll -> enroll lai:
+// POST /enroll tra watched_seconds = 0 (nghia la "chua xem gi" theo doc cua DTO), vai giay sau
+// GET /my-enrollments tra 5640 cho CUNG ghi danh do.
+//
+// Test nay khoa ca hai dau cua hop dong:
+//   - service phai doc so tu existing.LessonProgress (ban ghi repository da Preload);
+//   - neu somebody bo Preload trong repository, fake nay van con nguyen du lieu => test nay xanh
+//     gia. Vi vay test o tang repository (goi DryRun/GetByUserAndCourseUnscoped that) la thu
+//     khang dinh Preload co that su duoc phat ra — xem
+//     TestGetByUserAndCourseUnscoped_CoPreloadLessonProgress ben package repository.
+func TestEnroll_ReEnrollTraWatchedSecondsThat(t *testing.T) {
+	enrollmentID := uuid.New()
+	courseID := uuid.New()
+
+	// Got soft-delete: day la ban ghi cu duoc khoi phuc, khong phai enroll lan dau.
+	deletedAt := gorm.DeletedAt{Time: time.Now(), Valid: true}
+	existing := &model.Enrollment{
+		BaseModel:  model.BaseModel{ID: enrollmentID, DeletedAt: deletedAt},
+		CourseID:   courseID,
+		EnrolledAt: time.Now().Add(-30 * 24 * time.Hour),
+		// Cac dong lesson_progress KHONG bi xoa khi Unenroll — repo that Preload chung len day.
+		LessonProgress: []model.LessonProgress{
+			{VideoWatchedSecs: 4800, EnrollmentID: enrollmentID},
+			{VideoWatchedSecs: 840, EnrollmentID: enrollmentID},
+		},
+	}
+	repo := &fakeEnrollmentRepoWatched{unscopedEnrollment: existing}
+	courseRepo := &fakeCourseRepoWatched{}
+	svc := NewEnrollmentService(repo, courseRepo, &fakeLessonRepoWatched{})
+
+	res, err := svc.Enroll(context.Background(), uuid.New(), courseID)
+	if err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
+	}
+
+	if got, want := res.WatchedSeconds, 5640; got != want {
+		t.Errorf("WatchedSeconds sau re-enroll = %d, mong doi %d (tong cua 4800 + 840 da Preload)", got, want)
+	}
+	// Nhanh re-enroll phai di qua RestoreAndReactivate chu khong tao ban ghi moi.
+	if repo.reactivateUpdates == nil {
+		t.Fatal("nhanh re-enroll khong goi RestoreAndReactivate")
+	}
+	if repo.unscopedCalls == 0 {
+		t.Error("Enroll khong dung ban Unscoped de phat hien re-enroll")
+	}
+	// Reset tien do tren bang enrollments: neu khong reset, ghi danh vua khoi phuc se mang tien do
+	// cu (khong nhat quan voi watched_seconds = 5640 vua tra ve).
+	for _, col := range []string{"progress_percentage", "completed_at", "last_accessed_at", "enrolled_at"} {
+		if _, ok := repo.reactivateUpdates[col]; !ok {
+			t.Errorf("map RestoreAndReactivate thieu cot %q", col)
+		}
+	}
+}
+
+// TestGetByUserAndCourseUnscoped_PreloadLessonProgressChoNhanhReEnroll (review 260912, finding N1)
+// — pin CHINH cai Preload, khong chi pin viec service doc du lieu.
+//
+// Test service o tren (TestEnroll_ReEnrollTraWatchedSecondsThat) chay bang fake, nen no chi chung
+// minh duoc "NEU repository tra ve LessonProgress thi service cong dung". No VAN XANH neu ai do xoa
+// Preload("LessonProgress") khoi repository that — dung kieu "green that proves nothing" ma finding
+// N2 vua va o cho khac. Test nay goi THANG repository that (NewEnrollmentRepository + DryRun) va bat
+// lay danh sach preload ma no phat ra, nen xoa Preload la do ngay o day.
+//
+// Vi sao dat o package service: trong repo nay moi file *_test.go cua internal/repository deu nam
+// trong .git/info/exclude (local-only — xem comment "giu ngoai PR #54" trong file do), nen mot test
+// dat tai internal/repository se KHONG BAO GIO chay tren CI. Day la hop dong ma chinh service phu
+// thuoc de tra dung watched_seconds, nen dat canh no la cho duy nhat bao ve duoc tren CI.
+func TestGetByUserAndCourseUnscoped_PreloadLessonProgressChoNhanhReEnroll(t *testing.T) {
+	db, err := gorm.Open(gormtests.DummyDialector{}, &gorm.Config{})
+	if err != nil {
+		t.Fatalf("khong mo duoc gorm db: %v", err)
+	}
+
+	// Statement.Preloads cua cau truy van chinh; cac cau preload chay sau do qua callback
+	// gorm:preload, nen phan tu [0] chinh la cau SELECT enrollments.
+	var seen []map[string][]interface{}
+	if err := db.Callback().Query().Before("gorm:query").Register("test:capture_preloads", func(tx *gorm.DB) {
+		snapshot := make(map[string][]interface{}, len(tx.Statement.Preloads))
+		for name, conds := range tx.Statement.Preloads {
+			snapshot[name] = conds
+		}
+		seen = append(seen, snapshot)
+	}); err != nil {
+		t.Fatalf("khong dang ky duoc callback: %v", err)
+	}
+
+	repo := repository.NewEnrollmentRepository(db.Session(&gorm.Session{DryRun: true}))
+
+	if _, err := repo.GetByUserAndCourseUnscoped(context.Background(), uuid.New(), uuid.New()); err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
+	}
+
+	if len(seen) == 0 {
+		t.Fatal("khong bat duoc cau truy van nao — callback khong chay, test nay vo nghia")
+	}
+	if _, ok := seen[0]["LessonProgress"]; !ok {
+		t.Errorf("GetByUserAndCourseUnscoped KHONG Preload LessonProgress (preloads=%v).\n"+
+			"Thieu Preload nay thi nhanh re-enroll cua Enroll luon tra watched_seconds = 0, "+
+			"mau thuan voi GET /my-enrollments cho cung ghi danh do.", seen[0])
 	}
 }
 
@@ -281,6 +431,18 @@ func TestUpdateLessonProgress_WatchedSecondsChiTangKhongGiam(t *testing.T) {
 			}
 			if _, ok := repo.updateUpdates["completed_at"]; ok {
 				t.Error("map UPDATE chua cot completed_at du request khong gui status")
+			}
+			// updated_at / last_accessed_at (review 260912, finding N2): hai cot nay PHAI co trong
+			// map. Repository ghi bang UpdateColumns, ma UpdateColumns dat SkipHooks = true
+			// (finisher_api.go:423-428, gorm v1.30.0) nen nhanh AutoUpdateTime bi bo qua
+			// (callbacks/update.go:235-238) — dong "updated_at": now o service la thu DUY NHAT giu
+			// cot do song. Xoa no di thi cot dung yen mai mai (hong sync incremental / cache
+			// invalidation / audit) ma ca suite van xanh: dung kieu "green that proves nothing".
+			if _, ok := repo.updateUpdates["updated_at"]; !ok {
+				t.Error("map UPDATE thieu cot updated_at — UpdateColumns bo qua auto-update-time cua GORM, thieu cot nay thi updated_at dung yen vinh vien")
+			}
+			if _, ok := repo.updateUpdates["last_accessed_at"]; !ok {
+				t.Error("map UPDATE thieu cot last_accessed_at — trinh phat vua cham vao bai hoc, cot nay phai duoc ghi")
 			}
 			if _, ok := repo.updateUpdates["video_watched_seconds"]; ok {
 				t.Error("video_watched_seconds nam trong map — no phai di qua GREATEST() trong SQL, khong set tho")
