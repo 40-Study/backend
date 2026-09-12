@@ -37,6 +37,19 @@ type EnrollmentRepositoryInterface interface {
 
 	// LessonProgress
 	UpsertLessonProgress(ctx context.Context, progress *model.LessonProgress) error
+	// UpdateLessonProgressFields (review 260912, finding #2): UPDATE chỉ đúng các cột trong
+	// updates (map) cho bản ghi lesson_progress của (userID, lessonID) — đọc lại bản ghi SAU khi
+	// ghi. Trả về (nil, nil) khi không tìm thấy bản ghi nào để UPDATE.
+	//
+	// Trước đây đường ghi tiến trình dùng db.Save(progress): Save() ghi ĐÈ TOÀN BỘ struct, nên
+	// (a) một request đọc-trước-ghi-sau có thể hạ video_watched_seconds xuống, và (b) request đó
+	// có thể ghi đè luôn status/completed_at mà request song song vừa ghi — đúng lớp bug mà cột
+	// chỉ-tăng sinh ra để diệt. Ghi bằng map chỉ chạm đúng các cột được yêu cầu.
+	//
+	// watchedSeconds: khi khác nil, cột video_watched_seconds KHÔNG được set thẳng mà dùng
+	// GREATEST(video_watched_seconds, ?) ngay trong SQL, để phép max là nguyên tử ở tầng DB thay
+	// vì so sánh read-then-write ở Go (hai request song song vẫn có thể làm giá trị giảm).
+	UpdateLessonProgressFields(ctx context.Context, userID, lessonID uuid.UUID, updates map[string]interface{}, watchedSeconds *int) (*model.LessonProgress, error)
 	GetLessonProgress(ctx context.Context, userID, lessonID uuid.UUID) (*model.LessonProgress, error)
 	CountCompletedMandatory(ctx context.Context, enrollmentID uuid.UUID) (int64, error)
 	CountTotalMandatory(ctx context.Context, courseID uuid.UUID) (int64, error)
@@ -267,6 +280,57 @@ func (r *EnrollmentRepository) GetByCourseIDIncludeDeleted(ctx context.Context, 
 
 func (r *EnrollmentRepository) UpsertLessonProgress(ctx context.Context, progress *model.LessonProgress) error {
 	return r.db.WithContext(ctx).Save(progress).Error
+}
+
+// buildUpdateLessonProgressFieldsQuery (review 260912, finding #2) — tach phan XAY cau UPDATE ra
+// khoi phan doc .Error, theo dung pattern cua buildRestoreAndReactivateQuery: test DryRun
+// (enrollment_repository_test.go) goi duoc DUNG ham san xuat that va doc Statement.SQL, thay vi
+// hand-roll lai cau query trong test (xoa/sua sai ham nay se lam test do).
+func (r *EnrollmentRepository) buildUpdateLessonProgressFieldsQuery(
+	ctx context.Context,
+	userID, lessonID uuid.UUID,
+	updates map[string]interface{},
+	watchedSeconds *int,
+) *gorm.DB {
+	// Clone map truoc khi enrich: caller (service) co the dang giu va tai su dung map nay.
+	cols := make(map[string]interface{}, len(updates)+1)
+	for k, v := range updates {
+		cols[k] = v
+	}
+	if watchedSeconds != nil {
+		// GREATEST(...) chu khong phai gia tri tho: phep max phai la NGUYEN TU o tang DB. Doc row
+		// -> so sanh o Go -> ghi de (cach cu) khong nguyen tu: hai request song song cung doc 400,
+		// request 450 ghi truoc, request 430 ghi sau => DB con 430, dung bug can diet.
+		cols["video_watched_seconds"] = gorm.Expr("GREATEST(video_watched_seconds, ?)", *watchedSeconds)
+	}
+
+	// UpdateColumns (khong phai Updates): bo qua hook BeforeUpdate/UpdatedAt cua GORM nen map duoc
+	// dung NGUYEN VEN lam danh sach cot. Updates(map) cua GORM tu them updated_at => 2 nguon
+	// quyet dinh cot, kho kiem chung va khong ghi duoc updated_at khi caller KHONG yeu cau.
+	// updated_at vi vay la trach nhiem cua caller (service luon set).
+	return r.db.WithContext(ctx).
+		Model(&model.LessonProgress{}).
+		Where("user_id = ? AND lesson_id = ?", userID, lessonID).
+		UpdateColumns(cols)
+}
+
+func (r *EnrollmentRepository) UpdateLessonProgressFields(
+	ctx context.Context,
+	userID, lessonID uuid.UUID,
+	updates map[string]interface{},
+	watchedSeconds *int,
+) (*model.LessonProgress, error) {
+	res := r.buildUpdateLessonProgressFieldsQuery(ctx, userID, lessonID, updates, watchedSeconds)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		// Khong co ban ghi nao de UPDATE: KHONG tao moi o day (handler da tao qua UpsertLessonProgress).
+		// Tra (nil, nil) de service biet day la duong "ban ghi da bien mat giua hai buoc" va tra loi
+		// loi thay vi tra ve mot DTO mang gia tri chua he duoc ghi xuong DB.
+		return nil, nil
+	}
+	return r.GetLessonProgress(ctx, userID, lessonID)
 }
 
 func (r *EnrollmentRepository) GetLessonProgress(ctx context.Context, userID, lessonID uuid.UUID) (*model.LessonProgress, error) {

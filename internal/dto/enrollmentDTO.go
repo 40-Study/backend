@@ -46,7 +46,11 @@ type UpdateLessonProgressDTO struct {
 	ProgressPercent  *decimal.Decimal `json:"progress_percentage"`
 	// min=0: truoc day khong co rang buoc nao — client gui -999999 duoc luu thang vao DB va
 	// lam chi so "thoi gian hoc" tren web am. Da tai hien duoc tren server that.
-	VideoWatchedSecs *int `json:"video_watched_seconds" validate:"omitempty,min=0"`
+	// max=86400 (24 gio): min=0 chan so am nhung khong chan gia tri rac. Cot nay chi TANG (xem
+	// UpdateLessonProgress), nen mot lan gui 2000000000 (~63 nam) se khong bao gio bi ghi de boi
+	// cac request nho hon nua => hong vinh vien "thoi gian hoc" tren web va
+	// total_study_time_minutes o trang ho so, chi sua duoc bang UPDATE tay trong DB.
+	VideoWatchedSecs *int `json:"video_watched_seconds" validate:"omitempty,min=0,max=86400"`
 }
 
 type LessonProgressResponseDTO struct {
