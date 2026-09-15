@@ -88,6 +88,20 @@ func (s *WhiteboardService) SaveSnapshot(ctx context.Context, userID uuid.UUID, 
 		return err
 	}
 
+	// F-4 (issue #58 review vong 2): truoc day SaveSnapshot khong kiem Settings.WhiteboardLocked
+	// (BroadcastEvent co kiem, o duoi) — hoc sinh ghi de duoc TOAN BO snapshot da luu ke ca khi GV
+	// da khoa bang, nen tinh nang "khoa bang" chi chan duoc realtime, khong chan duoc trang thai
+	// da LUU. Chi nguoi quan tri phien (host/GV lop/instructor khoa) moi duoc ghi khi dang khoa.
+	session, err := s.sessionRepo.GetByID(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session != nil && session.Settings.WhiteboardLocked {
+		if err := s.livestreamSvc.EnsureSessionManage(ctx, sessionID, userID); err != nil {
+			return ErrWhiteboardLocked
+		}
+	}
+
 	// Serialize elements + appState to JSON string for storage
 	data := map[string]any{
 		"elements":  req.Elements,

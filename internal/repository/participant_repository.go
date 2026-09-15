@@ -19,6 +19,7 @@ type ParticipantRepositoryInterface interface {
 	Update(ctx context.Context, participant *model.Participant) error
 	UpdateRole(ctx context.Context, id uuid.UUID, role model.ParticipantRole) error
 	SetLeft(ctx context.Context, id uuid.UUID) error
+	MarkKicked(ctx context.Context, id uuid.UUID) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	CountBySession(ctx context.Context, sessionID uuid.UUID) (int64, error)
 	CountActiveBySession(ctx context.Context, sessionID uuid.UUID) (int64, error)
@@ -106,6 +107,21 @@ func (r *ParticipantRepository) SetLeft(ctx context.Context, id uuid.UUID) error
 		Model(&model.Participant{}).
 		Where("id = ?", id).
 		Updates(map[string]interface{}{
+			"is_active": false,
+			"left_at":   gorm.Expr("CURRENT_TIMESTAMP"),
+		}).Error
+}
+
+// MarkKicked (F-5, issue #58 review vòng 2): ghi bền trạng thái "đã bị kick" — trước đây kick chỉ
+// gọi LiveKit RemoveParticipant (ngắt kết nối realtime), không đổi gì trong DB, nên người bị kick
+// gọi lại POST /:id/join là được cho vào lại ngay lập tức. Gộp luôn is_active=false/left_at cùng
+// một update, không cần gọi SetLeft riêng.
+func (r *ParticipantRepository) MarkKicked(ctx context.Context, id uuid.UUID) error {
+	return r.db.WithContext(ctx).
+		Model(&model.Participant{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"is_kicked": true,
 			"is_active": false,
 			"left_at":   gorm.Expr("CURRENT_TIMESTAMP"),
 		}).Error

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,28 +21,36 @@ type LivestreamServiceInterface interface {
 	// Create: hostID la nguoi goi THAT SU (lay tu access token o tang handler), khong nam trong
 	// req — xem comment tai dto.CreateLivestreamDTO.
 	Create(ctx context.Context, hostID uuid.UUID, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error)
-	GetByID(ctx context.Context, id uuid.UUID) (*dto.LivestreamDetailDTO, error)
-	// GetAll: lessonContentID (N10, review vòng 2) lọc phiên theo lesson_content_id, nil = không lọc.
-	GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) (*dto.LivestreamListDTO, error)
+	// GetByID/GetParticipants (F-1, issue #58 review vong 2): userID/isAdmin de kiem thanh vien
+	// phien truoc khi tra chi tiet/roster — truoc day 2 handler nay chi co AuthMiddleware, bat ky
+	// user dang nhap nao cung doc duoc chi tiet + roster cua phien bat ky.
+	GetByID(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) (*dto.LivestreamDetailDTO, error)
+	// GetAll: lessonContentID (N10, review vòng 2) lọc phiên theo lesson_content_id, nil = không
+	// lọc. userID/isAdmin (F-1): non-admin chi thay phien minh la host/GV lop/instructor
+	// khoa/hoc sinh lop — khong duoc liet ke toan he thong.
+	GetAll(ctx context.Context, userID uuid.UUID, isAdmin bool, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) (*dto.LivestreamListDTO, error)
 	// Update/Delete/Start/End: userID la nguoi goi THAT SU (access token), kiem quyen quan tri phien
-	// truoc khi lam bat cu thu gi — xem canManageSession (finding review V3-6/V3-7, issue #58).
-	Update(ctx context.Context, userID, id uuid.UUID, req dto.UpdateLivestreamDTO) (*model.LivestreamSession, error)
-	Delete(ctx context.Context, userID, id uuid.UUID) error
-	Start(ctx context.Context, userID, id uuid.UUID) (*model.LivestreamSession, error)
-	End(ctx context.Context, userID, id uuid.UUID) (*model.LivestreamSession, error)
-	// Join: userID la nguoi tham gia THAT SU (access token) — xem dto.JoinLivestreamDTO.
-	Join(ctx context.Context, sessionID, userID uuid.UUID, req dto.JoinLivestreamDTO) (*dto.ParticipantResponseDTO, error)
+	// truoc khi lam bat cu thu gi — xem canManageSession. isAdmin (D2, issue #58 review vong 2):
+	// admin he thong quan tri duoc phien du khong phai host/GV lop.
+	Update(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID, req dto.UpdateLivestreamDTO) (*model.LivestreamSession, error)
+	Delete(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) error
+	Start(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) (*model.LivestreamSession, error)
+	End(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) (*model.LivestreamSession, error)
+	// Join: userID la nguoi tham gia THAT SU (access token) — xem dto.JoinLivestreamDTO. isAdmin
+	// (D2/D3): admin he thong giam sat duoc phien du khong phai thanh vien lop.
+	Join(ctx context.Context, sessionID, userID uuid.UUID, isAdmin bool, req dto.JoinLivestreamDTO) (*dto.ParticipantResponseDTO, error)
 	// Leave: userID la nguoi roi phong THAT SU (access token), khong con nam trong DTO.
 	Leave(ctx context.Context, sessionID, userID uuid.UUID) error
-	GetParticipants(ctx context.Context, sessionID uuid.UUID, page, pageSize int) ([]model.Participant, int64, error)
+	GetParticipants(ctx context.Context, userID uuid.UUID, isAdmin bool, sessionID uuid.UUID, page, pageSize int) ([]model.Participant, int64, error)
 	// MuteParticipant/KickParticipant: actorID la nguoi goi, targetID la doi tuong bi tac dong.
-	MuteParticipant(ctx context.Context, actorID, sessionID, targetID uuid.UUID) error
-	KickParticipant(ctx context.Context, actorID, sessionID, targetID uuid.UUID) error
-	// LockWhiteboard: actorID la nguoi goi (chi host/GV lop/instructor khoa moi duoc khoa bang).
-	LockWhiteboard(ctx context.Context, actorID, sessionID uuid.UUID, locked bool) error
-	// StartScreenShare/StopScreenShare: actorID la nguoi goi.
-	StartScreenShare(ctx context.Context, actorID, sessionID uuid.UUID) error
-	StopScreenShare(ctx context.Context, actorID, sessionID uuid.UUID) error
+	MuteParticipant(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID, targetID uuid.UUID) error
+	KickParticipant(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID, targetID uuid.UUID) error
+	// LockWhiteboard: actorID la nguoi goi (chi host/GV lop/instructor khoa/admin moi duoc khoa bang).
+	LockWhiteboard(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID uuid.UUID, locked bool) error
+	// StartScreenShare/StopScreenShare: actorID la nguoi goi (phai quan tri duoc phien), targetID
+	// la nguoi duoc CAP/THU quyen publish (D3) — rong = actor tu chia se (== actorID).
+	StartScreenShare(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID, targetID uuid.UUID) error
+	StopScreenShare(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID, targetID uuid.UUID) error
 	// EnsureSessionMember/EnsureSessionManage (V3-6, issue #58): loi UY QUYEN dung chung cho
 	// ChatService/WhiteboardService — hai module nay cung phai tra loi "nguoi nay co quan he gi
 	// voi phien khong" nhung khong nen tu lam lai phep kiem host/GV lop/instructor/hoc sinh da co
@@ -56,10 +65,9 @@ type LivestreamService struct {
 	analyticsRepo   repository.AnalyticsRepositoryInterface
 	classRepo       repository.ClassRepositoryInterface
 	courseRepo      repository.CourseRepositoryInterface
-	// enrollmentRepo (finding V3-6, issue #58): Join phai kiem nguoi tham gia co quan he that voi
-	// phien khong (hoc sinh da enroll khoa cua phien, hoac la GV lop/instructor khoa) — truoc day
-	// bat ky user dang nhap nao cung join duoc bat ky phien nao. enrollmentRepo.GetByUserAndCourse
-	// tra (nil, nil) khi khong tim thay, du de phan biet "khong enroll" voi loi ha tang.
+	// enrollmentRepo (finding V3-6, issue #58): du phong cho phien KHONG gan lop (session.ClassID
+	// == uuid.Nil) — xem resolveJoinRole. Khong xay ra voi schema hien tai (ClassID NOT NULL)
+	// nhung giu de phong mo rong sau nay.
 	enrollmentRepo repository.EnrollmentRepositoryInterface
 	redis          *redis.Client
 	livekitSvc     LivekitServiceInterface
@@ -107,14 +115,46 @@ var ErrNotSessionMember = errors.New("forbidden: not a member of this session")
 // (403) chu khong phai loi du lieu (400).
 var ErrCannotKickHost = errors.New("forbidden: cannot kick the host of this session")
 
-// IsForbiddenErr (finding review V3-6/V3-7, issue #58): gom moi sentinel UY QUYEN cua nhom
-// livestream ve MOT cho, de tang handler khong phai liet ke lai tung sentinel (va khong the quen
-// mot cai khi them sau nay).
+// ErrParticipantKicked (F-5, issue #58 review vong 2): nguoi da bi kick khoi phien co goi lai
+// POST /:id/join — truoc day khong co gi ngan lai vi quan he DB (GV lop/hoc sinh lop) khong doi,
+// nen resolveJoinRole van cho qua va cap token moi.
+var ErrParticipantKicked = errors.New("forbidden: kicked from this session")
+
+// ErrWhiteboardLocked (F-4, issue #58 review vong 2): bang trang dang bi khoa va nguoi goi khong
+// phai nguoi quan tri phien — dung cho SaveSnapshot (truoc day khong kiem khoa bang, hoc sinh ghi
+// de duoc snapshot ca khi GV da khoa).
+var ErrWhiteboardLocked = errors.New("forbidden: whiteboard is locked")
+
+// IsForbiddenErr (finding review V3-6/V3-7, issue #58) — gom moi sentinel UY QUYEN cua nhom
+// livestream/chat/whiteboard ve MOT cho, de tang handler khong phai liet ke lai tung sentinel.
 func IsForbiddenErr(err error) bool {
 	return errors.Is(err, ErrNotClassTeacher) ||
 		errors.Is(err, ErrNotClassMember) ||
 		errors.Is(err, ErrNotSessionMember) ||
-		errors.Is(err, ErrCannotKickHost)
+		errors.Is(err, ErrCannotKickHost) ||
+		errors.Is(err, ErrParticipantKicked) ||
+		errors.Is(err, ErrWhiteboardLocked)
+}
+
+// ForbiddenCode (D4, issue #58 review vong 2): anh xa MOT sentinel uy quyen sang ma loi CO DINH
+// ma web ghim vao (truong "message" trong envelope 403) — truoc day moi handler tra chuoi tu do
+// ("Forbidden"), khien web khong phan biet duoc "khong phai thanh vien" voi "bang dang khoa" de
+// hien thi dung thong bao. Dung thong nhat o moi handler livestream/chat/whiteboard.
+func ForbiddenCode(err error) string {
+	switch {
+	case errors.Is(err, ErrParticipantKicked):
+		return "KICKED"
+	case errors.Is(err, ErrWhiteboardLocked):
+		return "WHITEBOARD_LOCKED"
+	case errors.Is(err, ErrNotSessionMember):
+		return "NOT_SESSION_MEMBER"
+	case errors.Is(err, ErrCannotKickHost):
+		return "CANNOT_KICK_HOST"
+	case errors.Is(err, ErrNotClassTeacher), errors.Is(err, ErrNotClassMember):
+		return "NOT_SESSION_HOST"
+	default:
+		return "FORBIDDEN"
+	}
 }
 
 // isClassTeacherOrInstructor — dinh nghia "giao vien lop/instructor khoa" da duoc rut ve
@@ -127,26 +167,31 @@ func (s *LivestreamService) isClassTeacherOrInstructor(ctx context.Context, user
 
 // canManageClass tra ErrNotClassTeacher khi userID khong duoc quan tri lop. Uy quyen cho
 // ensureClassManage (class_access.go) — mot dinh nghia duy nhat cho ca livestream lan
-// class-lesson-content. isAdmin=false: host cua mot phien lop khong tu dong la admin he thong,
-// quyen admin duoc xet rieng o tang handler cho cac handler co ho tro.
-func (s *LivestreamService) canManageClass(ctx context.Context, userID, classID uuid.UUID) error {
-	return ensureClassManage(ctx, s.classRepo, s.courseRepo, userID, classID, false)
+// class-lesson-content.
+func (s *LivestreamService) canManageClass(ctx context.Context, userID, classID uuid.UUID, isAdmin bool) error {
+	return ensureClassManage(ctx, s.classRepo, s.courseRepo, userID, classID, isAdmin)
 }
 
-// canManageSession = host cua phien HOAC nguoi quan tri duoc lop cua phien (canManageClass).
-func (s *LivestreamService) canManageSession(ctx context.Context, userID uuid.UUID, session *model.LivestreamSession) error {
+// canManageSession = host cua phien, HOAC admin he thong (D2), HOAC nguoi quan tri duoc lop cua
+// phien (canManageClass). isAdmin thao tac tren phien nguoi khac duoc ghi log de audit — admin
+// khong phai host van co quyen day du nhung hanh dong cua ho de lai dau vet.
+func (s *LivestreamService) canManageSession(ctx context.Context, userID uuid.UUID, isAdmin bool, session *model.LivestreamSession) error {
 	if session == nil {
 		return errors.New("session not found")
 	}
 	if userID == session.HostID {
 		return nil
 	}
-	return s.canManageClass(ctx, userID, session.ClassID)
+	if isAdmin {
+		log.Printf("[ADMIN-ACTION] user=%s quan tri phien=%s (khong phai host=%s)", userID, session.ID, session.HostID)
+		return nil
+	}
+	return s.canManageClass(ctx, userID, session.ClassID, false)
 }
 
 // getManageableSession tai phien va kiem quyen quan tri trong MOT buoc, de moi handler quan tri
 // khong the vo tinh bo qua mot trong hai. Xem canManageSession.
-func (s *LivestreamService) getManageableSession(ctx context.Context, userID, sessionID uuid.UUID) (*model.LivestreamSession, error) {
+func (s *LivestreamService) getManageableSession(ctx context.Context, userID uuid.UUID, isAdmin bool, sessionID uuid.UUID) (*model.LivestreamSession, error) {
 	session, err := s.repo.GetByID(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -154,7 +199,7 @@ func (s *LivestreamService) getManageableSession(ctx context.Context, userID, se
 	if session == nil {
 		return nil, errors.New("session not found")
 	}
-	if err := s.canManageSession(ctx, userID, session); err != nil {
+	if err := s.canManageSession(ctx, userID, isAdmin, session); err != nil {
 		return nil, err
 	}
 	return session, nil
@@ -166,20 +211,9 @@ func (s *LivestreamService) Create(ctx context.Context, hostID uuid.UUID, req dt
 		return nil, errors.New("invalid class_id")
 	}
 
-	// N1 (review vong 2, 260915): fix host_id (vong truoc) chi chan MAO DANH — phien khong con
-	// mang ten nguoi khac duoc nua — nhung khong chan UY QUYEN: bat ky user dang nhap nao (ke ca
-	// hoc sinh) van tao duoc phien gan vao MOT LOP BAT KY, va khi co scheduled_at, Create con
-	// enqueue reminder BAN THONG BAO TOI CA LOP do. Kiem hostID phai la giao vien cua class_id
-	// HOAC instructor cua khoa hoc chua lop do, truoc khi tao bat cu thu gi — dat truoc moi thao
-	// tac ghi/enqueue trong ham nay nen tu dong bao ve ca duong goi noi bo
-	// (ClassLessonContentService.createLivestreamSession cung truyen hostID = userID xac thuc,
-	// khong co gi de bypass). Dung lai sentinel ErrNotClassTeacher da co san (grade_service.go,
-	// C-13 audit 260909) thay vi khai bao ban sao — cung y nghia "khong phai giao vien lop nay".
-	//
-	// V3-6/V3-7 (issue #58): phep kiem nay da duoc rut thanh canManageClass de moi handler quan
-	// tri khac dung lai dung mot dinh nghia — xem canManageClass. Host o day chinh la nguoi goi
-	// nen khong can nhanh "userID == session.HostID".
-	if err := s.canManageClass(ctx, hostID, classID); err != nil {
+	// N1/V3-6/V3-7 (issue #58): host phai la giao vien cua class_id HOAC instructor cua khoa
+	// hoc chua lop do, truoc khi tao bat cu thu gi.
+	if err := s.canManageClass(ctx, hostID, classID, false); err != nil {
 		return nil, err
 	}
 
@@ -265,13 +299,29 @@ func (s *LivestreamService) Create(ctx context.Context, hostID uuid.UUID, req dt
 	return session, nil
 }
 
-func (s *LivestreamService) GetByID(ctx context.Context, id uuid.UUID) (*dto.LivestreamDetailDTO, error) {
+// ensureMemberOfSession la phan than dung chung cho GetByID/GetParticipants/EnsureSessionMember —
+// giu MOT dinh nghia "thanh vien" duy nhat (resolveJoinRole), khong lam lai o tung noi goi.
+func (s *LivestreamService) ensureMemberOfSession(ctx context.Context, userID uuid.UUID, session *model.LivestreamSession) error {
+	_, err := s.resolveJoinRole(ctx, userID, session)
+	return err
+}
+
+func (s *LivestreamService) GetByID(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) (*dto.LivestreamDetailDTO, error) {
 	session, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if session == nil {
 		return nil, nil
+	}
+
+	// F-1 (issue #58 review vong 2): truoc day handler nay chi co AuthMiddleware — bat ky user
+	// dang nhap nao cung xem duoc chi tiet (kem room_name + roster realtime tu LiveKit) cua phien
+	// bat ky, ke ca phien cua lop/org khac.
+	if !isAdmin {
+		if err := s.ensureMemberOfSession(ctx, userID, session); err != nil {
+			return nil, err
+		}
 	}
 
 	detail := &dto.LivestreamDetailDTO{
@@ -300,8 +350,11 @@ func (s *LivestreamService) GetByID(ctx context.Context, id uuid.UUID) (*dto.Liv
 	return detail, nil
 }
 
-func (s *LivestreamService) GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) (*dto.LivestreamListDTO, error) {
-	sessions, total, err := s.repo.GetAll(ctx, page, pageSize, status, hostID, lessonContentID)
+func (s *LivestreamService) GetAll(ctx context.Context, userID uuid.UUID, isAdmin bool, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) (*dto.LivestreamListDTO, error) {
+	// F-1 (issue #58 review vong 2): truoc day khong loc theo nguoi goi — bat ky user dang nhap
+	// nao cung liet ke duoc TOAN BO phien cua he thong. Loc thuc su nam o tang repo (mot truy
+	// van, giu dung tinh chinh xac cua phan trang).
+	sessions, total, err := s.repo.GetAll(ctx, userID, isAdmin, page, pageSize, status, hostID, lessonContentID)
 	if err != nil {
 		return nil, err
 	}
@@ -319,10 +372,8 @@ func (s *LivestreamService) GetAll(ctx context.Context, page, pageSize int, stat
 	}, nil
 }
 
-func (s *LivestreamService) Update(ctx context.Context, userID, id uuid.UUID, req dto.UpdateLivestreamDTO) (*model.LivestreamSession, error) {
-	// V3-6 (issue #58): truoc day bat ky user dang nhap nao cung doi duoc title/max_viewers cua
-	// phien nguoi khac — keo theo ca viec ha max_viewers de chan nguoi khac vao phong.
-	session, err := s.getManageableSession(ctx, userID, id)
+func (s *LivestreamService) Update(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID, req dto.UpdateLivestreamDTO) (*model.LivestreamSession, error) {
+	session, err := s.getManageableSession(ctx, userID, isAdmin, id)
 	if err != nil {
 		return nil, err
 	}
@@ -344,10 +395,8 @@ func (s *LivestreamService) Update(ctx context.Context, userID, id uuid.UUID, re
 	return session, nil
 }
 
-func (s *LivestreamService) Delete(ctx context.Context, userID, id uuid.UUID) error {
-	// V3-6 (issue #58): xoa phien la thao tac pha huy (xoa ca room LiveKit) — truoc day khong
-	// kiem quyen, bat ky user dang nhap nao cung xoa duoc phien cua nguoi khac.
-	session, err := s.getManageableSession(ctx, userID, id)
+func (s *LivestreamService) Delete(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) error {
+	session, err := s.getManageableSession(ctx, userID, isAdmin, id)
 	if err != nil {
 		return err
 	}
@@ -356,9 +405,8 @@ func (s *LivestreamService) Delete(ctx context.Context, userID, id uuid.UUID) er
 	return s.repo.Delete(ctx, id)
 }
 
-func (s *LivestreamService) Start(ctx context.Context, userID, id uuid.UUID) (*model.LivestreamSession, error) {
-	// V3-6 (issue #58): mo phong hoc la thao tac quan tri — chi host/GV lop/instructor khoa.
-	session, err := s.getManageableSession(ctx, userID, id)
+func (s *LivestreamService) Start(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) (*model.LivestreamSession, error) {
+	session, err := s.getManageableSession(ctx, userID, isAdmin, id)
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +417,8 @@ func (s *LivestreamService) Start(ctx context.Context, userID, id uuid.UUID) (*m
 // khong co nguoi goi, khong co access token, va khong den tu HTTP: no duoc len lich tu luc tao
 // phien. Actor cua no chinh la host cua phien (nguoi da duoc kiem quyen ngay tai Create), nen day
 // KHONG phai duong vong quyen: khong co tham so nao den tu client. Ten ham co chu "AsSystem" de
-// bat ky ai doc code cung thay ngay day la duong noi bo, khong duoc goi tu handler.
+// bat ky ai doc code cung thay ngay day la duong noi bo — KHONG GOI TU HANDLER, khong nam trong
+// LivestreamServiceInterface (chi app.go giu con tro cu the *LivestreamService de goi truc tiep).
 func (s *LivestreamService) StartAsSystem(ctx context.Context, id uuid.UUID) (*model.LivestreamSession, error) {
 	session, err := s.repo.GetByID(ctx, id)
 	if err != nil {
@@ -408,10 +457,8 @@ func (s *LivestreamService) startSession(ctx context.Context, session *model.Liv
 	return s.repo.GetByID(ctx, session.ID)
 }
 
-func (s *LivestreamService) End(ctx context.Context, userID, id uuid.UUID) (*model.LivestreamSession, error) {
-	// V3-6 (issue #58): ket thuc phien la thao tac quan tri — truoc day bat ky user dang nhap nao
-	// cung ket thuc duoc phien dang dien ra (ngat live cua ca lop).
-	session, err := s.getManageableSession(ctx, userID, id)
+func (s *LivestreamService) End(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) (*model.LivestreamSession, error) {
+	session, err := s.getManageableSession(ctx, userID, isAdmin, id)
 	if err != nil {
 		return nil, err
 	}
@@ -431,18 +478,36 @@ func (s *LivestreamService) End(ctx context.Context, userID, id uuid.UUID) (*mod
 	return s.repo.GetByID(ctx, id)
 }
 
-// resolveJoinRole (finding review V3-6, issue #58) quyet dinh vai tro cua nguoi tham gia phien,
-// dua tren QUAN HE THAT trong DB — khong bao gio dua tren gia tri client gui len:
+// resolveJoinRole (finding review V3-6, issue #58; sua D1 vong 2) quyet dinh vai tro cua nguoi
+// tham gia phien, dua tren QUAN HE THAT trong DB — khong bao gio dua tren gia tri client gui len:
 //
 //	teacher  : host phien, GV cua lop, hoac instructor cua khoa chua lop
-//	student  : hoc sinh da enroll lop cua phien, hoac da enroll khoa cua phien
+//	student  : hoc sinh da enroll CHINH LOP cua phien
 //	ErrNotSessionMember: khong co quan he nao o tren -> khong duoc vao phong
 //
-// Truoc day vai tro lay tu `req.Role` (client tu khai) => bat ky ai cung tu phong minh len teacher,
-// va `IsHost` cua LiveKit token duoc set theo role do.
+// D1 (issue #58 review vong 2, sua F-6): truoc day co them nhanh du phong enroll theo KHOA
+// (Enrollment.GetByUserAndCourse) khi khong phai hoc sinh CUA LOP — khien hoc sinh lop B (cung
+// khoa) join duoc phien cua lop A, doc/ghi chat va bang trang cua lop A. Phien luon gan mot lop
+// cu the (session.ClassID NOT NULL trong model) nen fallback do khong con dieu kien de kich hoat
+// dung: fallback Enrollment CHI con y nghia neu mot phien nao do KHONG gan lop
+// (session.ClassID == uuid.Nil) — khong xay ra voi schema hien tai, giu lai de phong mo rong.
 func (s *LivestreamService) resolveJoinRole(ctx context.Context, userID uuid.UUID, session *model.LivestreamSession) (model.ParticipantRole, error) {
 	if userID == session.HostID {
 		return model.ParticipantRoleTeacher, nil
+	}
+
+	if session.ClassID == uuid.Nil {
+		if session.CourseID == nil {
+			return "", ErrNotSessionMember
+		}
+		enrollment, err := s.enrollmentRepo.GetByUserAndCourse(ctx, userID, *session.CourseID)
+		if err != nil {
+			return "", fmt.Errorf("failed to verify course enrollment: %w", err)
+		}
+		if enrollment == nil {
+			return "", ErrNotSessionMember
+		}
+		return model.ParticipantRoleStudent, nil
 	}
 
 	class, err := s.classRepo.GetByID(ctx, session.ClassID)
@@ -461,7 +526,6 @@ func (s *LivestreamService) resolveJoinRole(ctx context.Context, userID uuid.UUI
 		return model.ParticipantRoleTeacher, nil
 	}
 
-	// Hoc sinh cua lop (StudentClass) — duong enroll pho bien nhat cua phien gan lop.
 	isStudent, err := s.classRepo.StudentClassExists(ctx, session.ClassID, userID)
 	if err != nil {
 		return "", fmt.Errorf("failed to verify class enrollment: %w", err)
@@ -470,29 +534,15 @@ func (s *LivestreamService) resolveJoinRole(ctx context.Context, userID uuid.UUI
 		return model.ParticipantRoleStudent, nil
 	}
 
-	// Duong enroll theo khoa (Enrollment). Uu tien khoa cua lop, dung khoa cua phien lam du phong
-	// khi lop khong gan khoa nao. GetByUserAndCourse tra (nil, nil) khi khong tim thay.
-	courseID := session.CourseID
-	if class.CourseID != nil {
-		courseID = class.CourseID
-	}
-	if courseID != nil {
-		enrollment, err := s.enrollmentRepo.GetByUserAndCourse(ctx, userID, *courseID)
-		if err != nil {
-			return "", fmt.Errorf("failed to verify course enrollment: %w", err)
-		}
-		if enrollment != nil {
-			return model.ParticipantRoleStudent, nil
-		}
-	}
-
 	return "", ErrNotSessionMember
 }
 
-// EnsureSessionMember (V3-6, issue #58): tra ErrNotSessionMember (qua resolveJoinRole) neu userID
+// EnsureSessionMember (V3-6, issue #58; toi uu F-8 vong 2): tra ErrNotSessionMember neu userID
 // khong co quan he gi voi phien — dung cho doc/ghi chat va bang trong mot phien (chi thanh vien
-// phien do moi duoc tham gia), day la muc kiem THAP hon EnsureSessionManage (khong doi hoi phai
-// la nguoi quan tri). Bo qua gia tri role tra ve vi caller o day chi can biet "co duoc vao khong".
+// phien do moi duoc tham gia). Day la duong NONG (chay tren MOI tin nhan chat, MOI su kien bang
+// trang), nen chi tra loi CO/KHONG (khong can vai tro chinh xac nhu resolveJoinRole) qua MOT truy
+// van gop IsUserRelatedToClass — tong cong 2 truy van (session + membership), thay vi toi da 4
+// truy van rieng le cua duong Join.
 func (s *LivestreamService) EnsureSessionMember(ctx context.Context, sessionID, userID uuid.UUID) error {
 	session, err := s.repo.GetByID(ctx, sessionID)
 	if err != nil {
@@ -501,18 +551,58 @@ func (s *LivestreamService) EnsureSessionMember(ctx context.Context, sessionID, 
 	if session == nil {
 		return errors.New("session not found")
 	}
-	_, err = s.resolveJoinRole(ctx, userID, session)
-	return err
+	if userID == session.HostID {
+		return nil
+	}
+
+	if session.ClassID == uuid.Nil {
+		if session.CourseID == nil {
+			return ErrNotSessionMember
+		}
+		enrollment, err := s.enrollmentRepo.GetByUserAndCourse(ctx, userID, *session.CourseID)
+		if err != nil {
+			return fmt.Errorf("failed to verify course enrollment: %w", err)
+		}
+		if enrollment == nil {
+			return ErrNotSessionMember
+		}
+		return nil
+	}
+
+	related, err := s.classRepo.IsUserRelatedToClass(ctx, session.ClassID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to verify session membership: %w", err)
+	}
+	if !related {
+		return ErrNotSessionMember
+	}
+	return nil
 }
 
 // EnsureSessionManage (V3-6, issue #58): uy quyen cho canManageSession (host/GV lop/instructor
-// khoa) — dung cho thao tac kiem duyet cua ChatService (ghim/xoa tin nhan cua NGUOI KHAC).
+// khoa) — dung cho thao tac kiem duyet cua ChatService (ghim/xoa tin nhan cua NGUOI KHAC). Khong
+// co nhanh admin (D2 chi ap dung cho quan tri PHIEN LIVE — End/Kick/Mute/khoa bang — khong mo
+// rong sang kiem duyet chat).
 func (s *LivestreamService) EnsureSessionManage(ctx context.Context, sessionID, userID uuid.UUID) error {
-	_, err := s.getManageableSession(ctx, userID, sessionID)
+	_, err := s.getManageableSession(ctx, userID, false, sessionID)
 	return err
 }
 
-func (s *LivestreamService) Join(ctx context.Context, sessionID, userID uuid.UUID, req dto.JoinLivestreamDTO) (*dto.ParticipantResponseDTO, error) {
+// participantGrant (D3, issue #58 review vong 2) tinh 3 quyen LiveKit tu VAI TRO da duoc server
+// suy ra (khong bao gio tu client): giao vien/host/admin duoc publish AV day du; hoc sinh MAC
+// DINH khong publish AV (CanPublish=false) — chi duoc khi host duyet chia se man hinh
+// (StartScreenShare cap rieng qua UpdateParticipant). CanPublishData LUON true tru khi bang trang
+// dang khoa VA nguoi nay khong phai nguoi quan tri — web ve bang trang va gui share_request qua
+// data channel topic "whiteboard" (VideoTab.tsx), nen khong the tat hoan toan.
+func participantGrant(role model.ParticipantRole, whiteboardLocked bool) (canPublish, canSubscribe, canPublishData bool) {
+	isManager := role == model.ParticipantRoleTeacher
+	canPublish = isManager
+	canSubscribe = true
+	canPublishData = isManager || !whiteboardLocked
+	return
+}
+
+func (s *LivestreamService) Join(ctx context.Context, sessionID, userID uuid.UUID, isAdmin bool, req dto.JoinLivestreamDTO) (*dto.ParticipantResponseDTO, error) {
 	// V3-6 (issue #58): userID la nguoi goi THAT SU (access token), khong con lay tu body.
 	session, err := s.repo.GetByID(ctx, sessionID)
 	if err != nil {
@@ -547,16 +637,35 @@ func (s *LivestreamService) Join(ctx context.Context, sessionID, userID uuid.UUI
 		}
 	}
 
+	// F-5 (issue #58 review vong 2): nguoi da bi kick khoi PHIEN NAY khong duoc vao lai — kiem
+	// TRUOC resolveJoinRole vi day la ly do tu choi cu the hon "khong phai thanh vien" (ho VAN la
+	// hoc sinh cua lop, chi la da bi kick khoi buoi hoc nay).
+	existing, err := s.participantRepo.GetBySessionAndUser(ctx, sessionID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil && existing.IsKicked {
+		return nil, ErrParticipantKicked
+	}
+
 	// V3-6 (issue #58): chi nguoi co quan he that voi phien moi vao duoc, va vai tro do SERVER
 	// suy ra tu quan he do (khong nhan tu body). Dat sau cac buoc kiem trang thai/suc chua de giu
 	// nguyen thu tu thong bao loi cu cho nguoi dung hop le, va truoc moi thao tac ghi.
 	role, err := s.resolveJoinRole(ctx, userID, session)
 	if err != nil {
-		return nil, err
+		if !isAdmin {
+			return nil, err
+		}
+		// D2/D3 (issue #58 review vong 2): admin he thong giam sat duoc phien du khong phai
+		// thanh vien lop — cap quyen tuong duong giao vien (chi de xem/quan tri, khong phai vi
+		// admin "hoc" lop nay).
+		role = model.ParticipantRoleTeacher
+		log.Printf("[ADMIN-ACTION] user=%s tham gia phien=%s voi tu cach giam sat (khong phai thanh vien lop)", userID, sessionID)
 	}
 
+	canPublish, canSubscribe, canPublishData := participantGrant(role, session.Settings.WhiteboardLocked)
+
 	// check nếu đã tham gia rồi thì trả về token luôn, không tạo participant mới
-	existing, _ := s.participantRepo.GetBySessionAndUser(ctx, sessionID, userID)
 	if existing != nil {
 		// Update role nếu cần (e.g. host re-join)
 		if existing.Role != role {
@@ -567,9 +676,12 @@ func (s *LivestreamService) Join(ctx context.Context, sessionID, userID uuid.UUI
 		// V3-6 (issue #58): Identity PHAI la userID that (da xac thuc tu access token). Truoc day
 		// lay req.UserID tu body nen token mang danh tinh cua nguoi khac neu client khai vay.
 		token, err := s.livekitSvc.CreateJoinToken(ctx, session.RoomName, dto.JoinTokenDTO{
-			Identity: userID.String(),
-			Name:     req.Name,
-			IsHost:   role == model.ParticipantRoleTeacher,
+			Identity:       userID.String(),
+			Name:           req.Name,
+			IsHost:         role == model.ParticipantRoleTeacher,
+			CanPublish:     ptrBool(canPublish),
+			CanSubscribe:   ptrBool(canSubscribe),
+			CanPublishData: ptrBool(canPublishData),
 		})
 		if err != nil {
 			return nil, err
@@ -596,9 +708,12 @@ func (s *LivestreamService) Join(ctx context.Context, sessionID, userID uuid.UUI
 	res := s.toParticipantResponseDTO(participant)
 	res.ID = participant.ID
 	token, err := s.livekitSvc.CreateJoinToken(ctx, session.RoomName, dto.JoinTokenDTO{
-		Identity: userID.String(),
-		Name:     req.Name,
-		IsHost:   role == model.ParticipantRoleTeacher,
+		Identity:       userID.String(),
+		Name:           req.Name,
+		IsHost:         role == model.ParticipantRoleTeacher,
+		CanPublish:     ptrBool(canPublish),
+		CanSubscribe:   ptrBool(canSubscribe),
+		CanPublishData: ptrBool(canPublishData),
 	})
 	if err != nil {
 		return nil, err
@@ -632,14 +747,28 @@ func (s *LivestreamService) Leave(ctx context.Context, sessionID, userID uuid.UU
 	return s.participantRepo.SetLeft(ctx, participant.ID)
 }
 
-func (s *LivestreamService) GetParticipants(ctx context.Context, sessionID uuid.UUID, page, pageSize int) ([]model.Participant, int64, error) {
+func (s *LivestreamService) GetParticipants(ctx context.Context, userID uuid.UUID, isAdmin bool, sessionID uuid.UUID, page, pageSize int) ([]model.Participant, int64, error) {
+	// F-1 (issue #58 review vong 2): truoc day khong kiem gi — bat ky user dang nhap nao cung
+	// doc duoc roster (user_id, role, joined_at) cua phien bat ky.
+	if !isAdmin {
+		session, err := s.repo.GetByID(ctx, sessionID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if session == nil {
+			return nil, 0, errors.New("session not found")
+		}
+		if err := s.ensureMemberOfSession(ctx, userID, session); err != nil {
+			return nil, 0, err
+		}
+	}
 	return s.participantRepo.GetBySession(ctx, sessionID, page, pageSize)
 }
 
-func (s *LivestreamService) MuteParticipant(ctx context.Context, actorID, sessionID, targetID uuid.UUID) error {
+func (s *LivestreamService) MuteParticipant(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID, targetID uuid.UUID) error {
 	// V3-6 (issue #58): mute la thao tac quan tri — actorID (nguoi goi) phai la host/GV lop/
-	// instructor khoa; targetID la nguoi bi mute. Truoc day khong kiem gi.
-	session, err := s.getManageableSession(ctx, actorID, sessionID)
+	// instructor khoa/admin; targetID la nguoi bi mute.
+	session, err := s.getManageableSession(ctx, actorID, isAdmin, sessionID)
 	if err != nil {
 		return err
 	}
@@ -658,17 +787,15 @@ func (s *LivestreamService) MuteParticipant(ctx context.Context, actorID, sessio
 	return err
 }
 
-func (s *LivestreamService) KickParticipant(ctx context.Context, actorID, sessionID, targetID uuid.UUID) error {
+func (s *LivestreamService) KickParticipant(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID, targetID uuid.UUID) error {
 	// V3-6 (issue #58): kick la thao tac quan tri — actorID (nguoi goi) phai la host/GV lop/
-	// instructor khoa; targetID la nguoi bi da ra. Truoc day khong kiem gi.
-	session, err := s.getManageableSession(ctx, actorID, sessionID)
+	// instructor khoa/admin; targetID la nguoi bi da ra.
+	session, err := s.getManageableSession(ctx, actorID, isAdmin, sessionID)
 	if err != nil {
 		return err
 	}
 
-	// V3-7 (issue #58): chan tu-da HOST ra khoi phong cua chinh minh. Khong co chan nay thi mot
-	// GV lop (khong phai host) — hoac chinh host tu bam nham — co the da host ra khoi phong, va
-	// host la nguoi duy nhat con quyen quan tri phien: mat host = phien khong con ai quan tri.
+	// V3-7 (issue #58): chan tu-da HOST ra khoi phong cua chinh minh.
 	if targetID == session.HostID {
 		return ErrCannotKickHost
 	}
@@ -677,17 +804,20 @@ func (s *LivestreamService) KickParticipant(ctx context.Context, actorID, sessio
 		return err
 	}
 
+	// F-5 (issue #58 review vong 2): ghi BEN trang thai bi kick — truoc day chi goi
+	// RemoveParticipant (ngat ket noi realtime), khong doi gi trong DB, nen nguoi bi kick goi lai
+	// POST /:id/join la vao lai duoc ngay (resolveJoinRole van thay dung quan he lop).
 	participant, _ := s.participantRepo.GetBySessionAndUser(ctx, sessionID, targetID)
 	if participant != nil {
-		_ = s.participantRepo.SetLeft(ctx, participant.ID)
+		_ = s.participantRepo.MarkKicked(ctx, participant.ID)
 	}
 
 	return nil
 }
 
-func (s *LivestreamService) LockWhiteboard(ctx context.Context, actorID, sessionID uuid.UUID, locked bool) error {
+func (s *LivestreamService) LockWhiteboard(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID uuid.UUID, locked bool) error {
 	// V3-6 (issue #58): khoa/mo bang la thao tac quan tri.
-	session, err := s.getManageableSession(ctx, actorID, sessionID)
+	session, err := s.getManageableSession(ctx, actorID, isAdmin, sessionID)
 	if err != nil {
 		return err
 	}
@@ -697,28 +827,80 @@ func (s *LivestreamService) LockWhiteboard(ctx context.Context, actorID, session
 	updateReq := dto.UpdateRoomMetadataDTO{
 		Metadata: string(settingsJSON),
 	}
-	_, err = s.livekitSvc.UpdateRoomMetadata(ctx, session.RoomName, updateReq)
+	if _, err := s.livekitSvc.UpdateRoomMetadata(ctx, session.RoomName, updateReq); err != nil {
+		return err
+	}
+
+	if err := s.repo.Update(ctx, session); err != nil {
+		return err
+	}
+
+	// D3 (issue #58 review vong 2): khoa/mo bang phai tat/bat lai CanPublishData cua MOI
+	// participant khong phai nguoi quan tri dang trong phong — truoc day chi doi Settings (anh
+	// huong SaveSnapshot qua EnsureSessionMember/F-4) va broadcast qua data channel (van bi khoa
+	// o BroadcastEvent), nhung KHONG doi grant LiveKit cua ai — hoc sinh van publish thang len
+	// topic "whiteboard" qua LiveKit duoc, di vong hoan toan qua server (F-2). No: khong biet
+	// participant nao dang duoc host duyet chia se man hinh rieng (khong luu trang thai do), nen
+	// CanPublish luon dat ve false cho non-manager o day — mot hoc sinh dang chia se man hinh se
+	// bi thu quyen publish khi GV khoa/mo bang, phai duoc cap lai qua /screenshare/start. Ghi
+	// nhan la no ky thuat (F-8 style), khong sua trong PR nay vi can them bang trang thai
+	// "dang duoc duyet chia se man hinh" moi giai quyet dut diem.
+	participants, err := s.livekitSvc.ListParticipants(ctx, session.RoomName)
+	if err != nil {
+		// Khong chan thao tac khoa bang chi vi khong lay duoc danh sach realtime — Settings va
+		// SaveSnapshot van duoc bao ve du LiveKit tam thoi khong dong bo duoc.
+		return nil
+	}
+	for _, p := range participants {
+		identity, parseErr := uuid.Parse(p.Identity)
+		if parseErr != nil {
+			continue
+		}
+		if identity == session.HostID {
+			continue
+		}
+		role, roleErr := s.resolveJoinRole(ctx, identity, session)
+		if roleErr == nil && role == model.ParticipantRoleTeacher {
+			continue
+		}
+		_, _ = s.livekitSvc.UpdateParticipant(ctx, session.RoomName, p.Identity, dto.UpdateParticipantDTO{
+			CanPublish:     ptrBool(false),
+			CanPublishData: ptrBool(!locked),
+		})
+	}
+
+	return nil
+}
+
+func (s *LivestreamService) StartScreenShare(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID, targetID uuid.UUID) error {
+	// D3 (issue #58 review vong 2): host/GV lop/instructor khoa/admin DUYET chia se man hinh cho
+	// targetID (rong o tang handler = actorID, tuc host tu chia se). Truoc day StartScreenShare
+	// chi kiem quyen NGUOI GOI ma khong lam gi ca — hoc sinh van khong publish duoc vi
+	// CanPublish mac dinh (D3) la false, nen "duyet" chi la kiem quyen suong, khong cap gi.
+	session, err := s.getManageableSession(ctx, actorID, isAdmin, sessionID)
 	if err != nil {
 		return err
 	}
-
-	return s.repo.Update(ctx, session)
+	_, err = s.livekitSvc.UpdateParticipant(ctx, session.RoomName, targetID.String(), dto.UpdateParticipantDTO{
+		CanPublish: ptrBool(true),
+	})
+	return err
 }
 
-func (s *LivestreamService) StartScreenShare(ctx context.Context, actorID, sessionID uuid.UUID) error {
-	// V3-6 (issue #58): bat dau chia se man hinh la thao tac quan tri.
-	if _, err := s.getManageableSession(ctx, actorID, sessionID); err != nil {
+func (s *LivestreamService) StopScreenShare(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID, targetID uuid.UUID) error {
+	session, err := s.getManageableSession(ctx, actorID, isAdmin, sessionID)
+	if err != nil {
 		return err
 	}
-	return nil
-}
-
-func (s *LivestreamService) StopScreenShare(ctx context.Context, actorID, sessionID uuid.UUID) error {
-	// V3-6 (issue #58): dung chia se man hinh la thao tac quan tri.
-	if _, err := s.getManageableSession(ctx, actorID, sessionID); err != nil {
-		return err
+	// Khong ha CanPublish cua giao vien/host — baseline cua ho luon day du (D3), StopScreenShare
+	// chi thu lai quyen da CAP RIENG cho hoc sinh qua StartScreenShare.
+	if role, roleErr := s.resolveJoinRole(ctx, targetID, session); roleErr == nil && role == model.ParticipantRoleTeacher {
+		return nil
 	}
-	return nil
+	_, err = s.livekitSvc.UpdateParticipant(ctx, session.RoomName, targetID.String(), dto.UpdateParticipantDTO{
+		CanPublish: ptrBool(false),
+	})
+	return err
 }
 
 func (s *LivestreamService) toResponseDTO(session model.LivestreamSession) dto.LivestreamResponseDTO {

@@ -23,6 +23,11 @@ type UpdateParticipantDTO struct {
 	Metadata     string `json:"metadata"`
 	CanPublish   *bool  `json:"can_publish"`
 	CanSubscribe *bool  `json:"can_subscribe"`
+	// CanPublishData (D3, issue #58 review vòng 2): trước đây bị HARDCODE true trong
+	// LivekitService.UpdateParticipant nên không có cách nào tắt data-channel qua API này — khoá
+	// bảng trắng chỉ chặn được ở tầng lưu trữ (SaveSnapshot), không chặn được học sinh publish
+	// thẳng lên topic "whiteboard" qua LiveKit. nil = giữ nguyên true (tương thích ngược).
+	CanPublishData *bool `json:"can_publish_data"`
 }
 
 // SendDataDTO - payload to send a data message in a room

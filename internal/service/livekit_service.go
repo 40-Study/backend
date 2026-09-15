@@ -125,7 +125,10 @@ func (s *LivekitService) CreateJoinToken(ctx context.Context, roomName string, r
 	} else {
 		at.SetName(req.Identity)
 	}
-	at.SetValidFor(24 * time.Hour)
+	// F-5 (issue #58 review vòng 2): 24h cũ là dư thừa so với một buổi học và làm token của
+	// người bị kick sống quá lâu — RemoveParticipant chỉ ngắt kết nối, không thu hồi được JWT đã
+	// ký, nên hạ TTL xuống độ dài một buổi học là lớp phòng thủ duy nhất còn lại phía server.
+	at.SetValidFor(4 * time.Hour)
 	at.SetVideoGrant(grant)
 	return at.ToJWT()
 }
@@ -163,7 +166,13 @@ func (s *LivekitService) UpdateParticipant(ctx context.Context, roomName, identi
 		Identity: identity,
 		Metadata: req.Metadata,
 	}
-	if req.CanPublish != nil || req.CanSubscribe != nil {
+	// D3/F-2 (issue #58 review vòng 2): trước đây nhánh này chỉ kích hoạt khi CanPublish HOẶC
+	// CanSubscribe được truyền, và luôn HARDCODE CanPublishData=true — nên gọi UpdateParticipant
+	// CHỈ để tắt CanPublishData (khoá bảng trắng) không có tác dụng gì (field không tồn tại
+	// trong request, hoặc bị ghi đè về true). LiveKit REPLACE toàn bộ permission khi Permission
+	// khác nil (không merge từng field) — nên khi chỉ một field được truyền, các field còn lại
+	// PHẢI được set tường minh theo giá trị hiện tại mà caller biết (không suy đoán ở đây).
+	if req.CanPublish != nil || req.CanSubscribe != nil || req.CanPublishData != nil {
 		perm := &livekit.ParticipantPermission{
 			CanPublishData: true,
 		}
@@ -172,6 +181,9 @@ func (s *LivekitService) UpdateParticipant(ctx context.Context, roomName, identi
 		}
 		if req.CanSubscribe != nil {
 			perm.CanSubscribe = *req.CanSubscribe
+		}
+		if req.CanPublishData != nil {
+			perm.CanPublishData = *req.CanPublishData
 		}
 		updateReq.Permission = perm
 	}

@@ -22,6 +22,7 @@ type ClassRepositoryInterface interface {
 	// Class relationship checks
 	TeacherClassExists(ctx context.Context, classID, teacherID uuid.UUID) (bool, error)
 	StudentClassExists(ctx context.Context, classID, studentID uuid.UUID) (bool, error)
+	IsUserRelatedToClass(ctx context.Context, classID, userID uuid.UUID) (bool, error)
 
 	// Teacher-Class
 	AssignTeacher(ctx context.Context, tc *model.TeacherClass) error
@@ -142,6 +143,26 @@ func (r *ClassRepository) StudentClassExists(ctx context.Context, classID, stude
 		Where("class_id = ? AND student_id = ?", classID, studentID).
 		Count(&count).Error
 	return count > 0, err
+}
+
+// IsUserRelatedToClass (F-8, issue #58 review vòng 2): gộp GV lớp / học sinh lớp / instructor
+// khoá chứa lớp vào MỘT truy vấn thay vì 3 lời gọi riêng (TeacherClassExists + StudentClassExists
+// + course.GetByID) — dùng cho đường kiểm quyền NÓNG (EnsureSessionMember, chạy trên mỗi tin
+// nhắn chat/sự kiện bảng trắng), nơi chỉ cần biết CÓ/KHÔNG, không cần phân biệt vai trò chính
+// xác như resolveJoinRole.
+func (r *ClassRepository) IsUserRelatedToClass(ctx context.Context, classID, userID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT EXISTS(
+			SELECT 1 FROM teacher_classes WHERE class_id = ? AND teacher_id = ?
+			UNION
+			SELECT 1 FROM student_classes WHERE class_id = ? AND student_id = ?
+			UNION
+			SELECT 1 FROM classes c JOIN courses co ON co.id = c.course_id
+				WHERE c.id = ? AND co.instructor_id = ?
+		)
+	`, classID, userID, classID, userID, classID, userID).Scan(&exists).Error
+	return exists, err
 }
 
 // Teacher-Class

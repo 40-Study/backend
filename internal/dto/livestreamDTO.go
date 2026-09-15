@@ -110,8 +110,13 @@ type ParticipantResponseDTO struct {
 // hinh la nguoi dang goi API, khong phai mot user_id client tu khai. Body cu
 // (`{user_id, action}`) van duoc Fiber parse binh thuong — `user_id` bi bo qua lang le, khong doi
 // contract response (xem API_DOCUMENTATION.md).
+// ScreenShareDTO (D3, issue #58 review vòng 2): UserID là ĐỐI TƯỢNG được host/GV DUYỆT chia sẻ
+// màn hình — rỗng = actor tự chia sẻ (host tự bật cam/màn hình của chính mình), khác rỗng = actor
+// (đã được canManageSession xác nhận là host/GV lớp/instructor khoá/admin) cấp/thu quyền publish
+// cho một học sinh cụ thể. Không phải danh tính người gọi — actor luôn lấy từ access token.
 type ScreenShareDTO struct {
 	Action string `json:"action" validate:"required,oneof=start stop"`
+	UserID string `json:"user_id" validate:"omitempty,uuid"`
 }
 
 // ModerationActionDTO — `user_id` o day la DOI TUONG bi tac dong (mute/kick ai), khong phai danh
