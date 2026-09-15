@@ -5,6 +5,7 @@ import (
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/service"
+	"study.com/v1/internal/utils"
 )
 
 type LivestreamHandlerInterface interface {
@@ -35,12 +36,28 @@ func NewLivestreamHandler(svc service.LivestreamServiceInterface) *LivestreamHan
 }
 
 func (h *LivestreamHandler) Create(c *fiber.Ctx) error {
+	// Finding review 260915 (tu PR web #16): host cua phien PHAI la nguoi dang goi API, lay tu
+	// access token — truoc day handler nhan thang host_id tu body va dung nguyen, nen bat ky user
+	// dang nhap nao cung tao duoc livestream mang ten mot user khac bang cach tu khai host_id.
+	userID, err := extractUserID(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized", "error": err.Error(),
+		})
+	}
+
 	var req dto.CreateLivestreamDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	session, err := h.svc.Create(c.Context(), req)
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed", "errors": errs,
+		})
+	}
+
+	session, err := h.svc.Create(c.Context(), userID, req)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}

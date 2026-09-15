@@ -420,7 +420,6 @@ func (s *ClassLessonContentService) createLivestreamSession(ctx context.Context,
 
 	livestreamReq := dto.CreateLivestreamDTO{
 		Title:           fmt.Sprintf("%s - %s", title, class.Name),
-		HostID:          userID.String(),
 		ClassID:         clc.ClassID.String(),
 		CourseID:        courseID.String(),
 		LessonContentID: clc.LessonContentID.String(),
@@ -429,7 +428,7 @@ func (s *ClassLessonContentService) createLivestreamSession(ctx context.Context,
 		ScheduledAt:     scheduledAt,
 	}
 
-	_, _ = s.livestreamSvc.Create(ctx, livestreamReq)
+	_, _ = s.livestreamSvc.Create(ctx, userID, livestreamReq)
 }
 
 func (s *ClassLessonContentService) toResponseDTO(clc *model.ClassLessonContent) *dto.ClassLessonContentResponseDTO {

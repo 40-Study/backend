@@ -17,7 +17,9 @@ import (
 )
 
 type LivestreamServiceInterface interface {
-	Create(ctx context.Context, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error)
+	// Create: hostID la nguoi goi THAT SU (lay tu access token o tang handler), khong nam trong
+	// req — xem comment tai dto.CreateLivestreamDTO.
+	Create(ctx context.Context, hostID uuid.UUID, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*dto.LivestreamDetailDTO, error)
 	GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID) (*dto.LivestreamListDTO, error)
 	Update(ctx context.Context, id uuid.UUID, req dto.UpdateLivestreamDTO) (*model.LivestreamSession, error)
@@ -68,12 +70,7 @@ func livestreamJoinedKey(sessionID uuid.UUID) string {
 	return fmt.Sprintf("livestream:%s:joined", sessionID.String())
 }
 
-func (s *LivestreamService) Create(ctx context.Context, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error) {
-	hostID, err := uuid.Parse(req.HostID)
-	if err != nil {
-		return nil, errors.New("invalid host_id")
-	}
-
+func (s *LivestreamService) Create(ctx context.Context, hostID uuid.UUID, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error) {
 	classID, err := uuid.Parse(req.ClassID)
 	if err != nil {
 		return nil, errors.New("invalid class_id")
