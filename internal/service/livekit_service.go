@@ -172,8 +172,17 @@ func (s *LivekitService) UpdateParticipant(ctx context.Context, roomName, identi
 	// trong request, hoặc bị ghi đè về true). LiveKit REPLACE toàn bộ permission khi Permission
 	// khác nil (không merge từng field) — nên khi chỉ một field được truyền, các field còn lại
 	// PHẢI được set tường minh theo giá trị hiện tại mà caller biết (không suy đoán ở đây).
-	if req.CanPublish != nil || req.CanSubscribe != nil || req.CanPublishData != nil {
+	//
+	// R2-1 (issue #58 review vòng 3, BLOCKER): bản vá D3/F-2 ở trên chỉ mặc định CanPublishData,
+	// bỏ quên CanSubscribe — nó ở zero-value (false) trừ khi caller truyền tường minh, và KHÔNG
+	// call site nào trong livestream_service.go từng truyền field này (mute/duyệt-thu screenshare/
+	// khoá-mở bảng). Hệ quả thật: mute một học sinh cắt luôn khả năng nghe/nhìn của họ; khoá/mở
+	// bảng chạy vòng lặp UpdateParticipant cho MỌI người không phải host/GV nên CẢ LỚP mất
+	// subscribe — phòng học đen hình. Mặc định CanSubscribe=true khi không truyền, đúng ý đã ghi
+	// trong comment ở trên nhưng trước đây chưa làm.
+	if req.CanPublish != nil || req.CanSubscribe != nil || req.CanPublishData != nil || len(req.CanPublishSources) > 0 {
 		perm := &livekit.ParticipantPermission{
+			CanSubscribe:   true,
 			CanPublishData: true,
 		}
 		if req.CanPublish != nil {
@@ -185,9 +194,53 @@ func (s *LivekitService) UpdateParticipant(ctx context.Context, roomName, identi
 		if req.CanPublishData != nil {
 			perm.CanPublishData = *req.CanPublishData
 		}
+		if len(req.CanPublishSources) > 0 {
+			perm.CanPublishSources = trackSourcesFromStrings(req.CanPublishSources)
+		}
 		updateReq.Permission = perm
 	}
 	return s.client().UpdateParticipant(ctx, updateReq)
+}
+
+// trackSourcesFromStrings (D5, issue #58 review vòng 3) chuyển các tên nguồn publish dạng chuỗi
+// (dùng ở tầng DTO để không ép internal/dto phụ thuộc kiểu vendor livekit) sang
+// []livekit.TrackSource mà ParticipantPermission.CanPublishSources yêu cầu.
+func trackSourcesFromStrings(sources []string) []livekit.TrackSource {
+	out := make([]livekit.TrackSource, 0, len(sources))
+	for _, s := range sources {
+		switch s {
+		case "camera":
+			out = append(out, livekit.TrackSource_CAMERA)
+		case "microphone":
+			out = append(out, livekit.TrackSource_MICROPHONE)
+		case "screen_share":
+			out = append(out, livekit.TrackSource_SCREEN_SHARE)
+		case "screen_share_audio":
+			out = append(out, livekit.TrackSource_SCREEN_SHARE_AUDIO)
+		}
+	}
+	return out
+}
+
+// trackSourceStrings (R2-1/R2-11, issue #58 review vòng 3) chuyển ngược []livekit.TrackSource ->
+// []string — dùng khi LockWhiteboard đọc lại permission HIỆN TẠI của participant (từ
+// ListParticipants) để truyền nguyên vẹn CanPublishSources thay vì làm mất nguồn đã được duyệt
+// khi chỉ muốn đổi CanPublishData.
+func trackSourceStrings(sources []livekit.TrackSource) []string {
+	out := make([]string, 0, len(sources))
+	for _, s := range sources {
+		switch s {
+		case livekit.TrackSource_CAMERA:
+			out = append(out, "camera")
+		case livekit.TrackSource_MICROPHONE:
+			out = append(out, "microphone")
+		case livekit.TrackSource_SCREEN_SHARE:
+			out = append(out, "screen_share")
+		case livekit.TrackSource_SCREEN_SHARE_AUDIO:
+			out = append(out, "screen_share_audio")
+		}
+	}
+	return out
 }
 
 // SendData broadcasts a data message to participants in a room.

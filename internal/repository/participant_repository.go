@@ -117,6 +117,9 @@ func (r *ParticipantRepository) SetLeft(ctx context.Context, id uuid.UUID) error
 // gọi lại POST /:id/join là được cho vào lại ngay lập tức. Gộp luôn is_active=false/left_at cùng
 // một update, không cần gọi SetLeft riêng.
 func (r *ParticipantRepository) MarkKicked(ctx context.Context, id uuid.UUID) error {
+	// R2-8 (issue #58 review vong 3): truoc day khong ghi kicked_at du cot da duoc khai bao va
+	// migrate — cot chet, khong ai doc. Ghi luon "now()" o day (re hon xoa cot vi cot da ton tai
+	// va co the co gia tri huu ich cho audit sau nay).
 	return r.db.WithContext(ctx).
 		Model(&model.Participant{}).
 		Where("id = ?", id).
@@ -124,6 +127,7 @@ func (r *ParticipantRepository) MarkKicked(ctx context.Context, id uuid.UUID) er
 			"is_kicked": true,
 			"is_active": false,
 			"left_at":   gorm.Expr("CURRENT_TIMESTAMP"),
+			"kicked_at": gorm.Expr("CURRENT_TIMESTAMP"),
 		}).Error
 }
 

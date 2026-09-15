@@ -28,6 +28,12 @@ type UpdateParticipantDTO struct {
 	// bảng trắng chỉ chặn được ở tầng lưu trữ (SaveSnapshot), không chặn được học sinh publish
 	// thẳng lên topic "whiteboard" qua LiveKit. nil = giữ nguyên true (tương thích ngược).
 	CanPublishData *bool `json:"can_publish_data"`
+	// CanPublishSources (D5, issue #58 review vòng 3): giới hạn NGUỒN được phép publish khi
+	// CanPublish=true — dùng cho duyệt chia sẻ màn hình ("screen_share", "screen_share_audio")
+	// để KHÔNG mở kèm camera/microphone. Rỗng = không giới hạn nguồn (giữ hành vi cũ). Giá trị
+	// hợp lệ: "camera", "microphone", "screen_share", "screen_share_audio" — xem
+	// LivekitService.trackSourcesFromStrings.
+	CanPublishSources []string `json:"can_publish_sources,omitempty"`
 }
 
 // SendDataDTO - payload to send a data message in a room

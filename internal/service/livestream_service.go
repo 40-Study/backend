@@ -555,6 +555,21 @@ func (s *LivestreamService) EnsureSessionMember(ctx context.Context, sessionID, 
 		return nil
 	}
 
+	// R2-2 (issue #58 review vong 3, BLOCKER): F-5 (vong 2) chi chan nguoi bi kick o duong Join —
+	// EnsureSessionMember la cong gac cua chat gui/doc VA bang trang doc/ghi/broadcast, khong kiem
+	// IsKicked, nen nguoi bi kick van gui chat va ghi bang binh thuong qua REST du da bi ngat khoi
+	// LiveKit. Kiem TRUOC ca quan he lop — day la ly do tu choi cu the hon "khong phai thanh vien"
+	// (ho VAN la thanh vien lop, chi la da bi kick khoi buoi hoc nay). Lam tang tu 2 len 3 truy
+	// van cho duong khong phai host (session + participant + membership) — danh doi chap nhan
+	// duoc vi day la loi CHAN MERGE, F-8 chi la toi uu "cang re cang tot" o vong truoc.
+	participant, err := s.participantRepo.GetBySessionAndUser(ctx, sessionID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to verify participant state: %w", err)
+	}
+	if participant != nil && participant.IsKicked {
+		return ErrParticipantKicked
+	}
+
 	if session.ClassID == uuid.Nil {
 		if session.CourseID == nil {
 			return ErrNotSessionMember
@@ -780,8 +795,23 @@ func (s *LivestreamService) MuteParticipant(ctx context.Context, actorID uuid.UU
 	if participant == nil {
 		return errors.New("participant not found")
 	}
+
+	// R2-1 (issue #58 review vong 3): LiveKit THAY THE toan bo Permission moi lan
+	// UpdateParticipant duoc goi voi Permission khac nil — chi truyen mot minh CanPublish se pho
+	// mac CanSubscribe/CanPublishData cho gia tri mac dinh cua livekit_service, co the vo tinh MO
+	// LAI kenh du lieu (CanPublishData) neu bang trang dang bi khoa dung luc nguoi nay bi mute.
+	// Tu tinh lai ca bo ba theo dung vai tro/trang thai khoa bang HIEN TAI roi ghi de rieng
+	// CanPublish=false — dung participant.Role da luu trong DB lam phuong an du phong neu
+	// resolveJoinRole loi (vd loi tai lop).
+	role, roleErr := s.resolveJoinRole(ctx, targetID, session)
+	if roleErr != nil {
+		role = participant.Role
+	}
+	_, canSubscribe, canPublishData := participantGrant(role, session.Settings.WhiteboardLocked)
 	updateReq := dto.UpdateParticipantDTO{
-		CanPublish: ptrBool(false),
+		CanPublish:     ptrBool(false),
+		CanSubscribe:   ptrBool(canSubscribe),
+		CanPublishData: ptrBool(canPublishData),
 	}
 	_, err = s.livekitSvc.UpdateParticipant(ctx, session.RoomName, targetID.String(), updateReq)
 	return err
@@ -839,12 +869,15 @@ func (s *LivestreamService) LockWhiteboard(ctx context.Context, actorID uuid.UUI
 	// participant khong phai nguoi quan tri dang trong phong — truoc day chi doi Settings (anh
 	// huong SaveSnapshot qua EnsureSessionMember/F-4) va broadcast qua data channel (van bi khoa
 	// o BroadcastEvent), nhung KHONG doi grant LiveKit cua ai — hoc sinh van publish thang len
-	// topic "whiteboard" qua LiveKit duoc, di vong hoan toan qua server (F-2). No: khong biet
-	// participant nao dang duoc host duyet chia se man hinh rieng (khong luu trang thai do), nen
-	// CanPublish luon dat ve false cho non-manager o day — mot hoc sinh dang chia se man hinh se
-	// bi thu quyen publish khi GV khoa/mo bang, phai duoc cap lai qua /screenshare/start. Ghi
-	// nhan la no ky thuat (F-8 style), khong sua trong PR nay vi can them bang trang thai
-	// "dang duoc duyet chia se man hinh" moi giai quyet dut diem.
+	// topic "whiteboard" qua LiveKit duoc, di vong hoan toan qua server (F-2).
+	//
+	// R2-1/R2-11 (issue #58 review vong 3): truoc day vong lap nay LUON dat CanPublish=false cho
+	// MOI non-manager, bat ke ho co dang duoc duyet chia se man hinh hay khong (R2-11) — vo tinh
+	// thu lai quyen do moi lan GV khoa/mo bang. Va vi khong truyen CanSubscribe, no bi LiveKit dat
+	// ve false theo mac dinh cu (R2-1, BLOCKER) — CA LOP mat kha nang nhan hinh/tieng khi bang bi
+	// khoa hoac mo. Sua: doc lai CanPublish/CanPublishSources HIEN TAI cua tung participant tu
+	// chinh ket qua ListParticipants (p.Permission), truyen nguyen ven lai, CHI doi CanPublishData
+	// theo trang thai khoa — khong con dua doan nao vao gia tri mac dinh nua.
 	participants, err := s.livekitSvc.ListParticipants(ctx, session.RoomName)
 	if err != nil {
 		// Khong chan thao tac khoa bang chi vi khong lay duoc danh sach realtime — Settings va
@@ -863,14 +896,26 @@ func (s *LivestreamService) LockWhiteboard(ctx context.Context, actorID uuid.UUI
 		if roleErr == nil && role == model.ParticipantRoleTeacher {
 			continue
 		}
+		canPublish := false
+		var sources []string
+		if p.Permission != nil {
+			canPublish = p.Permission.CanPublish
+			sources = trackSourceStrings(p.Permission.CanPublishSources)
+		}
 		_, _ = s.livekitSvc.UpdateParticipant(ctx, session.RoomName, p.Identity, dto.UpdateParticipantDTO{
-			CanPublish:     ptrBool(false),
-			CanPublishData: ptrBool(!locked),
+			CanPublish:        ptrBool(canPublish),
+			CanPublishSources: sources,
+			CanPublishData:    ptrBool(!locked),
 		})
 	}
 
 	return nil
 }
+
+// screenShareSources (D5, issue #58 review vong 3): duyet chia se man hinh CHI duoc phep publish
+// hinh + tieng CUA MAN HINH — khong phai la cach "mo lai" camera/microphone cho hoc sinh. Hang so
+// dung chung cho ca Start (cap) va nhac lai trong comment cua Stop (thu).
+var screenShareSources = []string{"screen_share", "screen_share_audio"}
 
 func (s *LivestreamService) StartScreenShare(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID, targetID uuid.UUID) error {
 	// D3 (issue #58 review vong 2): host/GV lop/instructor khoa/admin DUYET chia se man hinh cho
@@ -881,8 +926,19 @@ func (s *LivestreamService) StartScreenShare(ctx context.Context, actorID uuid.U
 	if err != nil {
 		return err
 	}
+	// D5 (issue #58 review vong 3): duyet chia se man hinh KHONG duoc mo kem camera/microphone —
+	// CanPublishSources gioi han dung 2 nguon man hinh. CanPublishData tinh lai theo vai tro/khoa
+	// bang HIEN TAI (R2-1) thay vi bo trong de mac dinh co the vo tinh mo lai kenh du lieu dang
+	// bi khoa.
+	role, roleErr := s.resolveJoinRole(ctx, targetID, session)
+	if roleErr != nil {
+		role = model.ParticipantRoleStudent // fallback an toan: khong ro vai tro thi coi quyen thap nhat
+	}
+	_, _, canPublishData := participantGrant(role, session.Settings.WhiteboardLocked)
 	_, err = s.livekitSvc.UpdateParticipant(ctx, session.RoomName, targetID.String(), dto.UpdateParticipantDTO{
-		CanPublish: ptrBool(true),
+		CanPublish:        ptrBool(true),
+		CanPublishSources: screenShareSources,
+		CanPublishData:    ptrBool(canPublishData),
 	})
 	return err
 }
@@ -894,11 +950,17 @@ func (s *LivestreamService) StopScreenShare(ctx context.Context, actorID uuid.UU
 	}
 	// Khong ha CanPublish cua giao vien/host — baseline cua ho luon day du (D3), StopScreenShare
 	// chi thu lai quyen da CAP RIENG cho hoc sinh qua StartScreenShare.
-	if role, roleErr := s.resolveJoinRole(ctx, targetID, session); roleErr == nil && role == model.ParticipantRoleTeacher {
+	role, roleErr := s.resolveJoinRole(ctx, targetID, session)
+	if roleErr == nil && role == model.ParticipantRoleTeacher {
 		return nil
 	}
+	if roleErr != nil {
+		role = model.ParticipantRoleStudent
+	}
+	_, _, canPublishData := participantGrant(role, session.Settings.WhiteboardLocked)
 	_, err = s.livekitSvc.UpdateParticipant(ctx, session.RoomName, targetID.String(), dto.UpdateParticipantDTO{
-		CanPublish: ptrBool(false),
+		CanPublish:     ptrBool(false),
+		CanPublishData: ptrBool(canPublishData),
 	})
 	return err
 }
