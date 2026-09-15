@@ -249,15 +249,17 @@ func (s *SectionService) toLessonResponseDTO(lesson *model.Lesson, contents []mo
 		resp.Contents = make([]dto.LessonContentResponseDTO, len(contents))
 		for i, c := range contents {
 			resp.Contents[i] = dto.LessonContentResponseDTO{
-				ID:           c.ID,
-				LessonID:     c.LessonID,
-				Type:         c.Type,
-				Title:        c.Title,
-				VideoURL:     c.VideoURL,
-				Duration:     c.Duration,
-				DisplayOrder: c.DisplayOrder,
-				CreatedAt:    c.CreatedAt,
-				UpdatedAt:    c.UpdatedAt,
+				ID:       c.ID,
+				LessonID: c.LessonID,
+				Type:     c.Type,
+				Title:    c.Title,
+				VideoURL: c.VideoURL,
+				Duration: c.Duration,
+				// N10 (review vòng 2, từ review web): xem chú thích tại model.LessonContent.
+				LivestreamSessionID: c.LivestreamSessionID,
+				DisplayOrder:        c.DisplayOrder,
+				CreatedAt:           c.CreatedAt,
+				UpdatedAt:           c.UpdatedAt,
 			}
 		}
 	}

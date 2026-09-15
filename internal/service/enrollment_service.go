@@ -16,6 +16,27 @@ import (
 // không kiểm tra course.Price/IsFree hay đơn hàng đã thanh toán. Handler map lỗi này sang 402.
 var ErrPaymentRequired = errors.New("payment required for this course")
 
+// lessonProgressStatusRank (HIGH-2, review 260915): status chỉ được đi LÊN, không bao giờ đi
+// LÙI. Beacon `POST /api/progress` (sendBeacon khi đóng tab) luôn gửi cứng "in_progress" —
+// không phân biệt được người học đang xem LẦN ĐẦU hay xem LẠI một bài đã `completed`. Ghi đè vô
+// điều kiện thì mỗi lần đóng tab một bài đã hoàn thành sẽ hạ nó về in_progress, và
+// CountCompletedMandatory (đếm theo status='completed') kéo tụt % tiến độ khoá học đang hiển thị
+// cho phụ huynh/học viên.
+//
+// N8 (review vòng 2, 260915): giá trị status lạ (không có trong map) nhận rank 0 — thấp nhất —
+// nên thực tế bị CHẶN ghi khi progress.Status hiện tại đã ≥ "in_progress" (rank 0 < 1). Map này
+// không phải "cho phép enum lạ đi qua" mà ngược lại: bất kỳ giá trị nào ngoài ba key trên coi
+// như thấp nhất và chỉ được ghi khi progress hiện tại còn ở "not_started". Vô hại hiện nay vì cả
+// hai DTO liên quan (UpdateLessonProgressDTO, beacon) đều đã validate `oneof=not_started
+// in_progress completed`, nên request tới được đây luôn có status hợp lệ — nhưng nếu enum status
+// mở rộng sau này mà quên cập nhật map, giá trị mới sẽ bị coi là rank 0 và im lặng không ghi
+// được (trừ khi progress đang not_started), không phải "được chấp nhận" như comment cũ ngụ ý.
+var lessonProgressStatusRank = map[string]int{
+	"not_started": 0,
+	"in_progress": 1,
+	"completed":   2,
+}
+
 type EnrollmentServiceInterface interface {
 	Enroll(ctx context.Context, userID, courseID uuid.UUID) (*dto.EnrollmentResponseDTO, error)
 	Unenroll(ctx context.Context, userID, courseID uuid.UUID) error
@@ -300,7 +321,10 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		// cot nay dung yen mai mai.
 		"updated_at": now,
 	}
-	if req.Status != nil {
+	// HIGH-2 (review 260915): chi ghi status khi cap bac MOI >= cap bac HIEN TAI — xem
+	// lessonProgressStatusRank. Bo qua ca hai request khong gui status VA request muon ha cap:
+	// khong dua "status" vao map thi cau UPDATE khong dung toi cot do, giu nguyen gia tri cu.
+	if req.Status != nil && lessonProgressStatusRank[*req.Status] >= lessonProgressStatusRank[progress.Status] {
 		updates["status"] = *req.Status
 		if *req.Status == "completed" && progress.CompletedAt == nil {
 			updates["completed_at"] = now

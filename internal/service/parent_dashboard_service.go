@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 
 	"github.com/google/uuid"
@@ -86,10 +87,36 @@ func (s *ParentDashboardService) GetChildOverview(ctx context.Context, parentID,
 	}
 
 	completedCount := 0
+	enrollmentIDs := make([]uuid.UUID, 0, len(enrollments))
 	for _, e := range enrollments {
+		enrollmentIDs = append(enrollmentIDs, e.ID)
 		if e.CompletedAt != nil {
 			completedCount++
 		}
+	}
+
+	// TotalStudyMinutes: thoi gian hoc THAT cua child, lay tu lesson_progress.video_watched_seconds.
+	// Tai dung SumWatchedSecondsByEnrollmentIDs (cung ham ma GET /my-enrollments dung) de toan he
+	// thong chi co MOT dinh nghia "da hoc bao nhieu" — tu viet SUM rieng o day se la ban sao thu
+	// hai, va hai ban sao se lech nhau.
+	totalStudyMinutes := 0
+	if len(enrollmentIDs) > 0 {
+		watchedByEnrollment, err := s.enrollmentRepo.SumWatchedSecondsByEnrollmentIDs(ctx, enrollmentIDs)
+		if err != nil {
+			// MED-4 (review 260915): quyet dinh co chu y la GIU throw o day (khong fallback ve 0)
+			// — 0 se lam phu huynh tuong con khong hoc gi, sai hon ca viec sap trang bao loi. Chi
+			// them log co ngu canh (childID/parentID/so enrollment) de phan biet duoc voi loi XP/
+			// streak ben duoi (nhanh do CO CHU Y nuot loi — xem comment tai do, khong sua trong PR
+			// nay) khi doc log san xuat.
+			log.Printf("[ERROR] GetChildOverview: failed to sum watched seconds for child=%s parent=%s enrollments=%d: %v",
+				childID, parentID, len(enrollmentIDs), err)
+			return nil, fmt.Errorf("failed to sum watched seconds: %w", err)
+		}
+		totalWatchedSeconds := 0
+		for _, seconds := range watchedByEnrollment {
+			totalWatchedSeconds += seconds
+		}
+		totalStudyMinutes = totalWatchedSeconds / 60
 	}
 
 	// Get XP and streak from UserStatsRepository
@@ -113,7 +140,7 @@ func (s *ParentDashboardService) GetChildOverview(ctx context.Context, parentID,
 		CurrentStreak:     currentStreak,
 		EnrolledCourses:   int(totalEnrolled),
 		CompletedCourses:  completedCount,
-		TotalStudyMinutes: 0, // TODO: calculate from lesson progress
+		TotalStudyMinutes: totalStudyMinutes,
 		CanViewProgress:   relation.CanViewProgress,
 		CanViewGrades:     relation.CanViewGrades,
 		CanViewAttendance: relation.CanViewAttendance,

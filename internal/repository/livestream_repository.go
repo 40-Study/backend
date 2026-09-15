@@ -14,7 +14,9 @@ type LivestreamRepositoryInterface interface {
 	Create(ctx context.Context, session *model.LivestreamSession) error
 	GetByID(ctx context.Context, id uuid.UUID) (*model.LivestreamSession, error)
 	GetByRoomName(ctx context.Context, roomName string) (*model.LivestreamSession, error)
-	GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID) ([]model.LivestreamSession, int64, error)
+	// GetAll: lessonContentID (N10, review vòng 2 — "nếu rẻ") lọc phiên theo lesson_content_id,
+	// nil = không lọc.
+	GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) ([]model.LivestreamSession, int64, error)
 	Update(ctx context.Context, session *model.LivestreamSession) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	UpdateStatus(ctx context.Context, id uuid.UUID, status model.LivestreamSessionStatus) error
@@ -62,7 +64,7 @@ func (r *LivestreamRepository) GetByRoomName(ctx context.Context, roomName strin
 	return &session, nil
 }
 
-func (r *LivestreamRepository) GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID) ([]model.LivestreamSession, int64, error) {
+func (r *LivestreamRepository) GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) ([]model.LivestreamSession, int64, error) {
 	var sessions []model.LivestreamSession
 	var total int64
 
@@ -78,6 +80,9 @@ func (r *LivestreamRepository) GetAll(ctx context.Context, page, pageSize int, s
 	}
 	if hostID != nil {
 		query = query.Where("host_id = ?", hostID)
+	}
+	if lessonContentID != nil {
+		query = query.Where("lesson_content_id = ?", lessonContentID)
 	}
 
 	if err := query.Count(&total).Error; err != nil {

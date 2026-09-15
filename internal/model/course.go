@@ -142,6 +142,16 @@ type LessonContent struct {
 	// Bắt buộc hoàn thành mới được học tiếp
 	IsMandatory bool `gorm:"default:true" json:"is_mandatory"`
 
+	// LivestreamSessionID (N10, review vòng 2, từ review web): liên kết tới phiên livestream
+	// được tự động tạo khi content này (type="livestream") được gán lịch cho một lớp — xem
+	// ClassLessonContentService.createLivestreamSession. Trước đây phiên được tạo xong rồi bỏ
+	// qua (`_, _ = s.livestreamSvc.Create(...)`), không có cách nào từ content lấy lại được id
+	// phiên; web mở phòng theo id lesson_content (`/rooms/<lesson_content_id>`) nên join luôn
+	// hỏng vì đó không phải RoomName/session id thật. Cột này ghi đúng MỘT lần khi phiên được
+	// tạo thành công; không cập nhật lại khi phiên đổi trạng thái (Status/StartedAt/EndedAt nằm
+	// trên chính LivestreamSession, không cần đồng bộ ngược).
+	LivestreamSessionID *uuid.UUID `gorm:"type:uuid" json:"livestream_session_id"`
+
 	DisplayOrder int `gorm:"default:0;index" json:"display_order"`
 
 	CreatedAt time.Time
@@ -154,4 +164,3 @@ type LessonContent struct {
 func (LessonContent) TableName() string {
 	return "lesson_contents"
 }
-

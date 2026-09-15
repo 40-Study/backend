@@ -2,16 +2,25 @@ package dto
 
 import "github.com/google/uuid"
 
+// CreateLivestreamDTO — KHONG con truong host_id (finding review 260915, PR web #16): host cua
+// phien phai la nguoi dang goi API (lay tu access token), khong duoc client tu khai bao trong
+// body — truoc day handler nhan thang host_id tu body va dung nguyen de tao session, nen bat ky
+// user dang nhap nao cung co the tao livestream mang ten mot user KHAC bang cach doan/lay UUID
+// cua ho. hostID gio la tham so rieng cua LivestreamServiceInterface.Create, lay tu
+// c.Locals("user_id") o handler — xem LivestreamHandler.Create.
 type CreateLivestreamDTO struct {
 	Title           string `json:"title" validate:"required,min=3,max=255"`
 	Description     string `json:"description"`
-	HostID          string `json:"host_id" validate:"required,uuid"`
 	ClassID         string `json:"class_id" validate:"required,uuid"`
 	CourseID        string `json:"course_id" validate:"omitempty,uuid"`
 	LessonContentID string `json:"lesson_content_id" validate:"omitempty,uuid"`
 	MaxViewers      int64  `json:"max_viewers"`
 	IsRecorded      bool   `json:"is_recorded"`
-	ScheduledAt     string `json:"scheduled_at"`
+	// N9 (review vong 2, 260915): truoc day livestream_service.go nuot loi parse RFC3339 cua
+	// truong nay (`if err == nil { session.ScheduledAt = &scheduledTime }`) — client go sai dinh
+	// dang van nhan 200, phien duoc tao KHONG lich, KHONG enqueue reminder, ma khong he biet.
+	// Validate ngay o DTO de handler tra 400 truoc khi toi service, thay vi im lang bo qua.
+	ScheduledAt string `json:"scheduled_at" validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
 }
 
 type UpdateLivestreamDTO struct {

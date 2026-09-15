@@ -259,17 +259,19 @@ func (s *LessonContentService) ReorderContents(ctx context.Context, lessonID uui
 
 func (s *LessonContentService) toContentResponseDTO(c *model.LessonContent) *dto.LessonContentResponseDTO {
 	resp := &dto.LessonContentResponseDTO{
-		ID:           c.ID,
-		LessonID:     c.LessonID,
-		Type:         c.Type,
-		Title:        c.Title,
-		VideoURL:     c.VideoURL,
-		Duration:     c.Duration,
-		ExerciseID:   c.ExerciseID,
-		IsMandatory:  c.IsMandatory,
-		DisplayOrder: c.DisplayOrder,
-		CreatedAt:    c.CreatedAt,
-		UpdatedAt:    c.UpdatedAt,
+		ID:          c.ID,
+		LessonID:    c.LessonID,
+		Type:        c.Type,
+		Title:       c.Title,
+		VideoURL:    c.VideoURL,
+		Duration:    c.Duration,
+		ExerciseID:  c.ExerciseID,
+		IsMandatory: c.IsMandatory,
+		// N10 (review vòng 2, từ review web): xem chú thích tại model.LessonContent.
+		LivestreamSessionID: c.LivestreamSessionID,
+		DisplayOrder:        c.DisplayOrder,
+		CreatedAt:           c.CreatedAt,
+		UpdatedAt:           c.UpdatedAt,
 	}
 
 	// Extract upload ID from video_url patterns and generate HLS + fallback URLs

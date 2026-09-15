@@ -1,10 +1,13 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/service"
+	"study.com/v1/internal/utils"
 )
 
 type LivestreamHandlerInterface interface {
@@ -35,13 +38,37 @@ func NewLivestreamHandler(svc service.LivestreamServiceInterface) *LivestreamHan
 }
 
 func (h *LivestreamHandler) Create(c *fiber.Ctx) error {
+	// Finding review 260915 (tu PR web #16): host cua phien PHAI la nguoi dang goi API, lay tu
+	// access token — truoc day handler nhan thang host_id tu body va dung nguyen, nen bat ky user
+	// dang nhap nao cung tao duoc livestream mang ten mot user khac bang cach tu khai host_id.
+	userID, err := extractUserID(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized", "error": err.Error(),
+		})
+	}
+
 	var req dto.CreateLivestreamDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	session, err := h.svc.Create(c.Context(), req)
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed", "errors": errs,
+		})
+	}
+
+	session, err := h.svc.Create(c.Context(), userID, req)
 	if err != nil {
+		// N1 (review vong 2, 260915): ErrNotClassTeacher la loi UY QUYEN (403), khong phai loi
+		// ha tang — phan loai bang errors.Is (dung pattern sentinel LOW-7 da co cho select-org),
+		// khong so chuoi.
+		if errors.Is(err, service.ErrNotClassTeacher) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"message": "Forbidden", "error": err.Error(),
+			})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
@@ -81,7 +108,17 @@ func (h *LivestreamHandler) GetAll(c *fiber.Ctx) error {
 		}
 	}
 
-	result, err := h.svc.GetAll(c.Context(), page, pageSize, status, hostID)
+	// N10 (review vòng 2): filter theo lesson_content_id — bỏ qua giá trị không parse được thay
+	// vì trả 400, giữ nguyên hành vi khoan dung sẵn có của host_id ở trên.
+	var lessonContentID *uuid.UUID
+	if lcid := c.Query("lesson_content_id"); lcid != "" {
+		id, err := uuid.Parse(lcid)
+		if err == nil {
+			lessonContentID = &id
+		}
+	}
+
+	result, err := h.svc.GetAll(c.Context(), page, pageSize, status, hostID, lessonContentID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}

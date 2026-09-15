@@ -17,9 +17,12 @@ import (
 )
 
 type LivestreamServiceInterface interface {
-	Create(ctx context.Context, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error)
+	// Create: hostID la nguoi goi THAT SU (lay tu access token o tang handler), khong nam trong
+	// req — xem comment tai dto.CreateLivestreamDTO.
+	Create(ctx context.Context, hostID uuid.UUID, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*dto.LivestreamDetailDTO, error)
-	GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID) (*dto.LivestreamListDTO, error)
+	// GetAll: lessonContentID (N10, review vòng 2) lọc phiên theo lesson_content_id, nil = không lọc.
+	GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) (*dto.LivestreamListDTO, error)
 	Update(ctx context.Context, id uuid.UUID, req dto.UpdateLivestreamDTO) (*model.LivestreamSession, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	Start(ctx context.Context, id uuid.UUID) (*model.LivestreamSession, error)
@@ -38,6 +41,8 @@ type LivestreamService struct {
 	repo            repository.LivestreamRepositoryInterface
 	participantRepo repository.ParticipantRepositoryInterface
 	analyticsRepo   repository.AnalyticsRepositoryInterface
+	classRepo       repository.ClassRepositoryInterface
+	courseRepo      repository.CourseRepositoryInterface
 	redis           *redis.Client
 	livekitSvc      LivekitServiceInterface
 	q               *asynq_queue.Queue
@@ -48,6 +53,8 @@ func NewLivestreamService(
 	repo repository.LivestreamRepositoryInterface,
 	participantRepo repository.ParticipantRepositoryInterface,
 	analyticsRepo repository.AnalyticsRepositoryInterface,
+	classRepo repository.ClassRepositoryInterface,
+	courseRepo repository.CourseRepositoryInterface,
 	redis *redis.Client,
 	livekitSvc LivekitServiceInterface,
 	q *asynq_queue.Queue,
@@ -57,6 +64,8 @@ func NewLivestreamService(
 		repo:            repo,
 		participantRepo: participantRepo,
 		analyticsRepo:   analyticsRepo,
+		classRepo:       classRepo,
+		courseRepo:      courseRepo,
 		redis:           redis,
 		livekitSvc:      livekitSvc,
 		q:               q,
@@ -68,15 +77,44 @@ func livestreamJoinedKey(sessionID uuid.UUID) string {
 	return fmt.Sprintf("livestream:%s:joined", sessionID.String())
 }
 
-func (s *LivestreamService) Create(ctx context.Context, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error) {
-	hostID, err := uuid.Parse(req.HostID)
-	if err != nil {
-		return nil, errors.New("invalid host_id")
-	}
-
+func (s *LivestreamService) Create(ctx context.Context, hostID uuid.UUID, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error) {
 	classID, err := uuid.Parse(req.ClassID)
 	if err != nil {
 		return nil, errors.New("invalid class_id")
+	}
+
+	// N1 (review vong 2, 260915): fix host_id (vong truoc) chi chan MAO DANH — phien khong con
+	// mang ten nguoi khac duoc nua — nhung khong chan UY QUYEN: bat ky user dang nhap nao (ke ca
+	// hoc sinh) van tao duoc phien gan vao MOT LOP BAT KY, va khi co scheduled_at, Create con
+	// enqueue reminder BAN THONG BAO TOI CA LOP do. Kiem hostID phai la giao vien cua class_id
+	// HOAC instructor cua khoa hoc chua lop do, truoc khi tao bat cu thu gi — dat truoc moi thao
+	// tac ghi/enqueue trong ham nay nen tu dong bao ve ca duong goi noi bo
+	// (ClassLessonContentService.createLivestreamSession cung truyen hostID = userID xac thuc,
+	// khong co gi de bypass). Dung lai sentinel ErrNotClassTeacher da co san (grade_service.go,
+	// C-13 audit 260909) thay vi khai bao ban sao — cung y nghia "khong phai giao vien lop nay".
+	class, err := s.classRepo.GetByID(ctx, classID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load class: %w", err)
+	}
+	if class == nil {
+		return nil, errors.New("class not found")
+	}
+	isTeacher, err := s.classRepo.TeacherClassExists(ctx, classID, hostID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify class teacher: %w", err)
+	}
+	if !isTeacher {
+		isInstructor := false
+		if class.CourseID != nil {
+			course, err := s.courseRepo.GetByID(ctx, *class.CourseID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to load course: %w", err)
+			}
+			isInstructor = course != nil && course.InstructorID == hostID
+		}
+		if !isInstructor {
+			return nil, ErrNotClassTeacher
+		}
 	}
 
 	// CourseID optional
@@ -196,8 +234,8 @@ func (s *LivestreamService) GetByID(ctx context.Context, id uuid.UUID) (*dto.Liv
 	return detail, nil
 }
 
-func (s *LivestreamService) GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID) (*dto.LivestreamListDTO, error) {
-	sessions, total, err := s.repo.GetAll(ctx, page, pageSize, status, hostID)
+func (s *LivestreamService) GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) (*dto.LivestreamListDTO, error) {
+	sessions, total, err := s.repo.GetAll(ctx, page, pageSize, status, hostID, lessonContentID)
 	if err != nil {
 		return nil, err
 	}
@@ -544,7 +582,7 @@ func (s *LivestreamService) toResponseDTO(session model.LivestreamSession) dto.L
 		Description:     ptrToStr(session.Description),
 		HostID:          session.HostID,
 		ClassID:         session.ClassID,
-		CourseID:         session.CourseID,
+		CourseID:        session.CourseID,
 		LessonContentID: session.LessonContentID,
 		RoomName:        session.RoomName,
 		Status:          string(session.Status),

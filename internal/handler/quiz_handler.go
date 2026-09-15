@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"log"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -86,6 +88,57 @@ func (h *QuizHandler) GetAllQuizzes(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Quizzes retrieved successfully",
 		"data":    quizzes,
+	})
+}
+
+// GetQuizzesByLesson tra ve TAT CA quiz cua mot bai hoc duoi dang MANG PHANG.
+//
+// Ton tai rieng thay vi dung `GET /quizzes?lesson_id=` vi web goi
+// `GET /lessons/:lessonId/quizzes` (web: services/quiz.service.ts getByLesson,
+// lib/server-fetchers/curriculum.ts) va mong `data` la mang, KHONG phai envelope
+// phan trang {data,total,page,page_size} ma GetAllQuizzes tra ve.
+//
+// Truoc ban va nay route khong ton tai, nen MOI bai hoc nhan 404 va quiz luon
+// rong tren trang hoc — khong phai vi bai khong co quiz. Vi vay bai hoc khong co
+// quiz o day tra 200 [] chu khong phai 404, de web phan biet duoc "khong co quiz"
+// voi "route sai".
+func (h *QuizHandler) GetQuizzesByLesson(c *fiber.Ctx) error {
+	lessonID, err := uuid.Parse(c.Params("lessonId"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid lesson ID",
+			"error":   err.Error(),
+		})
+	}
+
+	// pageSize 50 = tran tren service cho phep (>50 bi ep ve 10); mot bai hoc
+	// thuc te chi co 1-3 quiz nen khong can phan trang o day.
+	list, err := h.service.GetAllQuizzes(c.Context(), &lessonID, nil, nil, 1, 50)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to retrieve quizzes",
+			"error":   err.Error(),
+		})
+	}
+
+	// Bao dam serialize thanh [] chu khong phai null: server fetcher lam `res || []`
+	// nhung client axios doc `r.data.data` va null se lam vo cho goi .length.
+	data := list.Data
+	if data == nil {
+		data = []dto.QuizResponseDTO{}
+	}
+
+	// LOW-11 (review 260915): pageSize cung 50 cat im lang neu mot bai co >50 quiz — khong co
+	// co bao, khong co total tra ve client. Log de biet gia dinh "1-3 quiz/bai" o comment tren
+	// da sai o lesson nao, thay vi phat hien khi phu huynh/hoc vien bao thieu quiz.
+	if list.Total > int64(len(data)) {
+		log.Printf("[WARN] GetQuizzesByLesson: lesson=%s co %d quiz nhung chi tra ve %d (pageSize cung 50)",
+			lessonID, list.Total, len(data))
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Quizzes retrieved successfully",
+		"data":    data,
 	})
 }
 

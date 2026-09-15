@@ -297,15 +297,17 @@ func (s *LessonService) toLessonResponseDTO(lesson *model.Lesson, contents []mod
 		resp.Contents = make([]dto.LessonContentResponseDTO, len(contents))
 		for i, c := range contents {
 			item := dto.LessonContentResponseDTO{
-				ID:           c.ID,
-				LessonID:     c.LessonID,
-				Type:         c.Type,
-				Title:        c.Title,
-				VideoURL:     c.VideoURL,
-				Duration:     c.Duration,
-				DisplayOrder: c.DisplayOrder,
-				CreatedAt:    c.CreatedAt,
-				UpdatedAt:    c.UpdatedAt,
+				ID:       c.ID,
+				LessonID: c.LessonID,
+				Type:     c.Type,
+				Title:    c.Title,
+				VideoURL: c.VideoURL,
+				Duration: c.Duration,
+				// N10 (review vòng 2, từ review web): xem chú thích tại model.LessonContent.
+				LivestreamSessionID: c.LivestreamSessionID,
+				DisplayOrder:        c.DisplayOrder,
+				CreatedAt:           c.CreatedAt,
+				UpdatedAt:           c.UpdatedAt,
 			}
 			// Extract upload ID and generate HLS + fallback URLs
 			if c.VideoURL != nil && *c.VideoURL != "" {

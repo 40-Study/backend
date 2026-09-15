@@ -55,6 +55,7 @@
 | POST | `/api/auth/register` | Register | Đăng ký (verify OTP) |
 | POST | `/api/auth/login` | Login | Đăng nhập |
 | POST | `/api/auth/select-role` | SelectRole | Chọn role khi login |
+| POST | `/api/auth/select-org` | SelectOrg | **[Cần đăng nhập]** Đổi tổ chức đang hoạt động (giữ nguyên role), cấp lại token — KHÔNG phải bước 3 của login. (BLOCKER-1, review 260915: `select-role` luôn hoàn tất login trong một bước; endpoint này dùng SAU khi đã có access token, không dùng `session_token`.) |
 | POST | `/api/auth/refresh-token` | RefreshToken | Làm mới access token |
 | POST | `/api/auth/reset-password/request` | RequestPasswordReset | Gửi OTP reset password |
 | POST | `/api/auth/reset-password` | ResetPassword | Reset password |
@@ -334,7 +335,13 @@
 | DELETE | `/api/courses/:courseId/enroll` | Unenroll | Hủy ghi danh |
 | GET | `/api/enrollments` | GetMyEnrollments | Lấy enrollments của tôi |
 | GET | `/api/enrollments/:id` | GetEnrollmentDetail | Chi tiết enrollment |
-| PUT | `/api/lessons/:lessonId/progress` | UpdateLessonProgress | Cập nhật tiến độ |
+| PUT | `/api/lessons/:lessonId/progress` | UpdateLessonProgress | Cập nhật tiến độ (JSON body) |
+| POST | `/api/progress` | TrackProgressBeacon | Nhận tiến độ từ `navigator.sendBeacon` khi đóng tab (body `text/plain`, không đặt được header) |
+| GET | `/api/lessons/:lessonId/quizzes` | GetQuizzesByLesson | Quiz của bài học — mảng phẳng, `200 []` khi bài không có quiz |
+
+Ghi chú về `GET /api/lessons/:lessonId/quizzes`: trả **mảng phẳng** (không bọc envelope)
+vì web unwrap một lớp rồi gọi `.length`; trả `200 []` chứ không `404` khi bài không có
+quiz, để client phân biệt được "bài rỗng" với "route không tồn tại".
 
 ---
 
@@ -811,6 +818,21 @@ Assignment (update)
 ---
 
 ### 5. COURSE PROGRESS
+
+> **Trạng thái (2026-09-15):** các API dưới đây **chưa tồn tại**. `progress_router.go`,
+> `extension_router.go`, `calendar_router.go` là file **comment 100%** — chúng khai báo
+> `ProgressHandler` / `ExtensionHandler` / `CalendarHandler` / `ReminderHandler` nhưng
+> **không handler nào trong 4 cái đó được implement** (0/4). Bảng "API cần thêm" bên dưới
+> vì vậy vẫn đúng là *cần thêm*, không phải *đã có nhưng bị comment*.
+>
+> Hai thứ **đã** tồn tại và không nên thêm trùng:
+> - `PUT /api/lessons/:lessonId/progress` (`EnrollmentHandler.UpdateLessonProgress`) — đường ghi tiến độ duy nhất, đã có kiểm tra quyền.
+> - `POST /api/progress` (`EnrollmentHandler.TrackProgressBeacon`) — adapter cho `sendBeacon`, gọi lại cùng logic ghi ở trên.
+>
+> Ba thứ trùng tên ở nơi khác cần tránh tạo lại: `GET|PUT /api/reminders/settings` đã sống trong
+> `schedule_router.go` (dùng `ScheduleHandler.GetReminderSettings` / `UpdateReminderSetting`);
+> lớp `PersonalEvent` (`personal_events`) đã có ở `personal_event_routes.go`;
+> `lesson_progress` model đã có ở `internal/model/enrollment.go`.
 
 #### ❌ Thiếu: Time Spent Tracking
 
