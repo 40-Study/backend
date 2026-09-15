@@ -65,11 +65,13 @@ func (r *LivestreamRepository) GetByRoomName(ctx context.Context, roomName strin
 	return &session, nil
 }
 
-func (r *LivestreamRepository) GetAll(ctx context.Context, userID uuid.UUID, isAdmin bool, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) ([]model.LivestreamSession, int64, error) {
-	var sessions []model.LivestreamSession
-	var total int64
-
-	query := r.db.WithContext(ctx).Model(&model.LivestreamSession{})
+// buildGetAllQuery (F-1/D6/R2-7, issue #58 review vòng 3): tách phần XÂY các điều kiện `WHERE`
+// (lọc theo status/host/lesson_content_id, và lọc theo người gọi khi không phải admin) ra khỏi
+// phần đếm/phân trang, để test DryRun (livestream_repository_authz_test.go) gọi được ĐÚNG hàm
+// sản xuất thật thay vì hand-roll lại câu query — theo đúng pattern buildStudentClassExistsQuery
+// (class_repository.go)/buildRestoreAndReactivateQuery (enrollment_repository.go).
+func buildGetAllQuery(db *gorm.DB, userID uuid.UUID, isAdmin bool, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) *gorm.DB {
+	query := db.Model(&model.LivestreamSession{})
 	if status != "" {
 		// Handle comma-separated status values (e.g., "live,scheduled")
 		statuses := utils.SplitAndTrim(status, ",")
@@ -101,6 +103,14 @@ func (r *LivestreamRepository) GetAll(ctx context.Context, userID uuid.UUID, isA
 			userID, userID, userID, userID,
 		)
 	}
+	return query
+}
+
+func (r *LivestreamRepository) GetAll(ctx context.Context, userID uuid.UUID, isAdmin bool, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) ([]model.LivestreamSession, int64, error) {
+	var sessions []model.LivestreamSession
+	var total int64
+
+	query := buildGetAllQuery(r.db.WithContext(ctx), userID, isAdmin, status, hostID, lessonContentID)
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err

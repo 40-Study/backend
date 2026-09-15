@@ -302,6 +302,21 @@ func (s *LivestreamService) Create(ctx context.Context, hostID uuid.UUID, req dt
 // ensureMemberOfSession la phan than dung chung cho GetByID/GetParticipants/EnsureSessionMember —
 // giu MOT dinh nghia "thanh vien" duy nhat (resolveJoinRole), khong lam lai o tung noi goi.
 func (s *LivestreamService) ensureMemberOfSession(ctx context.Context, userID uuid.UUID, session *model.LivestreamSession) error {
+	// R3-5 (issue #58 review vong 3): truoc day chi uy quyen cho resolveJoinRole, khong kiem
+	// IsKicked nhu EnsureSessionMember (duong gac cua chat/bang trang) — hai dinh nghia "thanh
+	// vien phien" lech nhau ngay trong cung file (dung rui ro R2-9 da canh bao): nguoi bi kick
+	// van doc duoc chi tiet phien (GetByID) va danh sach nguoi tham gia (GetParticipants) du
+	// khong con gui chat/ghi bang duoc. Host khong the tu kick chinh minh (chan o KickParticipant/
+	// V3-7) nen bo qua kiem cho nhanh host.
+	if userID != session.HostID {
+		participant, err := s.participantRepo.GetBySessionAndUser(ctx, session.ID, userID)
+		if err != nil {
+			return fmt.Errorf("failed to verify participant state: %w", err)
+		}
+		if participant != nil && participant.IsKicked {
+			return ErrParticipantKicked
+		}
+	}
 	_, err := s.resolveJoinRole(ctx, userID, session)
 	return err
 }

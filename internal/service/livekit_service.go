@@ -159,8 +159,12 @@ func (s *LivekitService) RemoveParticipant(ctx context.Context, roomName, identi
 	return err
 }
 
-// UpdateParticipant updates a participant's permissions or metadata.
-func (s *LivekitService) UpdateParticipant(ctx context.Context, roomName, identity string, req dto.UpdateParticipantDTO) (*livekit.ParticipantInfo, error) {
+// buildUpdateParticipantRequest (R3-1, issue #58 review vòng 4): tách phần XÂY
+// *livekit.UpdateParticipantRequest ra khỏi phần gọi mạng thật (`s.client().UpdateParticipant`),
+// để test đọc được ĐÚNG kết quả build mà không cần fake/mock gRPC client — cùng tinh thần
+// buildRestoreAndReactivateQuery (enrollment_repository.go) và buildStudentClassExistsQuery
+// (class_repository.go): xoá/sửa sai mặc định ở đây sẽ làm test đỏ ngay, thay vì chỉ đọc diff.
+func buildUpdateParticipantRequest(roomName, identity string, req dto.UpdateParticipantDTO) *livekit.UpdateParticipantRequest {
 	updateReq := &livekit.UpdateParticipantRequest{
 		Room:     roomName,
 		Identity: identity,
@@ -179,7 +183,8 @@ func (s *LivekitService) UpdateParticipant(ctx context.Context, roomName, identi
 	// khoá-mở bảng). Hệ quả thật: mute một học sinh cắt luôn khả năng nghe/nhìn của họ; khoá/mở
 	// bảng chạy vòng lặp UpdateParticipant cho MỌI người không phải host/GV nên CẢ LỚP mất
 	// subscribe — phòng học đen hình. Mặc định CanSubscribe=true khi không truyền, đúng ý đã ghi
-	// trong comment ở trên nhưng trước đây chưa làm.
+	// trong comment ở trên nhưng trước đây chưa làm. R3-1 (review vòng 3): mặc định này KHÔNG có
+	// test bảo vệ — xem TestBuildUpdateParticipantRequest_* trong livekit_service_test.go.
 	if req.CanPublish != nil || req.CanSubscribe != nil || req.CanPublishData != nil || len(req.CanPublishSources) > 0 {
 		perm := &livekit.ParticipantPermission{
 			CanSubscribe:   true,
@@ -199,7 +204,12 @@ func (s *LivekitService) UpdateParticipant(ctx context.Context, roomName, identi
 		}
 		updateReq.Permission = perm
 	}
-	return s.client().UpdateParticipant(ctx, updateReq)
+	return updateReq
+}
+
+// UpdateParticipant updates a participant's permissions or metadata.
+func (s *LivekitService) UpdateParticipant(ctx context.Context, roomName, identity string, req dto.UpdateParticipantDTO) (*livekit.ParticipantInfo, error) {
+	return s.client().UpdateParticipant(ctx, buildUpdateParticipantRequest(roomName, identity, req))
 }
 
 // trackSourcesFromStrings (D5, issue #58 review vòng 3) chuyển các tên nguồn publish dạng chuỗi
