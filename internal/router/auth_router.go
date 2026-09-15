@@ -49,7 +49,11 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	// của luồng đăng nhập, nhưng SelectRole luôn hoàn tất login rồi xoá pending key nên
 	// pending.SelectedRole luôn nil ⇒ mọi lời gọi trả 400, route là code chết. Nay đặt SAU
 	// AuthMiddleware: danh tính lấy từ access token, không phụ thuộc pending key.
-	auth.Post("/select-org", authHandler.SelectOrg)
+	//
+	// N5 (review vong 2, 260915): route nay cham Redis/DB va cap lai token giong het select-role
+	// (da co authRateLimiter o tren) nhung bi bo sot khi chuyen sang nhom protected — gan lai
+	// cung mot authRateLimiter (khoa theo IP, tai su dung duoc du dung sau AuthMiddleware).
+	auth.Post("/select-org", authRateLimiter, authHandler.SelectOrg)
 
 	// Profile management
 	auth.Get("/me/profiles", authHandler.GetMyProfiles)
