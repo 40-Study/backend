@@ -24,6 +24,10 @@ type stubLivestreamService struct {
 	// createErr (N1, review vong 2 260915): khi khac nil, Create tra loi nay thay vi thanh cong —
 	// dung de gia lap ErrNotClassTeacher tu tang service ma khong can dung service that.
 	createErr error
+	// gotLessonContentIDFilter (N10, review vong 2): GetAll ghi lai tham so nay de test kiem
+	// tra handler co parse dung query ?lesson_content_id= khong.
+	gotLessonContentIDFilter *uuid.UUID
+	getAllCalled             int
 }
 
 func (s *stubLivestreamService) Create(ctx context.Context, hostID uuid.UUID, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error) {
@@ -41,8 +45,10 @@ func (s *stubLivestreamService) Create(ctx context.Context, hostID uuid.UUID, re
 func (s *stubLivestreamService) GetByID(ctx context.Context, id uuid.UUID) (*dto.LivestreamDetailDTO, error) {
 	return nil, errors.New("not used in these tests")
 }
-func (s *stubLivestreamService) GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID) (*dto.LivestreamListDTO, error) {
-	return nil, errors.New("not used in these tests")
+func (s *stubLivestreamService) GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) (*dto.LivestreamListDTO, error) {
+	s.getAllCalled++
+	s.gotLessonContentIDFilter = lessonContentID
+	return &dto.LivestreamListDTO{Data: []dto.LivestreamResponseDTO{}, Total: 0, Page: page, PageSize: pageSize}, nil
 }
 func (s *stubLivestreamService) Update(ctx context.Context, id uuid.UUID, req dto.UpdateLivestreamDTO) (*model.LivestreamSession, error) {
 	return nil, errors.New("not used in these tests")
@@ -261,5 +267,58 @@ func TestLivestreamCreate_ScheduledAtHopLeRFC3339_DuocChapNhan(t *testing.T) {
 	}
 	if svc.called != 1 {
 		t.Errorf("service.Create duoc goi %d lan, muon 1", svc.called)
+	}
+}
+
+// TestLivestreamGetAll_LocTheoLessonContentID (N10, review vong 2 — "neu re"): query
+// ?lesson_content_id=<uuid> phai duoc parse va truyen xuong service.GetAll dung uuid.
+func TestLivestreamGetAll_LocTheoLessonContentID(t *testing.T) {
+	svc := &stubLivestreamService{}
+	h := NewLivestreamHandler(svc)
+
+	app := fiber.New()
+	app.Get("/livestream", h.GetAll)
+
+	lessonContentID := uuid.New()
+	req := httptest.NewRequest("GET", "/livestream?lesson_content_id="+lessonContentID.String(), nil)
+
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test loi: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, muon 200", resp.StatusCode)
+	}
+	if svc.getAllCalled != 1 {
+		t.Fatalf("service.GetAll duoc goi %d lan, muon 1", svc.getAllCalled)
+	}
+	if svc.gotLessonContentIDFilter == nil {
+		t.Fatal("lessonContentID truyen xuong service la nil du query co gan ?lesson_content_id=")
+	}
+	if *svc.gotLessonContentIDFilter != lessonContentID {
+		t.Errorf("lessonContentID = %s, muon %s", *svc.gotLessonContentIDFilter, lessonContentID)
+	}
+}
+
+// TestLivestreamGetAll_KhongCoLessonContentID_KhongLoc: khong dat query -> filter phai la nil,
+// khong duoc suy dien ra mot gia tri rac (vd uuid.Nil).
+func TestLivestreamGetAll_KhongCoLessonContentID_KhongLoc(t *testing.T) {
+	svc := &stubLivestreamService{}
+	h := NewLivestreamHandler(svc)
+
+	app := fiber.New()
+	app.Get("/livestream", h.GetAll)
+
+	req := httptest.NewRequest("GET", "/livestream", nil)
+
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test loi: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, muon 200", resp.StatusCode)
+	}
+	if svc.gotLessonContentIDFilter != nil {
+		t.Errorf("lessonContentID = %v, muon nil khi khong co query", *svc.gotLessonContentIDFilter)
 	}
 }

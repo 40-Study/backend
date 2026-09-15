@@ -428,7 +428,19 @@ func (s *ClassLessonContentService) createLivestreamSession(ctx context.Context,
 		ScheduledAt:     scheduledAt,
 	}
 
-	_, _ = s.livestreamSvc.Create(ctx, userID, livestreamReq)
+	// N10 (review vòng 2, từ review web): trước đây phiên tạo xong rồi bỏ qua (`_, _ =`),
+	// không có cách nào từ content lấy lại được id phiên — web mở phòng theo id lesson_content
+	// (`/rooms/<lesson_content_id>`) nên join luôn hỏng vì đó không phải RoomName/session id
+	// thật. Ghi lại content.LivestreamSessionID khi tạo phiên thành công để
+	// LessonContentResponseDTO trả đúng id phiên cho web. Lỗi tạo phiên hoặc ghi lại vẫn không
+	// làm hỏng luồng gán lịch (giữ nguyên hành vi cũ: không throw ra ngoài AssignClassToContent)
+	// — nhưng không còn im lặng nuốt kết quả nữa.
+	session, err := s.livestreamSvc.Create(ctx, userID, livestreamReq)
+	if err != nil || session == nil {
+		return
+	}
+	content.LivestreamSessionID = &session.ID
+	_ = s.lessonRepo.UpdateContent(ctx, content)
 }
 
 func (s *ClassLessonContentService) toResponseDTO(clc *model.ClassLessonContent) *dto.ClassLessonContentResponseDTO {

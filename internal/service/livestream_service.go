@@ -21,7 +21,8 @@ type LivestreamServiceInterface interface {
 	// req — xem comment tai dto.CreateLivestreamDTO.
 	Create(ctx context.Context, hostID uuid.UUID, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*dto.LivestreamDetailDTO, error)
-	GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID) (*dto.LivestreamListDTO, error)
+	// GetAll: lessonContentID (N10, review vòng 2) lọc phiên theo lesson_content_id, nil = không lọc.
+	GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) (*dto.LivestreamListDTO, error)
 	Update(ctx context.Context, id uuid.UUID, req dto.UpdateLivestreamDTO) (*model.LivestreamSession, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	Start(ctx context.Context, id uuid.UUID) (*model.LivestreamSession, error)
@@ -233,8 +234,8 @@ func (s *LivestreamService) GetByID(ctx context.Context, id uuid.UUID) (*dto.Liv
 	return detail, nil
 }
 
-func (s *LivestreamService) GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID) (*dto.LivestreamListDTO, error) {
-	sessions, total, err := s.repo.GetAll(ctx, page, pageSize, status, hostID)
+func (s *LivestreamService) GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) (*dto.LivestreamListDTO, error) {
+	sessions, total, err := s.repo.GetAll(ctx, page, pageSize, status, hostID, lessonContentID)
 	if err != nil {
 		return nil, err
 	}
@@ -581,7 +582,7 @@ func (s *LivestreamService) toResponseDTO(session model.LivestreamSession) dto.L
 		Description:     ptrToStr(session.Description),
 		HostID:          session.HostID,
 		ClassID:         session.ClassID,
-		CourseID:         session.CourseID,
+		CourseID:        session.CourseID,
 		LessonContentID: session.LessonContentID,
 		RoomName:        session.RoomName,
 		Status:          string(session.Status),

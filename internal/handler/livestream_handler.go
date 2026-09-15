@@ -108,7 +108,17 @@ func (h *LivestreamHandler) GetAll(c *fiber.Ctx) error {
 		}
 	}
 
-	result, err := h.svc.GetAll(c.Context(), page, pageSize, status, hostID)
+	// N10 (review vòng 2): filter theo lesson_content_id — bỏ qua giá trị không parse được thay
+	// vì trả 400, giữ nguyên hành vi khoan dung sẵn có của host_id ở trên.
+	var lessonContentID *uuid.UUID
+	if lcid := c.Query("lesson_content_id"); lcid != "" {
+		id, err := uuid.Parse(lcid)
+		if err == nil {
+			lessonContentID = &id
+		}
+	}
+
+	result, err := h.svc.GetAll(c.Context(), page, pageSize, status, hostID, lessonContentID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
