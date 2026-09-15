@@ -461,6 +461,9 @@ func (s *ClassLessonContentService) toResponseDTO(clc *model.ClassLessonContent)
 	resp.ClassName = clc.Class.Name
 	resp.ContentType = clc.LessonContent.Type
 	resp.ContentTitle = clc.LessonContent.Title
+	// N10 (review vòng 2, bổ sung theo yêu cầu mở rộng của team-lead sang mapper "class lesson
+	// content"): xem chú thích tại model.LessonContent.LivestreamSessionID.
+	resp.LivestreamSessionID = clc.LessonContent.LivestreamSessionID
 
 	return resp
 }

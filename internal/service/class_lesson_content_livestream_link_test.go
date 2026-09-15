@@ -113,3 +113,50 @@ func TestCreateLivestreamSession_TaoPhienLoi_KhongGoiUpdateContent(t *testing.T)
 		t.Error("content.LivestreamSessionID khong con nil du tao phien that bai")
 	}
 }
+
+// TestToResponseDTO_ContentLivestream_TraDungLivestreamSessionID (N10, bo sung theo yeu cau mo
+// rong cua team-lead sang mapper "class lesson content"): ClassLessonContentResponseDTO — dung
+// cho GET /lesson-contents/:id/classes va GET /classes/:id/content-schedule — phai lo dung
+// livestream_session_id lay tu LessonContent da preload, khong chi LessonContentResponseDTO.
+func TestToResponseDTO_ContentLivestream_TraDungLivestreamSessionID(t *testing.T) {
+	sessionID := uuid.New()
+	s := &ClassLessonContentService{}
+
+	clc := &model.ClassLessonContent{
+		ID:      uuid.New(),
+		ClassID: uuid.New(),
+		Class:   model.Class{Name: "Lop A"},
+		LessonContent: model.LessonContent{
+			Type:                "livestream",
+			LivestreamSessionID: &sessionID,
+		},
+	}
+
+	resp := s.toResponseDTO(clc)
+
+	if resp.LivestreamSessionID == nil {
+		t.Fatal("response.LivestreamSessionID la nil du LessonContent da co gia tri")
+	}
+	if *resp.LivestreamSessionID != sessionID {
+		t.Errorf("LivestreamSessionID = %s, muon %s", *resp.LivestreamSessionID, sessionID)
+	}
+}
+
+// TestToResponseDTO_ContentVideo_LivestreamSessionIDLaNull: content khong phai livestream (vd
+// video) -> LivestreamSessionID phai la null, khong duoc bay ra gia tri rac.
+func TestToResponseDTO_ContentVideo_LivestreamSessionIDLaNull(t *testing.T) {
+	s := &ClassLessonContentService{}
+
+	clc := &model.ClassLessonContent{
+		ID:            uuid.New(),
+		ClassID:       uuid.New(),
+		Class:         model.Class{Name: "Lop A"},
+		LessonContent: model.LessonContent{Type: "video"},
+	}
+
+	resp := s.toResponseDTO(clc)
+
+	if resp.LivestreamSessionID != nil {
+		t.Errorf("LivestreamSessionID = %v, muon nil cho content type=video", *resp.LivestreamSessionID)
+	}
+}

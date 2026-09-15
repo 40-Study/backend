@@ -36,7 +36,11 @@ type ClassLessonContentResponseDTO struct {
 	LessonContentID uuid.UUID  `json:"lesson_content_id"`
 	ContentType     string     `json:"content_type"`
 	ContentTitle    *string    `json:"content_title,omitempty"`
-	ClassName       string     `json:"class_name"`
+	// LivestreamSessionID (N10, review vòng 2, bổ sung sau khi team-lead mở rộng phạm vi sang
+	// mapper "class lesson content"): KHÔNG omitempty — luôn có mặt, null khi ContentType không
+	// phải "livestream" hoặc chưa có phiên nào được tạo cho cặp lớp+content này.
+	LivestreamSessionID *uuid.UUID `json:"livestream_session_id"`
+	ClassName           string     `json:"class_name"`
 	OpenDate        *time.Time `json:"open_date,omitempty"`
 	DueDate         *time.Time `json:"due_date,omitempty"`
 	ScheduledAt     *time.Time `json:"scheduled_at,omitempty"`
