@@ -132,10 +132,14 @@ type SwitchProfileResponseDto struct {
 	CurrentDevice DeviceSessionDto `json:"current_device,omitempty"` // Thông tin thiết bị đang login, để FE hiển thị và quản lý phiên đăng nhập
 }
 
-// SelectOrgRequestDto - Chọn org sau khi đã chọn role.
-// organization_id rỗng hoặc không gửi = chọn chế độ "Độc lập" (không thuộc org nào).
+// SelectOrgRequestDto - Body của POST /auth/select-org.
+//
+// KHÔNG còn session_token: route này là endpoint ĐÃ ĐĂNG NHẬP (access token), danh tính lấy từ
+// token chứ không từ phiên chờ trong Redis. Lý do đổi: SelectRole luôn hoàn tất login rồi xoá
+// pending key nên bản dùng session_token không bao giờ tới được (BLOCKER-1, review 260915).
+//
+// organization_id rỗng hoặc không gửi = chuyển về chế độ "Độc lập" (không thuộc org nào).
 type SelectOrgRequestDto struct {
-	SessionToken   string `json:"session_token" validate:"required"`
 	OrganizationID string `json:"organization_id,omitempty" validate:"omitempty,uuid"`
 }
 

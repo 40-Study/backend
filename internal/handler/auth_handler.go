@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -607,12 +608,32 @@ func (h *AuthHandler) SelectRole(c *fiber.Ctx) error {
 }
 
 // SelectOrg handles POST /auth/select-org
-// Bước 3 của luồng đăng nhập (sau select-role), dùng session_token chứ không dùng access token —
-// vì vậy route này nằm ở nhóm CÔNG KHAI của /auth, cùng chỗ với select-role.
+// Đổi tổ chức đang hoạt động khi ĐÃ đăng nhập, giữ nguyên role hiện tại, và cấp lại
+// access/refresh token mang active_org mới.
 //
-// organization_id rỗng/không gửi = chọn chế độ "Độc lập". Service SelectOrg chỉ chấp nhận org mà
-// user thật sự thuộc (đối chiếu getUserOrgs), nên không cần kiểm tra quyền ở tầng handler.
+// BLOCKER-1 (review 260915): bản cũ nằm ở nhóm CÔNG KHAI và dùng session_token của luồng đăng
+// nhập, nhưng SelectRole luôn hoàn tất login rồi xoá pending key nên route không bao giờ chạy
+// được. Nay route nằm SAU AuthMiddleware: danh tính lấy từ token (user_id/device_id/active_role).
+//
+// organization_id rỗng/không gửi = chuyển về chế độ "Độc lập". Service SelectOrg chỉ chấp nhận
+// org mà user thật sự thuộc (đối chiếu getUserOrgs), nên không cần kiểm tra quyền ở tầng handler.
 func (h *AuthHandler) SelectOrg(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	deviceID, ok := c.Locals("device_id").(uuid.UUID)
+	if !ok || deviceID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	// active_role đến từ claim trong access token, không từ body — client không tự chọn role
+	// khi đổi org (đổi role là việc của switch-role).
+	activeRole, _ := c.Locals("active_role").(string)
+
 	var req dto.SelectOrgRequestDto
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -628,9 +649,12 @@ func (h *AuthHandler) SelectOrg(c *fiber.Ctx) error {
 		})
 	}
 
-	response, err := h.authService.SelectOrg(c.Context(), req)
+	response, err := h.authService.SelectOrg(c.Context(), userID, deviceID, activeRole, req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+		// LOW-7 (review 260915): phân loại lỗi thay vì trả 400 cho mọi thứ. "org không thuộc
+		// user" là lỗi quyền (403) — không phải lỗi nhập liệu; lỗi Redis/DB phải là 500 để
+		// client phân biệt được backend hỏng với body sai.
+		return c.Status(selectOrgErrorStatus(err)).JSON(fiber.Map{
 			"message": "Select organization failed",
 			"error":   err.Error(),
 		})
@@ -642,6 +666,22 @@ func (h *AuthHandler) SelectOrg(c *fiber.Ctx) error {
 		"message": "Organization selected successfully",
 		"data":    response,
 	})
+}
+
+// selectOrgErrorStatus map lỗi của service SelectOrg sang HTTP status (LOW-7, review 260915).
+// Mặc định 500 cho lỗi hạ tầng (Redis/DB) — trước đây mọi lỗi đều trả 400 nên client thấy
+// "lỗi nhập liệu" khi thật ra backend hỏng, và monitoring không phân biệt được.
+func selectOrgErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, service.ErrOrgNotBelongToUser):
+		return fiber.StatusForbidden
+	case errors.Is(err, service.ErrInvalidOrgIDFormat):
+		return fiber.StatusBadRequest
+	case errors.Is(err, service.ErrUserNotFound):
+		return fiber.StatusUnauthorized
+	default:
+		return fiber.StatusInternalServerError
+	}
 }
 
 // SwitchRole handles POST /auth/switch-role

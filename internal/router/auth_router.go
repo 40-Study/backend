@@ -32,10 +32,6 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	// M-03 (audit 260909): select-role/refresh-token trước đây không rate-limit dù chạm
 	// Redis/DB và cấp token — select-role còn là bề mặt khai thác của C-01.
 	auth.Post("/select-role", authRateLimiter, authHandler.SelectRole)
-	// select-org là bước 3 của luồng đăng nhập (session_token, chưa có access token) —
-	// web/src/lib/meet/auth.ts gọi route này sau select-role. Cùng bề mặt khai thác như
-	// select-role nên cũng đi qua authRateLimiter.
-	auth.Post("/select-org", authRateLimiter, authHandler.SelectOrg)
 	auth.Get("/system-roles", authHandler.GetSystemRoleOptions)
 	auth.Post("/reset-password/request", otpRateLimiter, authHandler.RequestPasswordReset)
 	auth.Post("/reset-password", authRateLimiter, authHandler.ResetPassword)
@@ -47,6 +43,13 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	// Role management
 	auth.Get("/my-roles", authHandler.GetMyRoles)
 	auth.Post("/switch-role", authHandler.SwitchRole)
+	// select-org đổi tổ chức đang hoạt động (giữ nguyên role), cấp lại token mang active_org mới.
+	//
+	// BLOCKER-1 (review 260915): trước đây route này nằm ở nhóm CÔNG KHAI và dùng session_token
+	// của luồng đăng nhập, nhưng SelectRole luôn hoàn tất login rồi xoá pending key nên
+	// pending.SelectedRole luôn nil ⇒ mọi lời gọi trả 400, route là code chết. Nay đặt SAU
+	// AuthMiddleware: danh tính lấy từ access token, không phụ thuộc pending key.
+	auth.Post("/select-org", authHandler.SelectOrg)
 
 	// Profile management
 	auth.Get("/me/profiles", authHandler.GetMyProfiles)

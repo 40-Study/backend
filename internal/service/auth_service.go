@@ -31,8 +31,10 @@ type AuthServiceInterface interface {
 	GetMyRoles(ctx context.Context, userID uuid.UUID) (*dto.GetMyRolesResponseDto, error)
 	SelectRole(ctx context.Context, req dto.SelectRoleRequestDto) (*dto.SelectRoleResponseDto, error)
 	SwitchRole(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, req dto.SwitchRoleRequestDto) (*dto.SelectRoleResponseDto, error)
-	// SelectOrg là bước 3 của luồng đăng nhập (session_token), sau SelectRole.
-	SelectOrg(ctx context.Context, req dto.SelectOrgRequestDto) (*dto.SelectRoleResponseDto, error)
+	// SelectOrg đổi tổ chức đang hoạt động của user ĐÃ đăng nhập (access token), GIỮ NGUYÊN role
+	// hiện tại và cấp lại access/refresh token mang active_org mới.
+	// organization_id rỗng = chuyển về chế độ "Độc lập".
+	SelectOrg(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, activeRole string, req dto.SelectOrgRequestDto) (*dto.SelectRoleResponseDto, error)
 	// Profile management
 	GetSystemRoleOptions(ctx context.Context) ([]dto.SystemRoleOptionDto, error)
 	GetMyProfiles(ctx context.Context, userID uuid.UUID) ([]dto.ProfileDto, error)
@@ -64,6 +66,17 @@ type AuthService struct {
 
 	parentInvitationSvc ParentInvitationServiceInterface
 }
+
+// Sentinel lỗi của luồng chọn/đổi tổ chức. Handler dùng errors.Is để map sang đúng HTTP status
+// (LOW-7, review 260915) thay vì so khớp chuỗi thông báo — đổi câu chữ sẽ không âm thầm đổi status.
+var (
+	// ErrOrgNotBelongToUser — organization_id không nằm trong danh sách org user thật sự thuộc.
+	ErrOrgNotBelongToUser = errors.New("user does not belong to this organization")
+	// ErrInvalidOrgIDFormat — organization_id sai định dạng UUID.
+	ErrInvalidOrgIDFormat = errors.New("invalid organization_id format")
+	// ErrUserNotFound — không tìm thấy user theo user_id trong token.
+	ErrUserNotFound = errors.New("user not found")
+)
 
 // formatTimePtr formats a *time.Time to *string (RFC3339), returns nil if input is nil.
 func formatTimePtr(t *time.Time) *string {
@@ -787,60 +800,23 @@ func (s *AuthService) SwitchProfile(ctx context.Context, userID uuid.UUID, devic
 	return result, nil
 }
 
-// SelectOrg chọn org sau khi đã chọn role (dùng session_token).
-// organization_id rỗng = chọn chế độ "Độc lập" (active_org=null).
-func (s *AuthService) SelectOrg(ctx context.Context, req dto.SelectOrgRequestDto) (*dto.SelectRoleResponseDto, error) {
-	pendingKey := constants.KeyPendingLogin(req.SessionToken)
-	pendingData, err := s.redisClient.Get(ctx, pendingKey).Result()
-	if err == redis.Nil {
-		return nil, errors.New("session expired or invalid, please login again")
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get pending login: %w", err)
-	}
-
-	var pending PendingLogin
-	if err := json.Unmarshal([]byte(pendingData), &pending); err != nil {
-		return nil, fmt.Errorf("failed to parse pending login: %w", err)
-	}
-
-	if pending.SelectedRole == nil {
-		return nil, errors.New("no role selected yet, please call select-profile first")
-	}
-
-	userID, _ := uuid.Parse(pending.UserID)
-
-	var selectedOrg *dto.OrgContextDto
-
-	// organization_id rỗng = chế độ "Độc lập"
-	if req.OrganizationID != "" {
-		orgs, err := s.getUserOrgs(ctx, userID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load organizations: %w", err)
-		}
-		for _, org := range orgs {
-			if org.ID == req.OrganizationID {
-				selectedOrg = &org
-				break
-			}
-		}
-		if selectedOrg == nil {
-			return nil, errors.New("invalid organization_id: user does not belong to this organization")
-		}
-	}
-
-	user, err := s.userRepo.FindUserByID(ctx, userID)
-	if err != nil || user == nil {
-		return nil, errors.New("user not found")
-	}
-
-	result, err := s.completeLogin(ctx, user, pending.DeviceInfo, *pending.SelectedRole, selectedOrg)
-	if err != nil {
-		return nil, err
-	}
-	result.EntryContext = s.determineEntryContext(pending.SystemRoles)
-	_ = s.redisClient.Del(ctx, pendingKey).Err()
-	return result, nil
+// SelectOrg đổi tổ chức đang hoạt động khi user ĐÃ đăng nhập (access token), giữ nguyên role.
+// organization_id rỗng = chuyển về chế độ "Độc lập" (active_org=null).
+//
+// BLOCKER-1 (review 260915): bản cũ đọc pending key của luồng đăng nhập và đòi
+// pending.SelectedRole != nil — nhưng SelectRole luôn hoàn tất login rồi XOÁ pending key nên
+// route không bao giờ tới được. Endpoint nay lấy danh tính từ access token (user_id/device_id/
+// active_role do AuthMiddleware set vào Locals), xác thực membership qua getUserOrgs rồi cấp lại
+// token mang active_org mới — không phụ thuộc pending key nữa.
+//
+// Dùng lại nguyên vẹn logic đổi org đã có ở SwitchOrg (trước đây không có route nào gọi): giữ
+// role đang hoạt động, nạp lại thông tin thiết bị từ session, cấp token qua completeLogin.
+// SwitchOrg đổi org theo (userID, deviceID) nên hai lối vào dùng chung một đường ghi — không
+// nhân bản logic.
+func (s *AuthService) SelectOrg(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, activeRole string, req dto.SelectOrgRequestDto) (*dto.SelectRoleResponseDto, error) {
+	return s.SwitchOrg(ctx, userID, deviceID, activeRole, dto.SwitchOrgRequestDto{
+		OrganizationID: req.OrganizationID,
+	})
 }
 
 // SwitchOrg đổi org khi đã đăng nhập (giữ nguyên role).
@@ -851,7 +827,7 @@ func (s *AuthService) SwitchOrg(ctx context.Context, userID uuid.UUID, deviceID 
 	if req.OrganizationID != "" {
 		orgID, err := uuid.Parse(req.OrganizationID)
 		if err != nil {
-			return nil, errors.New("invalid organization_id format")
+			return nil, ErrInvalidOrgIDFormat
 		}
 
 		orgs, err := s.getUserOrgs(ctx, userID)
@@ -867,13 +843,13 @@ func (s *AuthService) SwitchOrg(ctx context.Context, userID uuid.UUID, deviceID 
 			}
 		}
 		if selectedOrg == nil {
-			return nil, errors.New("user does not belong to this organization")
+			return nil, ErrOrgNotBelongToUser
 		}
 	}
 
 	user, err := s.userRepo.FindUserByID(ctx, userID)
 	if err != nil || user == nil {
-		return nil, errors.New("user not found")
+		return nil, ErrUserNotFound
 	}
 
 	// Lấy tất cả system roles
