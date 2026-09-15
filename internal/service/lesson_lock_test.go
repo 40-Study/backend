@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/uuid"
@@ -47,6 +48,15 @@ func TestResolveLessonLock_ChuaEnroll_BaiKhongPhaiPreviewBiKhoa(t *testing.T) {
 	}
 	if reason == nil || *reason != LockReasonNotEnrolled {
 		t.Fatalf("lock_reason = %v, muon %q", reason, LockReasonNotEnrolled)
+	}
+	// T-2 (review vòng 2): khẳng định THÊM bằng chuỗi LITERAL "not_enrolled" — không chỉ bằng
+	// chính hằng số LockReasonNotEnrolled sinh ra nó (so một giá trị với chính hằng số sinh ra
+	// nó thì luôn đúng bất kể hằng số mang giá trị gì). Web GHIM cứng đúng chuỗi này
+	// (web/src/lib/lesson-lock.ts: not_enrolled: "Bạn cần tham gia khoá học để mở bài này") —
+	// đổi giá trị hằng số ở backend mà không đổi ở web thì học viên nhận sai thông điệp và mất
+	// nút ghi danh, và test so-với-chính-hằng-số không bao giờ bắt được việc này.
+	if reason == nil || *reason != "not_enrolled" {
+		t.Fatalf("lock_reason = %v, muon chuỗi literal \"not_enrolled\" (giá trị web đã ghim, không phải chỉ đúng TÊN hằng số)", reason)
 	}
 	if progress == nil || progress.Status != "not_started" {
 		t.Fatalf("progress = %+v, muon not_started (chua co ban ghi)", progress)
@@ -124,6 +134,11 @@ func TestResolveLessonLock_Sequential_BaiTruocChuaCompleted_BiKhoa(t *testing.T)
 	}
 	if reason == nil || *reason != LockReasonPreviousIncomplete {
 		t.Fatalf("lock_reason = %v, muon %q", reason, LockReasonPreviousIncomplete)
+	}
+	// T-2 (review vòng 2): xem chú thích tại TestResolveLessonLock_ChuaEnroll_BaiKhongPhaiPreviewBiKhoa
+	// — web ghim literal "previous_incomplete" (lesson-lock.ts).
+	if reason == nil || *reason != "previous_incomplete" {
+		t.Fatalf("lock_reason = %v, muon chuỗi literal \"previous_incomplete\"", reason)
 	}
 }
 
@@ -213,5 +228,157 @@ func TestResolveLessonLock_ProgressTraDungGiaTri(t *testing.T) {
 	}
 	if progress.Status != "in_progress" || progress.WatchedPct != 42.5 || progress.LastPositionSeconds != 300 {
 		t.Fatalf("progress = %+v, khong khop ban ghi da luu", progress)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// gatherLessonLockInput (review vòng 2, bổ sung theo yêu cầu team lead — trước đây hàm này
+// KHÔNG có test trực tiếp nào, dù đây chính là nơi CAO-4 nằm).
+// ---------------------------------------------------------------------------
+
+type fakeEnrollmentRepoForGather struct {
+	repository.EnrollmentRepositoryInterface
+	enrollment *model.Enrollment
+	order      []repository.LessonOrderInfo
+	progress   map[uuid.UUID]*model.LessonProgress
+
+	gotUserID   uuid.UUID
+	gotCourseID uuid.UUID
+	// progressCalls (review vòng 2): đếm số lần GetLessonProgressMapByUserAndCourse được gọi —
+	// dùng để khẳng định hàm KHÔNG gọi truy vấn tiến độ khi chưa enroll (tối ưu đã có từ trước,
+	// chưa từng có test khẳng định).
+	progressCalls int
+}
+
+func (f *fakeEnrollmentRepoForGather) GetByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error) {
+	f.gotUserID = userID
+	f.gotCourseID = courseID
+	return f.enrollment, nil
+}
+
+func (f *fakeEnrollmentRepoForGather) GetLessonOrderInfoByCourseID(ctx context.Context, courseID uuid.UUID) ([]repository.LessonOrderInfo, error) {
+	return f.order, nil
+}
+
+func (f *fakeEnrollmentRepoForGather) GetLessonProgressMapByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (map[uuid.UUID]*model.LessonProgress, error) {
+	f.progressCalls++
+	return f.progress, nil
+}
+
+// TestGatherLessonLockInput_DaEnroll_TapHopDungDuLieu: enrollment khac nil -> Enrolled=true,
+// LessonOrder/Progress lay dung tu repo, userID/courseID truyen dung xuong repo.
+func TestGatherLessonLockInput_DaEnroll_TapHopDungDuLieu(t *testing.T) {
+	userID, courseID, bai1 := uuid.New(), uuid.New(), uuid.New()
+	order := []repository.LessonOrderInfo{{ID: bai1}}
+	progress := map[uuid.UUID]*model.LessonProgress{bai1: progressOf("in_progress")}
+	repo := &fakeEnrollmentRepoForGather{
+		enrollment: &model.Enrollment{UserID: userID, CourseID: courseID},
+		order:      order,
+		progress:   progress,
+	}
+
+	in, err := gatherLessonLockInput(context.Background(), repo, userID, courseID, true, false)
+	if err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
+	}
+	if !in.Enrolled {
+		t.Error("Enrolled = false, muon true (enrollment khac nil)")
+	}
+	if !in.Sequential {
+		t.Error("Sequential khong duoc truyen dung tu tham so")
+	}
+	if len(in.LessonOrder) != 1 || in.LessonOrder[0].ID != bai1 {
+		t.Errorf("LessonOrder = %+v, muon dung tu repo", in.LessonOrder)
+	}
+	if in.Progress[bai1] == nil || in.Progress[bai1].Status != "in_progress" {
+		t.Errorf("Progress = %+v, muon dung tu repo", in.Progress)
+	}
+	if repo.gotUserID != userID || repo.gotCourseID != courseID {
+		t.Errorf("GetByUserAndCourse nhan userID=%s courseID=%s, muon %s/%s", repo.gotUserID, repo.gotCourseID, userID, courseID)
+	}
+	if repo.progressCalls != 1 {
+		t.Errorf("GetLessonProgressMapByUserAndCourse goi %d lan, muon 1 (da enroll)", repo.progressCalls)
+	}
+}
+
+// TestGatherLessonLockInput_ChuaEnroll_KhongGoiTruyVanTienDo: enrollment=nil -> Enrolled=false,
+// Progress la map RONG (khong phai nil, tranh panic khi ResolveLessonLock doc in.Progress[id]),
+// va KHONG goi GetLessonProgressMapByUserAndCourse (khong co ly do truy van tien do cua nguoi
+// chua enroll).
+func TestGatherLessonLockInput_ChuaEnroll_KhongGoiTruyVanTienDo(t *testing.T) {
+	repo := &fakeEnrollmentRepoForGather{enrollment: nil}
+
+	in, err := gatherLessonLockInput(context.Background(), repo, uuid.New(), uuid.New(), true, false)
+	if err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
+	}
+	if in.Enrolled {
+		t.Error("Enrolled = true, muon false (enrollment = nil)")
+	}
+	if in.Progress == nil {
+		t.Error("Progress = nil, muon map rong (khong phai nil)")
+	}
+	if repo.progressCalls != 0 {
+		t.Errorf("GetLessonProgressMapByUserAndCourse goi %d lan, muon 0 (chua enroll)", repo.progressCalls)
+	}
+}
+
+// TestGatherLessonLockInput_BypassLock_TruyenNguyenXuongLessonLockInput (CAO-4): tham so
+// bypassLock phai duoc truyen NGUYEN xuong LessonLockInput.BypassLock — day chinh la noi CAO-4
+// (C-1 cua reviewer) nam, va truoc yeu cau bo sung nay ham gatherLessonLockInput khong co test
+// truc tiep nao ca.
+func TestGatherLessonLockInput_BypassLock_TruyenNguyenXuongLessonLockInput(t *testing.T) {
+	repo := &fakeEnrollmentRepoForGather{enrollment: nil} // chua enroll — truong hop bypass phai thang
+
+	in, err := gatherLessonLockInput(context.Background(), repo, uuid.New(), uuid.New(), true, true)
+	if err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
+	}
+	if !in.BypassLock {
+		t.Fatal("BypassLock = false, muon true (tham so bypassLock=true phai duoc truyen nguyen xuong)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// EnsureLessonInCourse (quyet dinh team lead, review vong 2): lessonID khong thuoc LessonOrder
+// cua khoa dang xet phai la LOI RO RANG, khong duoc ResolveLessonLock am tham mo (idx==-1) hay
+// khoa nham ly do previous_incomplete.
+// ---------------------------------------------------------------------------
+
+func TestEnsureLessonInCourse_LessonThuocKhoa_KhongLoi(t *testing.T) {
+	bai1 := uuid.New()
+	if err := EnsureLessonInCourse(bai1, lessonOrder(gated(bai1))); err != nil {
+		t.Fatalf("loi = %v, muon nil (lessonID co trong LessonOrder)", err)
+	}
+}
+
+func TestEnsureLessonInCourse_LessonKhongThuocKhoa_TraLoiRoRang(t *testing.T) {
+	baiLa, baiKhongThuoc := uuid.New(), uuid.New()
+	err := EnsureLessonInCourse(baiKhongThuoc, lessonOrder(gated(baiLa)))
+	if err != ErrLessonNotInCourse {
+		t.Fatalf("loi = %v, muon ErrLessonNotInCourse", err)
+	}
+}
+
+// TestResolveLessonLock_LessonKhongThuocKhoa_KhongDuocMoLen: lam ro hanh vi HIEN TAI cua chinh
+// ResolveLessonLock khi khong co EnsureLessonInCourse dung truoc no — idx==-1 (lessonID khong co
+// trong LessonOrder) roi vao nhanh "idx<=0" va tra locked=false. Day CHINH LA ly do
+// EnsureLessonInCourse phai duoc goi TRUOC o moi caller nhan lessonID tuy y (xem
+// lesson_content_service.go, lesson_service.go) — ResolveLessonLock mot minh KHONG phan biet
+// duoc "bai dau khoa" voi "bai khong thuoc khoa nay".
+func TestResolveLessonLock_LessonKhongThuocKhoa_KhongDuocMoLen(t *testing.T) {
+	baiLa, baiKhongThuoc := uuid.New(), uuid.New()
+	in := LessonLockInput{
+		Enrolled:    true,
+		Sequential:  true,
+		LessonOrder: lessonOrder(gated(baiLa)),
+	}
+
+	// Ghi nhan hien trang: ResolveLessonLock don thuan tra locked=false (KHONG phai vi bai nay
+	// hop le, ma vi no khong tim thay idx). Test nay la tai lieu cho quyet dinh EnsureLessonInCourse
+	// phai chan TRUOC — nếu chỉ dựa vào ResolveLessonLock, bài lạ sẽ "mở lén" đúng như report ghi.
+	locked, reason, _ := ResolveLessonLock(baiKhongThuoc, in)
+	if locked || reason != nil {
+		t.Fatalf("locked=%v reason=%v — xac nhan hien trang: ResolveLessonLock mo bai la (idx==-1), do la ly do EnsureLessonInCourse phai chan TRUOC no", locked, reason)
 	}
 }

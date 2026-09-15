@@ -102,6 +102,41 @@ func TestGetContentsByLessonID_BaiKhoa_TraErrLessonLocked(t *testing.T) {
 	}
 }
 
+// TestGetContentsByLessonID_LessonKhongThuocKhoa_TraErrLessonNotInCourse (quyet dinh team lead,
+// review vong 2): lessonID khong nam trong LessonOrder ma GetLessonOrderInfoByCourseID tra ve
+// (du lieu khong nhat quan — courseID van duoc suy dung tu lessonID, nhung LessonOrder cua chinh
+// khoa do lai KHONG chua lessonID nay) phai la ErrLessonNotInCourse, KHONG duoc ResolveLessonLock
+// am tham mo (locked=false vi idx==-1) va cung KHONG duoc nap contents that.
+func TestGetContentsByLessonID_LessonKhongThuocKhoa_TraErrLessonNotInCourse(t *testing.T) {
+	lessonID := uuid.New()
+	courseID := uuid.New()
+	lesson := &model.Lesson{IsPreview: false}
+	lesson.ID = lessonID
+
+	lessonRepo := &fakeLessonRepoForLock{
+		lesson:   lesson,
+		contents: []model.LessonContent{{Type: "video", VideoURL: strPtr("secret.mp4")}},
+	}
+	courseRepo := &fakeCourseRepoForLock{course: &model.Course{Sequential: true}}
+	enrollmentRepo := &fakeEnrollmentRepoForLock{
+		courseID:   courseID,
+		enrollment: &model.Enrollment{},
+		// order KHONG chua lessonID — mo phong du lieu khong nhat quan.
+		order: []repository.LessonOrderInfo{{ID: uuid.New(), IsPreview: false}},
+	}
+
+	s := NewLessonContentService(lessonRepo, nil, courseRepo, enrollmentRepo, nil, nil)
+
+	_, err := s.GetContentsByLessonID(context.Background(), lessonID, uuid.New(), false)
+
+	if err != ErrLessonNotInCourse {
+		t.Fatalf("err = %v, muon ErrLessonNotInCourse", err)
+	}
+	if lessonRepo.gotContentsCall {
+		t.Fatal("contents THAT da bi nap du lessonID khong thuoc khoa dang xet")
+	}
+}
+
 // TestGetContentsByLessonID_GiangVienSoHuu_KhongBiKhoa (CAO-4): giang vien la InstructorID cua
 // course chua bai nay, CHUA enroll (dieu ma luat not_enrolled dang le khoa MOI bai) — van phai
 // xem duoc contents vi ho SO HUU khoa hoc.

@@ -243,6 +243,11 @@ func (s *LessonService) resolveLessonByIDLock(ctx context.Context, lesson *model
 	if err != nil {
 		return false, nil, nil, err
 	}
+	// Quyết định team lead (review vòng 2): xem chú thích tại EnsureLessonInCourse — lessonID
+	// không thuộc LessonOrder của courseID vừa suy ra là lỗi rõ ràng, không mở lén.
+	if err := EnsureLessonInCourse(lesson.ID, lockInput.LessonOrder); err != nil {
+		return false, nil, nil, err
+	}
 	locked, reason, progress := ResolveLessonLock(lesson.ID, lockInput)
 	return locked, reason, progress, nil
 }

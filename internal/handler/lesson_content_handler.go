@@ -96,6 +96,13 @@ func (h *LessonContentHandler) GetContent(c *fiber.Ctx) error {
 				"message": "LESSON_LOCKED",
 			})
 		}
+		// Quyết định team lead (review vòng 2): lessonID không thuộc khoá đang xét -> 404 rõ
+		// ràng, không lẫn với 403 LESSON_LOCKED và không mở lén.
+		if err == service.ErrLessonNotInCourse {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"message": "Lesson does not belong to this course",
+			})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve contents", "error": err.Error(),
 		})

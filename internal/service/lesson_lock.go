@@ -22,6 +22,29 @@ const (
 // noi dung bai, khong chi chan o UI.
 var ErrLessonLocked = errors.New("lesson locked")
 
+// ErrLessonNotInCourse (quyết định team lead, review vòng 2): lessonID không xuất hiện trong
+// LessonOrder của khoá mà ResolveLessonLock đang xét — dữ liệu không nhất quán (hiếm khi xảy ra
+// qua đường hợp lệ vì courseID luôn được suy TỪ lessonID ở mọi caller hiện có, xem
+// EnsureLessonInCourse). Trường hợp này KHÔNG được coi là "mở" (idx==-1 trong ResolveLessonLock
+// tự nhiên trả locked=false, vì luật 4 chỉ xét được "bài trước" khi biết vị trí bài) và cũng
+// KHÔNG được coi là "khoá vì previous_incomplete" (không có cơ sở nào để gán lý do đó) — phải là
+// lỗi rõ ràng, chặn ở handler bằng 404, không mở lén và không khoá nhầm lý do.
+var ErrLessonNotInCourse = errors.New("lesson does not belong to this course")
+
+// EnsureLessonInCourse (quyết định team lead, review vòng 2): xác nhận lessonID có mặt trong
+// LessonOrder TRƯỚC khi gọi ResolveLessonLock — caller nào nhận lessonID làm tham số tuỳ ý
+// (không phải lặp qua chính danh sách bài của khoá, như SectionService.GetAllSections) BẮT BUỘC
+// gọi hàm này ngay sau gatherLessonLockInput và trả ErrLessonNotInCourse nếu false, thay vì để
+// ResolveLessonLock âm thầm trả locked=false (idx==-1) cho một bài không thuộc khoá đang xét.
+func EnsureLessonInCourse(lessonID uuid.UUID, order []repository.LessonOrderInfo) error {
+	for _, item := range order {
+		if item.ID == lessonID {
+			return nil
+		}
+	}
+	return ErrLessonNotInCourse
+}
+
 // LessonLockInput gom du lieu can co de tinh locked/lock_reason/progress cho MOT bai hoc,
 // theo dung dinh nghia contract Phase 1 §2. Tach thanh struct rieng de dung CHUNG giua
 // SectionService (tinh ca curriculum mot luc) va LessonContentService (chan noi dung MOT bai) —

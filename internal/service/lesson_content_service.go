@@ -156,6 +156,12 @@ func (s *LessonContentService) GetContentsByLessonID(ctx context.Context, lesson
 		if err != nil {
 			return nil, err
 		}
+		// Quyết định team lead (review vòng 2): lessonID không thực sự thuộc LessonOrder của
+		// courseID vừa suy ra (dữ liệu không nhất quán) không được ResolveLessonLock âm thầm mở
+		// (idx==-1) hay khoá nhầm lý do — phải là lỗi rõ ràng. Xem EnsureLessonInCourse.
+		if err := EnsureLessonInCourse(lessonID, lockInput.LessonOrder); err != nil {
+			return nil, err
+		}
 		if locked, _, _ := ResolveLessonLock(lessonID, lockInput); locked {
 			return nil, ErrLessonLocked
 		}

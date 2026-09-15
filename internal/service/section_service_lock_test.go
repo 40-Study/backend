@@ -37,9 +37,19 @@ type fakeEnrollmentRepoForSections struct {
 	enrolled bool
 	order    []repository.LessonOrderInfo
 	progress map[uuid.UUID]*model.LessonProgress
+
+	// onlyEnrolledUserID (T-1, review vòng 2): khi khác uuid.Nil, GetByUserAndCourse chỉ trả
+	// "đã enroll" cho ĐÚNG userID này — mọi userID khác (kể cả uuid.Nil) đều "chưa enroll". Trước
+	// bản vá, fake này trả CÙNG MỘT kết quả bất kể userID truyền vào là ai, nên
+	// SectionService.GetAllSections lỡ tính khoá cho uuid.Nil thay vì người đang gọi (N3) vẫn
+	// xanh — trường này tồn tại để ÍT NHẤT MỘT test ràng buộc kết quả vào ĐÚNG danh tính người gọi.
+	onlyEnrolledUserID uuid.UUID
 }
 
 func (f *fakeEnrollmentRepoForSections) GetByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error) {
+	if f.onlyEnrolledUserID != uuid.Nil && userID != f.onlyEnrolledUserID {
+		return nil, nil
+	}
 	if !f.enrolled {
 		return nil, nil
 	}
@@ -213,5 +223,39 @@ func TestSectionService_GetAllSections_KhoaKhongSequential_KhongKhoaBaiNao(t *te
 
 	if ok, locked, _ := findLesson(result, bai2); !ok || locked {
 		t.Fatalf("khoa khong sequential: bai2 phai mo, found=%v locked=%v", ok, locked)
+	}
+}
+
+// TestSectionService_GetAllSections_TinhKhoaTheoDungNguoiGoi_KhongPhaiUuidNil (T-1, review vòng
+// 2): fake CHỈ coi "đã enroll" đối với ĐÚNG userID được truyền vào GetAllSections — nếu service
+// lỡ tính khoá cho uuid.Nil (hoặc bất kỳ userID nào khác) thay vì người đang gọi, fake sẽ trả
+// "chưa enroll" và bài sẽ hiện khoá sai. Đóng khoảng hở N3 mà reviewer chỉ ra: mọi test khác
+// dùng cùng một fake trả cùng kết quả bất kể userID, nên hoán userID thành uuid.Nil vẫn xanh.
+func TestSectionService_GetAllSections_TinhKhoaTheoDungNguoiGoi_KhongPhaiUuidNil(t *testing.T) {
+	bai1, bai2, sections, course := buildTwoLessonSequentialCourse()
+	course.Sequential = false // don gian hoa: chi can biet "mo hay khoa vi not_enrolled"
+	nguoiGoiThat := uuid.New()
+	svc := NewSectionService(
+		&fakeSectionRepoForSections{sections: sections},
+		&fakeCourseRepoForSections{course: course},
+		&fakeEnrollmentRepoForSections{
+			enrolled:           true,
+			onlyEnrolledUserID: nguoiGoiThat,
+			order:              []repository.LessonOrderInfo{{ID: bai1}, {ID: bai2}},
+		},
+	)
+
+	result, err := svc.GetAllSections(context.Background(), course.ID, nguoiGoiThat, false)
+	if err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
+	}
+
+	// nguoiGoiThat DA enroll: ca hai bai phai MO. Neu service lo tinh khoa cho uuid.Nil (hoac
+	// mot userID khac) thay vi nguoiGoiThat, fake se tra "chua enroll" va bai se bi khoa sai.
+	if ok, locked, reason := findLesson(result, bai1); !ok || locked {
+		t.Fatalf("bai1: found=%v locked=%v reason=%v, muon mo (dung userID cua nguoi goi da enroll)", ok, locked, reason)
+	}
+	if ok, locked, reason := findLesson(result, bai2); !ok || locked {
+		t.Fatalf("bai2: found=%v locked=%v reason=%v, muon mo (dung userID cua nguoi goi da enroll)", ok, locked, reason)
 	}
 }

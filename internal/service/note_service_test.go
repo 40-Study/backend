@@ -33,10 +33,16 @@ type fakeNoteRepo struct {
 
 	listByLessonSort string
 	listByLessonRes  []model.UserNote
+	// listByLessonUserID/listByCourseUserID (T-1, review vòng 2): ghi lại userID THẬT SỰ nhận
+	// được — trước bản vá, cả hai fake bỏ qua tham số này hoàn toàn, nên thay userID bằng
+	// uuid.Nil ở NoteService.ListByLesson/ListByCourse (đường ĐỌC, không có kiểm chủ sở hữu
+	// tường minh như Update/Delete, dựa hoàn toàn vào userID truyền đúng xuống WHERE) vẫn xanh.
+	listByLessonUserID uuid.UUID
 
 	listByCourseSort      string
 	listByCourseSectionID *uuid.UUID
 	listByCourseRes       []model.UserNote
+	listByCourseUserID    uuid.UUID
 }
 
 func (f *fakeNoteRepo) Create(ctx context.Context, note *model.UserNote) error {
@@ -78,11 +84,13 @@ func (f *fakeNoteRepo) Delete(ctx context.Context, id uuid.UUID) error {
 }
 
 func (f *fakeNoteRepo) ListByLesson(ctx context.Context, userID, lessonID uuid.UUID, sort string) ([]model.UserNote, error) {
+	f.listByLessonUserID = userID
 	f.listByLessonSort = sort
 	return f.listByLessonRes, nil
 }
 
 func (f *fakeNoteRepo) ListByCourse(ctx context.Context, userID, courseID uuid.UUID, sectionID *uuid.UUID, sort string) ([]model.UserNote, error) {
+	f.listByCourseUserID = userID
 	f.listByCourseSort = sort
 	f.listByCourseSectionID = sectionID
 	return f.listByCourseRes, nil
@@ -243,12 +251,19 @@ func TestNoteService_ListByLesson_TruyenDungThamSoSort(t *testing.T) {
 		t.Run(sort, func(t *testing.T) {
 			noteRepo := &fakeNoteRepo{}
 			svc := NewNoteService(noteRepo, &fakeEnrollmentRepoWatched{})
+			userID := uuid.New()
 
-			if _, err := svc.ListByLesson(context.Background(), uuid.New(), uuid.New(), sort); err != nil {
+			if _, err := svc.ListByLesson(context.Background(), userID, uuid.New(), sort); err != nil {
 				t.Fatalf("khong mong doi loi: %v", err)
 			}
 			if noteRepo.listByLessonSort != sort {
 				t.Errorf("sort truyen xuong repo = %q, muon %q", noteRepo.listByLessonSort, sort)
+			}
+			// T-1 (review vòng 2): userID phải được truyền NGUYÊN xuống repo — đây là rào chắn
+			// DUY NHẤT chống đọc ghi chú của người khác ở đường này (không có kiểm chủ sở hữu
+			// tường minh như Update/Delete, dựa hoàn toàn vào WHERE user_id = ?).
+			if noteRepo.listByLessonUserID != userID {
+				t.Errorf("userID truyen xuong repo = %s, muon %s (dung userID cua chinh nguoi goi)", noteRepo.listByLessonUserID, userID)
 			}
 		})
 	}
@@ -260,8 +275,9 @@ func TestNoteService_ListByCourse_TruyenDungSectionIDVaSort(t *testing.T) {
 	sectionID := uuid.New()
 	noteRepo := &fakeNoteRepo{}
 	svc := NewNoteService(noteRepo, &fakeEnrollmentRepoWatched{})
+	userID := uuid.New()
 
-	if _, err := svc.ListByCourse(context.Background(), uuid.New(), uuid.New(), &sectionID, "oldest"); err != nil {
+	if _, err := svc.ListByCourse(context.Background(), userID, uuid.New(), &sectionID, "oldest"); err != nil {
 		t.Fatalf("khong mong doi loi: %v", err)
 	}
 	if noteRepo.listByCourseSort != "oldest" {
@@ -269,6 +285,10 @@ func TestNoteService_ListByCourse_TruyenDungSectionIDVaSort(t *testing.T) {
 	}
 	if noteRepo.listByCourseSectionID == nil || *noteRepo.listByCourseSectionID != sectionID {
 		t.Errorf("section_id truyen xuong repo = %v, muon %s", noteRepo.listByCourseSectionID, sectionID)
+	}
+	// T-1 (review vòng 2): xem chú thích tại TestNoteService_ListByLesson_TruyenDungThamSoSort.
+	if noteRepo.listByCourseUserID != userID {
+		t.Errorf("userID truyen xuong repo = %s, muon %s (dung userID cua chinh nguoi goi)", noteRepo.listByCourseUserID, userID)
 	}
 }
 
