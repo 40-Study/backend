@@ -16,6 +16,19 @@ import (
 // không kiểm tra course.Price/IsFree hay đơn hàng đã thanh toán. Handler map lỗi này sang 402.
 var ErrPaymentRequired = errors.New("payment required for this course")
 
+// lessonProgressStatusRank (HIGH-2, review 260915): status chỉ được đi LÊN, không bao giờ đi
+// LÙI. Beacon `POST /api/progress` (sendBeacon khi đóng tab) luôn gửi cứng "in_progress" —
+// không phân biệt được người học đang xem LẦN ĐẦU hay xem LẠI một bài đã `completed`. Ghi đè vô
+// điều kiện thì mỗi lần đóng tab một bài đã hoàn thành sẽ hạ nó về in_progress, và
+// CountCompletedMandatory (đếm theo status='completed') kéo tụt % tiến độ khoá học đang hiển thị
+// cho phụ huynh/học viên. Giá trị status lạ (không có trong map) nhận rank 0 — thấp nhất — để
+// không vô tình chặn một giá trị hợp lệ khác nếu enum status mở rộng sau này mà quên cập nhật map.
+var lessonProgressStatusRank = map[string]int{
+	"not_started": 0,
+	"in_progress": 1,
+	"completed":   2,
+}
+
 type EnrollmentServiceInterface interface {
 	Enroll(ctx context.Context, userID, courseID uuid.UUID) (*dto.EnrollmentResponseDTO, error)
 	Unenroll(ctx context.Context, userID, courseID uuid.UUID) error
@@ -300,7 +313,10 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		// cot nay dung yen mai mai.
 		"updated_at": now,
 	}
-	if req.Status != nil {
+	// HIGH-2 (review 260915): chi ghi status khi cap bac MOI >= cap bac HIEN TAI — xem
+	// lessonProgressStatusRank. Bo qua ca hai request khong gui status VA request muon ha cap:
+	// khong dua "status" vao map thi cau UPDATE khong dung toi cot do, giu nguyen gia tri cu.
+	if req.Status != nil && lessonProgressStatusRank[*req.Status] >= lessonProgressStatusRank[progress.Status] {
 		updates["status"] = *req.Status
 		if *req.Status == "completed" && progress.CompletedAt == nil {
 			updates["completed_at"] = now

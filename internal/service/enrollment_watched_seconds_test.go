@@ -588,3 +588,90 @@ func TestUpdateLessonProgress_BanGhiMoiThiTaoVoiGiaTriClientGui(t *testing.T) {
 		t.Errorf("DTO tra ve VideoWatchedSecs = %d, mong doi 87", res.VideoWatchedSecs)
 	}
 }
+
+// TestUpdateLessonProgress_StatusKhongDuocHaCap (HIGH-2, review 260915): beacon dong tab
+// (POST /api/progress) luon gui cung "in_progress" du nguoi hoc dang xem lai mot bai da
+// "completed". Ghi de vo dieu kien se ha cap ban ghi va lam CountCompletedMandatory tut so —
+// % tien do khoa hoc phu huynh thay se giam moi khi con xem lai bai cu.
+func TestUpdateLessonProgress_StatusKhongDuocHaCap(t *testing.T) {
+	cases := []struct {
+		ten           string
+		hienTai       string
+		gui           string
+		mongStatusDoc string // status con lai trong "DB" gia lap sau khi goi
+		mongCoTrongMap bool  // "status" co duoc dua vao map UPDATE khong
+	}{
+		{"completed -> in_progress: bi chan", "completed", "in_progress", "completed", false},
+		{"completed -> not_started: bi chan", "completed", "not_started", "completed", false},
+		{"completed -> completed: cho qua (rank bang nhau)", "completed", "completed", "completed", true},
+		{"in_progress -> completed: cho qua (tien len)", "in_progress", "completed", "completed", true},
+		{"not_started -> in_progress: cho qua (tien len)", "not_started", "in_progress", "in_progress", true},
+		{"in_progress -> not_started: bi chan", "in_progress", "not_started", "in_progress", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.ten, func(t *testing.T) {
+			enrollmentID := uuid.New()
+			enrollment := newEnrollmentWithID(enrollmentID)
+			existing := &model.LessonProgress{
+				VideoWatchedSecs: 100,
+				EnrollmentID:     enrollmentID,
+				Status:           tc.hienTai,
+			}
+			repo := &fakeEnrollmentRepoWatched{
+				lessonProgress: existing,
+				enrollment:     &enrollment,
+				courseID:       uuid.New(),
+			}
+			svc := NewEnrollmentService(repo, nil, &fakeLessonRepoWatched{})
+
+			gui := tc.gui
+			res, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
+				dto.UpdateLessonProgressDTO{Status: &gui})
+			if err != nil {
+				t.Fatalf("khong mong doi loi: %v", err)
+			}
+
+			_, coTrongMap := repo.updateUpdates["status"]
+			if coTrongMap != tc.mongCoTrongMap {
+				t.Errorf("status co trong map UPDATE = %v, mong doi %v (hien tai=%q, gui=%q)",
+					coTrongMap, tc.mongCoTrongMap, tc.hienTai, tc.gui)
+			}
+			if existing.Status != tc.mongStatusDoc {
+				t.Errorf("status sau cung trong DB gia lap = %q, mong doi %q (hien tai=%q, gui=%q)",
+					existing.Status, tc.mongStatusDoc, tc.hienTai, tc.gui)
+			}
+			if res.Status != tc.mongStatusDoc {
+				t.Errorf("status DTO tra ve = %q, mong doi %q", res.Status, tc.mongStatusDoc)
+			}
+		})
+	}
+}
+
+// TestUpdateLessonProgress_HaCapKhongDongThoiXoaCompletedAt: mot request bi chan ha cap (vi du
+// completed -> in_progress) khong duoc dua ca "completed_at" vao map UPDATE — guard nam TRUOC ca
+// hai truong nen chan status thi chan luon completed_at cung mot cho, khong con duong nao khac
+// de vo tinh xoa moc thoi gian hoan thanh.
+func TestUpdateLessonProgress_HaCapKhongDongThoiXoaCompletedAt(t *testing.T) {
+	enrollmentID := uuid.New()
+	enrollment := newEnrollmentWithID(enrollmentID)
+	existing := &model.LessonProgress{
+		VideoWatchedSecs: 100,
+		EnrollmentID:     enrollmentID,
+		Status:           "completed",
+	}
+	repo := &fakeEnrollmentRepoWatched{
+		lessonProgress: existing,
+		enrollment:     &enrollment,
+		courseID:       uuid.New(),
+	}
+	svc := NewEnrollmentService(repo, nil, &fakeLessonRepoWatched{})
+
+	status := "in_progress"
+	if _, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
+		dto.UpdateLessonProgressDTO{Status: &status}); err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
+	}
+	if _, ok := repo.updateUpdates["completed_at"]; ok {
+		t.Error("map UPDATE chua completed_at du request bi chan ha cap status")
+	}
+}
