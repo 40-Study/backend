@@ -28,6 +28,19 @@ type stubLivestreamService struct {
 	// tra handler co parse dung query ?lesson_content_id= khong.
 	gotLessonContentIDFilter *uuid.UUID
 	getAllCalled             int
+
+	// V3-6/V3-7 (issue #58): cac truong duoi day ghi lai danh tinh nguoi goi / doi tuong ma
+	// handler truyen xuong, de test chung minh handler KHONG con lay chung tu body.
+	gotActorID       uuid.UUID
+	gotSessionID     uuid.UUID
+	gotTargetID      uuid.UUID
+	gotJoinUserID    uuid.UUID
+	gotLeaveUserID   uuid.UUID
+	gotJoinReq       dto.JoinLivestreamDTO
+	gotScreenShareID uuid.UUID
+	gotLocked        bool
+	// authzErr: khi khac nil, MOI method quan tri tra loi nay — dung de gia lap 403 tu service.
+	authzErr error
 }
 
 func (s *stubLivestreamService) Create(ctx context.Context, hostID uuid.UUID, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error) {
@@ -50,41 +63,70 @@ func (s *stubLivestreamService) GetAll(ctx context.Context, page, pageSize int, 
 	s.gotLessonContentIDFilter = lessonContentID
 	return &dto.LivestreamListDTO{Data: []dto.LivestreamResponseDTO{}, Total: 0, Page: page, PageSize: pageSize}, nil
 }
-func (s *stubLivestreamService) Update(ctx context.Context, id uuid.UUID, req dto.UpdateLivestreamDTO) (*model.LivestreamSession, error) {
-	return nil, errors.New("not used in these tests")
+func (s *stubLivestreamService) Update(ctx context.Context, userID, id uuid.UUID, req dto.UpdateLivestreamDTO) (*model.LivestreamSession, error) {
+	s.gotActorID, s.gotSessionID = userID, id
+	if s.authzErr != nil {
+		return nil, s.authzErr
+	}
+	return &model.LivestreamSession{BaseModel: model.BaseModel{ID: id}, HostID: userID}, nil
 }
-func (s *stubLivestreamService) Delete(ctx context.Context, id uuid.UUID) error {
-	return errors.New("not used in these tests")
+func (s *stubLivestreamService) Delete(ctx context.Context, userID, id uuid.UUID) error {
+	s.gotActorID, s.gotSessionID = userID, id
+	return s.authzErr
 }
-func (s *stubLivestreamService) Start(ctx context.Context, id uuid.UUID) (*model.LivestreamSession, error) {
-	return nil, errors.New("not used in these tests")
+func (s *stubLivestreamService) Start(ctx context.Context, userID, id uuid.UUID) (*model.LivestreamSession, error) {
+	s.gotActorID, s.gotSessionID = userID, id
+	if s.authzErr != nil {
+		return nil, s.authzErr
+	}
+	return &model.LivestreamSession{BaseModel: model.BaseModel{ID: id}}, nil
 }
-func (s *stubLivestreamService) End(ctx context.Context, id uuid.UUID) (*model.LivestreamSession, error) {
-	return nil, errors.New("not used in these tests")
+func (s *stubLivestreamService) End(ctx context.Context, userID, id uuid.UUID) (*model.LivestreamSession, error) {
+	s.gotActorID, s.gotSessionID = userID, id
+	if s.authzErr != nil {
+		return nil, s.authzErr
+	}
+	return &model.LivestreamSession{BaseModel: model.BaseModel{ID: id}}, nil
 }
-func (s *stubLivestreamService) Join(ctx context.Context, sessionID uuid.UUID, req dto.JoinLivestreamDTO) (*dto.ParticipantResponseDTO, error) {
-	return nil, errors.New("not used in these tests")
+func (s *stubLivestreamService) Join(ctx context.Context, sessionID, userID uuid.UUID, req dto.JoinLivestreamDTO) (*dto.ParticipantResponseDTO, error) {
+	s.gotSessionID, s.gotJoinUserID, s.gotJoinReq = sessionID, userID, req
+	if s.authzErr != nil {
+		return nil, s.authzErr
+	}
+	return &dto.ParticipantResponseDTO{
+		ID:       uuid.New(),
+		UserID:   userID,
+		Role:     string(model.ParticipantRoleStudent),
+		Token:    "fake-token",
+		JoinedAt: "2026-01-01T00:00:00Z",
+	}, nil
 }
-func (s *stubLivestreamService) Leave(ctx context.Context, sessionID uuid.UUID, req dto.LeaveLivestreamDTO) error {
-	return errors.New("not used in these tests")
+func (s *stubLivestreamService) Leave(ctx context.Context, sessionID, userID uuid.UUID) error {
+	s.gotSessionID, s.gotLeaveUserID = sessionID, userID
+	return s.authzErr
 }
 func (s *stubLivestreamService) GetParticipants(ctx context.Context, sessionID uuid.UUID, page, pageSize int) ([]model.Participant, int64, error) {
 	return nil, 0, errors.New("not used in these tests")
 }
-func (s *stubLivestreamService) MuteParticipant(ctx context.Context, sessionID, userID uuid.UUID) error {
-	return errors.New("not used in these tests")
+func (s *stubLivestreamService) MuteParticipant(ctx context.Context, actorID, sessionID, targetID uuid.UUID) error {
+	s.gotActorID, s.gotSessionID, s.gotTargetID = actorID, sessionID, targetID
+	return s.authzErr
 }
-func (s *stubLivestreamService) KickParticipant(ctx context.Context, sessionID, userID uuid.UUID) error {
-	return errors.New("not used in these tests")
+func (s *stubLivestreamService) KickParticipant(ctx context.Context, actorID, sessionID, targetID uuid.UUID) error {
+	s.gotActorID, s.gotSessionID, s.gotTargetID = actorID, sessionID, targetID
+	return s.authzErr
 }
-func (s *stubLivestreamService) LockWhiteboard(ctx context.Context, sessionID uuid.UUID, locked bool) error {
-	return errors.New("not used in these tests")
+func (s *stubLivestreamService) LockWhiteboard(ctx context.Context, actorID, sessionID uuid.UUID, locked bool) error {
+	s.gotActorID, s.gotSessionID, s.gotLocked = actorID, sessionID, locked
+	return s.authzErr
 }
-func (s *stubLivestreamService) StartScreenShare(ctx context.Context, sessionID, userID uuid.UUID) error {
-	return errors.New("not used in these tests")
+func (s *stubLivestreamService) StartScreenShare(ctx context.Context, actorID, sessionID uuid.UUID) error {
+	s.gotActorID, s.gotScreenShareID = actorID, sessionID
+	return s.authzErr
 }
-func (s *stubLivestreamService) StopScreenShare(ctx context.Context, sessionID, userID uuid.UUID) error {
-	return errors.New("not used in these tests")
+func (s *stubLivestreamService) StopScreenShare(ctx context.Context, actorID, sessionID uuid.UUID) error {
+	s.gotActorID, s.gotScreenShareID = actorID, sessionID
+	return s.authzErr
 }
 
 // TestLivestreamCreate_BoQuaHostIDTuBody (review 260915, tu PR web #16): client gui them

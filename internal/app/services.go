@@ -177,6 +177,8 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		repos.Analytics,
 		repos.Class,
 		repos.Course,
+		// V3-6 (issue #58): Join can kiem nguoi tham gia co enroll khoa cua phien khong.
+		repos.Enrollment,
 		resources.Redis,
 		livekitSvc,
 		resources.Queue,

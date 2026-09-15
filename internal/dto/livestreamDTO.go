@@ -33,14 +33,20 @@ type StartLivestreamDTO struct {
 	RoomName string `json:"room_name" validate:"required"`
 }
 
+// JoinLivestreamDTO — KHONG con user_id va role (finding review V3-6, issue #58): nguoi tham gia
+// phien PHAI la nguoi dang goi API (lay tu access token), va vai tro do SERVER suy ra tu quan he
+// that (host / GV lop / instructor khoa / hoc sinh da enroll) chu khong do client tu khai.
+//
+// Truoc day handler nhan thang `user_id` tu body roi dung lam ca (a) danh tinh nguoi tham gia va
+// (b) `Identity` cua LiveKit token — nen bat ky user dang nhap nao cung join duoc DUOI TEN nguoi
+// khac chi bang cach khai user_id cua ho; `role` thi nhan nguyen gia tri client gui
+// (teacher/assistant/student/viewer) => tu phong minh len teacher, va `IsHost` cua token duoc set
+// theo role do. Ca hai duong deu da bi go: userID la tham so rieng cua
+// LivestreamServiceInterface.Join, lay tu c.Locals("user_id") o handler; role do service tinh.
+//
+// `name` duoc giu lai vi chi la ten HIEN THI (LiveKit display name), khong mang quyen.
 type JoinLivestreamDTO struct {
-	UserID string `json:"user_id" validate:"required,uuid"`
-	Name  string `json:"name" validate:"required"`
-	Role  string `json:"role" validate:"omitempty,oneof=teacher assistant student viewer"`
-}
-
-type LeaveLivestreamDTO struct {
-	UserID uuid.UUID `json:"user_id" validate:"required,uuid"`
+	Name string `json:"name" validate:"required"`
 }
 
 type LivestreamResponseDTO struct {
@@ -100,11 +106,17 @@ type ParticipantResponseDTO struct {
 	RoomName  string    `json:"room_name,omitempty"`
 }
 
+// ScreenShareDTO — KHONG con user_id (finding review V3-6, issue #58): nguoi bat/tat chia se man
+// hinh la nguoi dang goi API, khong phai mot user_id client tu khai. Body cu
+// (`{user_id, action}`) van duoc Fiber parse binh thuong — `user_id` bi bo qua lang le, khong doi
+// contract response (xem API_DOCUMENTATION.md).
 type ScreenShareDTO struct {
-	UserID string `json:"user_id" validate:"required,uuid"`
 	Action string `json:"action" validate:"required,oneof=start stop"`
 }
 
+// ModerationActionDTO — `user_id` o day la DOI TUONG bi tac dong (mute/kick ai), khong phai danh
+// tinh nguoi goi; nguoi goi lay tu access token (finding review V3-6, issue #58). Vi vay field nay
+// duoc giu nguyen, chi khac truoc la no khong con bi hieu nham thanh nguoi thuc hien.
 type ModerationActionDTO struct {
 	UserID   string `json:"user_id" validate:"required,uuid"`
 	Action   string `json:"action" validate:"required,oneof=mute kick"`

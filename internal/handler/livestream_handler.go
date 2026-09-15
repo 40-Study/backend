@@ -37,6 +37,32 @@ func NewLivestreamHandler(svc service.LivestreamServiceInterface) *LivestreamHan
 	return &LivestreamHandler{svc: svc}
 }
 
+// respondForbiddenOrError (V3-6/V3-7, issue #58) gom MOT cho duy nhat viec phan loai loi cua moi
+// handler livestream: sentinel UY QUYEN -> 403, con lai -> 500. Truoc day moi handler tu viet
+// `if err != nil { 500 }`, nen khi them kiem quyen ma quen nhanh phan loai thi nguoi dung nhan 500
+// thay vi 403 (va test "user la -> 403" khong bao gio bat duoc loi hoi quy).
+func respondForbiddenOrError(c *fiber.Ctx, err error) error {
+	if service.IsForbiddenErr(err) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"message": "Forbidden", "error": err.Error(),
+		})
+	}
+	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+}
+
+// callerOrUnauthorized lay danh tinh nguoi goi tu access token cho moi handler can biet AI dang
+// goi. Tra ve (uuid.Nil, true) khi da ghi response 401 — caller chi can `return nil`.
+func callerOrUnauthorized(c *fiber.Ctx) (uuid.UUID, bool) {
+	userID, err := extractUserID(c)
+	if err != nil {
+		_ = c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized", "error": err.Error(),
+		})
+		return uuid.Nil, true
+	}
+	return userID, false
+}
+
 func (h *LivestreamHandler) Create(c *fiber.Ctx) error {
 	// Finding review 260915 (tu PR web #16): host cua phien PHAI la nguoi dang goi API, lay tu
 	// access token — truoc day handler nhan thang host_id tu body va dung nguyen, nen bat ky user
@@ -64,12 +90,7 @@ func (h *LivestreamHandler) Create(c *fiber.Ctx) error {
 		// N1 (review vong 2, 260915): ErrNotClassTeacher la loi UY QUYEN (403), khong phai loi
 		// ha tang — phan loai bang errors.Is (dung pattern sentinel LOW-7 da co cho select-org),
 		// khong so chuoi.
-		if errors.Is(err, service.ErrNotClassTeacher) {
-			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-				"message": "Forbidden", "error": err.Error(),
-			})
-		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return respondForbiddenOrError(c, err)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -132,14 +153,19 @@ func (h *LivestreamHandler) Update(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
+	userID, done := callerOrUnauthorized(c)
+	if done {
+		return nil
+	}
+
 	var req dto.UpdateLivestreamDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	session, err := h.svc.Update(c.Context(), id, req)
+	session, err := h.svc.Update(c.Context(), userID, id, req)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return respondForbiddenOrError(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Session updated", "data": session})
@@ -151,8 +177,13 @@ func (h *LivestreamHandler) Delete(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	if err := h.svc.Delete(c.Context(), id); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	userID, done := callerOrUnauthorized(c)
+	if done {
+		return nil
+	}
+
+	if err := h.svc.Delete(c.Context(), userID, id); err != nil {
+		return respondForbiddenOrError(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Session deleted"})
@@ -164,9 +195,14 @@ func (h *LivestreamHandler) Start(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	session, err := h.svc.Start(c.Context(), id)
+	userID, done := callerOrUnauthorized(c)
+	if done {
+		return nil
+	}
+
+	session, err := h.svc.Start(c.Context(), userID, id)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return respondForbiddenOrError(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Session started", "data": session})
@@ -178,9 +214,14 @@ func (h *LivestreamHandler) End(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	session, err := h.svc.End(c.Context(), id)
+	userID, done := callerOrUnauthorized(c)
+	if done {
+		return nil
+	}
+
+	session, err := h.svc.End(c.Context(), userID, id)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return respondForbiddenOrError(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Session ended", "data": session})
@@ -192,32 +233,47 @@ func (h *LivestreamHandler) Join(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
+	// V3-6 (issue #58): danh tinh nguoi tham gia lay tu access token. `user_id` cu trong body bi
+	// Fiber bo qua lang le (field da bi xoa khoi DTO) — khong doi contract response.
+	userID, done := callerOrUnauthorized(c)
+	if done {
+		return nil
+	}
+
 	var req dto.JoinLivestreamDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	participant, err := h.svc.Join(c.Context(), id, req)
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed", "errors": errs,
+		})
+	}
+
+	participant, err := h.svc.Join(c.Context(), id, userID, req)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return respondForbiddenOrError(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Joined session", "data": participant})
 }
 
 func (h *LivestreamHandler) Leave(c *fiber.Ctx) error {
-	session_id, err := uuid.Parse(c.Params("id"))
+	sessionID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	var req dto.LeaveLivestreamDTO
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	// V3-6 (issue #58): nguoi roi phong la nguoi dang goi API — truoc day lay `user_id` tu body
+	// nen bat ky ai cung da duoc NGUOI KHAC ra khoi phong.
+	userID, done := callerOrUnauthorized(c)
+	if done {
+		return nil
 	}
 
-	if err := h.svc.Leave(c.Context(), session_id, req); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	if err := h.svc.Leave(c.Context(), sessionID, userID); err != nil {
+		return respondForbiddenOrError(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Left session"})
@@ -245,24 +301,41 @@ func (h *LivestreamHandler) GetParticipants(c *fiber.Ctx) error {
 	})
 }
 
+// moderationTarget (V3-6, issue #58) parse doi tuong bi tac dong tu body. `user_id` o day LA doi
+// tuong (khong phai nguoi goi) — nguoi goi lay tu access token o callerOrUnauthorized.
+func moderationTarget(c *fiber.Ctx) (uuid.UUID, *dto.ModerationActionDTO, error) {
+	var req dto.ModerationActionDTO
+	if err := c.BodyParser(&req); err != nil {
+		return uuid.Nil, nil, err
+	}
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return uuid.Nil, nil, fiber.NewError(fiber.StatusBadRequest, "validation failed")
+	}
+	targetID, err := uuid.Parse(req.UserID)
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	return targetID, &req, nil
+}
+
 func (h *LivestreamHandler) MuteParticipant(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	var req dto.ModerationActionDTO
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	actorID, done := callerOrUnauthorized(c)
+	if done {
+		return nil
 	}
 
-	userID, err := uuid.Parse(req.UserID)
+	targetID, _, err := moderationTarget(c)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid user_id"})
 	}
 
-	if err := h.svc.MuteParticipant(c.Context(), id, userID); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	if err := h.svc.MuteParticipant(c.Context(), actorID, id, targetID); err != nil {
+		return respondForbiddenOrError(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Participant muted"})
@@ -274,18 +347,18 @@ func (h *LivestreamHandler) KickParticipant(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	var req dto.ModerationActionDTO
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	actorID, done := callerOrUnauthorized(c)
+	if done {
+		return nil
 	}
 
-	userID, err := uuid.Parse(req.UserID)
+	targetID, _, err := moderationTarget(c)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid user_id"})
 	}
 
-	if err := h.svc.KickParticipant(c.Context(), id, userID); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	if err := h.svc.KickParticipant(c.Context(), actorID, id, targetID); err != nil {
+		return respondForbiddenOrError(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Participant kicked"})
@@ -297,8 +370,13 @@ func (h *LivestreamHandler) LockWhiteboard(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	if err := h.svc.LockWhiteboard(c.Context(), id, true); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	actorID, done := callerOrUnauthorized(c)
+	if done {
+		return nil
+	}
+
+	if err := h.svc.LockWhiteboard(c.Context(), actorID, id, true); err != nil {
+		return respondForbiddenOrError(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Whiteboard locked"})
@@ -310,11 +388,29 @@ func (h *LivestreamHandler) UnlockWhiteboard(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	if err := h.svc.LockWhiteboard(c.Context(), id, false); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	actorID, done := callerOrUnauthorized(c)
+	if done {
+		return nil
+	}
+
+	if err := h.svc.LockWhiteboard(c.Context(), actorID, id, false); err != nil {
+		return respondForbiddenOrError(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Whiteboard unlocked"})
+}
+
+// screenShareAction (V3-6, issue #58) parse body chia se man hinh. `user_id` cu trong body da bi
+// xoa khoi dto.ScreenShareDTO nen khong con duong nao de client khai nguoi chia se man hinh.
+func screenShareAction(c *fiber.Ctx) (string, error) {
+	var req dto.ScreenShareDTO
+	if err := c.BodyParser(&req); err != nil {
+		return "", err
+	}
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return "", errors.New("validation failed")
+	}
+	return req.Action, nil
 }
 
 func (h *LivestreamHandler) StartScreenShare(c *fiber.Ctx) error {
@@ -323,18 +419,17 @@ func (h *LivestreamHandler) StartScreenShare(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	var req dto.ScreenShareDTO
-	if err := c.BodyParser(&req); err != nil {
+	actorID, done := callerOrUnauthorized(c)
+	if done {
+		return nil
+	}
+
+	if _, err := screenShareAction(c); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	userID, err := uuid.Parse(req.UserID)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid user_id"})
-	}
-
-	if err := h.svc.StartScreenShare(c.Context(), id, userID); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	if err := h.svc.StartScreenShare(c.Context(), actorID, id); err != nil {
+		return respondForbiddenOrError(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Screen share started"})
@@ -346,18 +441,17 @@ func (h *LivestreamHandler) StopScreenShare(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	var req dto.ScreenShareDTO
-	if err := c.BodyParser(&req); err != nil {
+	actorID, done := callerOrUnauthorized(c)
+	if done {
+		return nil
+	}
+
+	if _, err := screenShareAction(c); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	userID, err := uuid.Parse(req.UserID)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid user_id"})
-	}
-
-	if err := h.svc.StopScreenShare(c.Context(), id, userID); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	if err := h.svc.StopScreenShare(c.Context(), actorID, id); err != nil {
+		return respondForbiddenOrError(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Screen share stopped"})
