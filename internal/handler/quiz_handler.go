@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"log"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -124,6 +126,14 @@ func (h *QuizHandler) GetQuizzesByLesson(c *fiber.Ctx) error {
 	data := list.Data
 	if data == nil {
 		data = []dto.QuizResponseDTO{}
+	}
+
+	// LOW-11 (review 260915): pageSize cung 50 cat im lang neu mot bai co >50 quiz — khong co
+	// co bao, khong co total tra ve client. Log de biet gia dinh "1-3 quiz/bai" o comment tren
+	// da sai o lesson nao, thay vi phat hien khi phu huynh/hoc vien bao thieu quiz.
+	if list.Total > int64(len(data)) {
+		log.Printf("[WARN] GetQuizzesByLesson: lesson=%s co %d quiz nhung chi tra ve %d (pageSize cung 50)",
+			lessonID, list.Total, len(data))
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
