@@ -210,6 +210,17 @@ func (s *CourseService) GetCourseBySlug(ctx context.Context, slug string) (*dto.
 		for j, les := range sec.Lessons {
 			// Public course detail exposes the syllabus, never protected content URLs.
 			lessons[j] = s.toLessonResponseDTO(&les, nil)
+
+			// Phase 1 §2: route nay KHONG co user dang nhap (public, xem truoc khi mua) nen
+			// khong biet duoc "bai truoc da completed chua" — chi biet CHAC MOT dieu: nguoi
+			// xem CHUA enroll. Bai preview/mien phi luon mo (dung y "bo qua bai preview" cua
+			// contract); moi bai con lai khoa voi ly do "not_enrolled". Khong co progress vi
+			// khong biet la ai.
+			if !les.IsPreview {
+				reason := LockReasonNotEnrolled
+				lessons[j].Locked = true
+				lessons[j].LockReason = &reason
+			}
 		}
 		sections[i] = dto.SectionResponseDTO{
 			ID:           sec.ID,
@@ -313,6 +324,12 @@ func (s *CourseService) UpdateCourse(ctx context.Context, id, actorUserID uuid.U
 	if req.IsFeatured != nil {
 		course.IsFeatured = *req.IsFeatured
 	}
+	if req.Sequential != nil {
+		course.Sequential = *req.Sequential
+	}
+	if req.MinVideoPct != nil {
+		course.MinVideoPct = *req.MinVideoPct
+	}
 
 	if err := s.courseRepo.Update(ctx, course); err != nil {
 		return nil, err
@@ -378,6 +395,13 @@ func (s *CourseService) toCourseResponseDTO(course *model.Course) *dto.CourseRes
 		IsFree:            course.IsFree,
 		CreatedAt:         course.CreatedAt,
 		UpdatedAt:         course.UpdatedAt,
+		Sequential:        course.Sequential,
+		MinVideoPct:       course.MinVideoPct,
+	}
+	if resp.MinVideoPct <= 0 {
+		// Dong cu duoc AutoMigrate them cot voi gia tri 0 — tra ve dung nguong THUC TE dang
+		// duoc dung (xem defaultMinVideoPct, enrollment_service.go) thay vi mot con so sai.
+		resp.MinVideoPct = defaultMinVideoPct
 	}
 
 	if course.Instructor.ID != uuid.Nil {

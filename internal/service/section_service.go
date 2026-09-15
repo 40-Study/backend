@@ -16,7 +16,10 @@ var ErrNotSectionCourseOwner = errors.New("forbidden: not the owner")
 
 type SectionServiceInterface interface {
 	CreateSection(ctx context.Context, courseID, actorUserID uuid.UUID, req dto.CreateSectionDTO) (*dto.SectionResponseDTO, error)
-	GetAllSections(ctx context.Context, courseID uuid.UUID) ([]dto.SectionResponseDTO, error)
+	// GetAllSections (Phase 1 §2): userID dung de tinh locked/lock_reason/progress cho TUNG bai
+	// theo dung nguoi dang xem — route nay luon di kem auth nen userID khong bao gio la uuid.Nil
+	// tren duong that; xem sectionForbiddenResponse/handler.
+	GetAllSections(ctx context.Context, courseID, userID uuid.UUID) ([]dto.SectionResponseDTO, error)
 	GetSectionByID(ctx context.Context, sectionID uuid.UUID) (*dto.SectionResponseDTO, error)
 	UpdateSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateSectionDTO) (*dto.SectionResponseDTO, error)
 	DeleteSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID, isAdmin bool) error
@@ -24,17 +27,20 @@ type SectionServiceInterface interface {
 }
 
 type SectionService struct {
-	sectionRepo repository.SectionRepositoryInterface
-	courseRepo  repository.CourseRepositoryInterface
+	sectionRepo    repository.SectionRepositoryInterface
+	courseRepo     repository.CourseRepositoryInterface
+	enrollmentRepo repository.EnrollmentRepositoryInterface
 }
 
 func NewSectionService(
 	sectionRepo repository.SectionRepositoryInterface,
 	courseRepo repository.CourseRepositoryInterface,
+	enrollmentRepo repository.EnrollmentRepositoryInterface,
 ) *SectionService {
 	return &SectionService{
-		sectionRepo: sectionRepo,
-		courseRepo:  courseRepo,
+		sectionRepo:    sectionRepo,
+		courseRepo:     courseRepo,
+		enrollmentRepo: enrollmentRepo,
 	}
 }
 
@@ -97,12 +103,24 @@ func (s *SectionService) CreateSection(ctx context.Context, courseID, actorUserI
 	return s.toSectionResponseDTO(section, nil), nil
 }
 
-func (s *SectionService) GetAllSections(ctx context.Context, courseID uuid.UUID) ([]dto.SectionResponseDTO, error) {
-	if err := s.validateCourse(ctx, courseID); err != nil {
+// GetAllSections (Phase 1 §2): "fetcher server" ma trang hoc (web) dung de lay curriculum —
+// day la endpoint DUY NHAT can tinh day du locked/lock_reason/progress theo NGUOI DANG XEM,
+// khac voi CourseService.GetCourseBySlug (public, khong biet nguoi xem la ai).
+func (s *SectionService) GetAllSections(ctx context.Context, courseID, userID uuid.UUID) ([]dto.SectionResponseDTO, error) {
+	course, err := s.courseRepo.GetByID(ctx, courseID)
+	if err != nil {
 		return nil, err
+	}
+	if course == nil {
+		return nil, errors.New("course not found")
 	}
 
 	sections, err := s.sectionRepo.GetAllByCourseID(ctx, courseID)
+	if err != nil {
+		return nil, err
+	}
+
+	lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, courseID, course.Sequential)
 	if err != nil {
 		return nil, err
 	}
@@ -112,6 +130,10 @@ func (s *SectionService) GetAllSections(ctx context.Context, courseID uuid.UUID)
 		lessons := make([]dto.LessonResponseDTO, len(sec.Lessons))
 		for j, les := range sec.Lessons {
 			lessons[j] = s.toLessonResponseDTO(&les, nil)
+			locked, reason, progress := ResolveLessonLock(les.ID, lockInput)
+			lessons[j].Locked = locked
+			lessons[j].LockReason = reason
+			lessons[j].Progress = progress
 		}
 		result[i] = *s.toSectionResponseDTO(&sec, lessons)
 	}

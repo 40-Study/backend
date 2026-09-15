@@ -351,9 +351,9 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Tag:           service.NewTagService(repos.Tag),
 		Cart:          service.NewCartService(repos.CartItem, repos.Course, repos.Enrollment),
 		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag),
-		Section:       service.NewSectionService(repos.Section, repos.Course),
+		Section:       service.NewSectionService(repos.Section, repos.Course, repos.Enrollment),
 		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, repos.Course, service.NewUploadService(resources.MinioClient, resources.Config)),
-		LessonContent: service.NewLessonContentService(repos.Lesson, repos.Section, repos.Course, service.NewUploadService(resources.MinioClient, resources.Config), uploadSvc),
+		LessonContent: service.NewLessonContentService(repos.Lesson, repos.Section, repos.Course, repos.Enrollment, service.NewUploadService(resources.MinioClient, resources.Config), uploadSvc),
 		Enrollment:    service.NewEnrollmentService(repos.Enrollment, repos.Course, repos.Lesson),
 
 		// ===== Upload & Video =====

@@ -38,4 +38,22 @@ type LessonResponseDTO struct {
 	Contents     []LessonContentResponseDTO `json:"contents,omitempty"`
 	CreatedAt    time.Time                  `json:"created_at"`
 	UpdatedAt    time.Time                  `json:"updated_at"`
+
+	// ——— Phase 1 §2 (khoá học tuần tự) ———
+	// KHÔNG dùng omitempty cho Locked/LockReason: contract ghi rõ hai trường này LUÔN xuất
+	// hiện trên curriculum (`"locked": false, "lock_reason": null`), web đọc thẳng shape này
+	// (web/src/types/lesson.ts). Locked/LockReason chỉ có Ý NGHĨA trên các response tính theo
+	// NGƯỜI DÙNG hiện tại (GetAllSections, GetCourseBySlug) — các response khác (tạo/sửa lesson)
+	// để mặc định false/nil vì không có "người xem" nào để tính khoá.
+	Locked     bool                      `json:"locked"`
+	LockReason *string                   `json:"lock_reason"`
+	Progress   *LessonProgressSummaryDTO `json:"progress,omitempty"`
+}
+
+// LessonProgressSummaryDTO là tiến độ TÓM TẮT gắn kèm mỗi bài trong curriculum (contract §2) —
+// khác với dto.LessonProgressStateDTO (contract §1, trả về từ chính request ghi tiến độ).
+type LessonProgressSummaryDTO struct {
+	Status              string  `json:"status"`
+	WatchedPct          float64 `json:"watched_pct"`
+	LastPositionSeconds int     `json:"last_position_seconds"`
 }

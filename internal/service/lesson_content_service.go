@@ -16,7 +16,10 @@ type LessonContentServiceInterface interface {
 	GetContentByID(ctx context.Context, contentID uuid.UUID) (*dto.LessonContentResponseDTO, error)
 	UpdateContent(ctx context.Context, contentID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateLessonContentDTO) (*dto.LessonContentResponseDTO, error)
 	DeleteContent(ctx context.Context, contentID, actorUserID uuid.UUID, isAdmin bool) error
-	GetContentsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]dto.LessonContentResponseDTO, error)
+	// GetContentsByLessonID (Phase 1 §2): userID dung de chan noi dung cua bai dang bi khoa —
+	// tra ve ErrLessonLocked (handler anh xa sang 403 {message:"LESSON_LOCKED"}) khi bai chua
+	// mo doi voi CHINH nguoi dang goi. Contract yeu cau chan ca tang API, khong chi an o UI.
+	GetContentsByLessonID(ctx context.Context, lessonID, userID uuid.UUID) ([]dto.LessonContentResponseDTO, error)
 	// ReorderContents (M2-03, review vòng 3): thêm actorUserID/isAdmin — trước đây hàm này chỉ
 	// validateLesson (kiểm TỒN TẠI), không kiểm CHỦ SỞ HỮU, khác với mọi CRUD content khác
 	// (Create/Update/Delete đều gọi requireContentLessonOwnerOrAdmin/requireLessonCourseOwnerOrAdmin).
@@ -27,6 +30,7 @@ type LessonContentService struct {
 	lessonRepo         repository.LessonRepositoryInterface
 	sectionRepo        repository.SectionRepositoryInterface
 	courseRepo         repository.CourseRepositoryInterface
+	enrollmentRepo     repository.EnrollmentRepositoryInterface
 	uploadService      UploadServiceInterface
 	videoUploadService VideoUploadServiceInterface
 }
@@ -35,6 +39,7 @@ func NewLessonContentService(
 	lessonRepo repository.LessonRepositoryInterface,
 	sectionRepo repository.SectionRepositoryInterface,
 	courseRepo repository.CourseRepositoryInterface,
+	enrollmentRepo repository.EnrollmentRepositoryInterface,
 	uploadService UploadServiceInterface,
 	videoUploadService VideoUploadServiceInterface,
 ) *LessonContentService {
@@ -42,6 +47,7 @@ func NewLessonContentService(
 		lessonRepo:         lessonRepo,
 		sectionRepo:        sectionRepo,
 		courseRepo:         courseRepo,
+		enrollmentRepo:     enrollmentRepo,
 		uploadService:      uploadService,
 		videoUploadService: videoUploadService,
 	}
@@ -63,17 +69,6 @@ func (s *LessonContentService) requireContentLessonOwnerOrAdmin(ctx context.Cont
 		return errors.New("lesson not found")
 	}
 	return requireLessonCourseOwnerOrAdmin(ctx, s.sectionRepo, s.courseRepo, lesson, actorUserID, isAdmin)
-}
-
-func (s *LessonContentService) validateLesson(ctx context.Context, lessonID uuid.UUID) error {
-	exists, err := s.lessonRepo.Exists(ctx, lessonID)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return errors.New("lesson not found")
-	}
-	return nil
 }
 
 func (s *LessonContentService) CreateContent(ctx context.Context, lessonID uuid.UUID, actorUserID uuid.UUID, isAdmin bool, req dto.CreateLessonContentDTO) (*dto.LessonContentResponseDTO, error) {
@@ -129,9 +124,34 @@ func (s *LessonContentService) GetContentByID(ctx context.Context, contentID uui
 	return s.toContentResponseDTO(content), nil
 }
 
-func (s *LessonContentService) GetContentsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]dto.LessonContentResponseDTO, error) {
-	if err := s.validateLesson(ctx, lessonID); err != nil {
+func (s *LessonContentService) GetContentsByLessonID(ctx context.Context, lessonID, userID uuid.UUID) ([]dto.LessonContentResponseDTO, error) {
+	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
+	if err != nil {
 		return nil, err
+	}
+	if lesson == nil {
+		return nil, errors.New("lesson not found")
+	}
+
+	// Phase 1 §2: chan noi dung bai bi khoa o CHINH tang API — contract ghi ro "khong chi chan
+	// UI". Bai preview/mien phi bo qua nhanh nay (ResolveLessonLock tu tra locked=false).
+	if !lesson.IsPreview {
+		courseID, err := s.enrollmentRepo.GetCourseIDByLessonID(ctx, lessonID)
+		if err != nil {
+			return nil, err
+		}
+		course, err := s.courseRepo.GetByID(ctx, courseID)
+		if err != nil {
+			return nil, err
+		}
+		sequential := course != nil && course.Sequential
+		lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, courseID, sequential)
+		if err != nil {
+			return nil, err
+		}
+		if locked, _, _ := ResolveLessonLock(lessonID, lockInput); locked {
+			return nil, ErrLessonLocked
+		}
 	}
 
 	contents, err := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)

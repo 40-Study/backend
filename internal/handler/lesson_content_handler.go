@@ -80,8 +80,21 @@ func (h *LessonContentHandler) GetContent(c *fiber.Ctx) error {
 		})
 	}
 
-	contents, err := h.service.GetContentsByLessonID(c.Context(), lessonID)
+	// Phase 1 §2: userID de service chan noi dung bai bi khoa (ErrLessonLocked -> 403 ben duoi).
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	contents, err := h.service.GetContentsByLessonID(c.Context(), lessonID, userID)
 	if err != nil {
+		if err == service.ErrLessonLocked {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"message": "LESSON_LOCKED",
+			})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve contents", "error": err.Error(),
 		})

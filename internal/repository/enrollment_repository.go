@@ -42,6 +42,15 @@ type EnrollmentRepositoryInterface interface {
 	// GetLessonIDsByCourseID tra ve id cac bai hoc cua khoa theo dung thu tu hien thi
 	// (section.display_order, lesson.display_order) — xem comment tai ham impl.
 	GetLessonIDsByCourseID(ctx context.Context, courseID uuid.UUID) ([]uuid.UUID, error)
+	// GetLessonOrderInfoByCourseID (Phase 1 §2, khoa hoc tuan tu): giong GetLessonIDsByCourseID
+	// nhung kem ca IsPreview — can de tim "bai truoc" MA BO QUA bai preview/mien phi (contract
+	// §2). Tach rieng khoi GetLessonIDsByCourseID (dang duoc §1 dung va da co test) thay vi doi
+	// chu ky ham do, tranh dong cham vao duong da on dinh.
+	GetLessonOrderInfoByCourseID(ctx context.Context, courseID uuid.UUID) ([]LessonOrderInfo, error)
+	// GetLessonProgressMapByUserAndCourse (Phase 1 §2): tra ve TOAN BO tien do da co cua MOT
+	// nguoi dung trong MOT khoa, dang map[lessonID]. Dung khi tinh locked/progress cho CA
+	// curriculum trong MOT lan doc, tranh N+1 (moi lesson mot query rieng).
+	GetLessonProgressMapByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (map[uuid.UUID]*model.LessonProgress, error)
 	GetEnrolledUserIDsByCourseID(ctx context.Context, courseID uuid.UUID) ([]uuid.UUID, error)
 
 	// LessonProgress
@@ -275,6 +284,55 @@ func (r *EnrollmentRepository) GetLessonIDsByCourseID(ctx context.Context, cours
 		Order("sections.display_order ASC, lessons.display_order ASC").
 		Pluck("lessons.id", &ids).Error
 	return ids, err
+}
+
+// LessonOrderInfo la MOT dong cua GetLessonOrderInfoByCourseID: id bai hoc kem is_preview,
+// theo dung thu tu hien thi trong khoa.
+type LessonOrderInfo struct {
+	ID        uuid.UUID
+	IsPreview bool
+}
+
+// GetLessonOrderInfoByCourseID (Phase 1 §2): xem comment tai interface. Cung JOIN nhu
+// GetLessonIDsByCourseID nhung lay them is_preview trong MOT truy van, thay vi query rieng
+// cho tung bai — logic khoa tuan tu can nhin thay CA chuoi bai (id + is_preview) cung luc de
+// tim "bai truoc" bo qua preview.
+func (r *EnrollmentRepository) GetLessonOrderInfoByCourseID(ctx context.Context, courseID uuid.UUID) ([]LessonOrderInfo, error) {
+	var rows []LessonOrderInfo
+	err := r.db.WithContext(ctx).
+		Model(&model.Lesson{}).
+		Select("lessons.id AS id, lessons.is_preview AS is_preview").
+		Joins("JOIN sections ON sections.id = lessons.section_id").
+		Where("sections.course_id = ?", courseID).
+		Order("sections.display_order ASC, lessons.display_order ASC").
+		Scan(&rows).Error
+	return rows, err
+}
+
+// GetLessonProgressMapByUserAndCourse (Phase 1 §2): xem comment tai interface. Khong tim thay
+// enrollment (nguoi dung chua enroll khoa nay) tra ve map RONG, khong phai loi — "chua enroll"
+// la mot trang thai hop le ma caller (tinh lock/progress) phai tu xu ly rieng.
+func (r *EnrollmentRepository) GetLessonProgressMapByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (map[uuid.UUID]*model.LessonProgress, error) {
+	enrollment, err := r.GetByUserAndCourse(ctx, userID, courseID)
+	if err != nil {
+		return nil, err
+	}
+	if enrollment == nil {
+		return map[uuid.UUID]*model.LessonProgress{}, nil
+	}
+
+	var records []model.LessonProgress
+	if err := r.db.WithContext(ctx).
+		Where("enrollment_id = ?", enrollment.ID).
+		Find(&records).Error; err != nil {
+		return nil, err
+	}
+
+	out := make(map[uuid.UUID]*model.LessonProgress, len(records))
+	for i := range records {
+		out[records[i].LessonID] = &records[i]
+	}
+	return out, nil
 }
 
 func (r *EnrollmentRepository) GetEnrolledUserIDsByCourseID(ctx context.Context, courseID uuid.UUID) ([]uuid.UUID, error) {
