@@ -142,7 +142,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 
 		// ===== Class =====
 		Class:              handler.NewClassHandler(services.Class, permChecker),
-		ClassLessonContent: handler.NewClassLessonContentHandler(services.ClassLessonContent),
+		ClassLessonContent: handler.NewClassLessonContentHandler(services.ClassLessonContent, permChecker),
 		Attendance:         handler.NewAttendanceHandler(services.Attendance),
 
 		// ===== Course Management =====

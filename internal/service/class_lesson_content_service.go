@@ -14,17 +14,20 @@ import (
 )
 
 type ClassLessonContentServiceInterface interface {
-	AssignClassToContent(ctx context.Context, contentID uuid.UUID, userID uuid.UUID, req dto.AssignClassToContentDTO) (*dto.ClassLessonContentResponseDTO, error)
-	UpdateClassContentSchedule(ctx context.Context, contentID, classID uuid.UUID, req dto.UpdateClassContentScheduleDTO) (*dto.ClassLessonContentResponseDTO, error)
-	RemoveClassFromContent(ctx context.Context, contentID, classID uuid.UUID) error
-	GetClassesForContent(ctx context.Context, contentID uuid.UUID, page, pageSize int) (*dto.ClassLessonContentListResponseDTO, error)
-	GetContentScheduleForClass(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.ClassLessonContentListResponseDTO, error)
-	BulkAssignClassesToContent(ctx context.Context, contentID uuid.UUID, userID uuid.UUID, req dto.BulkAssignClassesToContentDTO) ([]dto.ClassLessonContentResponseDTO, error)
+	AssignClassToContent(ctx context.Context, contentID uuid.UUID, userID uuid.UUID, isAdmin bool, req dto.AssignClassToContentDTO) (*dto.ClassLessonContentResponseDTO, error)
+	UpdateClassContentSchedule(ctx context.Context, contentID, classID, userID uuid.UUID, isAdmin bool, req dto.UpdateClassContentScheduleDTO) (*dto.ClassLessonContentResponseDTO, error)
+	RemoveClassFromContent(ctx context.Context, contentID, classID, userID uuid.UUID, isAdmin bool) error
+	GetClassesForContent(ctx context.Context, contentID, userID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.ClassLessonContentListResponseDTO, error)
+	GetContentScheduleForClass(ctx context.Context, classID, userID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.ClassLessonContentListResponseDTO, error)
+	BulkAssignClassesToContent(ctx context.Context, contentID uuid.UUID, userID uuid.UUID, isAdmin bool, req dto.BulkAssignClassesToContentDTO) ([]dto.ClassLessonContentResponseDTO, error)
 }
 
 type ClassLessonContentService struct {
 	clcRepo        repository.ClassLessonContentRepositoryInterface
 	classRepo      repository.ClassRepositoryInterface
+	// courseRepo (V3-7, issue #58): can de kiem instructor cua khoa chua lop — xem
+	// class_access.go. Truoc day service nay khong he biet khoa nao day lop nao.
+	courseRepo     repository.CourseRepositoryInterface
 	lessonRepo     repository.LessonRepositoryInterface
 	enrollmentRepo repository.EnrollmentRepositoryInterface
 	livestreamSvc  LivestreamServiceInterface
@@ -33,6 +36,7 @@ type ClassLessonContentService struct {
 func NewClassLessonContentService(
 	clcRepo repository.ClassLessonContentRepositoryInterface,
 	classRepo repository.ClassRepositoryInterface,
+	courseRepo repository.CourseRepositoryInterface,
 	lessonRepo repository.LessonRepositoryInterface,
 	enrollmentRepo repository.EnrollmentRepositoryInterface,
 	livestreamSvc LivestreamServiceInterface,
@@ -40,13 +44,14 @@ func NewClassLessonContentService(
 	return &ClassLessonContentService{
 		clcRepo:        clcRepo,
 		classRepo:      classRepo,
+		courseRepo:     courseRepo,
 		lessonRepo:     lessonRepo,
 		enrollmentRepo: enrollmentRepo,
 		livestreamSvc:  livestreamSvc,
 	}
 }
 
-func (s *ClassLessonContentService) AssignClassToContent(ctx context.Context, contentID uuid.UUID, userID uuid.UUID, req dto.AssignClassToContentDTO) (*dto.ClassLessonContentResponseDTO, error) {
+func (s *ClassLessonContentService) AssignClassToContent(ctx context.Context, contentID uuid.UUID, userID uuid.UUID, isAdmin bool, req dto.AssignClassToContentDTO) (*dto.ClassLessonContentResponseDTO, error) {
 	// Validate content exists
 	content, err := s.lessonRepo.GetContentByID(ctx, contentID)
 	if err != nil {
@@ -63,6 +68,13 @@ func (s *ClassLessonContentService) AssignClassToContent(ctx context.Context, co
 	}
 	if class == nil {
 		return nil, errors.New("class not found")
+	}
+
+	// V3-7 (issue #58): truoc day bat ky user dang nhap nao cung gan duoc mot lesson content vao
+	// BAT KY lop nao cua cung khoa hoc — ke ca hoc sinh. Gio chi giao vien cua lop / instructor
+	// cua khoa chua lop (hoac admin) moi duoc gan lich.
+	if err := ensureClassManage(ctx, s.classRepo, s.courseRepo, userID, req.ClassID, isAdmin); err != nil {
+		return nil, err
 	}
 
 	// Validate class belongs to the same course as the content
@@ -124,7 +136,12 @@ func (s *ClassLessonContentService) AssignClassToContent(ctx context.Context, co
 	return s.toResponseDTO(created), nil
 }
 
-func (s *ClassLessonContentService) UpdateClassContentSchedule(ctx context.Context, contentID, classID uuid.UUID, req dto.UpdateClassContentScheduleDTO) (*dto.ClassLessonContentResponseDTO, error) {
+func (s *ClassLessonContentService) UpdateClassContentSchedule(ctx context.Context, contentID, classID, userID uuid.UUID, isAdmin bool, req dto.UpdateClassContentScheduleDTO) (*dto.ClassLessonContentResponseDTO, error) {
+	// V3-7 (issue #58): doi lich hoc cua lop la thao tac GHI len lop — truoc day khong kiem quyen.
+	if err := ensureClassManage(ctx, s.classRepo, s.courseRepo, userID, classID, isAdmin); err != nil {
+		return nil, err
+	}
+
 	clc, err := s.clcRepo.GetByClassAndContent(ctx, classID, contentID)
 	if err != nil {
 		return nil, err
@@ -189,7 +206,12 @@ func (s *ClassLessonContentService) UpdateClassContentSchedule(ctx context.Conte
 	return s.toResponseDTO(updated), nil
 }
 
-func (s *ClassLessonContentService) RemoveClassFromContent(ctx context.Context, contentID, classID uuid.UUID) error {
+func (s *ClassLessonContentService) RemoveClassFromContent(ctx context.Context, contentID, classID, userID uuid.UUID, isAdmin bool) error {
+	// V3-7 (issue #58): go mot lesson content khoi lop la thao tac GHI (xoa lich cua ca lop).
+	if err := ensureClassManage(ctx, s.classRepo, s.courseRepo, userID, classID, isAdmin); err != nil {
+		return err
+	}
+
 	clc, err := s.clcRepo.GetByClassAndContent(ctx, classID, contentID)
 	if err != nil {
 		return err
@@ -201,7 +223,7 @@ func (s *ClassLessonContentService) RemoveClassFromContent(ctx context.Context, 
 	return s.clcRepo.Delete(ctx, classID, contentID)
 }
 
-func (s *ClassLessonContentService) GetClassesForContent(ctx context.Context, contentID uuid.UUID, page, pageSize int) (*dto.ClassLessonContentListResponseDTO, error) {
+func (s *ClassLessonContentService) GetClassesForContent(ctx context.Context, contentID, userID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.ClassLessonContentListResponseDTO, error) {
 	// Validate content exists
 	content, err := s.lessonRepo.GetContentByID(ctx, contentID)
 	if err != nil {
@@ -223,6 +245,20 @@ func (s *ClassLessonContentService) GetClassesForContent(ctx context.Context, co
 		return nil, err
 	}
 
+	// V3-7 (issue #58): truoc day bat ky user dang nhap nao cung doc duoc danh sach lop duoc gan
+	// vao mot lesson content. Quyen duoc xet tren dung tap lop cua trang nay: nguoi goi phai la
+	// thanh vien (giao vien lop/instructor khoa/hoc sinh) cua IT NHAT MOT lop trong so do.
+	// Danh doi da biet: mot giao vien co lop nam ngoai trang hien tai se nhan 403 thay vi thay
+	// dung phan cua minh — fail-closed (khong ro ri), va so lop cua mot lesson content thuong
+	// nam gon trong mot trang.
+	classIDs := make([]uuid.UUID, len(items))
+	for i, item := range items {
+		classIDs[i] = item.ClassID
+	}
+	if err := ensureAnyClassView(ctx, s.classRepo, s.courseRepo, userID, isAdmin, classIDs); err != nil {
+		return nil, err
+	}
+
 	dtos := make([]dto.ClassLessonContentResponseDTO, len(items))
 	for i, item := range items {
 		dtos[i] = *s.toResponseDTO(&item)
@@ -236,7 +272,7 @@ func (s *ClassLessonContentService) GetClassesForContent(ctx context.Context, co
 	}, nil
 }
 
-func (s *ClassLessonContentService) GetContentScheduleForClass(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.ClassLessonContentListResponseDTO, error) {
+func (s *ClassLessonContentService) GetContentScheduleForClass(ctx context.Context, classID, userID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.ClassLessonContentListResponseDTO, error) {
 	// Validate class exists
 	class, err := s.classRepo.GetByID(ctx, classID)
 	if err != nil {
@@ -244,6 +280,12 @@ func (s *ClassLessonContentService) GetContentScheduleForClass(ctx context.Conte
 	}
 	if class == nil {
 		return nil, errors.New("class not found")
+	}
+
+	// V3-7 (issue #58): thoi khoa bieu cua mot lop chi duoc xem boi giao vien lop/instructor khoa,
+	// hoc sinh cua lop, hoac admin — truoc day bat ky user dang nhap nao cung xem duoc.
+	if err := ensureClassView(ctx, s.classRepo, s.courseRepo, userID, classID, isAdmin); err != nil {
+		return nil, err
 	}
 
 	if page < 1 {
@@ -271,7 +313,7 @@ func (s *ClassLessonContentService) GetContentScheduleForClass(ctx context.Conte
 	}, nil
 }
 
-func (s *ClassLessonContentService) BulkAssignClassesToContent(ctx context.Context, contentID uuid.UUID, userID uuid.UUID, req dto.BulkAssignClassesToContentDTO) ([]dto.ClassLessonContentResponseDTO, error) {
+func (s *ClassLessonContentService) BulkAssignClassesToContent(ctx context.Context, contentID uuid.UUID, userID uuid.UUID, isAdmin bool, req dto.BulkAssignClassesToContentDTO) ([]dto.ClassLessonContentResponseDTO, error) {
 	// Validate content exists
 	content, err := s.lessonRepo.GetContentByID(ctx, contentID)
 	if err != nil {
@@ -318,6 +360,14 @@ func (s *ClassLessonContentService) BulkAssignClassesToContent(ctx context.Conte
 		}
 		if class.CourseID == nil || *class.CourseID != courseID {
 			return nil, fmt.Errorf("class %s does not belong to this course", classID)
+		}
+
+		// V3-7 (issue #58): gom phep kiem quyen cua tung lop vao chinh vong lap da co san (vong
+		// nay da load `class` cho muc dich khac) — khong ton them truy van nao. Duong
+		// `req.ClassIDs` rong chi goi ham nay KHONG tu kiem quyen gi ca (khac voi
+		// AssignClassToContent), nen neu bo qua cho nay thi "gan ca khoa" van la mot lo hong mo.
+		if err := ensureClassManage(ctx, s.classRepo, s.courseRepo, userID, classID, isAdmin); err != nil {
+			return nil, err
 		}
 
 		// Skip if already assigned

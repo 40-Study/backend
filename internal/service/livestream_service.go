@@ -105,53 +105,26 @@ var ErrCannotKickHost = errors.New("forbidden: cannot kick the host of this sess
 // livestream ve MOT cho, de tang handler khong phai liet ke lai tung sentinel (va khong the quen
 // mot cai khi them sau nay).
 func IsForbiddenErr(err error) bool {
-	return errors.Is(err, ErrNotClassTeacher) || errors.Is(err, ErrNotSessionMember) || errors.Is(err, ErrCannotKickHost)
+	return errors.Is(err, ErrNotClassTeacher) ||
+		errors.Is(err, ErrNotClassMember) ||
+		errors.Is(err, ErrNotSessionMember) ||
+		errors.Is(err, ErrCannotKickHost)
 }
 
-// isClassTeacherOrInstructor (finding review V3-6/V3-7, issue #58) — NGUON SU THAT DUY NHAT cho
-// cau hoi "user nay co vai tro giao vien voi lop nay khong" = giao vien cua lop HOAC instructor
-// cua khoa chua lop. Truoc day phep kiem chi ton tai copy trong Create (fix N1); moi handler quan
-// tri khac (Update/Delete/Start/End/mute/kick/khoa bang/chia se man hinh) deu KHONG kiem gi ca,
-// nen bat ky user dang nhap nao cung ket thuc duoc phien cua nguoi khac hoac da nguoi ra khoi
-// phong. `class` duoc truyen vao (da load) vi ca hai caller deu can no cho muc dich khac nua.
+// isClassTeacherOrInstructor — dinh nghia "giao vien lop/instructor khoa" da duoc rut ve
+// class_access.go (V3-7, issue #58) vi nhom handler /lesson-contents/:id/classes cung can dung
+// y nguyen phep kiem nay. Giu lai method manh nay lam lop mo mong de noi goi cua
+// LivestreamService khong phai truyen repository qua lai.
 func (s *LivestreamService) isClassTeacherOrInstructor(ctx context.Context, userID uuid.UUID, class *model.Class) (bool, error) {
-	if class == nil {
-		return false, errors.New("class not found")
-	}
-	isTeacher, err := s.classRepo.TeacherClassExists(ctx, class.ID, userID)
-	if err != nil {
-		return false, fmt.Errorf("failed to verify class teacher: %w", err)
-	}
-	if isTeacher {
-		return true, nil
-	}
-	if class.CourseID != nil {
-		course, err := s.courseRepo.GetByID(ctx, *class.CourseID)
-		if err != nil {
-			return false, fmt.Errorf("failed to load course: %w", err)
-		}
-		if course != nil && course.InstructorID == userID {
-			return true, nil
-		}
-	}
-	return false, nil
+	return classTeacherOrInstructor(ctx, s.classRepo, s.courseRepo, userID, class)
 }
 
-// canManageClass tra ErrNotClassTeacher khi userID khong duoc quan tri lop. Luon fail-closed: moi
-// loi doc du lieu deu thanh loi tra ve, khong bao gio thanh "cho phep".
+// canManageClass tra ErrNotClassTeacher khi userID khong duoc quan tri lop. Uy quyen cho
+// ensureClassManage (class_access.go) — mot dinh nghia duy nhat cho ca livestream lan
+// class-lesson-content. isAdmin=false: host cua mot phien lop khong tu dong la admin he thong,
+// quyen admin duoc xet rieng o tang handler cho cac handler co ho tro.
 func (s *LivestreamService) canManageClass(ctx context.Context, userID, classID uuid.UUID) error {
-	class, err := s.classRepo.GetByID(ctx, classID)
-	if err != nil {
-		return fmt.Errorf("failed to load class: %w", err)
-	}
-	ok, err := s.isClassTeacherOrInstructor(ctx, userID, class)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return ErrNotClassTeacher
-	}
-	return nil
+	return ensureClassManage(ctx, s.classRepo, s.courseRepo, userID, classID, false)
 }
 
 // canManageSession = host cua phien HOAC nguoi quan tri duoc lop cua phien (canManageClass).

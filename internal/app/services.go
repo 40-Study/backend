@@ -333,7 +333,9 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 
 		// ===== Class =====
 		Class:              service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student, repos.ParentStudent),
-		ClassLessonContent: service.NewClassLessonContentService(repos.ClassLessonContent, repos.Class, repos.Lesson, repos.Enrollment, livestreamSvc),
+		// V3-7 (issue #58): repos.Course duoc chen vao de kiem instructor cua khoa chua lop
+		// (class_access.go) — xem NewClassLessonContentService.
+		ClassLessonContent: service.NewClassLessonContentService(repos.ClassLessonContent, repos.Class, repos.Course, repos.Lesson, repos.Enrollment, livestreamSvc),
 		Attendance:         service.NewAttendanceService(repos.Attendance),
 
 		// ===== Teacher =====
