@@ -48,7 +48,7 @@ func (h *ChatHandler) Send(c *fiber.Ctx) error {
 	message, err := h.svc.SendMessage(c.Context(), userID, req)
 	if err != nil {
 		if status := chatErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
+			return c.Status(status).JSON(fiber.Map{"message": service.ForbiddenCode(err), "error": err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -78,7 +78,7 @@ func (h *ChatHandler) GetMessages(c *fiber.Ctx) error {
 	result, err := h.svc.GetMessages(c.Context(), userID, sessionID, page, pageSize)
 	if err != nil {
 		if status := chatErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
+			return c.Status(status).JSON(fiber.Map{"message": service.ForbiddenCode(err), "error": err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -103,7 +103,7 @@ func (h *ChatHandler) DeleteMessage(c *fiber.Ctx) error {
 
 	if err := h.svc.DeleteMessage(c.Context(), actorID, messageID); err != nil {
 		if status := chatErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
+			return c.Status(status).JSON(fiber.Map{"message": service.ForbiddenCode(err), "error": err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -126,7 +126,7 @@ func (h *ChatHandler) PinMessage(c *fiber.Ctx) error {
 
 	if err := h.svc.PinMessage(c.Context(), actorID, messageID); err != nil {
 		if status := chatErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
+			return c.Status(status).JSON(fiber.Map{"message": service.ForbiddenCode(err), "error": err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -146,7 +146,7 @@ func (h *ChatHandler) UnPinMessage(c *fiber.Ctx) error {
 
 	if err := h.svc.UnPinMessage(c.Context(), actorID, messageID); err != nil {
 		if status := chatErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
+			return c.Status(status).JSON(fiber.Map{"message": service.ForbiddenCode(err), "error": err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}

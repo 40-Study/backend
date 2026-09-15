@@ -161,7 +161,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		HLS:         handler.NewHLSHandler(minioClient, repos.VideoUpload),
 
 		// ===== Livestream Learning Platform =====
-		Livestream: handler.NewLivestreamHandler(services.Livestream),
+		Livestream: handler.NewLivestreamHandler(services.Livestream, permChecker),
 		Assignment: handler.NewAssignmentHandler(services.Assignment, services.Livekit),
 		Submission: handler.NewSubmissionHandler(services.Submission, permChecker),
 		Chat:       handler.NewChatHandler(services.Chat),

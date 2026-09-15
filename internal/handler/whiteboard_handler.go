@@ -46,7 +46,7 @@ func (h *WhiteboardHandler) GetSnapshot(c *fiber.Ctx) error {
 	snapshot, err := h.svc.GetSnapshot(c.Context(), userID, sessionID)
 	if err != nil {
 		if status := whiteboardErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
+			return c.Status(status).JSON(fiber.Map{"message": service.ForbiddenCode(err), "error": err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -76,7 +76,7 @@ func (h *WhiteboardHandler) SaveSnapshot(c *fiber.Ctx) error {
 
 	if err := h.svc.SaveSnapshot(c.Context(), userID, req); err != nil {
 		if status := whiteboardErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
+			return c.Status(status).JSON(fiber.Map{"message": service.ForbiddenCode(err), "error": err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -104,7 +104,7 @@ func (h *WhiteboardHandler) BroadcastEvent(c *fiber.Ctx) error {
 
 	if err := h.svc.BroadcastEvent(c.Context(), userID, sessionID, event, h.livekitSvc); err != nil {
 		if status := whiteboardErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
+			return c.Status(status).JSON(fiber.Map{"message": service.ForbiddenCode(err), "error": err.Error()})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
