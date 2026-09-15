@@ -76,6 +76,19 @@ var (
 	ErrInvalidOrgIDFormat = errors.New("invalid organization_id format")
 	// ErrUserNotFound — không tìm thấy user theo user_id trong token.
 	ErrUserNotFound = errors.New("user not found")
+	// ErrActiveRoleNotResolvable (N2, review vong 2 260915): SwitchOrg chi tim currentRole trong
+	// SYSTEM role cua user bang cach so ten voi active_role trong token. Neu role dang hoat dong
+	// la MOT ORG ROLE (dat qua switch-role voi role_type=organization) hoac mot system role vua
+	// bi thu hoi, khong co gi khop -> truoc day currentRole giu nguyen zero value va
+	// completeLogin sinh token active_role="" mot cach IM LANG (khong loi, khong log). Tra loi
+	// tuong minh nay thay vi de silent fallback tiep tuc — dung nguyen tac tai
+	// development-principles.md "loi thay vi fallback im lang".
+	ErrActiveRoleNotResolvable = errors.New("active role could not be resolved for this action — please switch role again")
+	// ErrUserInactive (N6, review vong 2 260915): SwitchOrg cap lai ca access lan refresh token
+	// ma khong kiem user.IsActive (Login:369 co kiem, SwitchOrg thi khong) — tai khoan vua bi vo
+	// hieu hoa nhung con access token cu van gia han them duoc mot vong refresh 7 ngay qua route
+	// nay.
+	ErrUserInactive = errors.New("user account is inactive")
 )
 
 // formatTimePtr formats a *time.Time to *string (RFC3339), returns nil if input is nil.
@@ -851,6 +864,12 @@ func (s *AuthService) SwitchOrg(ctx context.Context, userID uuid.UUID, deviceID 
 	if err != nil || user == nil {
 		return nil, ErrUserNotFound
 	}
+	// N6 (review vong 2, 260915): Login (:369) kiem user.IsActive truoc khi cap token, nhung
+	// SwitchOrg thi khong — tai khoan vua bi vo hieu hoa (con giu access token cu) van gia han
+	// them duoc mot vong refresh 7 ngay qua route nay.
+	if !user.IsActive {
+		return nil, ErrUserInactive
+	}
 
 	// Lấy tất cả system roles
 	userSystemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, "active")
@@ -868,6 +887,16 @@ func (s *AuthService) SwitchOrg(ctx context.Context, userID uuid.UUID, deviceID 
 		if sr.SystemRole.Name == activeRole {
 			currentRole = allRoles[i]
 		}
+	}
+	// N2 (review vong 2, 260915): activeRole trong token co the la mot ORG role (dat qua
+	// switch-role voi role_type=organization) hoac mot system role vua bi thu hoi — vong lap
+	// tren chi so voi SYSTEM role nen se khong khop gi ca trong hai truong hop do. Truoc day
+	// currentRole giu nguyen zero value va completeLogin sinh token voi active_role="" mot cach
+	// IM LANG (khong loi, khong log) — trai nguyen tac "loi thay vi fallback im lang". Tra loi
+	// tuong minh thay vi tiep tuc voi mot role rong: client phai goi lai switch-role de chon lai
+	// role truoc khi doi org.
+	if currentRole.Name == "" {
+		return nil, ErrActiveRoleNotResolvable
 	}
 
 	deviceInfo := dto.DeviceInfoDTO{DeviceID: deviceID.String()}

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -654,7 +655,19 @@ func (h *AuthHandler) SelectOrg(c *fiber.Ctx) error {
 		// LOW-7 (review 260915): phân loại lỗi thay vì trả 400 cho mọi thứ. "org không thuộc
 		// user" là lỗi quyền (403) — không phải lỗi nhập liệu; lỗi Redis/DB phải là 500 để
 		// client phân biệt được backend hỏng với body sai.
-		return c.Status(selectOrgErrorStatus(err)).JSON(fiber.Map{
+		status := selectOrgErrorStatus(err)
+		// N7 (review vong 2, 260915): nhanh 500 truoc day tra err.Error() nguyen van ra client —
+		// lo chuoi loi ha tang (vd "failed to load organizations: dial tcp ..."). Log day du o
+		// server, chi tra message chung cho client khi la loi 500; cac nhanh con lai (400/401/
+		// 403/409) van la loi NGHIEP VU ro rang, giu nguyen err.Error() vi khong lo gi nhay cam.
+		if status == fiber.StatusInternalServerError {
+			log.Printf("[ERROR] SelectOrg: loi ha tang cho user=%s: %v", userID, err)
+			return c.Status(status).JSON(fiber.Map{
+				"message": "Select organization failed",
+				"error":   "internal server error",
+			})
+		}
+		return c.Status(status).JSON(fiber.Map{
 			"message": "Select organization failed",
 			"error":   err.Error(),
 		})
@@ -679,6 +692,15 @@ func selectOrgErrorStatus(err error) int {
 		return fiber.StatusBadRequest
 	case errors.Is(err, service.ErrUserNotFound):
 		return fiber.StatusUnauthorized
+	// N6 (review vong 2, 260915): tai khoan bi vo hieu hoa — dung 401 giong Login (auth_service.go)
+	// de nhat quan quy uoc "tai khoan khong dung duoc -> 401, dang nhap lai" trong toan he thong.
+	case errors.Is(err, service.ErrUserInactive):
+		return fiber.StatusUnauthorized
+	// N2 (review vong 2, 260915): khong resolve duoc active_role (dang o org role hoac role vua
+	// bi thu hoi) — 409 vi day la xung dot TRANG THAI (token mang mot role khong con hop le
+	// trong ngu canh nay), khong phai loi nhap lieu (400) hay loi quyen (403).
+	case errors.Is(err, service.ErrActiveRoleNotResolvable):
+		return fiber.StatusConflict
 	default:
 		return fiber.StatusInternalServerError
 	}
