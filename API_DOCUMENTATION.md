@@ -250,7 +250,9 @@ nếu bài đang bị khoá đối với người gọi (chặn ở tầng API, 
 `subtitle_url: string|null` — đây là đường GHI mà web dùng thật; backend lưu vào đúng
 `lesson_content` type=`video` của bài và trả lại ở `LessonContentResponseDTO.subtitle_url`
 (nguồn authoritative). `LessonResponseDTO.subtitle_url` chỉ là bản dự phòng. Gửi `""` để gỡ
-phụ đề đang có; bài chưa có content video nào thì trả lỗi (không âm thầm bỏ qua).
+phụ đề đang có. Bài **chưa có** content type=`video` nào thì trả **400**
+`{"message": "LESSON_HAS_NO_VIDEO"}` (message cố định, không âm thầm bỏ qua) — đúng dạng với
+`LESSON_LOCKED` ở §2.
 
 #### 4.4 Lesson Content
 
@@ -389,7 +391,13 @@ qua khoảng không hợp lệ (`0 <= start < end <= duration`) mà không lỗi
 `watched_seconds` = tổng độ dài sau merge, `watched_pct = round(watched_seconds/duration*100, 1)`.
 Server tự chốt `completed` khi `watched_pct >= course.min_video_pct`; client gửi thẳng
 `status: "completed"` mà chưa đạt ngưỡng thì bị **bỏ qua** (không phải lỗi — response vẫn trả
-`status` thật). `completed` là bất biến (không bao giờ hạ cấp).
+`status` thật). `completed` là bất biến (không bao giờ hạ cấp) — client cũ vẫn có thể gửi kèm
+`status` (vd `in_progress` khi đóng tab) trong body heartbeat, giá trị này bị bỏ qua hoàn toàn
+nếu bài đã `completed`, không lỗi và không hạ cấp.
+
+**Đơn vị:** `duration_seconds` (request) là **giây**, do client đọc trực tiếp từ media player;
+`lesson_contents.duration` (đã có từ trước) cũng lưu **giây**, cùng đơn vị. `lessons.duration_minutes`
+là **phút** — không dùng trường này để tính `watched_pct`, chỉ hiển thị tổng thời lượng bài học.
 
 Response `data` (`LessonProgressStateDTO`, đổi kiểu trả về so với bản trước Phase 1):
 ```json
