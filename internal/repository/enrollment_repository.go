@@ -39,6 +39,9 @@ type EnrollmentRepositoryInterface interface {
 
 	// Lookup
 	GetCourseIDByLessonID(ctx context.Context, lessonID uuid.UUID) (uuid.UUID, error)
+	// GetLessonIDsByCourseID tra ve id cac bai hoc cua khoa theo dung thu tu hien thi
+	// (section.display_order, lesson.display_order) — xem comment tai ham impl.
+	GetLessonIDsByCourseID(ctx context.Context, courseID uuid.UUID) ([]uuid.UUID, error)
 	GetEnrolledUserIDsByCourseID(ctx context.Context, courseID uuid.UUID) ([]uuid.UUID, error)
 
 	// LessonProgress
@@ -253,6 +256,25 @@ func (r *EnrollmentRepository) GetCourseIDByLessonID(ctx context.Context, lesson
 		return uuid.Nil, errors.New("lesson not found in any course")
 	}
 	return result.CourseID, nil
+}
+
+// GetLessonIDsByCourseID tra ve id cac bai hoc cua mot khoa, SAP XEP theo dung thu tu
+// curriculum hien thi: (section.display_order, lesson.display_order).
+//
+// Dung cho Phase 1 §1 (`next_lesson_unlocked`) va §2 (khoa tuan tu — bai N phu thuoc bai N-1).
+// Tra ve day du trong MOT cau truy van thay vi de tang tren do chuoi section/lesson: ham tinh
+// khoa can nhin thay TOAN BO chuoi cung luc, va mot vong lap N+1 o day se chay o MOI request
+// tien do (heartbeat 10 giay/lan/nguoi hoc).
+func (r *EnrollmentRepository) GetLessonIDsByCourseID(ctx context.Context, courseID uuid.UUID) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := r.db.WithContext(ctx).
+		Model(&model.Lesson{}).
+		Select("lessons.id").
+		Joins("JOIN sections ON sections.id = lessons.section_id").
+		Where("sections.course_id = ?", courseID).
+		Order("sections.display_order ASC, lessons.display_order ASC").
+		Pluck("lessons.id", &ids).Error
+	return ids, err
 }
 
 func (r *EnrollmentRepository) GetEnrolledUserIDsByCourseID(ctx context.Context, courseID uuid.UUID) ([]uuid.UUID, error) {

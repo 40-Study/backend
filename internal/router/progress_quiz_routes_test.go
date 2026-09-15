@@ -59,16 +59,23 @@ type fakeEnrollmentService struct {
 	gotLessonID uuid.UUID
 	gotReq      dto.UpdateLessonProgressDTO
 	called      int
+	// ret: phan hoi ma fake tra ve. Phase 1 §1 doi kieu tra ve sang LessonProgressStateDTO
+	// (contract {lesson_id, status, watched_seconds, watched_pct, last_position_seconds,
+	// completed_at, next_lesson_unlocked}) nen test phai khang dinh duoc DUNG shape do.
+	ret *dto.LessonProgressStateDTO
 }
 
 func (f *fakeEnrollmentService) UpdateLessonProgress(
 	_ context.Context, userID, lessonID uuid.UUID, req dto.UpdateLessonProgressDTO,
-) (*dto.LessonProgressResponseDTO, error) {
+) (*dto.LessonProgressStateDTO, error) {
 	f.called++
 	f.gotUserID = userID
 	f.gotLessonID = lessonID
 	f.gotReq = req
-	return &dto.LessonProgressResponseDTO{}, nil
+	if f.ret != nil {
+		return f.ret, nil
+	}
+	return &dto.LessonProgressStateDTO{LessonID: lessonID}, nil
 }
 
 // routePaths tra ve tap "METHOD path" ma app that dang phuc vu.

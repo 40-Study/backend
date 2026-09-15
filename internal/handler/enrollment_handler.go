@@ -204,17 +204,28 @@ func (h *EnrollmentHandler) TrackProgressBeacon(c *fiber.Ctx) error {
 		})
 	}
 
-	lessonID, err := uuid.Parse(req.LessonID)
+	// Kiem tra CO MAT cua lesson id o tang handler chu khong dung `validate:"required,uuid"`:
+	// beacon Phase 1 gui `lesson_id` (snake_case) con ban truoc Phase 1 gui `lessonId`
+	// (camelCase) — hai truong khac ten nen khong the danh dau required cho tung truong, va
+	// danh dau required cho CA HAI se tu choi chinh nhung request hop le cua ban con lai.
+	//
+	// Thieu ca hai KHONG duoc coi la "khong doi gi": do la mot client hong, phai tra 400 de
+	// khong am tham danh roi tien do cua nguoi hoc.
+	rawLessonID := req.ResolvedLessonID()
+	if rawLessonID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  []string{"lesson_id là bắt buộc"},
+		})
+	}
+	lessonID, err := uuid.Parse(rawLessonID)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid lesson ID", "error": err.Error(),
 		})
 	}
 
-	progress, err := h.service.UpdateLessonProgress(c.Context(), userID, lessonID, dto.UpdateLessonProgressDTO{
-		Status:           req.Status,
-		VideoWatchedSecs: req.VideoWatchedSecs,
-	})
+	progress, err := h.service.UpdateLessonProgress(c.Context(), userID, lessonID, req.ToUpdateDTO())
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update progress", "error": err.Error(),

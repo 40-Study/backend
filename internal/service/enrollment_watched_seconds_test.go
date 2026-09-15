@@ -39,6 +39,9 @@ type fakeEnrollmentRepoWatched struct {
 	upserted       *model.LessonProgress
 	courseID       uuid.UUID
 	enrollment     *model.Enrollment
+	// lessonOrder: thu tu bai hoc trong khoa ma GetLessonIDsByCourseID tra ve (Phase 1 §1,
+	// next_lesson_unlocked). Rong = "khong co bai ke tiep".
+	lessonOrder []uuid.UUID
 
 	// Duong re-enroll (review 260912, finding N1): ban ghi ma GetByUserAndCourseUnscoped tra ve,
 	// DA kem LessonProgress dung nhu hop dong cua repository that.
@@ -57,6 +60,12 @@ type fakeEnrollmentRepoWatched struct {
 func (f *fakeEnrollmentRepoWatched) GetByUserID(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]model.Enrollment, int64, error) {
 	f.gotUserID = userID
 	return f.enrollments, f.total, nil
+}
+
+// GetLessonIDsByCourseID (Phase 1 §1): thu tu bai hoc trong khoa. Mac dinh rong — nghia la
+// "khong co bai ke tiep" — de cac test khong lien quan toi next_lesson_unlocked khong phai khai.
+func (f *fakeEnrollmentRepoWatched) GetLessonIDsByCourseID(ctx context.Context, courseID uuid.UUID) ([]uuid.UUID, error) {
+	return f.lessonOrder, nil
 }
 
 func (f *fakeEnrollmentRepoWatched) SumWatchedSecondsByEnrollmentIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]int, error) {
@@ -128,6 +137,21 @@ func (f *fakeEnrollmentRepoWatched) UpdateLessonProgressFields(ctx context.Conte
 			if t, ok := v.(time.Time); ok {
 				f.lessonProgress.CompletedAt = &t
 			}
+		case "watched_pct":
+			// Phase 1 §1: cot nay di qua map (khong qua GREATEST), set thang nhu UPDATE that.
+			if d, ok := v.(decimal.Decimal); ok {
+				f.lessonProgress.WatchedPct = d
+			}
+		case "last_position_seconds":
+			if n, ok := v.(int); ok {
+				f.lessonProgress.LastPositionSeconds = n
+			}
+		case "played_ranges":
+			// Phase 1 §1: played_ranges duoc GHI DE (khong phai GREATEST) — gia tri moi da la
+			// hop nhat cua cu + moi.
+			if r, ok := v.(model.PlayedRanges); ok {
+				f.lessonProgress.PlayedRanges = r
+			}
 		}
 	}
 	if watchedSeconds != nil && *watchedSeconds > f.lessonProgress.VideoWatchedSecs {
@@ -167,6 +191,8 @@ func (f *fakeCourseRepoWatched) GetByID(ctx context.Context, id uuid.UUID) (*mod
 	}
 	c := &model.Course{}
 	c.ID = id
+	// MinVideoPct = 0 => service dung defaultMinVideoPct (90). Cac test cu khong quan tam toi
+	// nguong nay nen khong phai khai bao gi.
 	return c, nil
 }
 
@@ -405,7 +431,7 @@ func TestUpdateLessonProgress_WatchedSecondsChiTangKhongGiam(t *testing.T) {
 				enrollment:     &enrollment,
 				courseID:       uuid.New(),
 			}
-			svc := NewEnrollmentService(repo, nil, &fakeLessonRepoWatched{})
+			svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{}, &fakeLessonRepoWatched{})
 
 			secs := tc.guiLen
 			res, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
@@ -458,9 +484,9 @@ func TestUpdateLessonProgress_WatchedSecondsChiTangKhongGiam(t *testing.T) {
 
 			// DTO phai phan anh ban ghi SAU khi ghi (doc lai tu repo), khong phai gia tri stale trong
 			// bo nho: gui 10 len mot row 432 thi phai tra ve 432.
-			if res.VideoWatchedSecs != tc.mongDoi {
+			if res.WatchedSeconds != tc.mongDoi {
 				t.Errorf("VideoWatchedSecs tra ve = %d, mong doi %d (hien tai %d, gui len %d)",
-					res.VideoWatchedSecs, tc.mongDoi, tc.hienTai, tc.guiLen)
+					res.WatchedSeconds, tc.mongDoi, tc.hienTai, tc.guiLen)
 			}
 			if existing.VideoWatchedSecs != tc.mongDoi {
 				t.Errorf("VideoWatchedSecs trong DB (gia lap) = %d, mong doi %d (hien tai %d, gui len %d)",
@@ -470,7 +496,12 @@ func TestUpdateLessonProgress_WatchedSecondsChiTangKhongGiam(t *testing.T) {
 	}
 }
 
-// status duoc gui len thi PHAI duoc ghi, nhung video_watched_seconds van khong nam trong map.
+// TestUpdateLessonProgress_GuiStatusThiCapNhatStatus (cap nhat Phase 1 §1): tu sau played_ranges,
+// client gui thang status="completed" KHONG con du de hoan thanh bai — server chi tu chot
+// completed khi CHINH NO tinh ra watched_pct dat nguong (xem resolveLessonStatus). Test nay khang
+// dinh ca hai ve: (1) status="completed" tu client, KHONG kem played_ranges/duration, bi bo qua;
+// (2) played_ranges phu du thoi luong thi server tu chot completed va ghi completed_at, du client
+// khong gui status nao ca.
 func TestUpdateLessonProgress_GuiStatusThiCapNhatStatus(t *testing.T) {
 	enrollmentID := uuid.New()
 	enrollment := newEnrollmentWithID(enrollmentID)
@@ -484,12 +515,33 @@ func TestUpdateLessonProgress_GuiStatusThiCapNhatStatus(t *testing.T) {
 		enrollment:     &enrollment,
 		courseID:       uuid.New(),
 	}
-	svc := NewEnrollmentService(repo, nil, &fakeLessonRepoWatched{})
+	svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{}, &fakeLessonRepoWatched{})
 
+	// (1) Client tu gui completed, khong co can cu (played_ranges/duration) => phai bi bo qua.
 	status := "completed"
 	secs := 10
 	res, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
 		dto.UpdateLessonProgressDTO{Status: &status, VideoWatchedSecs: &secs})
+	if err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
+	}
+	if res.Status != "in_progress" {
+		t.Errorf("status tra ve = %q, mong doi \"in_progress\" (client tu gui completed phai bi bo qua)", res.Status)
+	}
+	if _, ok := repo.updateUpdates["status"]; ok {
+		t.Error("map UPDATE khong duoc chua status khi client tu gui completed ma chua co can cu")
+	}
+	if _, ok := repo.updateUpdates["completed_at"]; ok {
+		t.Error("map UPDATE khong duoc chua completed_at khi client tu gui completed ma chua co can cu")
+	}
+
+	// (2) played_ranges phu 100% thoi luong => server TU chot completed (khong gui status).
+	duration := 100
+	res2, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
+		dto.UpdateLessonProgressDTO{
+			DurationSeconds: &duration,
+			PlayedRanges:    dto.PlayedRangesDTO{{Start: 0, End: 100}},
+		})
 	if err != nil {
 		t.Fatalf("khong mong doi loi: %v", err)
 	}
@@ -499,8 +551,8 @@ func TestUpdateLessonProgress_GuiStatusThiCapNhatStatus(t *testing.T) {
 	if _, ok := repo.updateUpdates["completed_at"]; !ok {
 		t.Error("map UPDATE thieu completed_at khi status chuyen sang completed")
 	}
-	if res.Status != "completed" {
-		t.Errorf("status tra ve = %q, mong doi \"completed\"", res.Status)
+	if res2.Status != "completed" {
+		t.Errorf("status tra ve = %q, mong doi \"completed\"", res2.Status)
 	}
 	// status di qua map, khong duoc set tho trong cung cau lenh voi watched seconds.
 	if _, ok := repo.updateUpdates["video_watched_seconds"]; ok {
@@ -565,7 +617,7 @@ func TestUpdateLessonProgress_BanGhiMoiThiTaoVoiGiaTriClientGui(t *testing.T) {
 		enrollment:     &enrollment,
 		courseID:       uuid.New(),
 	}
-	svc := NewEnrollmentService(repo, nil, &fakeLessonRepoWatched{})
+	svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{}, &fakeLessonRepoWatched{})
 
 	status := "in_progress"
 	secs := 87
@@ -589,8 +641,8 @@ func TestUpdateLessonProgress_BanGhiMoiThiTaoVoiGiaTriClientGui(t *testing.T) {
 	if repo.updateCalls != 0 {
 		t.Errorf("ban ghi moi khong duoc di qua duong UPDATE, nhung UpdateLessonProgressFields duoc goi %d lan", repo.updateCalls)
 	}
-	if res.VideoWatchedSecs != 87 {
-		t.Errorf("DTO tra ve VideoWatchedSecs = %d, mong doi 87", res.VideoWatchedSecs)
+	if res.WatchedSeconds != 87 {
+		t.Errorf("DTO tra ve VideoWatchedSecs = %d, mong doi 87", res.WatchedSeconds)
 	}
 }
 
@@ -608,8 +660,13 @@ func TestUpdateLessonProgress_StatusKhongDuocHaCap(t *testing.T) {
 	}{
 		{"completed -> in_progress: bi chan", "completed", "in_progress", "completed", false},
 		{"completed -> not_started: bi chan", "completed", "not_started", "completed", false},
-		{"completed -> completed: cho qua (rank bang nhau)", "completed", "completed", "completed", true},
-		{"in_progress -> completed: cho qua (tien len)", "in_progress", "completed", "completed", true},
+		// completed -> completed: gia tri khong doi nen KHONG can ghi lai (khac voi ban truoc
+		// Phase 1, khi rank>=rank la ghi vo dieu kien du gia tri giong het nhau).
+		{"completed -> completed: khong doi, khong ghi lai", "completed", "completed", "completed", false},
+		// in_progress -> completed CHUA co can cu (khong kem played_ranges/duration dat nguong)
+		// bi CHAN — day chinh la thay doi cot loi cua Phase 1 §1: client khong con tu chot
+		// completed duoc nua, xem TestResolveLessonStatus_ClientGuiCompletedBiBoQua.
+		{"in_progress -> completed: bi chan (chua dat nguong)", "in_progress", "completed", "in_progress", false},
 		{"not_started -> in_progress: cho qua (tien len)", "not_started", "in_progress", "in_progress", true},
 		{"in_progress -> not_started: bi chan", "in_progress", "not_started", "in_progress", false},
 	}
@@ -627,7 +684,7 @@ func TestUpdateLessonProgress_StatusKhongDuocHaCap(t *testing.T) {
 				enrollment:     &enrollment,
 				courseID:       uuid.New(),
 			}
-			svc := NewEnrollmentService(repo, nil, &fakeLessonRepoWatched{})
+			svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{}, &fakeLessonRepoWatched{})
 
 			gui := tc.gui
 			res, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
@@ -669,7 +726,7 @@ func TestUpdateLessonProgress_HaCapKhongDongThoiXoaCompletedAt(t *testing.T) {
 		enrollment:     &enrollment,
 		courseID:       uuid.New(),
 	}
-	svc := NewEnrollmentService(repo, nil, &fakeLessonRepoWatched{})
+	svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{}, &fakeLessonRepoWatched{})
 
 	status := "in_progress"
 	if _, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
