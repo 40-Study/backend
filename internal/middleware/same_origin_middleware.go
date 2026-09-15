@@ -43,6 +43,19 @@ func SameOriginRequired(allowedOrigins string) fiber.Handler {
 			return c.Next()
 		}
 
+		// N3 (review vong 2, 260915): CSRF chi co y nghia voi ambient credential (cookie) — trinh
+		// duyet TU DONG dinh kem cookie vao moi request toi domain do, ke ca tu mot trang la, nhung
+		// KHONG TU DONG dinh kem header Authorization. Client dung Bearer (Flutter mobile — co
+		// trong tech stack du an, curl, server-to-server, test tich hop) khong dat Origin/Referer
+		// va truoc day bi 403 OAN du token hoan toan hop le. AuthMiddleware uu tien cookie hon
+		// Bearer (xem auth_middleware.go) nen dung DUNG thu tu do de quyet dinh co ap dung kiem
+		// tra nay khong: co cookie accessToken -> van la duong CSRF nham toi -> kiem tiep; khong
+		// co cookie (chi dung Bearer, hoac khong auth gi ca) -> bo qua, de AuthMiddleware phia sau
+		// tu quyet dinh 401.
+		if c.Cookies("accessToken") == "" {
+			return c.Next()
+		}
+
 		origin := c.Get("Origin")
 		if origin == "" {
 			// sendBeacon tu trang cung origin doi khi khong dat Origin nhung van dat Referer —
