@@ -55,7 +55,7 @@
 | POST | `/api/auth/register` | Register | Đăng ký (verify OTP) |
 | POST | `/api/auth/login` | Login | Đăng nhập |
 | POST | `/api/auth/select-role` | SelectRole | Chọn role khi login |
-| POST | `/api/auth/select-org` | SelectOrg | Chọn organization khi login (bước 3, sau select-role) |
+| POST | `/api/auth/select-org` | SelectOrg | **[Cần đăng nhập]** Đổi tổ chức đang hoạt động (giữ nguyên role), cấp lại token — KHÔNG phải bước 3 của login. (BLOCKER-1, review 260915: `select-role` luôn hoàn tất login trong một bước; endpoint này dùng SAU khi đã có access token, không dùng `session_token`.) |
 | POST | `/api/auth/refresh-token` | RefreshToken | Làm mới access token |
 | POST | `/api/auth/reset-password/request` | RequestPasswordReset | Gửi OTP reset password |
 | POST | `/api/auth/reset-password` | ResetPassword | Reset password |
