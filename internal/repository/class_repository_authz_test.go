@@ -42,7 +42,11 @@ func TestStudentClassExists_LocTheoStatusActive(t *testing.T) {
 	if !strings.Contains(sql, "student_classes") {
 		t.Fatalf("khong nhan duoc cau truy van tren student_classes, got: %s", sql)
 	}
-	if !strings.Contains(sql, StudentClassActiveCondition) {
+	// R3-3 (issue #58 review vong 3): khang dinh CHUOI LITERAL "status = 'active'" thay vi so
+	// sanh voi hang so StudentClassActiveCondition — neu so voi chinh hang so, mutation M-8b
+	// (giu nguyen TEN hang so nhung doi NOI DUNG thanh "(1=1)") se lam ca production lan test
+	// cung doi theo, tuc D6 bi vo hieu hoan toan ma test van xanh (khang dinh vong tron).
+	if !strings.Contains(sql, "status = 'active'") {
 		t.Errorf("thieu dieu kien loc status active (D6) trong WHERE — hoc sinh da nghi lop van duoc tinh la thanh vien. SQL: %s", sql)
 	}
 }
@@ -58,7 +62,32 @@ func TestIsUserRelatedToClass_LocHocSinhTheoStatusActive(t *testing.T) {
 	if !strings.Contains(sql, "student_classes") {
 		t.Fatalf("khong nhan duoc cau truy van tren student_classes, got: %s", sql)
 	}
-	if !strings.Contains(sql, StudentClassActiveCondition) {
+	// R3-3: khang dinh chuoi literal, xem ghi chu chi tiet o TestStudentClassExists_LocTheoStatusActive.
+	if !strings.Contains(sql, "status = 'active'") {
 		t.Errorf("thieu dieu kien loc status active (D6) trong nhanh student_classes cua UNION — hoc sinh da nghi lop van duoc tinh la thanh vien phien. SQL: %s", sql)
+	}
+}
+
+// TestGetAll_LocHocSinhTheoStatusActive (R3-3, review vong 3): D6 truoc day chi duoc pin o 2/3
+// noi (StudentClassExists, IsUserRelatedToClass) — nhanh student_classes trong
+// LivestreamRepository.GetAll (F-1, phien nao duoc liet ke cho non-admin) khong co test DryRun
+// nao. Goi thang buildGetAllQuery (ham production that ma GetAll uy quyen toi).
+func TestGetAll_LocHocSinhTheoStatusActive(t *testing.T) {
+	db, err := gorm.Open(gormtests.DummyDialector{}, &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open dummy gorm db: %v", err)
+	}
+	repo := &LivestreamRepository{db: db.Session(&gorm.Session{DryRun: true})}
+
+	userID := uuid.New()
+	var total int64
+	tx := buildGetAllQuery(repo.db, userID, false, "", nil, nil).Count(&total)
+
+	sql := tx.Statement.SQL.String()
+	if !strings.Contains(sql, "student_classes") {
+		t.Fatalf("khong nhan duoc cau truy van tren student_classes, got: %s", sql)
+	}
+	if !strings.Contains(sql, "status = 'active'") {
+		t.Errorf("thieu dieu kien loc status active (D6) trong nhanh student_classes cua GetAll — hoc sinh da nghi lop van thay phien cua lop do trong danh sach. SQL: %s", sql)
 	}
 }

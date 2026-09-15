@@ -16,9 +16,11 @@ package service
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
+	livekit "github.com/livekit/protocol/livekit"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -92,15 +94,25 @@ func (f *fakeParticipantRepoJoin) MarkKicked(ctx context.Context, id uuid.UUID) 
 }
 
 // fakeLivekitSvcJoin: ghi lai identity ma RemoveParticipant duoc goi voi — dung de chung minh
-// KickParticipant that su goi LiveKit ngat ket noi (khong chi doi DB).
+// KickParticipant that su goi LiveKit ngat ket noi (khong chi doi DB). gotUpdateReq (R3-2, review
+// vong 3) ghi lai DTO ma UpdateParticipant nhan duoc lan goi GAN NHAT — dung cho
+// TestStartScreenShare_ChiCapNguonManHinh.
 type fakeLivekitSvcJoin struct {
 	LivekitServiceInterface
 	removeParticipantCalls []string
+	gotUpdateReq           dto.UpdateParticipantDTO
+	updateCalls            int
 }
 
 func (f *fakeLivekitSvcJoin) RemoveParticipant(ctx context.Context, roomName, identity string) error {
 	f.removeParticipantCalls = append(f.removeParticipantCalls, identity)
 	return nil
+}
+
+func (f *fakeLivekitSvcJoin) UpdateParticipant(ctx context.Context, roomName, identity string, req dto.UpdateParticipantDTO) (*livekit.ParticipantInfo, error) {
+	f.updateCalls++
+	f.gotUpdateReq = req
+	return nil, nil
 }
 
 func newLivestreamServiceForJoin(
@@ -447,5 +459,131 @@ func TestParticipantGrant_BangTheoVaiTroVaKhoaBang(t *testing.T) {
 				t.Errorf("canPublishData = %v, muon %v", gotPublishData, c.wantPublishData)
 			}
 		})
+	}
+}
+
+// --- R3-2 (review vong 3): D5 khong co test — M-7 xoa CanPublishSources khoi StartScreenShare
+// (duyet chia se man hinh mo lai ca camera/microphone) ma suite van xanh.
+
+func TestStartScreenShare_ChiCapNguonManHinh_KhongCamMic(t *testing.T) {
+	hostID := uuid.New()
+	sessionID := uuid.New()
+	targetID := uuid.New()
+	session := &model.LivestreamSession{
+		BaseModel: model.BaseModel{ID: sessionID},
+		HostID:    hostID,
+		ClassID:   uuid.New(),
+		RoomName:  "room-1",
+	}
+	repo := &fakeLivestreamRepoJoin{session: session}
+	livekitSvc := &fakeLivekitSvcJoin{}
+	svc := newLivestreamServiceForJoin(&fakeClassRepoJoin{}, &fakeCourseRepoJoin{}, repo, &fakeParticipantRepoJoin{}, livekitSvc)
+
+	if err := svc.StartScreenShare(context.Background(), hostID, false, sessionID, targetID); err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
+	}
+	if livekitSvc.updateCalls != 1 {
+		t.Fatalf("UpdateParticipant duoc goi %d lan, muon 1", livekitSvc.updateCalls)
+	}
+	if livekitSvc.gotUpdateReq.CanPublish == nil || !*livekitSvc.gotUpdateReq.CanPublish {
+		t.Error("CanPublish phai la true khi duyet chia se man hinh")
+	}
+	wantSources := []string{"screen_share", "screen_share_audio"}
+	if !reflect.DeepEqual(livekitSvc.gotUpdateReq.CanPublishSources, wantSources) {
+		t.Errorf("CanPublishSources = %v, muon %v (D5: khong duoc mo kem camera/microphone)",
+			livekitSvc.gotUpdateReq.CanPublishSources, wantSources)
+	}
+}
+
+// TestStopScreenShare_HaCanPublish_KhongConGioiHanNguon: StopScreenShare thu lai quyen bang cach
+// dat CanPublish=false — kiem tra khong con truyen CanPublishSources (khong can thiet khi da tat
+// publish hoan toan), tranh nham lan neu ai do sau nay vo tinh copy sai tu StartScreenShare.
+func TestStopScreenShare_HaCanPublish(t *testing.T) {
+	hostID := uuid.New()
+	sessionID := uuid.New()
+	targetID := uuid.New()
+	session := &model.LivestreamSession{
+		BaseModel: model.BaseModel{ID: sessionID},
+		HostID:    hostID,
+		ClassID:   uuid.New(),
+		RoomName:  "room-1",
+	}
+	repo := &fakeLivestreamRepoJoin{session: session}
+	livekitSvc := &fakeLivekitSvcJoin{}
+	svc := newLivestreamServiceForJoin(&fakeClassRepoJoin{}, &fakeCourseRepoJoin{}, repo, &fakeParticipantRepoJoin{}, livekitSvc)
+
+	if err := svc.StopScreenShare(context.Background(), hostID, false, sessionID, targetID); err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
+	}
+	if livekitSvc.gotUpdateReq.CanPublish == nil || *livekitSvc.gotUpdateReq.CanPublish {
+		t.Error("CanPublish phai la false sau khi thu hoi chia se man hinh")
+	}
+}
+
+// --- R3-5 (review vong 3): ensureMemberOfSession (duong ma GetByID/GetParticipants dung) khong
+// kiem IsKicked nhu EnsureSessionMember (duong chat/bang trang) — hai dinh nghia "thanh vien
+// phien" lech nhau trong cung file (dung R2-9 da canh bao). Nguoi bi kick van doc duoc chi tiet
+// phien va roster.
+
+func TestGetByID_NguoiDaBiKick_Bi403Kicked(t *testing.T) {
+	sessionID := uuid.New()
+	classID := uuid.New()
+	kickedUserID := uuid.New()
+	session := &model.LivestreamSession{BaseModel: model.BaseModel{ID: sessionID}, HostID: uuid.New(), ClassID: classID}
+	repo := &fakeLivestreamRepoJoin{session: session}
+	// isStudent=true: van la thanh vien lop hop le, chung minh chinh IsKicked la ly do tu choi.
+	classRepo := &fakeClassRepoJoin{class: &model.Class{BaseModel: model.BaseModel{ID: classID}}, isStudent: true}
+	participantRepo := &fakeParticipantRepoJoin{
+		existing: &model.Participant{
+			BaseModel: model.BaseModel{ID: uuid.New()},
+			SessionID: sessionID,
+			UserID:    kickedUserID,
+			IsKicked:  true,
+		},
+	}
+	svc := newLivestreamServiceForJoin(classRepo, &fakeCourseRepoJoin{}, repo, participantRepo, nil)
+
+	_, err := svc.GetByID(context.Background(), kickedUserID, false, sessionID)
+	if err != ErrParticipantKicked {
+		t.Errorf("loi = %v, mong doi ErrParticipantKicked (nguoi da bi kick van doc duoc chi tiet phien)", err)
+	}
+}
+
+func TestGetParticipants_NguoiDaBiKick_Bi403Kicked(t *testing.T) {
+	sessionID := uuid.New()
+	classID := uuid.New()
+	kickedUserID := uuid.New()
+	session := &model.LivestreamSession{BaseModel: model.BaseModel{ID: sessionID}, HostID: uuid.New(), ClassID: classID}
+	repo := &fakeLivestreamRepoJoin{session: session}
+	classRepo := &fakeClassRepoJoin{class: &model.Class{BaseModel: model.BaseModel{ID: classID}}, isStudent: true}
+	participantRepo := &fakeParticipantRepoJoin{
+		existing: &model.Participant{
+			BaseModel: model.BaseModel{ID: uuid.New()},
+			SessionID: sessionID,
+			UserID:    kickedUserID,
+			IsKicked:  true,
+		},
+	}
+	svc := newLivestreamServiceForJoin(classRepo, &fakeCourseRepoJoin{}, repo, participantRepo, nil)
+
+	_, _, err := svc.GetParticipants(context.Background(), kickedUserID, false, sessionID, 1, 20)
+	if err != ErrParticipantKicked {
+		t.Errorf("loi = %v, mong doi ErrParticipantKicked (nguoi da bi kick van doc duoc danh sach nguoi tham gia)", err)
+	}
+}
+
+// TestGetByID_ThanhVienBinhThuong_ChoPhep: hoi quy — them kiem IsKicked khong duoc chan oan
+// nguoi CHUA TUNG join phien (participant == nil trong DB).
+func TestGetByID_ThanhVienBinhThuong_ChoPhep(t *testing.T) {
+	sessionID := uuid.New()
+	classID := uuid.New()
+	userID := uuid.New()
+	session := &model.LivestreamSession{BaseModel: model.BaseModel{ID: sessionID}, HostID: uuid.New(), ClassID: classID}
+	repo := &fakeLivestreamRepoJoin{session: session}
+	classRepo := &fakeClassRepoJoin{class: &model.Class{BaseModel: model.BaseModel{ID: classID}}, isStudent: true}
+	svc := newLivestreamServiceForJoin(classRepo, &fakeCourseRepoJoin{}, repo, &fakeParticipantRepoJoin{}, nil)
+
+	if _, err := svc.GetByID(context.Background(), userID, false, sessionID); err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
 	}
 }
