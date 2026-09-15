@@ -115,6 +115,14 @@ type LessonProgress struct {
 	// played_ranges + duration o moi noi doc se khong cho ra cung ket qua khi duration thay doi.
 	WatchedPct decimal.Decimal `gorm:"type:decimal(5,2);default:0;column:watched_pct" json:"watched_pct"`
 
+	// FallbackDurationSeconds (B-1, vá theo review PR #60): server luôn ưu tiên duration THẬT
+	// từ lesson_contents/lesson_videos làm mẫu số của watched_pct — client KHÔNG được tự khai
+	// mẫu số khi server đã biết. Cột này CHỈ dùng khi server chưa có duration nào (bài chưa
+	// gắn content video): lưu lại duration client khai LẦN ĐẦU, CHỈ TĂNG (GREATEST) ở các lần
+	// sau — một client khai duration nhỏ hơn thật ở một request sau đó không được phép hạ mẫu
+	// số xuống. Không xuất ra JSON (chi tiết nội bộ, không thuộc contract).
+	FallbackDurationSeconds int `gorm:"default:0;column:fallback_duration_seconds" json:"-"`
+
 	// Relationships
 	User       User       `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
 	Lesson     Lesson     `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
@@ -139,7 +147,14 @@ type UserNote struct {
 	// chu so huu doc duoc ghi chu cua chinh minh (contract §3).
 	LessonID uuid.UUID `gorm:"type:uuid;not null;index:idx_user_notes_lesson" json:"lesson_id"`
 	// idx_user_notes_course: GET /courses/:courseId/notes loc theo (UserID, CourseID).
-	CourseID uuid.UUID `gorm:"type:uuid;not null;index:idx_user_notes_course" json:"course_id"`
+	//
+	// *uuid.UUID, khong phai uuid.UUID (TB, review vòng 2): bang user_notes DA CO SAN TRUOC
+	// Phase 1 (xem comment o dau struct) — AutoMigrate CHI THEM cot, khong tao lai bang, nen
+	// them mot cot NOT NULL khong co default vao mot bang co the DA CO DONG se loi ngay luc
+	// migrate (Postgres tu choi ADD COLUMN NOT NULL khong DEFAULT tren bang co du lieu). Nullable
+	// o day la bien phap AN TOAN CHO MIGRATE — moi dong THAT SU duoc tao qua CreateNote (duong
+	// ghi DUY NHAT) luon dien gia tri nay, khong bao gio de trong.
+	CourseID *uuid.UUID `gorm:"type:uuid;index:idx_user_notes_course" json:"course_id"`
 	// TimestampSecs: moc thoi gian trong video (giay) — bam vao ghi chu de seek toi day.
 	TimestampSecs int    `gorm:"not null;default:0;column:timestamp_seconds" json:"timestamp_seconds"`
 	Content       string `gorm:"type:text;not null" json:"content"`

@@ -88,7 +88,8 @@ func (h *LessonContentHandler) GetContent(c *fiber.Ctx) error {
 		})
 	}
 
-	contents, err := h.service.GetContentsByLessonID(c.Context(), lessonID, userID)
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	contents, err := h.service.GetContentsByLessonID(c.Context(), lessonID, userID, isAdmin)
 	if err != nil {
 		if err == service.ErrLessonLocked {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{

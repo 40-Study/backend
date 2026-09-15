@@ -205,7 +205,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		Schedule: handler.NewScheduleHandler(services.Schedule),
 
 		// ===== Quiz =====
-		Quiz: handler.NewQuizHandler(services.Quiz),
+		Quiz: handler.NewQuizHandler(services.Quiz, permChecker),
 
 		// ===== Grade =====
 		Grade: handler.NewGradeHandler(services.Grade),

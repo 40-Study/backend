@@ -99,7 +99,7 @@ func TestLessonQuizzesRoute_IsRegistered(t *testing.T) {
 
 	// cfg/redis nil an toan o day: AuthMiddleware chi dung closure luc setup,
 	// khong doc cfg/redis cho toi khi co request di qua middleware.
-	SetupQuizRoutes(api, nil, handler.NewQuizHandler(&fakeQuizService{}), nil)
+	SetupQuizRoutes(api, nil, handler.NewQuizHandler(&fakeQuizService{}, nil), nil)
 
 	want := "GET /api/lessons/:lessonId/quizzes"
 	if got := routePaths(app); !got[want] {
@@ -141,7 +141,7 @@ func TestGetQuizzesByLesson_ReturnsFlatArray(t *testing.T) {
 	app := fiber.New()
 	// Mount truc tiep, khong qua AuthMiddleware: middleware can Redis that va
 	// khong phai doi tuong cua test nay.
-	app.Get("/api/lessons/:lessonId/quizzes", handler.NewQuizHandler(fake).GetQuizzesByLesson)
+	app.Get("/api/lessons/:lessonId/quizzes", handler.NewQuizHandler(fake, nil).GetQuizzesByLesson)
 
 	res, err := app.Test(httptest.NewRequest("GET", "/api/lessons/"+lessonID.String()+"/quizzes", nil))
 	if err != nil {
@@ -180,7 +180,7 @@ func TestGetQuizzesByLesson_EmptyIsArrayNotNull(t *testing.T) {
 	fake := &fakeQuizService{ret: &dto.QuizListDTO{Data: nil, Total: 0, Page: 1, PageSize: 50}}
 
 	app := fiber.New()
-	app.Get("/api/lessons/:lessonId/quizzes", handler.NewQuizHandler(fake).GetQuizzesByLesson)
+	app.Get("/api/lessons/:lessonId/quizzes", handler.NewQuizHandler(fake, nil).GetQuizzesByLesson)
 
 	res, err := app.Test(httptest.NewRequest("GET", "/api/lessons/"+uuid.New().String()+"/quizzes", nil))
 	if err != nil {

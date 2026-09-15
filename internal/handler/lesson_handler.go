@@ -109,7 +109,18 @@ func (h *LessonHandler) GetLessonByID(c *fiber.Ctx) error {
 		})
 	}
 
-	lesson, err := h.service.GetLessonByID(c.Context(), lessonID)
+	// B-2 (review vòng 2): route nằm sau middleware.AuthMiddleware (course_router.go) nên
+	// user_id luôn có mặt trên đường thật — cần để service tính locked/lock_reason đúng người
+	// đang xem (xem LessonServiceInterface.GetLessonByID).
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	lesson, err := h.service.GetLessonByID(c.Context(), lessonID, userID, isAdmin)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Lesson not found",

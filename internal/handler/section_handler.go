@@ -97,7 +97,8 @@ func (h *SectionHandler) GetAllSections(c *fiber.Ctx) error {
 		})
 	}
 
-	sections, err := h.service.GetAllSections(c.Context(), courseID, userID)
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	sections, err := h.service.GetAllSections(c.Context(), courseID, userID, isAdmin)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve sections",

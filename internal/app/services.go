@@ -354,7 +354,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Cart:          service.NewCartService(repos.CartItem, repos.Course, repos.Enrollment),
 		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag),
 		Section:       service.NewSectionService(repos.Section, repos.Course, repos.Enrollment),
-		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, repos.Course, service.NewUploadService(resources.MinioClient, resources.Config)),
+		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, repos.Course, repos.Enrollment, service.NewUploadService(resources.MinioClient, resources.Config)),
 		LessonContent: service.NewLessonContentService(repos.Lesson, repos.Section, repos.Course, repos.Enrollment, service.NewUploadService(resources.MinioClient, resources.Config), uploadSvc),
 		Enrollment:    service.NewEnrollmentService(repos.Enrollment, repos.Course, repos.Lesson),
 
@@ -424,7 +424,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Schedule: service.NewScheduleService(repos.Schedule, resources.Redis, resources.Queue),
 
 		// ===== Quiz (Redis cache) =====
-		Quiz: service.NewQuizService(repos.Quiz, resources.Redis),
+		Quiz: service.NewQuizService(repos.Quiz, resources.Redis, repos.Course, repos.Section, repos.Lesson, repos.Livestream),
 
 		// ===== Grade (Redis cache) =====
 		Grade: service.NewGradeService(repos.Grade, repos.Class, resources.Redis),

@@ -6,16 +6,21 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
 
 type QuizHandler struct {
-	service service.QuizServiceInterface
+	service     service.QuizServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewQuizHandler(service service.QuizServiceInterface) *QuizHandler {
-	return &QuizHandler{service: service}
+// permChecker (B-3, review vòng 2): tính isAdmin cho GetQuizByID/GetQuestionsByQuiz — dùng lại
+// đúng pattern isAdminActor của LessonHandler/SectionHandler (permission_helper.go). nil-safe:
+// coi như không phải admin khi không truyền (test cũ NewQuizHandler(fake) — xem isAdminActor).
+func NewQuizHandler(service service.QuizServiceInterface, permChecker *middleware.PermissionChecker) *QuizHandler {
+	return &QuizHandler{service: service, permChecker: permChecker}
 }
 
 // ============================================================================
@@ -151,7 +156,18 @@ func (h *QuizHandler) GetQuizByID(c *fiber.Ctx) error {
 		})
 	}
 
-	quiz, err := h.service.GetQuizByID(c.Context(), id)
+	// B-3 (review vòng 2): user_id/isAdmin để service quyết định is_correct/explanation có bị
+	// giấu hay không (canViewQuizAnswerKey). Route nằm sau auth (quiz_router.go) nên user_id
+	// luôn có mặt trên đường thật.
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	quiz, err := h.service.GetQuizByID(c.Context(), id, userID, isAdmin)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Quiz not found",
@@ -298,7 +314,16 @@ func (h *QuizHandler) GetQuestionsByQuiz(c *fiber.Ctx) error {
 		})
 	}
 
-	questions, err := h.service.GetQuestionsByQuiz(c.Context(), quizID)
+	// B-3 (review vòng 2): xem chú thích tại GetQuizByID.
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	questions, err := h.service.GetQuestionsByQuiz(c.Context(), quizID, userID, isAdmin)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve questions",

@@ -29,6 +29,12 @@ type LessonRepositoryInterface interface {
 	DeleteContent(ctx context.Context, id uuid.UUID) error
 	ReorderContents(ctx context.Context, items []ReorderItem) error
 	CountContentsByIDsAndLesson(ctx context.Context, ids []uuid.UUID, lessonID uuid.UUID) (int64, error)
+
+	// GetLegacyVideoDurationByLessonID doc duration (giay) tu bang legacy lesson_videos
+	// (model.LessonVideo) — la nguon du phong THU HAI trong chuoi uu tien server-truth cua B-1
+	// (lesson_contents truoc, lesson_videos sau, chi khi ca hai deu 0 moi roi ve client). Tra
+	// (0, nil) khi khong co ban ghi — KHONG phai loi, chi la "khong co du lieu o day".
+	GetLegacyVideoDurationByLessonID(ctx context.Context, lessonID uuid.UUID) (int, error)
 }
 
 type LessonRepository struct {
@@ -183,4 +189,18 @@ func (r *LessonRepository) CountContentsByIDsAndLesson(ctx context.Context, ids 
 		Where("id IN ? AND lesson_id = ?", ids, lessonID).
 		Count(&count).Error
 	return count, err
+}
+
+func (r *LessonRepository) GetLegacyVideoDurationByLessonID(ctx context.Context, lessonID uuid.UUID) (int, error) {
+	var video model.LessonVideo
+	err := r.db.WithContext(ctx).
+		Where("lesson_id = ?", lessonID).
+		First(&video).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return video.DurationSeconds, nil
 }
