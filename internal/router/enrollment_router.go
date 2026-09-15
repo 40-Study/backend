@@ -16,6 +16,14 @@ func SetupEnrollmentRoutes(
 ) {
 	auth := middleware.AuthMiddleware(cfg, redis)
 
+	// MED-3 (review 260915): cung ALLOWED_ORIGINS voi middleware cors o app.go (cung mac dinh
+	// khi rong/nil de test router-level goi ham nay voi cfg=nil van chay duoc — xem
+	// SameOriginRequired ben duoi).
+	allowedOrigins := "http://localhost:3000"
+	if cfg != nil && cfg.AllowedOrigins != "" {
+		allowedOrigins = cfg.AllowedOrigins
+	}
+
 	// Enroll/Unenroll under courses
 	courses := api.Group("/courses")
 	{
@@ -44,5 +52,10 @@ func SetupEnrollmentRoutes(
 	// EnrollmentHandler.TrackProgressBeacon. Thay cho progress_router.go von bi
 	// comment toan bo — khong dung mot ProgressHandler rieng de tranh nhan doi
 	// logic ghi tien do.
-	api.Post("/progress", auth, enrollmentHandler.TrackProgressBeacon)
+	//
+	// MED-3 (review 260915): sendBeacon dung Content-Type "text/plain" nen day la simple
+	// request — khong preflight, cors.New khong chan duoc. SameOriginRequired dung truoc auth de
+	// tu choi som request tu origin la, khong ton chi phi xac thuc token/Redis cho request se bi
+	// tu choi.
+	api.Post("/progress", middleware.SameOriginRequired(allowedOrigins), auth, enrollmentHandler.TrackProgressBeacon)
 }
