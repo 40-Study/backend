@@ -31,6 +31,8 @@ type AuthServiceInterface interface {
 	GetMyRoles(ctx context.Context, userID uuid.UUID) (*dto.GetMyRolesResponseDto, error)
 	SelectRole(ctx context.Context, req dto.SelectRoleRequestDto) (*dto.SelectRoleResponseDto, error)
 	SwitchRole(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, req dto.SwitchRoleRequestDto) (*dto.SelectRoleResponseDto, error)
+	// SelectOrg là bước 3 của luồng đăng nhập (session_token), sau SelectRole.
+	SelectOrg(ctx context.Context, req dto.SelectOrgRequestDto) (*dto.SelectRoleResponseDto, error)
 	// Profile management
 	GetSystemRoleOptions(ctx context.Context) ([]dto.SystemRoleOptionDto, error)
 	GetMyProfiles(ctx context.Context, userID uuid.UUID) ([]dto.ProfileDto, error)

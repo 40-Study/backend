@@ -606,6 +606,44 @@ func (h *AuthHandler) SelectRole(c *fiber.Ctx) error {
 	})
 }
 
+// SelectOrg handles POST /auth/select-org
+// Bước 3 của luồng đăng nhập (sau select-role), dùng session_token chứ không dùng access token —
+// vì vậy route này nằm ở nhóm CÔNG KHAI của /auth, cùng chỗ với select-role.
+//
+// organization_id rỗng/không gửi = chọn chế độ "Độc lập". Service SelectOrg chỉ chấp nhận org mà
+// user thật sự thuộc (đối chiếu getUserOrgs), nên không cần kiểm tra quyền ở tầng handler.
+func (h *AuthHandler) SelectOrg(c *fiber.Ctx) error {
+	var req dto.SelectOrgRequestDto
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid request body",
+			"error":   err.Error(),
+		})
+	}
+
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errors,
+		})
+	}
+
+	response, err := h.authService.SelectOrg(c.Context(), req)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Select organization failed",
+			"error":   err.Error(),
+		})
+	}
+
+	h.setAuthCookies(c, response.AccessToken, response.RefreshToken)
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Organization selected successfully",
+		"data":    response,
+	})
+}
+
 // SwitchRole handles POST /auth/switch-role
 // Switches role while already logged in
 func (h *AuthHandler) SwitchRole(c *fiber.Ctx) error {

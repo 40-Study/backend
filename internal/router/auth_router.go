@@ -32,6 +32,10 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	// M-03 (audit 260909): select-role/refresh-token trước đây không rate-limit dù chạm
 	// Redis/DB và cấp token — select-role còn là bề mặt khai thác của C-01.
 	auth.Post("/select-role", authRateLimiter, authHandler.SelectRole)
+	// select-org là bước 3 của luồng đăng nhập (session_token, chưa có access token) —
+	// web/src/lib/meet/auth.ts gọi route này sau select-role. Cùng bề mặt khai thác như
+	// select-role nên cũng đi qua authRateLimiter.
+	auth.Post("/select-org", authRateLimiter, authHandler.SelectOrg)
 	auth.Get("/system-roles", authHandler.GetSystemRoleOptions)
 	auth.Post("/reset-password/request", otpRateLimiter, authHandler.RequestPasswordReset)
 	auth.Post("/reset-password", authRateLimiter, authHandler.ResetPassword)
