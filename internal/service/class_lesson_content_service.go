@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -437,10 +438,18 @@ func (s *ClassLessonContentService) createLivestreamSession(ctx context.Context,
 	// — nhưng không còn im lặng nuốt kết quả nữa.
 	session, err := s.livestreamSvc.Create(ctx, userID, livestreamReq)
 	if err != nil || session == nil {
+		// V3-2 (review vòng 3): không nuốt im lặng — thường là 403 do người gán lịch
+		// (admin/org-owner) không phải GV lớp/instructor khoá (kiểm quyền N1), khiến
+		// content có lịch nhưng livestream_session_id null vĩnh viễn.
+		log.Printf("[WARN] createLivestreamSession: content=%s class=%s user=%s: %v",
+			clc.LessonContentID, clc.ClassID, userID, err)
 		return
 	}
 	content.LivestreamSessionID = &session.ID
-	_ = s.lessonRepo.UpdateContent(ctx, content)
+	if err := s.lessonRepo.UpdateContent(ctx, content); err != nil {
+		log.Printf("[WARN] createLivestreamSession: ghi livestream_session_id thất bại content=%s session=%s: %v",
+			clc.LessonContentID, session.ID, err)
+	}
 }
 
 func (s *ClassLessonContentService) toResponseDTO(clc *model.ClassLessonContent) *dto.ClassLessonContentResponseDTO {
