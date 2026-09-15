@@ -57,6 +57,32 @@ func (h *DiscussionHandler) ListPosts(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"data": result})
 }
 
+// ListByLesson — GET /lessons/:lessonId/discussions?page=&limit= (Phase 1 §5). Tham số phân
+// trang la "limit" (khong phai "page_size" nhu ListPosts) — dung theo dung ten web goi
+// (web/src/services/discussion.service.ts, listByLesson).
+func (h *DiscussionHandler) ListByLesson(c *fiber.Ctx) error {
+	lessonID, err := uuid.Parse(c.Params("lessonId"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid lesson ID", "error": err.Error(),
+		})
+	}
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 10)
+
+	var userID *uuid.UUID
+	if uid, ok := c.Locals("user_id").(uuid.UUID); ok && uid != uuid.Nil {
+		userID = &uid
+	}
+
+	result, err := h.svc.ListPostsByLesson(c.Context(), lessonID, page, limit, userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"message": "Discussions retrieved successfully", "data": result})
+}
+
 // GetPostBySlug GET /api/discussions/:slug
 func (h *DiscussionHandler) GetPostBySlug(c *fiber.Ctx) error {
 	slug := c.Params("slug")

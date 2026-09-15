@@ -222,9 +222,43 @@ func (s *LessonService) UpdateLesson(ctx context.Context, lessonID, actorUserID 
 		return nil, err
 	}
 
+	if req.SubtitleURL != nil {
+		if err := s.applySubtitleURL(ctx, lessonID, req.SubtitleURL); err != nil {
+			return nil, err
+		}
+	}
+
 	contents, _ := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
 
 	return s.toLessonResponseDTO(lesson, contents), nil
+}
+
+// applySubtitleURL (Phase 1 §4): ghi subtitle_url vao dung content TYPE="video" cua bai — day
+// la "duong lane" ma web da chot (PUT /lessons/:id -> backend PERSIST vao lesson_videos, tra
+// lai o lesson content). Chuoi rong duoc coi la "go phu de" (chuyen ve nil), khac voi khong gui
+// gi (req.SubtitleURL == nil, khong cham toi ham nay).
+func (s *LessonService) applySubtitleURL(ctx context.Context, lessonID uuid.UUID, subtitleURL *string) error {
+	contents, err := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
+	if err != nil {
+		return err
+	}
+	var video *model.LessonContent
+	for i := range contents {
+		if contents[i].Type == "video" {
+			video = &contents[i]
+			break
+		}
+	}
+	if video == nil {
+		return errors.New("lesson has no video content to attach a subtitle to")
+	}
+
+	cleaned := subtitleURL
+	if cleaned != nil && *cleaned == "" {
+		cleaned = nil
+	}
+	video.SubtitleURL = cleaned
+	return s.lessonRepo.UpdateContent(ctx, video)
 }
 
 func (s *LessonService) DeleteLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool) error {
@@ -306,8 +340,15 @@ func (s *LessonService) toLessonResponseDTO(lesson *model.Lesson, contents []mod
 				// N10 (review vòng 2, từ review web): xem chú thích tại model.LessonContent.
 				LivestreamSessionID: c.LivestreamSessionID,
 				DisplayOrder:        c.DisplayOrder,
+				SubtitleURL:         c.SubtitleURL,
 				CreatedAt:           c.CreatedAt,
 				UpdatedAt:           c.UpdatedAt,
+			}
+			// Phase 1 §4: web doc subtitle_url AUTHORITATIVE tu chinh lesson content (item o
+			// tren); truong resp.SubtitleURL o cap lesson chi la BAN DU PHONG (web tu ghi chu
+			// "giu field nay lam du phong neu curriculum cung tra kem") — gan tu content video.
+			if c.Type == "video" && c.SubtitleURL != nil {
+				resp.SubtitleURL = c.SubtitleURL
 			}
 			// Extract upload ID and generate HLS + fallback URLs
 			if c.VideoURL != nil && *c.VideoURL != "" {

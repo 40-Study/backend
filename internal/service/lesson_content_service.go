@@ -93,6 +93,7 @@ func (s *LessonContentService) CreateContent(ctx context.Context, lessonID uuid.
 		ExerciseID:   req.ExerciseID,
 		IsMandatory:  true,
 		DisplayOrder: 0,
+		SubtitleURL:  req.SubtitleURL,
 	}
 
 	if req.Duration != nil {
@@ -200,6 +201,14 @@ func (s *LessonContentService) UpdateContent(ctx context.Context, contentID, act
 	if req.DisplayOrder != nil {
 		content.DisplayOrder = *req.DisplayOrder
 	}
+	if req.SubtitleURL != nil {
+		// Chuoi rong = go phu de dang co (contract §4), khac voi khong gui truong nay.
+		if *req.SubtitleURL == "" {
+			content.SubtitleURL = nil
+		} else {
+			content.SubtitleURL = req.SubtitleURL
+		}
+	}
 
 	if err := s.lessonRepo.UpdateContent(ctx, content); err != nil {
 		return nil, err
@@ -290,6 +299,7 @@ func (s *LessonContentService) toContentResponseDTO(c *model.LessonContent) *dto
 		// N10 (review vòng 2, từ review web): xem chú thích tại model.LessonContent.
 		LivestreamSessionID: c.LivestreamSessionID,
 		DisplayOrder:        c.DisplayOrder,
+		SubtitleURL:         c.SubtitleURL,
 		CreatedAt:           c.CreatedAt,
 		UpdatedAt:           c.UpdatedAt,
 	}

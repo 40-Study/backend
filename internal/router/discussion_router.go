@@ -15,6 +15,9 @@ func SetupDiscussionRoutes(api fiber.Router, cfg *config.Config, h *handler.Disc
 	discussions.Get("/", h.ListPosts)
 	discussions.Get("/:slug", h.GetPostBySlug)
 
+	// Hỏi đáp theo bài học (Phase 1 §5) — cùng tính công khai như GET /discussions.
+	api.Get("/lessons/:lessonId/discussions", h.ListByLesson)
+
 	// Auth-required routes
 	auth := discussions.Group("")
 	auth.Use(middleware.AuthMiddleware(cfg, redis))

@@ -147,6 +147,9 @@ type LessonContent struct {
 	// Video fields
 	VideoURL *string `gorm:"type:varchar(500)" json:"video_url,omitempty"`
 	Duration int     `gorm:"default:0" json:"duration"`
+	// SubtitleURL (Phase 1 §4): URL file phụ đề .vtt, upload qua luồng presigned có sẵn (bucket
+	// study-media). nil = chưa có phụ đề — web tự ẩn panel transcript, không phải lỗi.
+	SubtitleURL *string `gorm:"type:varchar(500);column:subtitle_url" json:"subtitle_url,omitempty"`
 
 	// Exercise fields (bài tập khóa học)
 	ExerciseID *uuid.UUID `gorm:"type:uuid" json:"exercise_id,omitempty"`

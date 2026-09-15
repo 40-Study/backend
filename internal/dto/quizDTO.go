@@ -137,6 +137,12 @@ type BulkCreateQuestionsDTO struct {
 // QUIZ ATTEMPT
 // ============================================================================
 
+// StartQuizDTO là body của POST /quizzes/:id/start (Phase 1 §6). Optional — thiếu hoặc rỗng
+// mặc định "official", đúng ý contract "mặc định official".
+type StartQuizDTO struct {
+	Mode string `json:"mode" validate:"omitempty,oneof=official practice"`
+}
+
 type StartQuizResponseDTO struct {
 	AttemptID     uuid.UUID             `json:"attempt_id"`
 	QuizID        uuid.UUID             `json:"quiz_id"`
@@ -144,6 +150,8 @@ type StartQuizResponseDTO struct {
 	TimeLimitMins *int                  `json:"time_limit_minutes,omitempty"`
 	Questions     []AttemptQuestionDTO  `json:"questions"`
 	StartedAt     time.Time             `json:"started_at"`
+	// Mode (Phase 1 §6): "official" | "practice" — phản hồi lại đúng chế độ đã bắt đầu.
+	Mode string `json:"mode"`
 }
 
 type AttemptQuestionDTO struct {

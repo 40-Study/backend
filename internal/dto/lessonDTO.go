@@ -24,6 +24,11 @@ type UpdateLessonDTO struct {
 	DurationMins *int    `json:"duration_minutes"`
 	IsPreview    *bool   `json:"is_preview"`
 	IsMandatory  *bool   `json:"is_mandatory"`
+	// SubtitleURL (Phase 1 §4): day la duong GHI ma web thuc su dung (PUT /lessons/:id) — xem
+	// chu thich tai LessonContentResponseDTO.SubtitleURL cho ly do. Gui "" hoac null de go
+	// phu de dang co. Ghi vao content VIDEO cua bai (LessonService.applySubtitleURL); bai chua
+	// co content video nao thi tra loi, khong am tham bo qua.
+	SubtitleURL *string `json:"subtitle_url"`
 }
 
 type LessonResponseDTO struct {
@@ -48,6 +53,12 @@ type LessonResponseDTO struct {
 	Locked     bool                      `json:"locked"`
 	LockReason *string                   `json:"lock_reason"`
 	Progress   *LessonProgressSummaryDTO `json:"progress,omitempty"`
+
+	// ——— Phase 1 §4 ———
+	// SubtitleURL o day la BAN DU PHONG (web dung `lessonVideo.subtitle_url` tren
+	// LessonContentResponseDTO lam nguon AUTHORITATIVE — xem chu thich tai
+	// LessonContentResponseDTO.SubtitleURL).
+	SubtitleURL *string `json:"subtitle_url,omitempty"`
 }
 
 // LessonProgressSummaryDTO là tiến độ TÓM TẮT gắn kèm mỗi bài trong curriculum (contract §2) —

@@ -15,6 +15,9 @@ type DiscussionServiceInterface interface {
 	CreatePost(ctx context.Context, userID uuid.UUID, req dto.CreateForumPostDTO) (*dto.ForumPostResponseDTO, error)
 	GetPostBySlug(ctx context.Context, slug string, userID *uuid.UUID) (*dto.ForumPostDetailResponseDTO, error)
 	ListPosts(ctx context.Context, category string, page, pageSize int, userID *uuid.UUID) (*dto.ForumPostListResponseDTO, error)
+	// ListPostsByLesson (Phase 1 §5): hoi dap gan voi MOT bai hoc cu the — GET
+	// /lessons/:lessonId/discussions, tra CUNG SHAPE voi ListPosts.
+	ListPostsByLesson(ctx context.Context, lessonID uuid.UUID, page, pageSize int, userID *uuid.UUID) (*dto.ForumPostListResponseDTO, error)
 	AddComment(ctx context.Context, postSlug string, userID uuid.UUID, req dto.CreateForumCommentDTO) (*dto.ForumCommentResponseDTO, error)
 	VoteDiscussion(ctx context.Context, discussionID, userID uuid.UUID, voteType string) error
 	RemoveVote(ctx context.Context, discussionID, userID uuid.UUID) error
@@ -43,6 +46,13 @@ func (s *DiscussionService) CreatePost(ctx context.Context, userID uuid.UUID, re
 		Content:  req.Content,
 		Category: &req.Category,
 		Slug:     &slug,
+	}
+	if req.LessonID != nil && *req.LessonID != "" {
+		lessonID, err := uuid.Parse(*req.LessonID)
+		if err != nil {
+			return nil, errors.New("invalid lesson_id")
+		}
+		post.LessonID = &lessonID
 	}
 
 	if err := s.repo.CreatePost(ctx, post); err != nil {
@@ -105,6 +115,45 @@ func (s *DiscussionService) ListPosts(ctx context.Context, category string, page
 	}
 
 	posts, total, err := s.repo.ListForumPosts(ctx, category, page, pageSize)
+	if err != nil {
+		return nil, err
+	}
+
+	var userVoteMap map[uuid.UUID]string
+	if userID != nil && len(posts) > 0 {
+		ids := make([]uuid.UUID, len(posts))
+		for i, p := range posts {
+			ids[i] = p.ID
+		}
+		userVoteMap, err = s.getUserVoteMap(ctx, *userID, ids)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	postDTOs := make([]dto.ForumPostResponseDTO, len(posts))
+	for i, p := range posts {
+		vote := voteFromMap(userVoteMap, p.ID)
+		postDTOs[i] = *mapPostToDTO(&p, vote)
+	}
+
+	return &dto.ForumPostListResponseDTO{
+		Posts:    postDTOs,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
+}
+
+func (s *DiscussionService) ListPostsByLesson(ctx context.Context, lessonID uuid.UUID, page, pageSize int, userID *uuid.UUID) (*dto.ForumPostListResponseDTO, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 50 {
+		pageSize = 10
+	}
+
+	posts, total, err := s.repo.ListPostsByLessonID(ctx, lessonID, page, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -311,6 +360,7 @@ func mapPostToDTO(post *model.Discussion, userVote *string) *dto.ForumPostRespon
 		UpvoteCount: post.UpvoteCount,
 		ReplyCount:  post.ReplyCount,
 		UserVote:    userVote,
+		LessonID:    post.LessonID,
 	}
 }
 

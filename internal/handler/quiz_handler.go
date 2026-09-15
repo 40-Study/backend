@@ -481,7 +481,24 @@ func (h *QuizHandler) StartQuiz(c *fiber.Ctx) error {
 		})
 	}
 
-	result, err := h.service.StartQuiz(c.Context(), id, userID)
+	// Phase 1 §6: body optional — client cũ (hoặc web gửi `{}` khi không truyền mode) vẫn phải
+	// chạy được, nên lỗi parse body RỖNG không được chặn request (chỉ chặn khi body có nội
+	// dung nhưng sai định dạng JSON).
+	var req dto.StartQuizDTO
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "Invalid request body", "error": err.Error(),
+			})
+		}
+		if errs := utils.ValidateStruct(req); len(errs) > 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "Validation failed", "errors": errs,
+			})
+		}
+	}
+
+	result, err := h.service.StartQuiz(c.Context(), id, userID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to start quiz",

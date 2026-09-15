@@ -32,7 +32,9 @@ type QuizServiceInterface interface {
 	BulkCreateQuestions(ctx context.Context, quizID uuid.UUID, req dto.BulkCreateQuestionsDTO) ([]dto.QuestionResponseDTO, error)
 
 	// Attempts
-	StartQuiz(ctx context.Context, quizID, userID uuid.UUID) (*dto.StartQuizResponseDTO, error)
+	// StartQuiz (Phase 1 §6): req.Mode "official" (mặc định) hoặc "practice" — practice không
+	// tính vào quiz_max_attempts (xem CountAttemptsByUserAndQuiz, chỉ đếm attempt "official").
+	StartQuiz(ctx context.Context, quizID, userID uuid.UUID, req dto.StartQuizDTO) (*dto.StartQuizResponseDTO, error)
 	SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, req dto.SubmitQuizDTO) (*dto.QuizAttemptResponseDTO, error)
 	GetMyAttempts(ctx context.Context, quizID, userID uuid.UUID) ([]dto.QuizAttemptResponseDTO, error)
 	GetAttemptByID(ctx context.Context, attemptID, userID uuid.UUID) (*dto.QuizAttemptDetailDTO, error)
@@ -480,14 +482,20 @@ func (s *QuizService) BulkCreateQuestions(ctx context.Context, quizID uuid.UUID,
 // QUIZ ATTEMPTS
 // ============================================================================
 
-func (s *QuizService) StartQuiz(ctx context.Context, quizID, userID uuid.UUID) (*dto.StartQuizResponseDTO, error) {
+func (s *QuizService) StartQuiz(ctx context.Context, quizID, userID uuid.UUID, req dto.StartQuizDTO) (*dto.StartQuizResponseDTO, error) {
 	quiz, err := s.repo.GetQuizWithQuestions(ctx, quizID)
 	if err != nil || quiz == nil {
 		return nil, errors.New("quiz not found")
 	}
 
-	// Check max attempts
-	if quiz.MaxAttempts != nil {
+	mode := req.Mode
+	if mode == "" {
+		mode = "official"
+	}
+
+	// Check max attempts — CHỈ đếm attempt "official" (contract §6: practice "không đếm vào
+	// quiz_max_attempts"). CountAttemptsByUserAndQuiz đã tự lọc mode='official' ở tầng SQL.
+	if quiz.MaxAttempts != nil && mode == "official" {
 		count, _ := s.repo.CountAttemptsByUserAndQuiz(ctx, userID, quizID)
 		if count >= int64(*quiz.MaxAttempts) {
 			return nil, errors.New("max attempts reached")
@@ -497,6 +505,7 @@ func (s *QuizService) StartQuiz(ctx context.Context, quizID, userID uuid.UUID) (
 	attempt := &model.QuizAttempt{
 		UserID:    userID,
 		QuizID:    quizID,
+		Mode:      mode,
 		StartedAt: time.Now(),
 	}
 
@@ -533,6 +542,7 @@ func (s *QuizService) StartQuiz(ctx context.Context, quizID, userID uuid.UUID) (
 		TimeLimitMins: quiz.TimeLimitMins,
 		Questions:     questions,
 		StartedAt:     attempt.StartedAt,
+		Mode:          attempt.Mode,
 	}, nil
 }
 
@@ -698,6 +708,11 @@ func (s *QuizService) GetAttemptByID(ctx context.Context, attemptID, userID uuid
 		return nil, errors.New("forbidden")
 	}
 
+	// Phase 1 §6: "explanation chỉ trả sau khi nộp" — gate CẢ correct_answer_ids theo cùng điều
+	// kiện cho nhất quán (contract không nói rõ, nhưng để lộ đáp án đúng trong lúc attempt còn
+	// đang làm dở thì cũng phá gate y hệt explanation).
+	submitted := attempt.CompletedAt != nil
+
 	answers := make([]dto.QuizAttemptAnswerDTO, len(attempt.Answers))
 	for i, aa := range attempt.Answers {
 		answers[i] = dto.QuizAttemptAnswerDTO{
@@ -708,7 +723,16 @@ func (s *QuizService) GetAttemptByID(ctx context.Context, attemptID, userID uuid
 			TextAnswer:        aa.TextAnswer,
 			IsCorrect:         aa.IsCorrect,
 			PointsEarned:      aa.PointsEarned,
-			Explanation:       aa.Question.Explanation,
+		}
+		if submitted {
+			answers[i].Explanation = aa.Question.Explanation
+			var correctIDs []string
+			for _, qa := range aa.Question.Answers {
+				if qa.IsCorrect {
+					correctIDs = append(correctIDs, qa.ID.String())
+				}
+			}
+			answers[i].CorrectAnswerIDs = correctIDs
 		}
 	}
 

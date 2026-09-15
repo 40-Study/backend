@@ -125,17 +125,30 @@ func (LessonProgress) TableName() string {
 	return "lesson_progress"
 }
 
+// UserNote la ghi chu cua nguoi hoc tai MOT moc thoi gian trong video cua bai hoc (Phase 1 §3).
+//
+// CourseID va TimestampSecs (them moi o Phase 1) — bang da co san TRUOC Phase 1 (chi co
+// UserID/LessonID/Content/VideoTimestampSecs/IsBookmarked) nhung CHUA TUNG co repository/
+// service/handler/route nao dung toi, nen day la MO RONG an toan, khong phai doi mot API dang
+// chay. CourseID luu THANG (khong suy tu LessonID moi lan doc) de loc "tat ca cac chuong" cua
+// MOT khoa (GET /courses/:courseId/notes) khong phai JOIN qua lessons/sections.
 type UserNote struct {
 	BaseModel
-	UserID             uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
-	LessonID           uuid.UUID `gorm:"type:uuid;not null;index" json:"lesson_id"`
-	Content            string    `gorm:"type:text;not null" json:"content"`
-	VideoTimestampSecs *int      `gorm:"column:video_timestamp_seconds" json:"video_timestamp_seconds,omitempty"`
-	IsBookmarked       bool      `gorm:"default:false" json:"is_bookmarked"`
+	UserID uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
+	// idx_user_notes_lesson: GET /lessons/:lessonId/notes loc theo (UserID, LessonID) — chi
+	// chu so huu doc duoc ghi chu cua chinh minh (contract §3).
+	LessonID uuid.UUID `gorm:"type:uuid;not null;index:idx_user_notes_lesson" json:"lesson_id"`
+	// idx_user_notes_course: GET /courses/:courseId/notes loc theo (UserID, CourseID).
+	CourseID uuid.UUID `gorm:"type:uuid;not null;index:idx_user_notes_course" json:"course_id"`
+	// TimestampSecs: moc thoi gian trong video (giay) — bam vao ghi chu de seek toi day.
+	TimestampSecs int    `gorm:"not null;default:0;column:timestamp_seconds" json:"timestamp_seconds"`
+	Content       string `gorm:"type:text;not null" json:"content"`
+	IsBookmarked  bool   `gorm:"default:false" json:"is_bookmarked"`
 
 	// Relationships
 	User   User   `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
 	Lesson Lesson `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
+	Course Course `gorm:"foreignKey:CourseID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 func (UserNote) TableName() string {

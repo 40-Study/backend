@@ -255,6 +255,9 @@ func (r *QuizRepository) GetAttemptWithAnswers(ctx context.Context, id uuid.UUID
 	err := r.db.WithContext(ctx).
 		Preload("Answers").
 		Preload("Answers.Question").
+		// Phase 1 §6: can Answers.Question.Answers (danh sach dap an cua CAU HOI, kem
+		// IsCorrect) de tinh correct_answer_ids — khac voi Answers (dap an NGUOI DUNG da chon).
+		Preload("Answers.Question.Answers").
 		First(&attempt, "id = ?", id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -288,11 +291,13 @@ func (r *QuizRepository) GetAttemptsByQuiz(ctx context.Context, quizID uuid.UUID
 	return attempts, err
 }
 
+// CountAttemptsByUserAndQuiz (Phase 1 §6): CHỈ đếm attempt mode="official" — dùng riêng cho
+// gate quiz_max_attempts, và contract ghi rõ practice "không đếm vào quiz_max_attempts".
 func (r *QuizRepository) CountAttemptsByUserAndQuiz(ctx context.Context, userID, quizID uuid.UUID) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).
 		Model(&model.QuizAttempt{}).
-		Where("user_id = ? AND quiz_id = ?", userID, quizID).
+		Where("user_id = ? AND quiz_id = ? AND mode = ?", userID, quizID, "official").
 		Count(&count).Error
 	return count, err
 }

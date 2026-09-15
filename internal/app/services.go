@@ -82,6 +82,8 @@ type Services struct {
 	ParentDashboard *service.ParentDashboardService
 	// ===== Discussion Forum =====
 	Discussion *service.DiscussionService
+	// ===== Note (Phase 1 §3) =====
+	Note service.NoteServiceInterface
 
 	// ===== Notification =====
 	Notification *service.NotificationService
@@ -409,6 +411,8 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 
 		// ===== Discussion Forum =====
 		Discussion: service.NewDiscussionService(repos.Discussion),
+		// ===== Note (Phase 1 §3) =====
+		Note: service.NewNoteService(repos.Note, repos.Enrollment),
 
 		// ===== Notification =====
 		Notification: service.NewNotificationService(repos.Notification, notifier),

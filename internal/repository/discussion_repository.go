@@ -14,6 +14,7 @@ type DiscussionRepositoryInterface interface {
 	GetPostBySlug(ctx context.Context, slug string) (*model.Discussion, error)
 	GetPostByID(ctx context.Context, id uuid.UUID) (*model.Discussion, error)
 	ListForumPosts(ctx context.Context, category string, page, pageSize int) ([]model.Discussion, int64, error)
+	ListPostsByLessonID(ctx context.Context, lessonID uuid.UUID, page, pageSize int) ([]model.Discussion, int64, error)
 	GetCommentsByPostID(ctx context.Context, postID uuid.UUID) ([]model.Discussion, error)
 	SlugExists(ctx context.Context, slug string) (bool, error)
 	CreateVote(ctx context.Context, vote *model.DiscussionVote) error
@@ -75,6 +76,30 @@ func (r *DiscussionRepository) ListForumPosts(ctx context.Context, category stri
 	if category != "" {
 		query = query.Where("category = ?", category)
 	}
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * pageSize
+	err := query.
+		Preload("User").
+		Order("created_at DESC").
+		Offset(offset).
+		Limit(pageSize).
+		Find(&posts).Error
+
+	return posts, total, err
+}
+
+// ListPostsByLessonID (Phase 1 §5): hoi dap gan voi MOT bai hoc — nguoc voi ListForumPosts
+// (dien dan chung, loc lesson_id IS NULL), ham nay loc DUNG lesson_id do.
+func (r *DiscussionRepository) ListPostsByLessonID(ctx context.Context, lessonID uuid.UUID, page, pageSize int) ([]model.Discussion, int64, error) {
+	var posts []model.Discussion
+	var total int64
+
+	query := r.db.WithContext(ctx).Model(&model.Discussion{}).
+		Where("lesson_id = ? AND parent_id IS NULL AND is_hidden = false", lessonID)
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err

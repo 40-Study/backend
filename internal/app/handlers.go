@@ -68,6 +68,8 @@ type Handlers struct {
 
 	// ===== Discussion Forum =====
 	Discussion *handler.DiscussionHandler
+	// ===== Note (Phase 1 §3) =====
+	Note *handler.NoteHandler
 
 	// ===== Notification =====
 	Notification *handler.NotificationHandler
@@ -184,6 +186,8 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 
 		// ===== Discussion Forum =====
 		Discussion: handler.NewDiscussionHandler(services.Discussion),
+		// ===== Note (Phase 1 §3) =====
+		Note: handler.NewNoteHandler(services.Note),
 
 		// ===== Notification =====
 		Notification: handler.NewNotificationHandler(services.Notification),
