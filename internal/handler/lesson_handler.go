@@ -160,6 +160,13 @@ func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
 		if lessonForbiddenResponse(c, err) {
 			return nil
 		}
+		// Phase 1 §4 (bổ sung từ review web #17): message CỐ ĐỊNH, không phải câu tự do —
+		// web so khớp đúng chuỗi này để hiện thông báo "bài chưa có video".
+		if err == service.ErrLessonHasNoVideo {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "LESSON_HAS_NO_VIDEO",
+			})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update lesson",
 			"error":   err.Error(),

@@ -15,6 +15,11 @@ import (
 // khóa học cha (qua section -> course.InstructorID) mới được tạo/sửa/xóa lesson (C-12).
 var ErrNotLessonCourseOwner = errors.New("forbidden: not the owner")
 
+// ErrLessonHasNoVideo (Phase 1 §4, bổ sung từ review web #17): PUT /lessons/:lessonId gửi
+// subtitle_url cho một bài chưa có content video nào để gắn vào — handler ánh xạ sang 400
+// {"message": "LESSON_HAS_NO_VIDEO"}, đúng contract, thay vì một message lỗi tự do.
+var ErrLessonHasNoVideo = errors.New("lesson has no video content to attach a subtitle to")
+
 type LessonServiceInterface interface {
 	CreateLesson(ctx context.Context, sectionID, actorUserID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error)
 	GetAllLessons(ctx context.Context, sectionID uuid.UUID) ([]dto.LessonResponseDTO, error)
@@ -250,7 +255,7 @@ func (s *LessonService) applySubtitleURL(ctx context.Context, lessonID uuid.UUID
 		}
 	}
 	if video == nil {
-		return errors.New("lesson has no video content to attach a subtitle to")
+		return ErrLessonHasNoVideo
 	}
 
 	cleaned := subtitleURL
