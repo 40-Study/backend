@@ -524,8 +524,14 @@ phiên và cũng không phải GV của lớp/instructor của khoá chứa lớ
   đổi ý nghĩa: đây là **mục tiêu được duyệt/thu hồi chia sẻ màn hình** (host chỉ định học sinh
   nào), không phải danh tính người gọi (danh tính người gọi vẫn luôn lấy từ token, không đổi).
   Bỏ trống `user_id` = duyệt/thu hồi cho chính người gọi. Chỉ người có quyền quản trị phiên
-  mới gọi được endpoint này.
+  mới gọi được endpoint này. **Duyệt chia sẻ màn hình KHÔNG mở kèm camera/microphone** — học
+  sinh được duyệt chỉ publish được hình/tiếng của màn hình, không tự bật được cam/mic qua
+  endpoint này.
 - LiveKit token (cấp khi `join`) rút ngắn thời hạn hiệu lực từ 24h xuống 4h.
+- **Học sinh đã nghỉ lớp không còn là "thành viên"** (issue #58, vá 2026-09-15 vòng 3): học sinh
+  có `student_classes.status` là `dropped`/`completed`/`pending` không còn join được phiên, không
+  đọc/gửi được chat, và không còn thấy phiên đó trong `GET /api/livestream`. Dữ liệu cũ với
+  `status` rỗng/NULL vẫn được coi là `active`.
 
 ---
 
