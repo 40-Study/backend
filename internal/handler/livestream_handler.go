@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -59,6 +61,14 @@ func (h *LivestreamHandler) Create(c *fiber.Ctx) error {
 
 	session, err := h.svc.Create(c.Context(), userID, req)
 	if err != nil {
+		// N1 (review vong 2, 260915): ErrNotClassTeacher la loi UY QUYEN (403), khong phai loi
+		// ha tang — phan loai bang errors.Is (dung pattern sentinel LOW-7 da co cho select-org),
+		// khong so chuoi.
+		if errors.Is(err, service.ErrNotClassTeacher) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"message": "Forbidden", "error": err.Error(),
+			})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 

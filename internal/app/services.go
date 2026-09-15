@@ -175,6 +175,8 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		repos.Livestream,
 		repos.Participant,
 		repos.Analytics,
+		repos.Class,
+		repos.Course,
 		resources.Redis,
 		livekitSvc,
 		resources.Queue,

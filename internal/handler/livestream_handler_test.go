@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/service"
 )
 
 // stubLivestreamService: chi Create duoc dung trong pham vi test nay — cac method khac cua
@@ -20,12 +21,18 @@ type stubLivestreamService struct {
 	gotHostID uuid.UUID
 	gotReq    dto.CreateLivestreamDTO
 	called    int
+	// createErr (N1, review vong 2 260915): khi khac nil, Create tra loi nay thay vi thanh cong —
+	// dung de gia lap ErrNotClassTeacher tu tang service ma khong can dung service that.
+	createErr error
 }
 
 func (s *stubLivestreamService) Create(ctx context.Context, hostID uuid.UUID, req dto.CreateLivestreamDTO) (*model.LivestreamSession, error) {
 	s.called++
 	s.gotHostID = hostID
 	s.gotReq = req
+	if s.createErr != nil {
+		return nil, s.createErr
+	}
 	return &model.LivestreamSession{
 		BaseModel: model.BaseModel{ID: uuid.New()},
 		HostID:    hostID,
@@ -168,5 +175,31 @@ func TestLivestreamCreate_ValidatesRequiredFields(t *testing.T) {
 	}
 	if svc.called != 0 {
 		t.Errorf("service.Create bi goi %d lan du request khong hop le", svc.called)
+	}
+}
+
+// TestLivestreamCreate_ForbiddenKhiKhongPhaiGiaoVienLop (N1, review vong 2 260915): service tra
+// ve service.ErrNotClassTeacher -> handler phai map ve 403, khong phai 500 mac dinh — day la loi
+// UY QUYEN, khong phai loi ha tang.
+func TestLivestreamCreate_ForbiddenKhiKhongPhaiGiaoVienLop(t *testing.T) {
+	svc := &stubLivestreamService{createErr: service.ErrNotClassTeacher}
+	h := NewLivestreamHandler(svc)
+
+	app := fiber.New()
+	app.Post("/livestream", func(c *fiber.Ctx) error {
+		c.Locals("user_id", uuid.New())
+		return c.Next()
+	}, h.Create)
+
+	body := `{"title":"Buoi hoc gia mao","class_id":"` + uuid.New().String() + `"}`
+	req := httptest.NewRequest("POST", "/livestream", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test loi: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusForbidden {
+		t.Fatalf("status = %d, muon 403 khi service tra ErrNotClassTeacher", resp.StatusCode)
 	}
 }
