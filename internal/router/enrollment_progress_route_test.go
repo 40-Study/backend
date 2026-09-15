@@ -10,6 +10,7 @@ package router
 
 import (
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -29,23 +30,52 @@ func mountEnrollmentRoutesForOriginTest() *fiber.App {
 	return app
 }
 
-// TestProgressBeaconRoute_RejectsForeignOrigin (MED-3): request khong Origin/Referer hop le bi
-// chan 403 TRUOC KHI cham auth/service — dung mutation de chung minh: go SameOriginRequired
-// khoi enrollment_router.go se lam test nay do (request se roi thang xuong auth va tra 401 thay
-// vi 403).
+// TestProgressBeaconRoute_RejectsForeignOrigin (MED-3, cap nhat N3 review vong 2 260915): request
+// CO cookie accessToken (duong CSRF that su nham toi — xem N3 tai same_origin_middleware.go) tu
+// mot origin la bi chan 403 TRUOC KHI cham auth/service — dung mutation de chung minh: go
+// SameOriginRequired khoi enrollment_router.go se lam test nay do (request se roi thang xuong
+// auth va tra 401 thay vi 403).
 func TestProgressBeaconRoute_RejectsForeignOrigin(t *testing.T) {
 	app := mountEnrollmentRoutesForOriginTest()
 
 	req := httptest.NewRequest("POST", "/api/progress", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
 	req.Header.Set("Origin", "https://evil.example")
+	req.AddCookie(&http.Cookie{Name: "accessToken", Value: "dummy-token-cho-test"})
 
 	res, err := app.Test(req)
 	if err != nil {
 		t.Fatalf("app.Test loi: %v", err)
 	}
 	if res.StatusCode != fiber.StatusForbidden {
-		t.Fatalf("status = %d, muon 403 (origin la phai bi chan truoc ca auth)", res.StatusCode)
+		t.Fatalf("status = %d, muon 403 (origin la + cookie accessToken phai bi chan truoc ca auth)", res.StatusCode)
+	}
+}
+
+// TestProgressBeaconRoute_BearerKhongOrigin_BoQuaCSRFNhungVanCanAuthHopLe (N3, review vong 2
+// 260915): client dung Bearer (khong cookie), khong dat Origin — truoc N3 se bi 403 OAN o
+// SameOriginRequired; sau N3 phai VUOT QUA lop CSRF va toi duoc `auth`, roi bi 401 vi token gia
+// (khong hop le) — chung minh CSRF layer khong con chan nham client Bearer nua, NHUNG van phai
+// qua duoc kiem tra token that su o auth.
+func TestProgressBeaconRoute_BearerKhongOrigin_BoQuaCSRFNhungVanCanAuthHopLe(t *testing.T) {
+	app := mountEnrollmentRoutesForOriginTest()
+
+	req := httptest.NewRequest("POST", "/api/progress", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+	req.Header.Set("Authorization", "Bearer gia-mao-khong-hop-le")
+	// KHONG dat Origin, KHONG dat cookie.
+
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test loi: %v", err)
+	}
+	if res.StatusCode != fiber.StatusUnauthorized {
+		t.Fatalf("status = %d, muon 401 (token Bearer sai — nhung phai la 401 tu AuthMiddleware, "+
+			"khong phai 403 tu SameOriginRequired, chung minh CSRF layer da bo qua request nay)", res.StatusCode)
+	}
+	bodyBytes, _ := io.ReadAll(res.Body)
+	if strings.Contains(string(bodyBytes), "request origin not allowed") {
+		t.Fatalf("body chua thong bao cua SameOriginRequired — nghia la request bi chan CSRF thay vi toi duoc auth: %s", bodyBytes)
 	}
 }
 
