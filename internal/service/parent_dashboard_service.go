@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 
 	"github.com/google/uuid"
@@ -102,6 +103,13 @@ func (s *ParentDashboardService) GetChildOverview(ctx context.Context, parentID,
 	if len(enrollmentIDs) > 0 {
 		watchedByEnrollment, err := s.enrollmentRepo.SumWatchedSecondsByEnrollmentIDs(ctx, enrollmentIDs)
 		if err != nil {
+			// MED-4 (review 260915): quyet dinh co chu y la GIU throw o day (khong fallback ve 0)
+			// — 0 se lam phu huynh tuong con khong hoc gi, sai hon ca viec sap trang bao loi. Chi
+			// them log co ngu canh (childID/parentID/so enrollment) de phan biet duoc voi loi XP/
+			// streak ben duoi (nhanh do CO CHU Y nuot loi — xem comment tai do, khong sua trong PR
+			// nay) khi doc log san xuat.
+			log.Printf("[ERROR] GetChildOverview: failed to sum watched seconds for child=%s parent=%s enrollments=%d: %v",
+				childID, parentID, len(enrollmentIDs), err)
 			return nil, fmt.Errorf("failed to sum watched seconds: %w", err)
 		}
 		totalWatchedSeconds := 0
