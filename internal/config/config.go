@@ -3,6 +3,7 @@ package config
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -267,4 +268,29 @@ func validateJWTSecret(secret, configFileHint string) error {
 		return fmt.Errorf("JWT_SECRET is still set to the old insecure default value — set a real secret in %s or as an environment variable", configFileHint)
 	}
 	return nil
+}
+
+// DefaultAllowedOrigins (N4, review vong 2 260915): gia tri mac dinh SSOT khi ALLOWED_ORIGINS
+// khong duoc dat trong .env — truoc day chuoi "http://localhost:3000" bi LAP o hai noi
+// (internal/app/app.go cho middleware cors.New, internal/router/enrollment_router.go cho
+// middleware.SameOriginRequired). Doi mot noi ma quen doi noi kia thi hai middleware nay se
+// khong con dung chung mot default nua ma khong co dau hieu bao loi nao.
+const DefaultAllowedOrigins = "http://localhost:3000"
+
+// ResolvedAllowedOrigins tra ve ALLOWED_ORIGINS da fallback ve DefaultAllowedOrigins khi rong,
+// va log canh bao MOT LAN moi lan goi neu gia tri la "*". An toan goi tren con tro nil (tra ve
+// thang default) de cac noi mount router trong test (cfg=nil, xem enrollment_router_test.go)
+// khong can tu kiem nil truoc khi goi.
+//
+// "*" tat HOAN TOAN ca cors.New lan middleware.SameOriginRequired (chan CSRF cho
+// POST /api/progress) — khong co dau hieu nao khac luc khoi dong, nen mot file .env production
+// dat gia tri nay se mat lop bao ve CSRF ma khong ai biet cho toi khi bi khai thac.
+func (c *Config) ResolvedAllowedOrigins() string {
+	if c == nil || c.AllowedOrigins == "" {
+		return DefaultAllowedOrigins
+	}
+	if c.AllowedOrigins == "*" {
+		log.Printf("[WARN] ALLOWED_ORIGINS=\"*\" — CORS mo hoan toan VA middleware.SameOriginRequired (chan CSRF cho POST /api/progress) bi TAT HOAN TOAN. Chi dung gia tri nay o moi truong dev, khong dung production.")
+	}
+	return c.AllowedOrigins
 }

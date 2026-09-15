@@ -139,10 +139,10 @@ func New() (*App, error) {
 	// Phải đứng TRƯỚC mọi route khác.
 	fiberApp.Use(recover.New(recover.Config{EnableStackTrace: true}))
 
-	allowedOrigins := resources.Config.AllowedOrigins
-	if allowedOrigins == "" {
-		allowedOrigins = "http://localhost:3000"
-	}
+	// N4 (review vong 2, 260915): default va canh bao "*" gio nam mot noi duy nhat
+	// (config.Config.ResolvedAllowedOrigins) — dung chung voi middleware.SameOriginRequired o
+	// enrollment_router.go, tranh hai noi troi default lang le khoi nhau.
+	allowedOrigins := resources.Config.ResolvedAllowedOrigins()
 	fiberApp.Use(cors.New(cors.Config{
 		AllowOrigins:     allowedOrigins,
 		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS, PATCH",

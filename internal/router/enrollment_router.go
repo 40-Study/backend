@@ -16,13 +16,11 @@ func SetupEnrollmentRoutes(
 ) {
 	auth := middleware.AuthMiddleware(cfg, redis)
 
-	// MED-3 (review 260915): cung ALLOWED_ORIGINS voi middleware cors o app.go (cung mac dinh
-	// khi rong/nil de test router-level goi ham nay voi cfg=nil van chay duoc — xem
-	// SameOriginRequired ben duoi).
-	allowedOrigins := "http://localhost:3000"
-	if cfg != nil && cfg.AllowedOrigins != "" {
-		allowedOrigins = cfg.AllowedOrigins
-	}
+	// MED-3 (review 260915) + N4 (review vong 2, 260915): cung ALLOWED_ORIGINS voi middleware
+	// cors o app.go, gio qua mot ham SSOT duy nhat (config.Config.ResolvedAllowedOrigins) — tu
+	// an toan voi cfg=nil (test router-level goi ham nay voi cfg=nil, xem
+	// TestProgressBeaconRoute_IsRegistered) va tu log canh bao khi ALLOWED_ORIGINS="*".
+	allowedOrigins := cfg.ResolvedAllowedOrigins()
 
 	// Enroll/Unenroll under courses
 	courses := api.Group("/courses")
