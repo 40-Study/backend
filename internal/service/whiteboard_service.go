@@ -12,31 +12,43 @@ import (
 	"study.com/v1/internal/repository"
 )
 
+// WhiteboardServiceInterface (V3-6, issue #58): userID la nguoi goi THAT SU (access token). Ca ba
+// thao tac deu doi hoi la THANH VIEN cua phien (EnsureSessionMember) — truoc day khong kiem gi
+// ca, bat ky user dang nhap nao cung doc/ghi/phat song bang trang cua bat ky phien nao.
 type WhiteboardServiceInterface interface {
-	GetSnapshot(ctx context.Context, sessionID uuid.UUID) (*dto.WhiteboardSnapshotResponseDTO, error)
-	SaveSnapshot(ctx context.Context, req dto.WhiteboardSnapshotDTO) error
-	BroadcastEvent(ctx context.Context, sessionID uuid.UUID, event dto.WhiteboardEventDTO, livekitSvc LivekitServiceInterface) error
+	GetSnapshot(ctx context.Context, userID, sessionID uuid.UUID) (*dto.WhiteboardSnapshotResponseDTO, error)
+	SaveSnapshot(ctx context.Context, userID uuid.UUID, req dto.WhiteboardSnapshotDTO) error
+	BroadcastEvent(ctx context.Context, userID, sessionID uuid.UUID, event dto.WhiteboardEventDTO, livekitSvc LivekitServiceInterface) error
 }
 
 type WhiteboardService struct {
 	repo        repository.WhiteboardRepositoryInterface
 	sessionRepo repository.LivestreamRepositoryInterface
 	redis       *redis.Client
+	// livestreamSvc (V3-6, issue #58): nguon su that duy nhat cho "nguoi nay co quan he gi voi
+	// phien khong" — xem LivestreamService.EnsureSessionMember.
+	livestreamSvc LivestreamServiceInterface
 }
 
 func NewWhiteboardService(
 	repo repository.WhiteboardRepositoryInterface,
 	sessionRepo repository.LivestreamRepositoryInterface,
 	redis *redis.Client,
+	livestreamSvc LivestreamServiceInterface,
 ) *WhiteboardService {
 	return &WhiteboardService{
-		repo:        repo,
-		sessionRepo: sessionRepo,
-		redis:       redis,
+		repo:          repo,
+		sessionRepo:   sessionRepo,
+		redis:         redis,
+		livestreamSvc: livestreamSvc,
 	}
 }
 
-func (s *WhiteboardService) GetSnapshot(ctx context.Context, sessionID uuid.UUID) (*dto.WhiteboardSnapshotResponseDTO, error) {
+func (s *WhiteboardService) GetSnapshot(ctx context.Context, userID, sessionID uuid.UUID) (*dto.WhiteboardSnapshotResponseDTO, error) {
+	if err := s.livestreamSvc.EnsureSessionMember(ctx, sessionID, userID); err != nil {
+		return nil, err
+	}
+
 	snapshot, err := s.repo.GetSnapshot(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -66,10 +78,28 @@ func (s *WhiteboardService) GetSnapshot(ctx context.Context, sessionID uuid.UUID
 	}, nil
 }
 
-func (s *WhiteboardService) SaveSnapshot(ctx context.Context, req dto.WhiteboardSnapshotDTO) error {
+func (s *WhiteboardService) SaveSnapshot(ctx context.Context, userID uuid.UUID, req dto.WhiteboardSnapshotDTO) error {
 	sessionID, err := uuid.Parse(req.SessionID)
 	if err != nil {
 		return err
+	}
+
+	if err := s.livestreamSvc.EnsureSessionMember(ctx, sessionID, userID); err != nil {
+		return err
+	}
+
+	// F-4 (issue #58 review vong 2): truoc day SaveSnapshot khong kiem Settings.WhiteboardLocked
+	// (BroadcastEvent co kiem, o duoi) — hoc sinh ghi de duoc TOAN BO snapshot da luu ke ca khi GV
+	// da khoa bang, nen tinh nang "khoa bang" chi chan duoc realtime, khong chan duoc trang thai
+	// da LUU. Chi nguoi quan tri phien (host/GV lop/instructor khoa) moi duoc ghi khi dang khoa.
+	session, err := s.sessionRepo.GetByID(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session != nil && session.Settings.WhiteboardLocked {
+		if err := s.livestreamSvc.EnsureSessionManage(ctx, sessionID, userID); err != nil {
+			return ErrWhiteboardLocked
+		}
 	}
 
 	// Serialize elements + appState to JSON string for storage
@@ -91,7 +121,11 @@ func (s *WhiteboardService) SaveSnapshot(ctx context.Context, req dto.Whiteboard
 	return s.repo.SaveSnapshot(ctx, snapshot)
 }
 
-func (s *WhiteboardService) BroadcastEvent(ctx context.Context, sessionID uuid.UUID, event dto.WhiteboardEventDTO, livekitSvc LivekitServiceInterface) error {
+func (s *WhiteboardService) BroadcastEvent(ctx context.Context, userID, sessionID uuid.UUID, event dto.WhiteboardEventDTO, livekitSvc LivekitServiceInterface) error {
+	if err := s.livestreamSvc.EnsureSessionMember(ctx, sessionID, userID); err != nil {
+		return err
+	}
+
 	session, err := s.sessionRepo.GetByID(ctx, sessionID)
 	if err != nil {
 		return err

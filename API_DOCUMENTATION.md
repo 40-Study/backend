@@ -309,6 +309,15 @@
 - `scheduled_at` - Giờ livestream bắt đầu
 - `end_at` - Giờ livestream kết thúc
 
+**Bảo mật (issue #58, vá 2026-09-15):** cả 5 endpoint (bao gồm
+`GET /api/courses/:course_id/classes/:id/contents` = `GetContentScheduleForClass`) giờ đòi hỏi
+người gọi là **GV của lớp / instructor của khoá chứa lớp / admin hệ thống** cho các thao tác
+GHI (gán/sửa/xoá lịch); riêng 2 endpoint ĐỌC
+(`GetClassesForContent`, `GetContentScheduleForClass`) cho phép thêm **học sinh của lớp** đọc
+lịch của chính lớp mình. Người không thoả điều kiện nhận **403**. Trước đây nhóm này chỉ có
+`auth` (đăng nhập), không kiểm quyền gì — bất kỳ user nào cũng gán/sửa/xoá được lịch của lớp
+bất kỳ, hoặc đọc được lịch/tên lớp của lớp bất kỳ.
+
 ---
 
 ### 6. Attendance
@@ -483,6 +492,47 @@ quiz, để client phân biệt được "bài rỗng" với "route không tồn
 - `started_at` - Giờ thực tế bắt đầu
 - `ended_at` - Giờ kết thúc
 
+**Bảo mật (issue #58, vá 2026-09-15):** danh tính người gọi cho MỌI endpoint ở trên lấy từ
+access token (`extractUserID`), không bao giờ từ body/URL. Các trường sau đã bị XÓA khỏi
+request body và bị Fiber bỏ qua lặng lẽ nếu client vẫn gửi — **không phải lỗi, không đổi status
+code**, nhưng client không nên gửi nữa:
+- `POST /api/livestream/:id/join` — body không còn `user_id`, `role`. Vai trò (`teacher`/
+  `student`) được server tự suy ra từ quan hệ thật (host/GV lớp/instructor khoá/học sinh đã
+  enroll); người không có quan hệ gì với phiên nhận **403**.
+- `POST /api/livestream/:id/screenshare/start|stop` — body không còn `user_id`.
+
+Các endpoint quản trị phiên (`Update`, `Delete`, `Start`, `End`, `mute`, `kick`,
+`lock/unlock-whiteboard`, `screenshare/*`) giờ trả **403** nếu người gọi không phải host của
+phiên và cũng không phải GV của lớp/instructor của khoá chứa lớp đó — trước đây không kiểm gì.
+`kick` còn chặn riêng trường hợp kick chính host (**403**).
+
+**Bảo mật vòng 2 (issue #58, vá 2026-09-15):**
+- `GET /api/livestream/:id`, `GET /api/livestream`, `GET /api/livestream/:id/participants` —
+  trước đây bất kỳ user đăng nhập nào cũng xem/liệt kê được phiên bất kỳ. Giờ đòi hỏi người gọi
+  là **thành viên phiên** (host/GV lớp/instructor khoá/học sinh đã enroll) mới xem được chi
+  tiết/roster (**403** nếu không); `GET /api/livestream` chỉ liệt kê các phiên người gọi có
+  quan hệ, trừ khi người gọi có quyền `SYSTEM_SETTINGS_MANAGE` (thấy toàn bộ).
+- **Mã lỗi 403 cố định** (field `message` trong envelope JSON, web nên ghim vào field này thay
+  vì so chuỗi): `NOT_SESSION_MEMBER` (không phải thành viên phiên/lớp), `NOT_SESSION_HOST`
+  (thiếu quyền quản trị), `CANNOT_KICK_HOST`, `WHITEBOARD_LOCKED`, `KICKED` (đã bị kick khỏi
+  chính phiên này — xem bên dưới). Áp dụng thống nhất cho mọi endpoint livestream/chat/
+  whiteboard.
+- `POST /api/livestream/:id/kick` — giờ **bền vững qua DB** (trước đây chỉ ngắt kết nối
+  LiveKit, gọi lại `join` là vào lại được ngay). Người đã bị kick gọi lại
+  `POST /api/livestream/:id/join` nhận **403** với `message: "KICKED"`.
+- `POST /api/livestream/:id/screenshare/start|stop` — body **có lại** field `user_id`, nhưng
+  đổi ý nghĩa: đây là **mục tiêu được duyệt/thu hồi chia sẻ màn hình** (host chỉ định học sinh
+  nào), không phải danh tính người gọi (danh tính người gọi vẫn luôn lấy từ token, không đổi).
+  Bỏ trống `user_id` = duyệt/thu hồi cho chính người gọi. Chỉ người có quyền quản trị phiên
+  mới gọi được endpoint này. **Duyệt chia sẻ màn hình KHÔNG mở kèm camera/microphone** — học
+  sinh được duyệt chỉ publish được hình/tiếng của màn hình, không tự bật được cam/mic qua
+  endpoint này.
+- LiveKit token (cấp khi `join`) rút ngắn thời hạn hiệu lực từ 24h xuống 4h.
+- **Học sinh đã nghỉ lớp không còn là "thành viên"** (issue #58, vá 2026-09-15 vòng 3): học sinh
+  có `student_classes.status` là `dropped`/`completed`/`pending` không còn join được phiên, không
+  đọc/gửi được chat, và không còn thấy phiên đó trong `GET /api/livestream`. Dữ liệu cũ với
+  `status` rỗng/NULL vẫn được coi là `active`.
+
 ---
 
 ### 13. Chat & Whiteboard
@@ -497,6 +547,22 @@ quiz, để client phân biệt được "bài rỗng" với "route không tồn
 | POST | `/api/chat/:id/pin` | PinMessage | Ghim tin nhắn |
 | POST | `/api/chat/:id/unpin` | UnPinMessage | Bỏ ghim tin nhắn |
 
+**Bảo mật (issue #58, vá 2026-09-15):**
+- `POST /api/chat/send` — body không còn `user_id` (đã xóa khỏi `SendChatMessageDTO`); người
+  gửi lấy từ token. Người gọi phải là **thành viên của phiên** (host/GV lớp/instructor
+  khoá/học sinh đã enroll) — không thì **403**. Trường `user_id` cũ trong body bị bỏ qua lặng
+  lẽ nếu client vẫn gửi.
+- `GET /api/chat/:sessionId/messages` — giờ đòi hỏi người gọi là thành viên phiên (**403** nếu
+  không) — trước đây bất kỳ user đăng nhập nào cũng đọc được chat của phiên bất kỳ.
+- `DELETE /api/chat/:id` — **đổi hợp đồng**: message id lấy từ URL `:id` (không còn từ body
+  `message_id`), người xóa lấy từ token (không còn từ body `deleted_by`). Cho phép nếu là
+  **tác giả tin nhắn** hoặc **người quản trị phiên** (host/GV lớp/instructor khoá); người lạ
+  nhận 403. *Ghi chú:* trước bản vá này, endpoint luôn trả 400 khi gọi không kèm body đúng
+  format — nếu web hiện đang gọi `DELETE /chat/:messageId` không kèm body (đúng như
+  `chat.service.ts` đang làm) thì đây là một cải thiện, không phải thay đổi hành vi cần sửa.
+- `POST /api/chat/:id/pin` và `/unpin` — giờ là thao tác **kiểm duyệt**, chỉ người quản trị
+  phiên mới gọi được (**403** với người khác) — trước đây không kiểm gì.
+
 #### 13.2 Whiteboard
 
 | Method | Path | Handler | Mô tả |
@@ -504,6 +570,20 @@ quiz, để client phân biệt được "bài rỗng" với "route không tồn
 | GET | `/api/whiteboard/:sessionId/snapshot` | GetSnapshot | Lấy snapshot |
 | POST | `/api/whiteboard/:sessionId/snapshot` | SaveSnapshot | Lưu snapshot |
 | POST | `/api/whiteboard/:sessionId/event` | BroadcastEvent | Broadcast event |
+
+**Bảo mật (issue #58, vá 2026-09-15):** cả 3 endpoint giờ đòi hỏi người gọi là **thành viên của
+phiên** (host/GV lớp/instructor khoá/học sinh đã enroll) — trả **403** nếu không. Trước đây bất
+kỳ user đăng nhập nào cũng đọc/ghi/phát được bảng trắng của bất kỳ phiên nào. Không đổi
+path/body field nào — chỉ thêm kiểm quyền.
+
+**Bảo mật vòng 2 (issue #58, vá 2026-09-15):**
+- `POST /api/whiteboard/:sessionId/snapshot` (SaveSnapshot) — khi bảng đang bị khoá
+  (`lock-whiteboard`), giờ trả **403** (`message: "WHITEBOARD_LOCKED"`) nếu người gọi không
+  phải người quản trị phiên. Trước đây chỉ `BroadcastEvent` (realtime) kiểm khoá bảng, còn lưu
+  snapshot thì không — học sinh ghi đè được toàn bộ trạng thái đã lưu kể cả khi GV đã khoá.
+- Khi GV khoá/mở bảng (`lock-whiteboard`/`unlock-whiteboard`), quyền gửi dữ liệu qua LiveKit
+  data-channel (vẽ bảng) của mọi người tham gia không phải host/GV được đồng bộ theo (tắt khi
+  khoá, bật lại khi mở) — trước đây chỉ đổi trạng thái trong DB, không đồng bộ LiveKit thật.
 
 ---
 

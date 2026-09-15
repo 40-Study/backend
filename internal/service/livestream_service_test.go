@@ -57,7 +57,7 @@ func (f *fakeAnalyticsRepoHostTest) Create(ctx context.Context, analytics *model
 func TestLivestreamCreate_HostIDLuonLaNguoiGoiThat(t *testing.T) {
 	repo := &fakeLivestreamRepoHostTest{}
 	analyticsRepo := &fakeAnalyticsRepoHostTest{}
-	svc := NewLivestreamService(repo, nil, analyticsRepo, &fakeClassRepoAllowAll{}, nil, nil, nil, nil, nil)
+	svc := NewLivestreamService(repo, nil, analyticsRepo, &fakeClassRepoAllowAll{}, nil, nil, nil, nil, nil, nil)
 
 	callerID := uuid.New()
 	classID := uuid.New()
@@ -92,14 +92,14 @@ func TestLivestreamCreate_TrenNguoiGoiKhacNhauChoRaHostKhacNhau(t *testing.T) {
 	caller1, caller2 := uuid.New(), uuid.New()
 
 	repo1 := &fakeLivestreamRepoHostTest{}
-	svc1 := NewLivestreamService(repo1, nil, &fakeAnalyticsRepoHostTest{}, &fakeClassRepoAllowAll{}, nil, nil, nil, nil, nil)
+	svc1 := NewLivestreamService(repo1, nil, &fakeAnalyticsRepoHostTest{}, &fakeClassRepoAllowAll{}, nil, nil, nil, nil, nil, nil)
 	session1, err := svc1.Create(context.Background(), caller1, req)
 	if err != nil {
 		t.Fatalf("khong mong doi loi (caller1): %v", err)
 	}
 
 	repo2 := &fakeLivestreamRepoHostTest{}
-	svc2 := NewLivestreamService(repo2, nil, &fakeAnalyticsRepoHostTest{}, &fakeClassRepoAllowAll{}, nil, nil, nil, nil, nil)
+	svc2 := NewLivestreamService(repo2, nil, &fakeAnalyticsRepoHostTest{}, &fakeClassRepoAllowAll{}, nil, nil, nil, nil, nil, nil)
 	session2, err := svc2.Create(context.Background(), caller2, req)
 	if err != nil {
 		t.Fatalf("khong mong doi loi (caller2): %v", err)

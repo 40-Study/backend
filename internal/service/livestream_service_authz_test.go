@@ -53,7 +53,7 @@ func (f *fakeCourseRepoAuthz) GetByID(ctx context.Context, id uuid.UUID) (*model
 }
 
 func newLivestreamServiceForAuthz(classRepo repository.ClassRepositoryInterface, courseRepo repository.CourseRepositoryInterface, repo repository.LivestreamRepositoryInterface) *LivestreamService {
-	return NewLivestreamService(repo, nil, &fakeAnalyticsRepoHostTest{}, classRepo, courseRepo, nil, nil, nil, nil)
+	return NewLivestreamService(repo, nil, &fakeAnalyticsRepoHostTest{}, classRepo, courseRepo, nil, nil, nil, nil, nil)
 }
 
 // TestLivestreamCreate_HocSinhTaoPhienChoLopKhongDay_BiTuChoi (kich ban chinh cua N1): user

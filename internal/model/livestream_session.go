@@ -71,6 +71,12 @@ type Participant struct {
 	JoinedAt  time.Time       `gorm:"type:timestamp;default:CURRENT_TIMESTAMP" json:"joined_at"`
 	LeftAt    *time.Time      `gorm:"type:timestamp" json:"left_at,omitempty"`
 	IsActive  bool            `gorm:"default:true" json:"is_active"`
+	// IsKicked/KickedAt (F-5, issue #58 review vòng 2): trước đây kick chỉ ngắt kết nối LiveKit
+	// (RemoveParticipant) — không đổi gì trong DB, nên người bị kick gọi lại POST /:id/join là
+	// vào lại được ngay (resolveJoinRole vẫn thấy đúng quan hệ lớp/khoá). Cột nullable, GORM
+	// AutoMigrate tự thêm — không cần migration tay.
+	IsKicked  bool       `gorm:"default:false" json:"is_kicked"`
+	KickedAt  *time.Time `gorm:"type:timestamp" json:"kicked_at,omitempty"`
 
 	Session *LivestreamSession `gorm:"foreignKey:SessionID" json:"-"`
 	User    *User              `gorm:"foreignKey:UserID" json:"-"`

@@ -177,6 +177,8 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		repos.Analytics,
 		repos.Class,
 		repos.Course,
+		// V3-6 (issue #58): Join can kiem nguoi tham gia co enroll khoa cua phien khong.
+		repos.Enrollment,
 		resources.Redis,
 		livekitSvc,
 		resources.Queue,
@@ -204,12 +206,16 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		repos.Analytics,
 		repos.Livestream,
 		livekitSvc,
+		// V3-6 (issue #58): dung livestreamSvc.EnsureSessionMember/EnsureSessionManage lam nguon
+		// su that duy nhat cho quyen thanh vien/quan tri phien — khong lam lai phep kiem nay.
+		livestreamSvc,
 	)
 
 	whiteboardSvc := service.NewWhiteboardService(
 		repos.Whiteboard,
 		repos.Livestream,
 		resources.Redis,
+		livestreamSvc,
 	)
 
 	analyticsSvc := service.NewAnalyticsService(
@@ -331,7 +337,9 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 
 		// ===== Class =====
 		Class:              service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student, repos.ParentStudent),
-		ClassLessonContent: service.NewClassLessonContentService(repos.ClassLessonContent, repos.Class, repos.Lesson, repos.Enrollment, livestreamSvc),
+		// V3-7 (issue #58): repos.Course duoc chen vao de kiem instructor cua khoa chua lop
+		// (class_access.go) — xem NewClassLessonContentService.
+		ClassLessonContent: service.NewClassLessonContentService(repos.ClassLessonContent, repos.Class, repos.Course, repos.Lesson, repos.Enrollment, livestreamSvc),
 		Attendance:         service.NewAttendanceService(repos.Attendance),
 
 		// ===== Teacher =====

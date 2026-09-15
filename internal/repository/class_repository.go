@@ -22,6 +22,7 @@ type ClassRepositoryInterface interface {
 	// Class relationship checks
 	TeacherClassExists(ctx context.Context, classID, teacherID uuid.UUID) (bool, error)
 	StudentClassExists(ctx context.Context, classID, studentID uuid.UUID) (bool, error)
+	IsUserRelatedToClass(ctx context.Context, classID, userID uuid.UUID) (bool, error)
 
 	// Teacher-Class
 	AssignTeacher(ctx context.Context, tc *model.TeacherClass) error
@@ -135,13 +136,55 @@ func (r *ClassRepository) TeacherClassExists(ctx context.Context, classID, teach
 	return count > 0, err
 }
 
+// StudentClassActiveCondition (D6, issue #58 review vòng 3): "thành viên lớp" (dùng để vào phiên
+// livestream/đọc-gửi chat) CHỈ tính học sinh đang HOẠT ĐỘNG trong lớp — status 'dropped'/
+// 'completed'/'pending' (model.StudentClass) không còn là thành viên. Dữ liệu cũ trước khi cột có
+// default 'active' có thể mang status rỗng/NULL — coi là active (không tự động loại học sinh cũ
+// ra khỏi lớp họ đang học chỉ vì thiếu dữ liệu). Dùng chung ở StudentClassExists,
+// IsUserRelatedToClass, và LivestreamRepository.GetAll (F-1) để tránh 3 nơi định nghĩa "active"
+// khác nhau (xem R2-9: hai định nghĩa "thành viên phiên" đã tồn tại song song, thêm nơi thứ ba tự
+// định nghĩa lại là chính cách chúng lệch nhau lặng lẽ).
+const StudentClassActiveCondition = "(status = 'active' OR status = '' OR status IS NULL)"
+
+// buildStudentClassExistsQuery (D6/R2-7, issue #58 review vòng 3): tách phần XÂY câu Count ra
+// khỏi phần đọc .Error, để test DryRun (class_repository_authz_test.go) gọi được ĐÚNG hàm sản
+// xuất thật thay vì hand-roll lại câu query trong test — xoá/sửa sai điều kiện lọc status ở đây
+// sẽ làm test đỏ, theo đúng pattern buildRestoreAndReactivateQuery (enrollment_repository.go).
+func buildStudentClassExistsQuery(db *gorm.DB, classID, studentID uuid.UUID, count *int64) *gorm.DB {
+	return db.Model(&model.StudentClass{}).
+		Where("class_id = ? AND student_id = ? AND "+StudentClassActiveCondition, classID, studentID).
+		Count(count)
+}
+
 func (r *ClassRepository) StudentClassExists(ctx context.Context, classID, studentID uuid.UUID) (bool, error) {
 	var count int64
-	err := r.db.WithContext(ctx).
-		Model(&model.StudentClass{}).
-		Where("class_id = ? AND student_id = ?", classID, studentID).
-		Count(&count).Error
-	return count > 0, err
+	tx := buildStudentClassExistsQuery(r.db.WithContext(ctx), classID, studentID, &count)
+	return count > 0, tx.Error
+}
+
+// buildIsUserRelatedToClassQuery (D6/R2-7, cùng lý do với buildStudentClassExistsQuery ở trên).
+func buildIsUserRelatedToClassQuery(db *gorm.DB, classID, userID uuid.UUID, exists *bool) *gorm.DB {
+	return db.Raw(`
+		SELECT EXISTS(
+			SELECT 1 FROM teacher_classes WHERE class_id = ? AND teacher_id = ?
+			UNION
+			SELECT 1 FROM student_classes WHERE class_id = ? AND student_id = ? AND `+StudentClassActiveCondition+`
+			UNION
+			SELECT 1 FROM classes c JOIN courses co ON co.id = c.course_id
+				WHERE c.id = ? AND co.instructor_id = ?
+		)
+	`, classID, userID, classID, userID, classID, userID).Scan(exists)
+}
+
+// IsUserRelatedToClass (F-8, issue #58 review vòng 2): gộp GV lớp / học sinh lớp / instructor
+// khoá chứa lớp vào MỘT truy vấn thay vì 3 lời gọi riêng (TeacherClassExists + StudentClassExists
+// + course.GetByID) — dùng cho đường kiểm quyền NÓNG (EnsureSessionMember, chạy trên mỗi tin
+// nhắn chat/sự kiện bảng trắng), nơi chỉ cần biết CÓ/KHÔNG, không cần phân biệt vai trò chính
+// xác như resolveJoinRole.
+func (r *ClassRepository) IsUserRelatedToClass(ctx context.Context, classID, userID uuid.UUID) (bool, error) {
+	var exists bool
+	tx := buildIsUserRelatedToClassQuery(r.db.WithContext(ctx), classID, userID, &exists)
+	return exists, tx.Error
 }
 
 // Teacher-Class

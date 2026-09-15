@@ -78,8 +78,10 @@ func New() (*App, error) {
 	services := InitServices(resources, repos, notifier)
 
 	// Register tasks sau khi có services để có thể inject livestream starter
+	// V3-6 (issue #58): Start() nay doi actorID (nguoi goi). Task auto-start chay nen khong co
+	// nguoi goi nen dung StartAsSystem — xem comment tai LivestreamService.StartAsSystem.
 	livestreamStarter := func(ctx context.Context, sessionID uuid.UUID) error {
-		_, err := services.Livestream.Start(ctx, sessionID)
+		_, err := services.Livestream.StartAsSystem(ctx, sessionID)
 		return err
 	}
 	asynq_queue.RegisterTasks(resources.Queue, notifier, repos.Class, repos.Enrollment, resources.Redis, livestreamStarter)
