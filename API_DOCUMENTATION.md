@@ -309,6 +309,15 @@
 - `scheduled_at` - Giờ livestream bắt đầu
 - `end_at` - Giờ livestream kết thúc
 
+**Bảo mật (issue #58, vá 2026-09-15):** cả 5 endpoint (bao gồm
+`GET /api/courses/:course_id/classes/:id/contents` = `GetContentScheduleForClass`) giờ đòi hỏi
+người gọi là **GV của lớp / instructor của khoá chứa lớp / admin hệ thống** cho các thao tác
+GHI (gán/sửa/xoá lịch); riêng 2 endpoint ĐỌC
+(`GetClassesForContent`, `GetContentScheduleForClass`) cho phép thêm **học sinh của lớp** đọc
+lịch của chính lớp mình. Người không thoả điều kiện nhận **403**. Trước đây nhóm này chỉ có
+`auth` (đăng nhập), không kiểm quyền gì — bất kỳ user nào cũng gán/sửa/xoá được lịch của lớp
+bất kỳ, hoặc đọc được lịch/tên lớp của lớp bất kỳ.
+
 ---
 
 ### 6. Attendance
@@ -483,6 +492,20 @@ quiz, để client phân biệt được "bài rỗng" với "route không tồn
 - `started_at` - Giờ thực tế bắt đầu
 - `ended_at` - Giờ kết thúc
 
+**Bảo mật (issue #58, vá 2026-09-15):** danh tính người gọi cho MỌI endpoint ở trên lấy từ
+access token (`extractUserID`), không bao giờ từ body/URL. Các trường sau đã bị XÓA khỏi
+request body và bị Fiber bỏ qua lặng lẽ nếu client vẫn gửi — **không phải lỗi, không đổi status
+code**, nhưng client không nên gửi nữa:
+- `POST /api/livestream/:id/join` — body không còn `user_id`, `role`. Vai trò (`teacher`/
+  `student`) được server tự suy ra từ quan hệ thật (host/GV lớp/instructor khoá/học sinh đã
+  enroll); người không có quan hệ gì với phiên nhận **403**.
+- `POST /api/livestream/:id/screenshare/start|stop` — body không còn `user_id`.
+
+Các endpoint quản trị phiên (`Update`, `Delete`, `Start`, `End`, `mute`, `kick`,
+`lock/unlock-whiteboard`, `screenshare/*`) giờ trả **403** nếu người gọi không phải host của
+phiên và cũng không phải GV của lớp/instructor của khoá chứa lớp đó — trước đây không kiểm gì.
+`kick` còn chặn riêng trường hợp kick chính host (**403**).
+
 ---
 
 ### 13. Chat & Whiteboard
@@ -497,6 +520,22 @@ quiz, để client phân biệt được "bài rỗng" với "route không tồn
 | POST | `/api/chat/:id/pin` | PinMessage | Ghim tin nhắn |
 | POST | `/api/chat/:id/unpin` | UnPinMessage | Bỏ ghim tin nhắn |
 
+**Bảo mật (issue #58, vá 2026-09-15):**
+- `POST /api/chat/send` — body không còn `user_id` (đã xóa khỏi `SendChatMessageDTO`); người
+  gửi lấy từ token. Người gọi phải là **thành viên của phiên** (host/GV lớp/instructor
+  khoá/học sinh đã enroll) — không thì **403**. Trường `user_id` cũ trong body bị bỏ qua lặng
+  lẽ nếu client vẫn gửi.
+- `GET /api/chat/:sessionId/messages` — giờ đòi hỏi người gọi là thành viên phiên (**403** nếu
+  không) — trước đây bất kỳ user đăng nhập nào cũng đọc được chat của phiên bất kỳ.
+- `DELETE /api/chat/:id` — **đổi hợp đồng**: message id lấy từ URL `:id` (không còn từ body
+  `message_id`), người xóa lấy từ token (không còn từ body `deleted_by`). Cho phép nếu là
+  **tác giả tin nhắn** hoặc **người quản trị phiên** (host/GV lớp/instructor khoá); người lạ
+  nhận 403. *Ghi chú:* trước bản vá này, endpoint luôn trả 400 khi gọi không kèm body đúng
+  format — nếu web hiện đang gọi `DELETE /chat/:messageId` không kèm body (đúng như
+  `chat.service.ts` đang làm) thì đây là một cải thiện, không phải thay đổi hành vi cần sửa.
+- `POST /api/chat/:id/pin` và `/unpin` — giờ là thao tác **kiểm duyệt**, chỉ người quản trị
+  phiên mới gọi được (**403** với người khác) — trước đây không kiểm gì.
+
 #### 13.2 Whiteboard
 
 | Method | Path | Handler | Mô tả |
@@ -504,6 +543,11 @@ quiz, để client phân biệt được "bài rỗng" với "route không tồn
 | GET | `/api/whiteboard/:sessionId/snapshot` | GetSnapshot | Lấy snapshot |
 | POST | `/api/whiteboard/:sessionId/snapshot` | SaveSnapshot | Lưu snapshot |
 | POST | `/api/whiteboard/:sessionId/event` | BroadcastEvent | Broadcast event |
+
+**Bảo mật (issue #58, vá 2026-09-15):** cả 3 endpoint giờ đòi hỏi người gọi là **thành viên của
+phiên** (host/GV lớp/instructor khoá/học sinh đã enroll) — trả **403** nếu không. Trước đây bất
+kỳ user đăng nhập nào cũng đọc/ghi/phát được bảng trắng của bất kỳ phiên nào. Không đổi
+path/body field nào — chỉ thêm kiểm quyền.
 
 ---
 

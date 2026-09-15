@@ -42,6 +42,12 @@ type LivestreamServiceInterface interface {
 	// StartScreenShare/StopScreenShare: actorID la nguoi goi.
 	StartScreenShare(ctx context.Context, actorID, sessionID uuid.UUID) error
 	StopScreenShare(ctx context.Context, actorID, sessionID uuid.UUID) error
+	// EnsureSessionMember/EnsureSessionManage (V3-6, issue #58): loi UY QUYEN dung chung cho
+	// ChatService/WhiteboardService — hai module nay cung phai tra loi "nguoi nay co quan he gi
+	// voi phien khong" nhung khong nen tu lam lai phep kiem host/GV lop/instructor/hoc sinh da co
+	// san o day (resolveJoinRole/canManageSession). Xem tung ham de biet muc kiem khac nhau the nao.
+	EnsureSessionMember(ctx context.Context, sessionID, userID uuid.UUID) error
+	EnsureSessionManage(ctx context.Context, sessionID, userID uuid.UUID) error
 }
 
 type LivestreamService struct {
@@ -481,6 +487,29 @@ func (s *LivestreamService) resolveJoinRole(ctx context.Context, userID uuid.UUI
 	}
 
 	return "", ErrNotSessionMember
+}
+
+// EnsureSessionMember (V3-6, issue #58): tra ErrNotSessionMember (qua resolveJoinRole) neu userID
+// khong co quan he gi voi phien — dung cho doc/ghi chat va bang trong mot phien (chi thanh vien
+// phien do moi duoc tham gia), day la muc kiem THAP hon EnsureSessionManage (khong doi hoi phai
+// la nguoi quan tri). Bo qua gia tri role tra ve vi caller o day chi can biet "co duoc vao khong".
+func (s *LivestreamService) EnsureSessionMember(ctx context.Context, sessionID, userID uuid.UUID) error {
+	session, err := s.repo.GetByID(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session == nil {
+		return errors.New("session not found")
+	}
+	_, err = s.resolveJoinRole(ctx, userID, session)
+	return err
+}
+
+// EnsureSessionManage (V3-6, issue #58): uy quyen cho canManageSession (host/GV lop/instructor
+// khoa) — dung cho thao tac kiem duyet cua ChatService (ghim/xoa tin nhan cua NGUOI KHAC).
+func (s *LivestreamService) EnsureSessionManage(ctx context.Context, sessionID, userID uuid.UUID) error {
+	_, err := s.getManageableSession(ctx, userID, sessionID)
+	return err
 }
 
 func (s *LivestreamService) Join(ctx context.Context, sessionID, userID uuid.UUID, req dto.JoinLivestreamDTO) (*dto.ParticipantResponseDTO, error) {

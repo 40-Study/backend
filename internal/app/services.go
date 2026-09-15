@@ -206,12 +206,16 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		repos.Analytics,
 		repos.Livestream,
 		livekitSvc,
+		// V3-6 (issue #58): dung livestreamSvc.EnsureSessionMember/EnsureSessionManage lam nguon
+		// su that duy nhat cho quyen thanh vien/quan tri phien — khong lam lai phep kiem nay.
+		livestreamSvc,
 	)
 
 	whiteboardSvc := service.NewWhiteboardService(
 		repos.Whiteboard,
 		repos.Livestream,
 		resources.Redis,
+		livestreamSvc,
 	)
 
 	analyticsSvc := service.NewAnalyticsService(

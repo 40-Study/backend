@@ -2,9 +2,11 @@ package dto
 
 import "github.com/google/uuid"
 
+// SendChatMessageDTO (V3-6, issue #58): UserID da bi xoa khoi DTO — nguoi gui la nguoi goi API
+// THAT SU, lay tu access token (handler.extractUserID), khong con lay tu body. Truoc day client
+// tu khai `user_id` bat ky, nen gui duoc tin nhan mang danh nguoi khac.
 type SendChatMessageDTO struct {
 	SessionID string `json:"session_id" validate:"required,uuid"`
-	UserID    string `json:"user_id" validate:"required,uuid"`
 	Message   string `json:"message" validate:"required,max=5000"`
 }
 
@@ -26,11 +28,8 @@ type ChatMessageListDTO struct {
 	PageSize int                      `json:"page_size"`
 }
 
-type DeleteChatMessageDTO struct {
-	MessageID string `json:"message_id" validate:"required,uuid"`
-	DeletedBy string `json:"deleted_by" validate:"required,uuid"`
-}
-
+// PinChatMessageDTO: khong con noi nao dung (Pin/UnPinMessage lay message id tu URL param, giong
+// PATCH/DELETE khac trong nhom nay) — giu lai vi khong thuoc pham vi finding nay.
 type PinChatMessageDTO struct {
 	MessageID string `json:"message_id" validate:"required,uuid"`
 }

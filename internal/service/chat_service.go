@@ -15,11 +15,19 @@ import (
 )
 
 type ChatServiceInterface interface {
-	SendMessage(ctx context.Context, req dto.SendChatMessageDTO) (*model.ChatMessage, error)
-	GetMessages(ctx context.Context, sessionID uuid.UUID, page, pageSize int) (*dto.ChatMessageListDTO, error)
-	DeleteMessage(ctx context.Context, messageID, deletedBy uuid.UUID) error
-	PinMessage(ctx context.Context, messageID uuid.UUID) error
-	UnPinMessage(ctx context.Context, messageID uuid.UUID) error
+	// SendMessage/GetMessages: userID la nguoi goi THAT SU (access token) — ca hai deu phai la
+	// THANH VIEN cua phien (EnsureSessionMember) truoc khi doc/ghi chat cua phien do. Truoc day
+	// khong kiem gi: bat ky user dang nhap nao cung doc duoc chat cua phien bat ky, va SendMessage
+	// nhan `user_id` tu body nen gui duoc tin nhan mao danh nguoi khac (V3-6, issue #58).
+	SendMessage(ctx context.Context, userID uuid.UUID, req dto.SendChatMessageDTO) (*model.ChatMessage, error)
+	GetMessages(ctx context.Context, userID, sessionID uuid.UUID, page, pageSize int) (*dto.ChatMessageListDTO, error)
+	// DeleteMessage/PinMessage/UnPinMessage: actorID la nguoi goi THAT SU. Xoa cho phep TAC GIA
+	// tin nhan HOAC nguoi quan tri phien (EnsureSessionManage); ghim/bo ghim la thao tac kiem
+	// duyet nen chi nguoi quan tri phien. Truoc day DeleteMessage nhan ca `message_id` lan
+	// `deleted_by` tu body (deleted_by tuy y client khai), Pin/UnPin khong kiem gi ca.
+	DeleteMessage(ctx context.Context, actorID, messageID uuid.UUID) error
+	PinMessage(ctx context.Context, actorID, messageID uuid.UUID) error
+	UnPinMessage(ctx context.Context, actorID, messageID uuid.UUID) error
 }
 
 type ChatService struct {
@@ -27,6 +35,10 @@ type ChatService struct {
 	analyticsRepo  repository.AnalyticsRepositoryInterface
 	livestreamRepo repository.LivestreamRepositoryInterface
 	livekitSvc     LivekitServiceInterface
+	// livestreamSvc (V3-6, issue #58): nguon su that duy nhat cho "nguoi nay co quan he gi voi
+	// phien khong" (EnsureSessionMember/EnsureSessionManage) — khong lam lai phep kiem
+	// host/GV lop/instructor/hoc sinh da co san trong LivestreamService.
+	livestreamSvc LivestreamServiceInterface
 }
 
 func NewChatService(
@@ -34,24 +46,27 @@ func NewChatService(
 	analyticsRepo repository.AnalyticsRepositoryInterface,
 	livestreamRepo repository.LivestreamRepositoryInterface,
 	livekitSvc LivekitServiceInterface,
+	livestreamSvc LivestreamServiceInterface,
 ) *ChatService {
 	return &ChatService{
 		repo:           repo,
 		analyticsRepo:  analyticsRepo,
 		livestreamRepo: livestreamRepo,
 		livekitSvc:     livekitSvc,
+		livestreamSvc:  livestreamSvc,
 	}
 }
 
-func (s *ChatService) SendMessage(ctx context.Context, req dto.SendChatMessageDTO) (*model.ChatMessage, error) {
+func (s *ChatService) SendMessage(ctx context.Context, userID uuid.UUID, req dto.SendChatMessageDTO) (*model.ChatMessage, error) {
 	sessionID, err := uuid.Parse(req.SessionID)
 	if err != nil {
 		return nil, errors.New("invalid session_id")
 	}
 
-	userID, err := uuid.Parse(req.UserID)
-	if err != nil {
-		return nil, errors.New("invalid user_id")
+	// V3-6 (issue #58): chi thanh vien phien (host/GV lop/instructor khoa/hoc sinh da enroll) moi
+	// duoc gui tin nhan vao phien do.
+	if err := s.livestreamSvc.EnsureSessionMember(ctx, sessionID, userID); err != nil {
+		return nil, err
 	}
 
 	message := &model.ChatMessage{
@@ -102,7 +117,13 @@ func (s *ChatService) SendMessage(ctx context.Context, req dto.SendChatMessageDT
 	return saved, nil
 }
 
-func (s *ChatService) GetMessages(ctx context.Context, sessionID uuid.UUID, page, pageSize int) (*dto.ChatMessageListDTO, error) {
+func (s *ChatService) GetMessages(ctx context.Context, userID, sessionID uuid.UUID, page, pageSize int) (*dto.ChatMessageListDTO, error) {
+	// V3-6 (issue #58): chi thanh vien phien moi doc duoc lich su chat cua phien do — truoc day
+	// bat ky user dang nhap nao cung doc duoc chat cua bat ky lop nao.
+	if err := s.livestreamSvc.EnsureSessionMember(ctx, sessionID, userID); err != nil {
+		return nil, err
+	}
+
 	messages, total, err := s.repo.GetBySession(ctx, sessionID, page, pageSize)
 	if err != nil {
 		return nil, err
@@ -121,7 +142,10 @@ func (s *ChatService) GetMessages(ctx context.Context, sessionID uuid.UUID, page
 	}, nil
 }
 
-func (s *ChatService) DeleteMessage(ctx context.Context, messageID, deletedBy uuid.UUID) error {
+// DeleteMessage (V3-6, issue #58): actorID la nguoi goi that su. Cho phep XOA neu la TAC GIA tin
+// nhan, hoac nguoi QUAN TRI duoc phien (host/GV lop/instructor khoa). Truoc day `deleted_by` lay
+// tu body — client tu khai bat ky UUID nao cung duoc ghi nhan la nguoi xoa, khong kiem quyen gi.
+func (s *ChatService) DeleteMessage(ctx context.Context, actorID, messageID uuid.UUID) error {
 	message, err := s.repo.GetByID(ctx, messageID)
 	if err != nil {
 		return err
@@ -130,15 +154,43 @@ func (s *ChatService) DeleteMessage(ctx context.Context, messageID, deletedBy uu
 		return errors.New("message not found")
 	}
 
-	return s.repo.SoftDelete(ctx, messageID, deletedBy)
+	if message.UserID != actorID {
+		if err := s.livestreamSvc.EnsureSessionManage(ctx, message.SessionID, actorID); err != nil {
+			return err
+		}
+	}
+
+	return s.repo.SoftDelete(ctx, messageID, actorID)
 }
 
-func (s *ChatService) PinMessage(ctx context.Context, messageID uuid.UUID) error {
+// PinMessage/UnPinMessage (V3-6, issue #58): thao tac KIEM DUYET — chi nguoi quan tri duoc phien
+// (host/GV lop/instructor khoa) moi ghim/bo ghim tin nhan. Truoc day khong kiem gi ca: bat ky user
+// dang nhap nao cung ghim duoc tin nhan cua bat ky phien nao.
+func (s *ChatService) PinMessage(ctx context.Context, actorID, messageID uuid.UUID) error {
+	message, err := s.repo.GetByID(ctx, messageID)
+	if err != nil {
+		return err
+	}
+	if message == nil {
+		return errors.New("message not found")
+	}
+	if err := s.livestreamSvc.EnsureSessionManage(ctx, message.SessionID, actorID); err != nil {
+		return err
+	}
 	return s.repo.Pin(ctx, messageID)
 }
 
-func (s *ChatService) UnPinMessage(ctx context.Context, messageID uuid.UUID) error {
-
+func (s *ChatService) UnPinMessage(ctx context.Context, actorID, messageID uuid.UUID) error {
+	message, err := s.repo.GetByID(ctx, messageID)
+	if err != nil {
+		return err
+	}
+	if message == nil {
+		return errors.New("message not found")
+	}
+	if err := s.livestreamSvc.EnsureSessionManage(ctx, message.SessionID, actorID); err != nil {
+		return err
+	}
 	return s.repo.UnPin(ctx, messageID)
 }
 

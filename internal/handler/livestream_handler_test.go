@@ -128,6 +128,14 @@ func (s *stubLivestreamService) StopScreenShare(ctx context.Context, actorID, se
 	s.gotActorID, s.gotScreenShareID = actorID, sessionID
 	return s.authzErr
 }
+func (s *stubLivestreamService) EnsureSessionMember(ctx context.Context, sessionID, userID uuid.UUID) error {
+	s.gotActorID, s.gotSessionID = userID, sessionID
+	return s.authzErr
+}
+func (s *stubLivestreamService) EnsureSessionManage(ctx context.Context, sessionID, userID uuid.UUID) error {
+	s.gotActorID, s.gotSessionID = userID, sessionID
+	return s.authzErr
+}
 
 // TestLivestreamCreate_BoQuaHostIDTuBody (review 260915, tu PR web #16): client gui them
 // "host_id" trong body (kich ban tan cong: doan/lay UUID cua mot user KHAC, vd giao vien, roi tu
