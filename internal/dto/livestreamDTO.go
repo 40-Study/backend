@@ -16,7 +16,11 @@ type CreateLivestreamDTO struct {
 	LessonContentID string `json:"lesson_content_id" validate:"omitempty,uuid"`
 	MaxViewers      int64  `json:"max_viewers"`
 	IsRecorded      bool   `json:"is_recorded"`
-	ScheduledAt     string `json:"scheduled_at"`
+	// N9 (review vong 2, 260915): truoc day livestream_service.go nuot loi parse RFC3339 cua
+	// truong nay (`if err == nil { session.ScheduledAt = &scheduledTime }`) — client go sai dinh
+	// dang van nhan 200, phien duoc tao KHONG lich, KHONG enqueue reminder, ma khong he biet.
+	// Validate ngay o DTO de handler tra 400 truoc khi toi service, thay vi im lang bo qua.
+	ScheduledAt string `json:"scheduled_at" validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
 }
 
 type UpdateLivestreamDTO struct {

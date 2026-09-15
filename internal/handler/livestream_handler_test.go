@@ -203,3 +203,63 @@ func TestLivestreamCreate_ForbiddenKhiKhongPhaiGiaoVienLop(t *testing.T) {
 		t.Fatalf("status = %d, muon 403 khi service tra ErrNotClassTeacher", resp.StatusCode)
 	}
 }
+
+// TestLivestreamCreate_ScheduledAtSaiDinhDang_BiTuChoi400 (N9, review vong 2 260915): truoc day
+// livestream_service.go nuot loi parse RFC3339 cua scheduled_at (`if err == nil { ... }`) — client
+// go sai dinh dang van nhan 201, phien duoc tao KHONG lich va KHONG enqueue reminder ma khong biet.
+// Sau khi them validate tag vao DTO, handler phai chan 400 TRUOC KHI cham service.
+func TestLivestreamCreate_ScheduledAtSaiDinhDang_BiTuChoi400(t *testing.T) {
+	svc := &stubLivestreamService{}
+	h := NewLivestreamHandler(svc)
+
+	app := fiber.New()
+	app.Post("/livestream", func(c *fiber.Ctx) error {
+		c.Locals("user_id", uuid.New())
+		return c.Next()
+	}, h.Create)
+
+	body := `{"title":"Buoi hoc Toan","class_id":"` + uuid.New().String() +
+		`","scheduled_at":"khong-phai-RFC3339"}`
+	req := httptest.NewRequest("POST", "/livestream", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test loi: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Fatalf("status = %d, muon 400 (scheduled_at sai dinh dang phai bi chan truoc khi cham service)", resp.StatusCode)
+	}
+	if svc.called != 0 {
+		t.Errorf("service.Create bi goi %d lan du scheduled_at khong hop le — phien co the da duoc tao ma khong co lich/reminder", svc.called)
+	}
+}
+
+// TestLivestreamCreate_ScheduledAtHopLeRFC3339_DuocChapNhan: chot chan hoi quy — mot gia tri
+// RFC3339 hop le van phai qua duoc validate va toi service, khong bi tag moi chan oan.
+func TestLivestreamCreate_ScheduledAtHopLeRFC3339_DuocChapNhan(t *testing.T) {
+	svc := &stubLivestreamService{}
+	h := NewLivestreamHandler(svc)
+
+	app := fiber.New()
+	app.Post("/livestream", func(c *fiber.Ctx) error {
+		c.Locals("user_id", uuid.New())
+		return c.Next()
+	}, h.Create)
+
+	body := `{"title":"Buoi hoc Toan","class_id":"` + uuid.New().String() +
+		`","scheduled_at":"2026-12-01T10:00:00Z"}`
+	req := httptest.NewRequest("POST", "/livestream", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test loi: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusCreated {
+		t.Fatalf("status = %d, muon 201 (scheduled_at hop le RFC3339)", resp.StatusCode)
+	}
+	if svc.called != 1 {
+		t.Errorf("service.Create duoc goi %d lan, muon 1", svc.called)
+	}
+}
