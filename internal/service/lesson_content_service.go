@@ -19,7 +19,9 @@ type LessonContentServiceInterface interface {
 	// GetContentsByLessonID (Phase 1 §2): userID dung de chan noi dung cua bai dang bi khoa —
 	// tra ve ErrLessonLocked (handler anh xa sang 403 {message:"LESSON_LOCKED"}) khi bai chua
 	// mo doi voi CHINH nguoi dang goi. Contract yeu cau chan ca tang API, khong chi an o UI.
-	GetContentsByLessonID(ctx context.Context, lessonID, userID uuid.UUID) ([]dto.LessonContentResponseDTO, error)
+	// isAdmin (CAO-4, review vòng 2): giảng viên sở hữu khóa học chứa bài này, hoặc admin hệ
+	// thống, KHÔNG BAO GIỜ bị khoá (xem BypassLock tại lesson_lock.go).
+	GetContentsByLessonID(ctx context.Context, lessonID, userID uuid.UUID, isAdmin bool) ([]dto.LessonContentResponseDTO, error)
 	// ReorderContents (M2-03, review vòng 3): thêm actorUserID/isAdmin — trước đây hàm này chỉ
 	// validateLesson (kiểm TỒN TẠI), không kiểm CHỦ SỞ HỮU, khác với mọi CRUD content khác
 	// (Create/Update/Delete đều gọi requireContentLessonOwnerOrAdmin/requireLessonCourseOwnerOrAdmin).
@@ -125,7 +127,7 @@ func (s *LessonContentService) GetContentByID(ctx context.Context, contentID uui
 	return s.toContentResponseDTO(content), nil
 }
 
-func (s *LessonContentService) GetContentsByLessonID(ctx context.Context, lessonID, userID uuid.UUID) ([]dto.LessonContentResponseDTO, error) {
+func (s *LessonContentService) GetContentsByLessonID(ctx context.Context, lessonID, userID uuid.UUID, isAdmin bool) ([]dto.LessonContentResponseDTO, error) {
 	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
 	if err != nil {
 		return nil, err
@@ -136,6 +138,9 @@ func (s *LessonContentService) GetContentsByLessonID(ctx context.Context, lesson
 
 	// Phase 1 §2: chan noi dung bai bi khoa o CHINH tang API — contract ghi ro "khong chi chan
 	// UI". Bai preview/mien phi bo qua nhanh nay (ResolveLessonLock tu tra locked=false).
+	// CAO-4: chu so huu khoa hoc / admin duoc bypass qua BypassLock (gatherLessonLockInput),
+	// nen van phai chay het nhanh nay (khong short-circuit rieng o day) de logic bypass nam
+	// DUY NHAT o mot cho (lesson_lock.go), khong lech voi SectionService/LessonService.
 	if !lesson.IsPreview {
 		courseID, err := s.enrollmentRepo.GetCourseIDByLessonID(ctx, lessonID)
 		if err != nil {
@@ -146,7 +151,8 @@ func (s *LessonContentService) GetContentsByLessonID(ctx context.Context, lesson
 			return nil, err
 		}
 		sequential := course != nil && course.Sequential
-		lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, courseID, sequential)
+		bypass := isAdmin || (course != nil && course.InstructorID == userID)
+		lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, courseID, sequential, bypass)
 		if err != nil {
 			return nil, err
 		}

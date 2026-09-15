@@ -18,14 +18,17 @@ import (
 type QuizServiceInterface interface {
 	CreateQuiz(ctx context.Context, req dto.CreateQuizDTO) (*dto.QuizResponseDTO, error)
 	GetAllQuizzes(ctx context.Context, lessonID, courseID, sessionID *uuid.UUID, page, pageSize int) (*dto.QuizListDTO, error)
-	GetQuizByID(ctx context.Context, id uuid.UUID) (*dto.QuizDetailDTO, error)
+	// GetQuizByID (B-3, review vòng 2): userID/isAdmin quyết định is_correct/explanation có bị
+	// giấu hay không — xem canViewQuizAnswerKey.
+	GetQuizByID(ctx context.Context, id, userID uuid.UUID, isAdmin bool) (*dto.QuizDetailDTO, error)
 	UpdateQuiz(ctx context.Context, id uuid.UUID, req dto.UpdateQuizDTO) (*dto.QuizResponseDTO, error)
 	DeleteQuiz(ctx context.Context, id uuid.UUID) error
 	DuplicateQuiz(ctx context.Context, id uuid.UUID) (*dto.QuizResponseDTO, error)
 
 	// Questions
 	CreateQuestion(ctx context.Context, quizID uuid.UUID, req dto.CreateQuestionDTO) (*dto.QuestionResponseDTO, error)
-	GetQuestionsByQuiz(ctx context.Context, quizID uuid.UUID) ([]dto.QuestionResponseDTO, error)
+	// GetQuestionsByQuiz (B-3, review vòng 2): userID/isAdmin — xem GetQuizByID.
+	GetQuestionsByQuiz(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) ([]dto.QuestionResponseDTO, error)
 	UpdateQuestion(ctx context.Context, quizID, questionID uuid.UUID, req dto.UpdateQuestionDTO) (*dto.QuestionResponseDTO, error)
 	DeleteQuestion(ctx context.Context, quizID, questionID uuid.UUID) error
 	ReorderQuestions(ctx context.Context, quizID uuid.UUID, req dto.ReorderQuestionsDTO) error
@@ -49,10 +52,97 @@ type QuizServiceInterface interface {
 type QuizService struct {
 	repo  repository.QuizRepositoryInterface
 	redis *redis.Client
+	// courseRepo/sectionRepo/lessonRepo/livestreamRepo (B-3, review vòng 2): dùng để lần từ
+	// quiz -> khoá học -> instructor, tính "ai được xem đáp án đúng trước khi nộp bài".
+	courseRepo     repository.CourseRepositoryInterface
+	sectionRepo    repository.SectionRepositoryInterface
+	lessonRepo     repository.LessonRepositoryInterface
+	livestreamRepo repository.LivestreamRepositoryInterface
 }
 
-func NewQuizService(repo repository.QuizRepositoryInterface, redis *redis.Client) *QuizService {
-	return &QuizService{repo: repo, redis: redis}
+func NewQuizService(
+	repo repository.QuizRepositoryInterface,
+	redis *redis.Client,
+	courseRepo repository.CourseRepositoryInterface,
+	sectionRepo repository.SectionRepositoryInterface,
+	lessonRepo repository.LessonRepositoryInterface,
+	livestreamRepo repository.LivestreamRepositoryInterface,
+) *QuizService {
+	return &QuizService{
+		repo:           repo,
+		redis:          redis,
+		courseRepo:     courseRepo,
+		sectionRepo:    sectionRepo,
+		lessonRepo:     lessonRepo,
+		livestreamRepo: livestreamRepo,
+	}
+}
+
+// canViewQuizAnswerKey (B-3, review vòng 2): trả true khi userID là instructor sở hữu khoá học
+// chứa quiz này, hoặc isAdmin — ba đường quiz có thể gắn vào (CourseID/LessonID/SessionID, xem
+// model.Quiz), thử LẦN LƯỢT, dừng ở đường ĐẦU TIÊN xác định được course. Quiz không lần ra được
+// course nào (dữ liệu hỏng/quiz mồ côi) mặc định GIẤU — fail-closed, không mở rộng quyền khi
+// không chắc chắn.
+func (s *QuizService) canViewQuizAnswerKey(ctx context.Context, quiz *model.Quiz, userID uuid.UUID, isAdmin bool) (bool, error) {
+	if isAdmin {
+		return true, nil
+	}
+
+	var courseID *uuid.UUID
+	switch {
+	case quiz.CourseID != nil:
+		courseID = quiz.CourseID
+	case quiz.LessonID != nil:
+		lesson, err := s.lessonRepo.GetByID(ctx, *quiz.LessonID)
+		if err != nil {
+			return false, err
+		}
+		if lesson != nil {
+			section, err := s.sectionRepo.GetByID(ctx, lesson.SectionID)
+			if err != nil {
+				return false, err
+			}
+			if section != nil {
+				courseID = &section.CourseID
+			}
+		}
+	case quiz.SessionID != nil:
+		session, err := s.livestreamRepo.GetByID(ctx, *quiz.SessionID)
+		if err != nil {
+			return false, err
+		}
+		if session != nil {
+			if session.HostID == userID {
+				// Host cua chinh phien live nay — khong can tra courseRepo, quyet dinh luon.
+				return true, nil
+			}
+			courseID = session.CourseID
+		}
+	}
+
+	if courseID == nil {
+		return false, nil
+	}
+	course, err := s.courseRepo.GetByID(ctx, *courseID)
+	if err != nil {
+		return false, err
+	}
+	return course != nil && course.InstructorID == userID, nil
+}
+
+// stripAnswerKey (B-3, review vòng 2): xoá is_correct/explanation khỏi MỘT bản sao của
+// QuestionResponseDTO trước khi trả cho người xem không đủ quyền — gọi SAU khi map từ model,
+// không sửa dữ liệu cache (xem GetQuizByID: cache lưu bản ĐẦY ĐỦ, strip áp dụng trên response
+// cho TỪNG người xem, để một request của instructor sau đó vẫn đọc được cache đầy đủ).
+func stripAnswerKey(q *dto.QuestionResponseDTO) dto.QuestionResponseDTO {
+	out := *q
+	out.Explanation = nil
+	out.Answers = make([]dto.AnswerResponseDTO, len(q.Answers))
+	for i, a := range q.Answers {
+		a.IsCorrect = nil
+		out.Answers[i] = a
+	}
+	return out
 }
 
 const (
@@ -150,42 +240,78 @@ func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, ses
 	return &dto.QuizListDTO{Data: data, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
-func (s *QuizService) GetQuizByID(ctx context.Context, id uuid.UUID) (*dto.QuizDetailDTO, error) {
-	// Check cache
+func (s *QuizService) GetQuizByID(ctx context.Context, id, userID uuid.UUID, isAdmin bool) (*dto.QuizDetailDTO, error) {
+	var quiz *model.Quiz
+	var result *dto.QuizDetailDTO
+
+	// Check cache — B-3 (review vòng 2): cache CHỨA BẢN ĐẦY ĐỦ (kể cả is_correct/explanation),
+	// chưa lọc theo người xem. Strip luôn diễn ra SAU đoạn cache/DB này, trên một BẢN SAO, nên
+	// một request của instructor sau đó vẫn đọc được đúng dữ liệu đầy đủ từ cache.
 	if s.redis != nil {
 		cacheKey := quizCachePrefix + id.String()
 		cached, err := s.redis.Get(ctx, cacheKey).Result()
 		if err == nil {
-			var result dto.QuizDetailDTO
-			if json.Unmarshal([]byte(cached), &result) == nil {
-				return &result, nil
+			var cachedResult dto.QuizDetailDTO
+			if json.Unmarshal([]byte(cached), &cachedResult) == nil {
+				result = &cachedResult
 			}
 		}
 	}
 
-	quiz, err := s.repo.GetQuizWithQuestions(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if quiz == nil {
-		return nil, errors.New("quiz not found")
-	}
-
-	questions := make([]dto.QuestionResponseDTO, len(quiz.Questions))
-	for i, q := range quiz.Questions {
-		questions[i] = *s.mapQuestionToDTO(&q)
-	}
-
-	result := &dto.QuizDetailDTO{
-		QuizResponseDTO: *s.mapQuizToDTO(quiz, len(quiz.Questions)),
-		Questions:       questions,
-	}
-
-	// Cache
-	if s.redis != nil {
-		if data, err := json.Marshal(result); err == nil {
-			s.redis.Set(ctx, quizCachePrefix+id.String(), data, quizCacheTTL)
+	if result == nil {
+		var err error
+		quiz, err = s.repo.GetQuizWithQuestions(ctx, id)
+		if err != nil {
+			return nil, err
 		}
+		if quiz == nil {
+			return nil, errors.New("quiz not found")
+		}
+
+		questions := make([]dto.QuestionResponseDTO, len(quiz.Questions))
+		for i, q := range quiz.Questions {
+			questions[i] = *s.mapQuestionToDTO(&q)
+		}
+
+		result = &dto.QuizDetailDTO{
+			QuizResponseDTO: *s.mapQuizToDTO(quiz, len(quiz.Questions)),
+			Questions:       questions,
+		}
+
+		// Cache — luôn cache bản ĐẦY ĐỦ (chưa strip).
+		if s.redis != nil {
+			if data, err := json.Marshal(result); err == nil {
+				s.redis.Set(ctx, quizCachePrefix+id.String(), data, quizCacheTTL)
+			}
+		}
+	} else {
+		// Đường cache-hit không nạp lại model.Quiz — cần nạp riêng để canViewQuizAnswerKey lần
+		// ra course (CourseID/LessonID/SessionID không đổi theo cache nên tra DB nhẹ, không phá
+		// mục đích cache — mục đích cache ở đây là tránh JOIN questions+answers, không phải
+		// tránh MỌI truy vấn).
+		fetched, err := s.repo.GetQuizByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		quiz = fetched
+	}
+
+	canView := isAdmin
+	if quiz != nil {
+		var err error
+		canView, err = s.canViewQuizAnswerKey(ctx, quiz, userID, isAdmin)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !canView {
+		strippedQuestions := make([]dto.QuestionResponseDTO, len(result.Questions))
+		for i, q := range result.Questions {
+			strippedQuestions[i] = stripAnswerKey(&q)
+		}
+		strippedResult := *result
+		strippedResult.Questions = strippedQuestions
+		return &strippedResult, nil
 	}
 
 	return result, nil
@@ -364,7 +490,19 @@ func (s *QuizService) CreateQuestion(ctx context.Context, quizID uuid.UUID, req 
 	return s.mapQuestionToDTO(question), nil
 }
 
-func (s *QuizService) GetQuestionsByQuiz(ctx context.Context, quizID uuid.UUID) ([]dto.QuestionResponseDTO, error) {
+func (s *QuizService) GetQuestionsByQuiz(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) ([]dto.QuestionResponseDTO, error) {
+	quiz, err := s.repo.GetQuizByID(ctx, quizID)
+	if err != nil {
+		return nil, err
+	}
+	if quiz == nil {
+		return nil, errors.New("quiz not found")
+	}
+	canView, err := s.canViewQuizAnswerKey(ctx, quiz, userID, isAdmin)
+	if err != nil {
+		return nil, err
+	}
+
 	questions, err := s.repo.GetQuestionsByQuizID(ctx, quizID)
 	if err != nil {
 		return nil, err
@@ -372,7 +510,11 @@ func (s *QuizService) GetQuestionsByQuiz(ctx context.Context, quizID uuid.UUID) 
 
 	result := make([]dto.QuestionResponseDTO, len(questions))
 	for i, q := range questions {
-		result[i] = *s.mapQuestionToDTO(&q)
+		mapped := *s.mapQuestionToDTO(&q)
+		if !canView {
+			mapped = stripAnswerKey(&mapped)
+		}
+		result[i] = mapped
 	}
 	return result, nil
 }
@@ -547,21 +689,46 @@ func (s *QuizService) StartQuiz(ctx context.Context, quizID, userID uuid.UUID, r
 }
 
 func (s *QuizService) SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, req dto.SubmitQuizDTO) (*dto.QuizAttemptResponseDTO, error) {
-	// Find the latest in-progress attempt
+	// Find the in-progress attempt to submit.
 	attempts, err := s.repo.GetAttemptsByUserAndQuiz(ctx, userID, quizID)
 	if err != nil {
 		return nil, err
 	}
 
 	var attempt *model.QuizAttempt
-	for i := range attempts {
-		if attempts[i].CompletedAt == nil {
-			attempt = &attempts[i]
-			break
+	if req.AttemptID != nil && *req.AttemptID != "" {
+		// CAO-6 (review vòng 2): client gửi kèm attempt_id (nhận từ POST /start) → nộp ĐÚNG
+		// attempt đó, tránh mơ hồ khi có cả attempt "official" VÀ "practice" cùng dang dở cho
+		// cùng quiz. attempt_id sai định dạng, không thuộc user này, không thuộc quiz này, hoặc
+		// đã nộp rồi đều là lỗi rõ ràng — KHÔNG âm thầm rơi về "chọn đại một attempt khác".
+		attemptID, parseErr := uuid.Parse(*req.AttemptID)
+		if parseErr != nil {
+			return nil, errors.New("invalid attempt_id")
 		}
-	}
-	if attempt == nil {
-		return nil, errors.New("no active attempt found")
+		for i := range attempts {
+			if attempts[i].ID == attemptID {
+				attempt = &attempts[i]
+				break
+			}
+		}
+		if attempt == nil {
+			return nil, errors.New("attempt not found for this user/quiz")
+		}
+		if attempt.CompletedAt != nil {
+			return nil, errors.New("attempt already submitted")
+		}
+	} else {
+		// Client cũ (chưa gửi attempt_id): giữ hành vi cũ — chọn attempt DANG DỞ mới nhất
+		// (attempts đã sắp created_at DESC), bất kể mode.
+		for i := range attempts {
+			if attempts[i].CompletedAt == nil {
+				attempt = &attempts[i]
+				break
+			}
+		}
+		if attempt == nil {
+			return nil, errors.New("no active attempt found")
+		}
 	}
 
 	quiz, err := s.repo.GetQuizWithQuestions(ctx, quizID)
@@ -865,10 +1032,11 @@ func (s *QuizService) mapQuizToDTO(quiz *model.Quiz, questionCount int) *dto.Qui
 func (s *QuizService) mapQuestionToDTO(q *model.Question) *dto.QuestionResponseDTO {
 	answers := make([]dto.AnswerResponseDTO, len(q.Answers))
 	for i, a := range q.Answers {
+		isCorrect := a.IsCorrect
 		answers[i] = dto.AnswerResponseDTO{
 			ID:           a.ID,
 			AnswerText:   a.AnswerText,
-			IsCorrect:    a.IsCorrect,
+			IsCorrect:    &isCorrect,
 			DisplayOrder: a.DisplayOrder,
 		}
 	}

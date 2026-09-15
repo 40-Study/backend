@@ -18,8 +18,9 @@ type SectionServiceInterface interface {
 	CreateSection(ctx context.Context, courseID, actorUserID uuid.UUID, req dto.CreateSectionDTO) (*dto.SectionResponseDTO, error)
 	// GetAllSections (Phase 1 §2): userID dung de tinh locked/lock_reason/progress cho TUNG bai
 	// theo dung nguoi dang xem — route nay luon di kem auth nen userID khong bao gio la uuid.Nil
-	// tren duong that; xem sectionForbiddenResponse/handler.
-	GetAllSections(ctx context.Context, courseID, userID uuid.UUID) ([]dto.SectionResponseDTO, error)
+	// tren duong that; xem sectionForbiddenResponse/handler. isAdmin (CAO-4, review vòng 2): chủ
+	// khoá học / admin xem curriculum của chính khoá mình không bị khoá bài nào (BypassLock).
+	GetAllSections(ctx context.Context, courseID, userID uuid.UUID, isAdmin bool) ([]dto.SectionResponseDTO, error)
 	GetSectionByID(ctx context.Context, sectionID uuid.UUID) (*dto.SectionResponseDTO, error)
 	UpdateSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateSectionDTO) (*dto.SectionResponseDTO, error)
 	DeleteSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID, isAdmin bool) error
@@ -106,7 +107,7 @@ func (s *SectionService) CreateSection(ctx context.Context, courseID, actorUserI
 // GetAllSections (Phase 1 §2): "fetcher server" ma trang hoc (web) dung de lay curriculum —
 // day la endpoint DUY NHAT can tinh day du locked/lock_reason/progress theo NGUOI DANG XEM,
 // khac voi CourseService.GetCourseBySlug (public, khong biet nguoi xem la ai).
-func (s *SectionService) GetAllSections(ctx context.Context, courseID, userID uuid.UUID) ([]dto.SectionResponseDTO, error) {
+func (s *SectionService) GetAllSections(ctx context.Context, courseID, userID uuid.UUID, isAdmin bool) ([]dto.SectionResponseDTO, error) {
 	course, err := s.courseRepo.GetByID(ctx, courseID)
 	if err != nil {
 		return nil, err
@@ -120,7 +121,10 @@ func (s *SectionService) GetAllSections(ctx context.Context, courseID, userID uu
 		return nil, err
 	}
 
-	lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, courseID, course.Sequential)
+	// CAO-4: giảng viên sở hữu chính khoá học này, hoặc admin hệ thống, xem curriculum không
+	// bị khoá bài nào (BypassLock — xem lesson_lock.go).
+	bypass := isAdmin || course.InstructorID == userID
+	lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, courseID, course.Sequential, bypass)
 	if err != nil {
 		return nil, err
 	}

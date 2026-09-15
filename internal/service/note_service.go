@@ -55,7 +55,7 @@ func (s *NoteService) CreateNote(ctx context.Context, userID, lessonID uuid.UUID
 	note := &model.UserNote{
 		UserID:        userID,
 		LessonID:      lessonID,
-		CourseID:      courseID,
+		CourseID:      &courseID,
 		TimestampSecs: req.TimestampSecs,
 		Content:       req.Content,
 	}
@@ -135,13 +135,21 @@ func toNoteResponseDTOs(notes []model.UserNote) []dto.NoteResponseDTO {
 }
 
 func toNoteResponseDTO(n *model.UserNote) *dto.NoteResponseDTO {
+	// TB (review vòng 2): CourseID giờ là *uuid.UUID ở model (xem chú thích tại
+	// model.UserNote.CourseID) — response DTO GIỮ NGUYÊN shape cũ (uuid.UUID, không đổi
+	// contract), chỉ đề phòng nil cho một dòng LÝ THUYẾT tạo từ trước Phase 1 (đường ghi DUY
+	// NHẤT hiện có, CreateNote, luôn điền giá trị này).
+	var courseID uuid.UUID
+	if n.CourseID != nil {
+		courseID = *n.CourseID
+	}
 	return &dto.NoteResponseDTO{
 		ID:            n.ID,
 		LessonID:      n.LessonID,
 		LessonTitle:   n.Lesson.Title,
 		SectionID:     n.Lesson.SectionID,
 		SectionTitle:  n.Lesson.Section.Title,
-		CourseID:      n.CourseID,
+		CourseID:      courseID,
 		TimestampSecs: n.TimestampSecs,
 		Content:       n.Content,
 		CreatedAt:     n.CreatedAt,

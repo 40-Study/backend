@@ -174,6 +174,20 @@ func (f *fakeEnrollmentRepoWatched) UpdateEnrollmentProgress(ctx context.Context
 
 type fakeLessonRepoWatched struct {
 	repository.LessonRepositoryInterface
+	// contents/legacyDuration (B-1, review vòng 2): resolveServerVideoDuration goi CA HAI method
+	// nay o MOI lan UpdateLessonProgress — de trong (mac dinh) nghia la server CHUA BIET duration
+	// nao, giu nguyen hanh vi cu cua cac test da co (durationSeconds roi ve client tu khai) ma
+	// khong phai sua tung test.
+	contents       []model.LessonContent
+	legacyDuration int
+}
+
+func (f *fakeLessonRepoWatched) GetContentsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]model.LessonContent, error) {
+	return f.contents, nil
+}
+
+func (f *fakeLessonRepoWatched) GetLegacyVideoDurationByLessonID(ctx context.Context, lessonID uuid.UUID) (int, error) {
+	return f.legacyDuration, nil
 }
 
 // fakeCourseRepoWatched: chi override hai method ma Enroll dung toi. Nhung interface de method them
@@ -557,6 +571,81 @@ func TestUpdateLessonProgress_GuiStatusThiCapNhatStatus(t *testing.T) {
 	// status di qua map, khong duoc set tho trong cung cau lenh voi watched seconds.
 	if _, ok := repo.updateUpdates["video_watched_seconds"]; ok {
 		t.Error("video_watched_seconds nam trong map — phai di qua GREATEST() trong SQL")
+	}
+}
+
+// TestUpdateLessonProgress_ServerDurationThangTheKhaiGiaCuaClient (B-1, review vòng 2, BLOCKER):
+// bài học có duration THẬT ở server là 1200 giây (lesson_contents, Type="video"). Client khai
+// khống duration_seconds=10 để watched_pct nhảy thẳng lên gần 100% chỉ với 10 giây xem thật —
+// đây chính là lỗ hổng B-1. Server PHẢI dùng 1200 (của chính nó), không phải 10 (client khai),
+// làm mẫu số — payload [[0,10]] trên bài 1200s cho pct ≈0.8 (10/1200*100 làm tròn 1 chữ số thập
+// phân), KHÔNG completed. Bước 2 gửi tiếp một request khác với duration_seconds=5 (một giá trị
+// khai khống KHÁC, nhỏ hơn) để chứng minh khoảng ĐÃ LƯU [[0,10]] KHÔNG bị mất — dưới code cũ,
+// normalizePlayedRange sẽ REJECT (không phải clamp) khoảng cũ vì End=10 > duration=5 "giả" ở lần
+// gửi sau, xoá sạch dữ liệu hợp lệ chỉ vì một request khác khai một duration nhỏ hơn.
+func TestUpdateLessonProgress_ServerDurationThangTheKhaiGiaCuaClient(t *testing.T) {
+	enrollmentID := uuid.New()
+	enrollment := newEnrollmentWithID(enrollmentID)
+	repo := &fakeEnrollmentRepoWatched{
+		lessonProgress: nil, // ban ghi dau tien — di duong INSERT
+		enrollment:     &enrollment,
+		courseID:       uuid.New(),
+	}
+	lessonRepo := &fakeLessonRepoWatched{
+		contents: []model.LessonContent{{Type: "video", Duration: 1200}},
+	}
+	svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{}, lessonRepo)
+
+	// (1) Lan dau: payload [[0,10]] + duration_seconds=10 (khai khong) tren bai 1200s that.
+	spoofedDuration := 10
+	res, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
+		dto.UpdateLessonProgressDTO{
+			DurationSeconds: &spoofedDuration,
+			PlayedRanges:    dto.PlayedRangesDTO{{Start: 0, End: 10}},
+		})
+	if err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
+	}
+	if res.WatchedPct < 0.75 || res.WatchedPct > 0.85 {
+		t.Fatalf("DTO tra ve watched_pct = %v, mong doi ≈0.8", res.WatchedPct)
+	}
+	if repo.upserted == nil {
+		t.Fatal("ban ghi dau tien khong duoc tao")
+	}
+	gotPct, _ := repo.upserted.WatchedPct.Float64()
+	if gotPct < 0.75 || gotPct > 0.85 {
+		t.Fatalf("watched_pct = %v, mong doi ≈0.8 (10/1200*100, KHONG phai 10/10*100=100 — server phai dung duration THAT 1200, khong phai duration_seconds=10 client khai)", gotPct)
+	}
+	if repo.upserted.Status == "completed" {
+		t.Fatal("status = completed — 0.8% khong the vuot nguong min_video_pct (mac dinh 90)")
+	}
+	if !sameRanges(repo.upserted.PlayedRanges, model.PlayedRanges{{Start: 0, End: 10}}) {
+		t.Fatalf("played_ranges = %+v, mong doi [[0,10]]", repo.upserted.PlayedRanges)
+	}
+
+	// (2) Chuyen ban ghi vua tao thanh ban ghi DA CO de lan goi sau di duong UPDATE, dung mot
+	// duration_seconds KHAI KHONG KHAC (5, nho hon ca lan truoc) — mo phong hai request khac nhau
+	// tu CUNG mot client bi loi/bi tan cong voi hai gia tri khac nhau.
+	repo.lessonProgress = repo.upserted
+	repo.upserted = nil
+	secondSpoof := 5
+	res2, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
+		dto.UpdateLessonProgressDTO{
+			DurationSeconds: &secondSpoof,
+			PlayedRanges:    dto.PlayedRangesDTO{{Start: 20, End: 30}},
+		})
+	if err != nil {
+		t.Fatalf("khong mong doi loi (lan 2): %v", err)
+	}
+	// Khong mat khoang cu [[0,10]]: merge voi khoang moi [[20,30]] phai la CA HAI, khong phai chi
+	// khoang moi (neu code cu con reject khoang cu vi "vuot duration=5 gia").
+	wantMerged := model.PlayedRanges{{Start: 0, End: 10}, {Start: 20, End: 30}}
+	if !sameRanges(repo.lessonProgress.PlayedRanges, wantMerged) {
+		t.Fatalf("played_ranges sau lan 2 = %+v, mong doi %+v — khoang cu [[0,10]] khong duoc mat du lan nay client khai duration=5",
+			repo.lessonProgress.PlayedRanges, wantMerged)
+	}
+	if res2.WatchedSeconds != 20 {
+		t.Fatalf("watched_seconds tra ve = %d, mong doi 20 (10 cu + 10 moi, ca hai khoang deu con)", res2.WatchedSeconds)
 	}
 }
 

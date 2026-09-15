@@ -37,6 +37,13 @@ type LessonLockInput struct {
 	// Progress: tien do CUA CHINH nguoi dang xem, map theo lessonID. Co the rong (chua enroll
 	// hoac chua hoc bai nao).
 	Progress map[uuid.UUID]*model.LessonProgress
+	// BypassLock (CAO-4 / reviewer C-1, review vòng 2): true khi người gọi là giảng viên sở hữu
+	// khóa học chứa bài này, hoặc admin hệ thống. Trước bản vá này, giảng viên/admin đi qua
+	// CÙNG một luật khóa tuần tự như học viên — một giảng viên xem lại chính khóa của mình (chưa
+	// enroll, hoặc bài trước tự đánh dấu chưa completed vì họ không "học tuần tự") vẫn bị khóa,
+	// không xem/kiểm duyệt được nội dung khóa mình dạy. Người sở hữu/admin KHÔNG BAO GIỜ bị khóa,
+	// bất kể preview/enrolled/sequential.
+	BypassLock bool
 }
 
 // ResolveLessonLock tinh locked/lock_reason/progress cho MOT bai hoc trong curriculum, theo
@@ -51,6 +58,13 @@ type LessonLockInput struct {
 //     dung TRUOC no (theo thu tu hien thi, bo qua moi bai preview xen giua) CHUA completed.
 func ResolveLessonLock(lessonID uuid.UUID, in LessonLockInput) (locked bool, lockReason *string, progress *dto.LessonProgressSummaryDTO) {
 	progress = toLessonProgressSummary(in.Progress[lessonID])
+
+	// CAO-4 / C-1: chủ sở hữu khóa học / admin không bao giờ bị khóa — kiểm TRƯỚC luật preview
+	// (luật 1) vì bypass này rộng hơn: preview chỉ mở MỘT bài, còn bypass mở TẤT CẢ bài của
+	// đúng khóa học mà actor sở hữu/quản trị.
+	if in.BypassLock {
+		return false, nil, progress
+	}
 
 	idx := -1
 	isPreview := false
@@ -107,12 +121,19 @@ func toLessonProgressSummary(p *model.LessonProgress) *dto.LessonProgressSummary
 }
 
 // gatherLessonLockInput doc du lieu can thiet (enrollment, thu tu bai, tien do) cho MOT
-// nguoi dung + MOT khoa hoc, dung chung boi SectionService va LessonContentService.
+// nguoi dung + MOT khoa hoc, dung chung boi SectionService, LessonContentService va
+// LessonService.GetLessonByID.
+//
+// bypassLock (CAO-4, review vòng 2): caller tự tính (course.InstructorID == userID || isAdmin)
+// TRƯỚC khi gọi — hàm này không tự tra courseRepo (chỉ nhận enrollmentRepo) nên không tự xác
+// định được chủ sở hữu; truyền thẳng qua LessonLockInput.BypassLock để ResolveLessonLock áp dụng
+// đồng nhất ở CẢ BA nơi gọi, tránh lệch luật giữa các endpoint.
 func gatherLessonLockInput(
 	ctx context.Context,
 	enrollmentRepo repository.EnrollmentRepositoryInterface,
 	userID, courseID uuid.UUID,
 	sequential bool,
+	bypassLock bool,
 ) (LessonLockInput, error) {
 	enrollment, err := enrollmentRepo.GetByUserAndCourse(ctx, userID, courseID)
 	if err != nil {
@@ -137,5 +158,6 @@ func gatherLessonLockInput(
 		Sequential:  sequential,
 		LessonOrder: order,
 		Progress:    progress,
+		BypassLock:  bypassLock,
 	}, nil
 }

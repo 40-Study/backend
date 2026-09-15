@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -320,13 +321,36 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 
 	// ——— Hop nhat khoang da phat (chong tua) ———
 	var storedRanges model.PlayedRanges
+	storedFallbackDuration := 0
 	if progress != nil {
 		storedRanges = progress.PlayedRanges
+		storedFallbackDuration = progress.FallbackDurationSeconds
 	}
-	durationSeconds := 0
+
+	// B-1 (review vòng 2, BLOCKER): nguồn sự thật thời lượng LÀ SERVER (lesson_contents, sau đó
+	// lesson_videos) — KHÔNG BAO GIỜ tin duration_seconds client tự khai khi server đã biết,
+	// đóng đường tấn công "khai duration=10 trên bài 1200s" biến 10 giây xem thật thành watched_pct
+	// ≈100%. Chỉ khi server = 0 (bài chưa gắn content video, dữ liệu thiếu) mới rơi về
+	// duration_seconds client khai, và giá trị đó BẮT BUỘC lưu STICKY-MAX (fallback_duration_seconds,
+	// xem model.LessonProgress) — một request sau đó khai duration NHỎ HƠN không được phép hạ mẫu
+	// số xuống (mất dữ liệu/pct nhảy lùi).
+	serverDuration, err := s.resolveServerVideoDuration(ctx, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	clientDuration := 0
 	if req.DurationSeconds != nil {
-		durationSeconds = *req.DurationSeconds
+		clientDuration = *req.DurationSeconds
 	}
+	durationSeconds := serverDuration
+	usingFallbackDuration := serverDuration <= 0
+	if usingFallbackDuration {
+		durationSeconds = storedFallbackDuration
+		if clientDuration > durationSeconds {
+			durationSeconds = clientDuration
+		}
+	}
+
 	// Chi hop nhat khi client THAT SU gui khoang moi VA co thoi luong lam mau so. Client cu
 	// (chi gui status + video_watched_seconds) di nguyen duong cu ben duoi.
 	hasRangePayload := len(req.PlayedRanges) > 0 && durationSeconds > 0
@@ -350,6 +374,11 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		if req.PositionSeconds != nil {
 			progress.LastPositionSeconds = *req.PositionSeconds
 		}
+		if usingFallbackDuration && durationSeconds > 0 {
+			// Ban ghi moi tao: chua co gia tri fallback cu nao de GREATEST, ghi thang durationSeconds
+			// (da la max(0, clientDuration) o tren).
+			progress.FallbackDurationSeconds = durationSeconds
+		}
 		if hasRangePayload {
 			progress.PlayedRanges = mergedRanges
 			progress.VideoWatchedSecs = mergedSeconds
@@ -357,7 +386,10 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 				progress.WatchedPct = pct
 			}
 		} else if req.VideoWatchedSecs != nil {
-			progress.VideoWatchedSecs = *req.VideoWatchedSecs
+			// TB (review vòng 2): clamp theo duration server-truth — khong cho client tu khai
+			// mot so giay da xem VUOT QUA do dai that cua video (chi so "thoi gian hoc" khong duoc
+			// phinh to vo han qua duong cu nay).
+			progress.VideoWatchedSecs = clampToDuration(*req.VideoWatchedSecs, durationSeconds)
 		}
 
 		status := resolveLessonStatus("not_started", req.Status, progress.WatchedPct, minVideoPct)
@@ -419,6 +451,13 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 	if req.PositionSeconds != nil {
 		updates["last_position_seconds"] = *req.PositionSeconds
 	}
+	if usingFallbackDuration && clientDuration > 0 {
+		// B-1 (review vòng 2): GREATEST() ngay trong SQL — cùng lý do với video_watched_seconds
+		// bên dưới, phép max phải NGUYÊN TỬ ở tầng DB, không phải đọc-so sánh-ghi ở tầng Go (hai
+		// request song song đọc cùng storedFallbackDuration cũ thì request ghi SAU sẽ đè mất giá
+		// trị lớn hơn của request ghi TRƯỚC nếu làm ở Go).
+		updates["fallback_duration_seconds"] = gorm.Expr("GREATEST(fallback_duration_seconds, ?)", clientDuration)
+	}
 
 	// watchedSeconds duoc truyen RIENG chu khong nam trong map: gia tri cua no phai di qua
 	// GREATEST() trong cau UPDATE, khong duoc set tho.
@@ -427,7 +466,11 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		// Tong do dai sau merge, KHONG phai con so client tu khai.
 		watchedSeconds = &mergedSeconds
 	} else if req.VideoWatchedSecs != nil {
-		watchedSeconds = req.VideoWatchedSecs
+		// TB (review vòng 2): clamp truoc khi day vao GREATEST() — khong clamp o day thi mot gia
+		// tri client khai vuot duration van thang GREATEST va lam phinh video_watched_seconds vo
+		// han qua duong cu nay.
+		clamped := clampToDuration(*req.VideoWatchedSecs, durationSeconds)
+		watchedSeconds = &clamped
 	}
 
 	updated, err := s.enrollmentRepo.UpdateLessonProgressFields(ctx, userID, lessonID, updates, watchedSeconds)
@@ -441,6 +484,40 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 	}
 
 	return s.finishLessonProgressStateUpdate(ctx, enrollment, updated, nextLessonUnlocked(lessonOrder, lessonID, sequential, updated.Status))
+}
+
+// resolveServerVideoDuration (B-1, review vòng 2): nguồn sự thật thời lượng LÀ SERVER — ưu tiên
+// lesson_contents (content Type="video".Duration, đây là loại content video THỰC SỰ được đọc/ghi
+// bởi mọi service khác trong hệ thống), sau đó lesson_videos (bảng legacy — AutoMigrate vẫn tạo
+// nhưng không repository/service nào khác đọc/ghi; tra theo đúng quyết định review dù trong thực
+// tế gần như luôn trả 0). Trả 0 khi CẢ HAI đều không có duration dương (bài chưa gắn content
+// video nào) — lúc đó caller (UpdateLessonProgress) mới được rơi về duration_seconds CLIENT khai.
+func (s *EnrollmentService) resolveServerVideoDuration(ctx context.Context, lessonID uuid.UUID) (int, error) {
+	contents, err := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
+	if err != nil {
+		return 0, err
+	}
+	for _, c := range contents {
+		if c.Type == "video" && c.Duration > 0 {
+			return c.Duration, nil
+		}
+	}
+	legacy, err := s.lessonRepo.GetLegacyVideoDurationByLessonID(ctx, lessonID)
+	if err != nil {
+		return 0, err
+	}
+	return legacy, nil
+}
+
+// clampToDuration (B-1/TB, review vòng 2): CẮT (không xoá) một giá trị giây về duration khi vượt
+// quá — dùng cho đường watched-seconds cũ (video_watched_seconds) để một client khai một số giây
+// lớn hơn độ dài thật của video không thể phình "thời gian học" vô hạn. duration<=0 (chưa biết
+// duration nào, kể cả fallback) nghĩa là không có gì để clamp — trả nguyên giá trị.
+func clampToDuration(seconds, duration int) int {
+	if duration > 0 && seconds > duration {
+		return duration
+	}
+	return seconds
 }
 
 // defaultMinVideoPct la nguong watched_pct mac dinh (contract §1) khi course.min_video_pct
@@ -555,7 +632,10 @@ func toLessonProgressStateDTO(p *model.LessonProgress, nextUnlocked bool) *dto.L
 		NextLessonUnlocked:  nextUnlocked,
 	}
 	if p.CompletedAt != nil {
-		formatted := p.CompletedAt.Format("2006-01-02T15:04:05Z")
+		// .UTC() BAT BUOC: Format voi layout "...15:04:05Z" chi la mot CHU CAI 'Z' theo dung nghia
+		// den, khong phai chi thi UTC — neu p.CompletedAt la gio dia phuong (khong phai UTC), no
+		// van bi gan hau to Z, ngu y SAI la UTC. time.RFC3339 + .UTC() moi dung.
+		formatted := p.CompletedAt.UTC().Format(time.RFC3339)
 		out.CompletedAt = &formatted
 	}
 	return out

@@ -94,7 +94,7 @@ func newTestNote(id, userID, lessonID, courseID uuid.UUID) *model.UserNote {
 	n := &model.UserNote{
 		UserID:        userID,
 		LessonID:      lessonID,
-		CourseID:      courseID,
+		CourseID:      &courseID,
 		TimestampSecs: 42,
 		Content:       "ghi chu test",
 	}
@@ -146,7 +146,8 @@ func TestNoteService_CreateNote_DaEnroll_TaoThanhCong(t *testing.T) {
 	if noteRepo.createCalls != 1 {
 		t.Fatalf("Create duoc goi %d lan, muon 1", noteRepo.createCalls)
 	}
-	if noteRepo.created.UserID != userID || noteRepo.created.LessonID != lessonID || noteRepo.created.CourseID != courseID {
+	if noteRepo.created.UserID != userID || noteRepo.created.LessonID != lessonID ||
+		noteRepo.created.CourseID == nil || *noteRepo.created.CourseID != courseID {
 		t.Errorf("note tao ra = %+v, thieu dung user_id/lesson_id/course_id", noteRepo.created)
 	}
 	if res.TimestampSecs != 123 || res.Content != "ghi chu" {

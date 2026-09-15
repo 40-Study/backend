@@ -18,10 +18,15 @@ import (
 // do client tự khai thì kéo thanh tua tới cuối video là có ngay 100%. Ở đây client chỉ khai
 // "tôi vừa phát đoạn [a,b]" — và chỉ những khoảng thoả ràng buộc mới được tính.
 //
-// Ràng buộc (theo contract §1): 0 <= start < end <= durationSeconds. Khoảng vi phạm bị BỎ QUA
-// (không làm hỏng cả request) — một client lỗi chỉ mất phần dữ liệu của chính khoảng đó.
-// durationSeconds <= 0 (chưa biết thời lượng) thì không kiểm được cận trên, chỉ kiểm start >= 0
-// và end > start.
+// Ràng buộc (theo contract §1): 0 <= start < end. Một khoảng có end > durationSeconds bị CẮT
+// (clamp) về durationSeconds — KHÔNG bị bỏ (xem sửa B-1, review vòng 2): duration bây giờ luôn
+// là giá trị server-truth (EnrollmentService.resolveServerVideoDuration), nên end > duration chỉ
+// còn xảy ra do sai số làm tròn phía client hoặc heartbeat cuối cùng trước khi video kết thúc —
+// bỏ hẳn khoảng đó xoá luôn phần "đã xem xong" hợp lệ nhất (giây cuối video), trong khi hành vi
+// đúng là giữ lại phần nằm trong duration. Chỉ một khoảng có Start đã VƯỢT QUA duration (vô lý,
+// không thể clamp về gì cả) mới thực sự bị bỏ — hệ quả tự nhiên của "end <= start sau khi clamp".
+// durationSeconds <= 0 (chưa biết thời lượng) thì không kiểm/clamp được cận trên, chỉ kiểm
+// start >= 0 và end > start.
 //
 // Trả về: danh sách khoảng sau merge (đã sắp xếp, không chồng lấn) và tổng số giây (làm tròn).
 func MergePlayedRanges(stored model.PlayedRanges, incoming []model.PlayedRange, durationSeconds int) (model.PlayedRanges, int) {
@@ -78,12 +83,13 @@ func normalizePlayedRange(r model.PlayedRange, durationSeconds int) (model.Playe
 	if r.Start < 0 || r.End <= r.Start {
 		return model.PlayedRange{}, false
 	}
-	if durationSeconds > 0 && r.End > float64(durationSeconds) {
-		return model.PlayedRange{}, false
-	}
 
 	start := math.Round(r.Start)
 	end := math.Round(r.End)
+	// B-1 (review vòng 2): CLAMP end về durationSeconds thay vì bỏ hẳn khoảng — xem chú thích
+	// tại MergePlayedRanges. Nếu start CŨNG đã vượt quá duration (start >= duration) thì sau khi
+	// clamp end sẽ <= start, và nhánh dưới tự nhiên loại bỏ khoảng vô lý này — không cần kiểm
+	// riêng cho trường hợp đó.
 	if durationSeconds > 0 && end > float64(durationSeconds) {
 		end = float64(durationSeconds)
 	}

@@ -103,7 +103,7 @@ func TestSectionService_GetAllSections_ChuaEnroll_MoiBaiKhoa(t *testing.T) {
 		},
 	)
 
-	result, err := svc.GetAllSections(context.Background(), course.ID, uuid.New())
+	result, err := svc.GetAllSections(context.Background(), course.ID, uuid.New(), false)
 	if err != nil {
 		t.Fatalf("khong mong doi loi: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestSectionService_GetAllSections_DaEnroll_BaiTruocChuaXongThiBaiSauKhoa(t 
 		},
 	)
 
-	result, err := svc.GetAllSections(context.Background(), course.ID, uuid.New())
+	result, err := svc.GetAllSections(context.Background(), course.ID, uuid.New(), false)
 	if err != nil {
 		t.Fatalf("khong mong doi loi: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestSectionService_GetAllSections_BaiTruocDaCompleted_BaiSauMo(t *testing.T
 		},
 	)
 
-	result, err := svc.GetAllSections(context.Background(), course.ID, uuid.New())
+	result, err := svc.GetAllSections(context.Background(), course.ID, uuid.New(), false)
 	if err != nil {
 		t.Fatalf("khong mong doi loi: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestSectionService_GetAllSections_KhoaKhongSequential_KhongKhoaBaiNao(t *te
 		},
 	)
 
-	result, err := svc.GetAllSections(context.Background(), course.ID, uuid.New())
+	result, err := svc.GetAllSections(context.Background(), course.ID, uuid.New(), false)
 	if err != nil {
 		t.Fatalf("khong mong doi loi: %v", err)
 	}

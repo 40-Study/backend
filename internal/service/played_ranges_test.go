@@ -142,13 +142,52 @@ func TestMergePlayedRanges_BoKhoangXauKhongLamHongRequest(t *testing.T) {
 // TestMergePlayedRanges_KhoangDaLuuCungBiKiem: du lieu CU trong DB cung phai qua normalize. Mot
 // dong ghi tu truoc khi co rang buoc co the chua khoang vuot thoi luong; neu khong kiem lai,
 // watched_pct se vuot 100% va khong bao gio dat dung nguong completed.
+//
+// B-1 (review vòng 2): SỬA kỳ vọng — khoảng vượt duration giờ bị CLAMP về duration (không phải
+// bị LOẠI như trước bản vá). Loại hẳn từng là chính lỗ hổng B-1 khai thác được ở chiều ngược lại
+// (một request SAU dùng duration_seconds NHỎ hơn có thể xoá sạch khoảng đã lưu hợp lệ trước đó vì
+// nó "vượt" cái duration giả mới); clamp giữ lại phần nằm trong duration thay vì mất trắng.
 func TestMergePlayedRanges_KhoangDaLuuCungBiKiem(t *testing.T) {
-	daLuu := model.PlayedRanges{{Start: 0, End: 9999}} // vuot duration 754
+	daLuu := model.PlayedRanges{{Start: 0, End: 9999}} // vuot duration 754, phai bi CLAMP ve 754
 
 	merged, seconds := MergePlayedRanges(daLuu, []model.PlayedRange{{Start: 10, End: 20}}, 754)
 
-	if !sameRanges(merged, model.PlayedRanges{{Start: 10, End: 20}}) {
-		t.Fatalf("merged = %+v, muon [[10,20]] — khoang cu vuot thoi luong phai bi loai", merged)
+	// [0,9999] clamp thanh [0,754], gom voi [10,20] (nam gon trong [0,754]) van la [0,754].
+	if !sameRanges(merged, model.PlayedRanges{{Start: 0, End: 754}}) {
+		t.Fatalf("merged = %+v, muon [[0,754]] — khoang cu vuot thoi luong phai bi CLAMP, khong duoc mat trang", merged)
+	}
+	if seconds != 754 {
+		t.Fatalf("watched_seconds = %d, muon 754", seconds)
+	}
+}
+
+// TestMergePlayedRanges_StartVuotDurationThiBiLoai: khac voi khoang chi VUOT o End (duoc clamp,
+// xem test tren), mot khoang co Start DA >= duration thi khong the clamp ve gi ca (clamp end se
+// <= start) — day la truong hop DUY NHAT con bi loai hoan toan sau sua B-1.
+func TestMergePlayedRanges_StartVuotDurationThiBiLoai(t *testing.T) {
+	merged, seconds := MergePlayedRanges(nil, []model.PlayedRange{
+		{Start: 900, End: 1000}, // start da vuot duration 754, khong clamp duoc
+		{Start: 100, End: 200},  // hop le
+	}, 754)
+
+	if !sameRanges(merged, model.PlayedRanges{{Start: 100, End: 200}}) {
+		t.Fatalf("merged = %+v, muon [[100,200]] — khoang co start vuot duration phai bi loai", merged)
+	}
+	if seconds != 100 {
+		t.Fatalf("watched_seconds = %d, muon 100", seconds)
+	}
+}
+
+// TestMergePlayedRanges_EndVuotDurationDuocClampKhongMatDuLieu: đúng test team-lead yêu cầu cho
+// B-1 (dạng played_ranges) — một khoảng vượt nhẹ qua duration (sai số làm tròn/heartbeat cuối)
+// phải được GIỮ LẠI phần hợp lệ, không bị xoá trắng.
+func TestMergePlayedRanges_EndVuotDurationDuocClampKhongMatDuLieu(t *testing.T) {
+	merged, seconds := MergePlayedRanges(nil, []model.PlayedRange{
+		{Start: 1190, End: 1205}, // duration 1200, end vuot nhe 5s
+	}, 1200)
+
+	if !sameRanges(merged, model.PlayedRanges{{Start: 1190, End: 1200}}) {
+		t.Fatalf("merged = %+v, muon [[1190,1200]] — end vuot duration phai duoc CLAMP, khong bi xoa", merged)
 	}
 	if seconds != 10 {
 		t.Fatalf("watched_seconds = %d, muon 10", seconds)
