@@ -55,40 +55,40 @@ func (s *stubLivestreamService) Create(ctx context.Context, hostID uuid.UUID, re
 		HostID:    hostID,
 	}, nil
 }
-func (s *stubLivestreamService) GetByID(ctx context.Context, id uuid.UUID) (*dto.LivestreamDetailDTO, error) {
+func (s *stubLivestreamService) GetByID(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) (*dto.LivestreamDetailDTO, error) {
 	return nil, errors.New("not used in these tests")
 }
-func (s *stubLivestreamService) GetAll(ctx context.Context, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) (*dto.LivestreamListDTO, error) {
+func (s *stubLivestreamService) GetAll(ctx context.Context, userID uuid.UUID, isAdmin bool, page, pageSize int, status string, hostID *uuid.UUID, lessonContentID *uuid.UUID) (*dto.LivestreamListDTO, error) {
 	s.getAllCalled++
 	s.gotLessonContentIDFilter = lessonContentID
 	return &dto.LivestreamListDTO{Data: []dto.LivestreamResponseDTO{}, Total: 0, Page: page, PageSize: pageSize}, nil
 }
-func (s *stubLivestreamService) Update(ctx context.Context, userID, id uuid.UUID, req dto.UpdateLivestreamDTO) (*model.LivestreamSession, error) {
+func (s *stubLivestreamService) Update(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID, req dto.UpdateLivestreamDTO) (*model.LivestreamSession, error) {
 	s.gotActorID, s.gotSessionID = userID, id
 	if s.authzErr != nil {
 		return nil, s.authzErr
 	}
 	return &model.LivestreamSession{BaseModel: model.BaseModel{ID: id}, HostID: userID}, nil
 }
-func (s *stubLivestreamService) Delete(ctx context.Context, userID, id uuid.UUID) error {
+func (s *stubLivestreamService) Delete(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) error {
 	s.gotActorID, s.gotSessionID = userID, id
 	return s.authzErr
 }
-func (s *stubLivestreamService) Start(ctx context.Context, userID, id uuid.UUID) (*model.LivestreamSession, error) {
+func (s *stubLivestreamService) Start(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) (*model.LivestreamSession, error) {
 	s.gotActorID, s.gotSessionID = userID, id
 	if s.authzErr != nil {
 		return nil, s.authzErr
 	}
 	return &model.LivestreamSession{BaseModel: model.BaseModel{ID: id}}, nil
 }
-func (s *stubLivestreamService) End(ctx context.Context, userID, id uuid.UUID) (*model.LivestreamSession, error) {
+func (s *stubLivestreamService) End(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) (*model.LivestreamSession, error) {
 	s.gotActorID, s.gotSessionID = userID, id
 	if s.authzErr != nil {
 		return nil, s.authzErr
 	}
 	return &model.LivestreamSession{BaseModel: model.BaseModel{ID: id}}, nil
 }
-func (s *stubLivestreamService) Join(ctx context.Context, sessionID, userID uuid.UUID, req dto.JoinLivestreamDTO) (*dto.ParticipantResponseDTO, error) {
+func (s *stubLivestreamService) Join(ctx context.Context, sessionID, userID uuid.UUID, isAdmin bool, req dto.JoinLivestreamDTO) (*dto.ParticipantResponseDTO, error) {
 	s.gotSessionID, s.gotJoinUserID, s.gotJoinReq = sessionID, userID, req
 	if s.authzErr != nil {
 		return nil, s.authzErr
@@ -105,27 +105,27 @@ func (s *stubLivestreamService) Leave(ctx context.Context, sessionID, userID uui
 	s.gotSessionID, s.gotLeaveUserID = sessionID, userID
 	return s.authzErr
 }
-func (s *stubLivestreamService) GetParticipants(ctx context.Context, sessionID uuid.UUID, page, pageSize int) ([]model.Participant, int64, error) {
+func (s *stubLivestreamService) GetParticipants(ctx context.Context, userID uuid.UUID, isAdmin bool, sessionID uuid.UUID, page, pageSize int) ([]model.Participant, int64, error) {
 	return nil, 0, errors.New("not used in these tests")
 }
-func (s *stubLivestreamService) MuteParticipant(ctx context.Context, actorID, sessionID, targetID uuid.UUID) error {
+func (s *stubLivestreamService) MuteParticipant(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID, targetID uuid.UUID) error {
 	s.gotActorID, s.gotSessionID, s.gotTargetID = actorID, sessionID, targetID
 	return s.authzErr
 }
-func (s *stubLivestreamService) KickParticipant(ctx context.Context, actorID, sessionID, targetID uuid.UUID) error {
+func (s *stubLivestreamService) KickParticipant(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID, targetID uuid.UUID) error {
 	s.gotActorID, s.gotSessionID, s.gotTargetID = actorID, sessionID, targetID
 	return s.authzErr
 }
-func (s *stubLivestreamService) LockWhiteboard(ctx context.Context, actorID, sessionID uuid.UUID, locked bool) error {
+func (s *stubLivestreamService) LockWhiteboard(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID uuid.UUID, locked bool) error {
 	s.gotActorID, s.gotSessionID, s.gotLocked = actorID, sessionID, locked
 	return s.authzErr
 }
-func (s *stubLivestreamService) StartScreenShare(ctx context.Context, actorID, sessionID uuid.UUID) error {
-	s.gotActorID, s.gotScreenShareID = actorID, sessionID
+func (s *stubLivestreamService) StartScreenShare(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID, targetID uuid.UUID) error {
+	s.gotActorID, s.gotScreenShareID, s.gotTargetID = actorID, sessionID, targetID
 	return s.authzErr
 }
-func (s *stubLivestreamService) StopScreenShare(ctx context.Context, actorID, sessionID uuid.UUID) error {
-	s.gotActorID, s.gotScreenShareID = actorID, sessionID
+func (s *stubLivestreamService) StopScreenShare(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID, targetID uuid.UUID) error {
+	s.gotActorID, s.gotScreenShareID, s.gotTargetID = actorID, sessionID, targetID
 	return s.authzErr
 }
 func (s *stubLivestreamService) EnsureSessionMember(ctx context.Context, sessionID, userID uuid.UUID) error {
@@ -144,7 +144,7 @@ func (s *stubLivestreamService) EnsureSessionManage(ctx context.Context, session
 // trong body.
 func TestLivestreamCreate_BoQuaHostIDTuBody(t *testing.T) {
 	svc := &stubLivestreamService{}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 
 	realCaller := uuid.New()
 	foreignHostIDInBody := uuid.New() // "nan nhan" ma attacker muon mao danh
@@ -184,7 +184,7 @@ func TestLivestreamCreate_BoQuaHostIDTuBody(t *testing.T) {
 // tiep (route that con co them AuthMiddleware o tang router).
 func TestLivestreamCreate_RequiresAuth(t *testing.T) {
 	svc := &stubLivestreamService{}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 
 	app := fiber.New()
 	app.Post("/livestream", h.Create)
@@ -210,7 +210,7 @@ func TestLivestreamCreate_RequiresAuth(t *testing.T) {
 // thieu title/class_id phai bi chan 400 truoc khi cham service.
 func TestLivestreamCreate_ValidatesRequiredFields(t *testing.T) {
 	svc := &stubLivestreamService{}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 
 	app := fiber.New()
 	app.Post("/livestream", func(c *fiber.Ctx) error {
@@ -239,7 +239,7 @@ func TestLivestreamCreate_ValidatesRequiredFields(t *testing.T) {
 // UY QUYEN, khong phai loi ha tang.
 func TestLivestreamCreate_ForbiddenKhiKhongPhaiGiaoVienLop(t *testing.T) {
 	svc := &stubLivestreamService{createErr: service.ErrNotClassTeacher}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 
 	app := fiber.New()
 	app.Post("/livestream", func(c *fiber.Ctx) error {
@@ -266,7 +266,7 @@ func TestLivestreamCreate_ForbiddenKhiKhongPhaiGiaoVienLop(t *testing.T) {
 // Sau khi them validate tag vao DTO, handler phai chan 400 TRUOC KHI cham service.
 func TestLivestreamCreate_ScheduledAtSaiDinhDang_BiTuChoi400(t *testing.T) {
 	svc := &stubLivestreamService{}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 
 	app := fiber.New()
 	app.Post("/livestream", func(c *fiber.Ctx) error {
@@ -295,7 +295,7 @@ func TestLivestreamCreate_ScheduledAtSaiDinhDang_BiTuChoi400(t *testing.T) {
 // RFC3339 hop le van phai qua duoc validate va toi service, khong bi tag moi chan oan.
 func TestLivestreamCreate_ScheduledAtHopLeRFC3339_DuocChapNhan(t *testing.T) {
 	svc := &stubLivestreamService{}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 
 	app := fiber.New()
 	app.Post("/livestream", func(c *fiber.Ctx) error {
@@ -324,10 +324,16 @@ func TestLivestreamCreate_ScheduledAtHopLeRFC3339_DuocChapNhan(t *testing.T) {
 // ?lesson_content_id=<uuid> phai duoc parse va truyen xuong service.GetAll dung uuid.
 func TestLivestreamGetAll_LocTheoLessonContentID(t *testing.T) {
 	svc := &stubLivestreamService{}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 
+	// F-1 (issue #58 review vong 2): GetAll gio doi hoi dang nhap (callerOrUnauthorized) truoc
+	// khi cham service — truoc day handler nay khong doc user_id nen mount thang khong Locals
+	// van qua duoc; nay phai gia lap AuthMiddleware nhu cac test khac.
 	app := fiber.New()
-	app.Get("/livestream", h.GetAll)
+	app.Get("/livestream", func(c *fiber.Ctx) error {
+		c.Locals("user_id", uuid.New())
+		return c.Next()
+	}, h.GetAll)
 
 	lessonContentID := uuid.New()
 	req := httptest.NewRequest("GET", "/livestream?lesson_content_id="+lessonContentID.String(), nil)
@@ -354,10 +360,14 @@ func TestLivestreamGetAll_LocTheoLessonContentID(t *testing.T) {
 // khong duoc suy dien ra mot gia tri rac (vd uuid.Nil).
 func TestLivestreamGetAll_KhongCoLessonContentID_KhongLoc(t *testing.T) {
 	svc := &stubLivestreamService{}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 
+	// F-1: xem ghi chu trong TestLivestreamGetAll_LocTheoLessonContentID o tren.
 	app := fiber.New()
-	app.Get("/livestream", h.GetAll)
+	app.Get("/livestream", func(c *fiber.Ctx) error {
+		c.Locals("user_id", uuid.New())
+		return c.Next()
+	}, h.GetAll)
 
 	req := httptest.NewRequest("GET", "/livestream", nil)
 

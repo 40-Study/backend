@@ -44,7 +44,7 @@ func doJSON(t *testing.T, app *fiber.App, method, path, body string) int {
 // service — neu con doc tu body thi userID truyen xuong se trung voi gia tri gia mao.
 func TestLivestreamJoin_MaoDanhBangUserID_BiBoQua(t *testing.T) {
 	svc := &stubLivestreamService{}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 
 	realCaller := uuid.New()
 	victimInBody := uuid.New()
@@ -71,7 +71,7 @@ func TestLivestreamJoin_MaoDanhBangUserID_BiBoQua(t *testing.T) {
 // dong toi vai tro — vai tro do service suy ra tu quan he that trong DB.
 func TestLivestreamJoin_BoRoleTuBody(t *testing.T) {
 	svc := &stubLivestreamService{}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 	caller := uuid.New()
 	sessionID := uuid.New()
 
@@ -92,7 +92,7 @@ func TestLivestreamJoin_BoRoleTuBody(t *testing.T) {
 // ErrNotSessionMember -> handler phai map 403 (khong phai 500).
 func TestLivestreamJoin_NguoiLa_Bi403(t *testing.T) {
 	svc := &stubLivestreamService{authzErr: service.ErrNotSessionMember}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 	app := mountWithCaller("POST", "/livestream/:id/join", uuid.New(), h.Join)
 
 	status := doJSON(t, app, "POST", "/livestream/"+uuid.New().String()+"/join", `{"name":"Nguoi la"}`)
@@ -105,7 +105,7 @@ func TestLivestreamJoin_NguoiLa_Bi403(t *testing.T) {
 // service (route that con AuthMiddleware, nhung handler phai tu chan duoc khi mount truc tiep).
 func TestLivestreamJoin_KhongDangNhap_Bi401(t *testing.T) {
 	svc := &stubLivestreamService{}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 
 	app := fiber.New()
 	app.Post("/livestream/:id/join", h.Join)
@@ -125,7 +125,7 @@ func TestLivestreamJoin_KhongDangNhap_Bi401(t *testing.T) {
 // phep bat ky ai da NGUOI KHAC ra khoi phong. Sau fix, nguoi roi phong luon la nguoi goi.
 func TestLivestreamLeave_MaoDanhBangUserID_BiBoQua(t *testing.T) {
 	svc := &stubLivestreamService{}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 
 	realCaller := uuid.New()
 	victimInBody := uuid.New()
@@ -150,7 +150,7 @@ func TestLivestreamLeave_MaoDanhBangUserID_BiBoQua(t *testing.T) {
 // (khong con truong nao), nen khong duoc doi hoi body.
 func TestLivestreamLeave_KhongCanBody(t *testing.T) {
 	svc := &stubLivestreamService{}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 	caller := uuid.New()
 
 	app := mountWithCaller("POST", "/livestream/:id/leave", caller, h.Leave)
@@ -268,7 +268,7 @@ func TestLivestreamManage_NguoiLa_Bi403(t *testing.T) {
 	for _, tc := range manageCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := &stubLivestreamService{authzErr: service.ErrNotClassTeacher}
-			h := NewLivestreamHandler(svc)
+			h := NewLivestreamHandler(svc, nil)
 			app := mountWithCaller(tc.method, tc.path, uuid.New(), tc.handle(h))
 
 			status := doJSON(t, app, tc.method, strings.Replace(tc.path, ":id", uuid.New().String(), 1), tc.body)
@@ -285,7 +285,7 @@ func TestLivestreamManage_Host_DuocPhep(t *testing.T) {
 	for _, tc := range manageCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := &stubLivestreamService{}
-			h := NewLivestreamHandler(svc)
+			h := NewLivestreamHandler(svc, nil)
 			hostID := uuid.New()
 			app := mountWithCaller(tc.method, tc.path, hostID, tc.handle(h))
 
@@ -306,7 +306,7 @@ func TestLivestreamManage_KhongDangNhap_Bi401(t *testing.T) {
 	for _, tc := range manageCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := &stubLivestreamService{}
-			h := NewLivestreamHandler(svc)
+			h := NewLivestreamHandler(svc, nil)
 			app := fiber.New()
 			app.Add(tc.method, tc.path, tc.handle(h))
 
@@ -326,7 +326,7 @@ func TestLivestreamManage_KhongDangNhap_Bi401(t *testing.T) {
 // khong phai ve nguoi goi — mot GV lop (co quyen quan tri) van khong duoc da host ra.
 func TestLivestreamKick_ChanKickHost_Bi403(t *testing.T) {
 	svc := &stubLivestreamService{authzErr: service.ErrCannotKickHost}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 	app := mountWithCaller("POST", "/livestream/:id/kick", uuid.New(), h.KickParticipant)
 
 	body := `{"user_id":"` + uuid.New().String() + `","action":"kick"}`
@@ -340,7 +340,7 @@ func TestLivestreamKick_ChanKickHost_Bi403(t *testing.T) {
 // lay tu token) — phai duoc truyen xuong dung, neu khong thi moderation khong con tac dung.
 func TestLivestreamKick_DoiTuongLayTuBody(t *testing.T) {
 	svc := &stubLivestreamService{}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 	hostID, targetID := uuid.New(), uuid.New()
 	app := mountWithCaller("POST", "/livestream/:id/kick", hostID, h.KickParticipant)
 
@@ -357,11 +357,14 @@ func TestLivestreamKick_DoiTuongLayTuBody(t *testing.T) {
 	}
 }
 
-// TestLivestreamScreenShare_MaoDanhBangUserID_BiBoQua: body cu `{"user_id": <nan nhan>}` khong con
-// duong vao — nguoi chia se man hinh luon la nguoi goi.
-func TestLivestreamScreenShare_MaoDanhBangUserID_BiBoQua(t *testing.T) {
+// TestLivestreamScreenShare_ActorLuonLayTuToken_TargetLayTuBody (D3, review vong 2 260915): sau D3,
+// `user_id` trong body la MUC TIEU hop le (host duyet chia se man hinh CHO mot hoc sinh cu the) —
+// day KHONG con la lo hong mao danh nhu Phase 1 (khi StartScreenShare chua co khai niem target).
+// Diem UY QUYEN van dam bao o tang service (getManageableSession trong StartScreenShare that —
+// stub o day chi xac nhan handler truyen dung 2 gia tri: actorID tu TOKEN, targetID tu BODY.
+func TestLivestreamScreenShare_ActorLuonLayTuToken_TargetLayTuBody(t *testing.T) {
 	svc := &stubLivestreamService{}
-	h := NewLivestreamHandler(svc)
+	h := NewLivestreamHandler(svc, nil)
 	caller, victim := uuid.New(), uuid.New()
 	app := mountWithCaller("POST", "/livestream/:id/screen-share/start", caller, h.StartScreenShare)
 
@@ -370,10 +373,27 @@ func TestLivestreamScreenShare_MaoDanhBangUserID_BiBoQua(t *testing.T) {
 	if status != fiber.StatusOK {
 		t.Fatalf("status = %d, muon 200", status)
 	}
-	if svc.gotScreenShareID != uuid.Nil && svc.gotScreenShareID == victim {
-		t.Error("nguoi chia se man hinh lay tu body — lo hong V3-6")
-	}
 	if svc.gotActorID != caller {
-		t.Errorf("actorID = %s, muon nguoi goi %s", svc.gotActorID, caller)
+		t.Errorf("actorID = %s, muon nguoi goi (tu token) %s — actorID KHONG duoc lay tu body", svc.gotActorID, caller)
+	}
+	if svc.gotTargetID != victim {
+		t.Errorf("targetID = %s, muon doi tuong trong body %s (D3: host duyet cho mot hoc sinh cu the)", svc.gotTargetID, victim)
+	}
+}
+
+// TestLivestreamScreenShare_KhongTruyenUserID_TargetLaChinhActor (D3): khi body khong co user_id
+// (truong hop hoc sinh/giao vien tu chia se man hinh cua chinh minh), target phai mac dinh la actor.
+func TestLivestreamScreenShare_KhongTruyenUserID_TargetLaChinhActor(t *testing.T) {
+	svc := &stubLivestreamService{}
+	h := NewLivestreamHandler(svc, nil)
+	caller := uuid.New()
+	app := mountWithCaller("POST", "/livestream/:id/screen-share/start", caller, h.StartScreenShare)
+
+	status := doJSON(t, app, "POST", "/livestream/"+uuid.New().String()+"/screen-share/start", `{"action":"start"}`)
+	if status != fiber.StatusOK {
+		t.Fatalf("status = %d, muon 200", status)
+	}
+	if svc.gotTargetID != caller {
+		t.Errorf("targetID = %s, muon mac dinh la actor %s khi body khong truyen user_id", svc.gotTargetID, caller)
 	}
 }
