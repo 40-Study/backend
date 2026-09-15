@@ -91,9 +91,12 @@ func (r *LivestreamRepository) GetAll(ctx context.Context, userID uuid.UUID, isA
 	// là host, hoặc thuộc lớp mình dạy/học, hoặc thuộc khoá mình là instructor. Admin (isAdmin)
 	// giữ nguyên hành vi cũ (thấy tất cả).
 	if !isAdmin {
+		// D6/R2-7 (issue #58 review vòng 3): nhánh "học sinh lớp" phải lọc theo
+		// StudentClassActiveCondition (status active/rỗng/NULL) — trước đây liệt kê cả lớp học
+		// sinh đã nghỉ (dropped/completed), cùng lớp lỗi với D1 vừa đóng ở resolveJoinRole.
 		query = query.Where(
 			"host_id = ? OR class_id IN (SELECT class_id FROM teacher_classes WHERE teacher_id = ?) OR "+
-				"class_id IN (SELECT class_id FROM student_classes WHERE student_id = ?) OR "+
+				"class_id IN (SELECT class_id FROM student_classes WHERE student_id = ? AND "+StudentClassActiveCondition+") OR "+
 				"class_id IN (SELECT id FROM classes WHERE course_id IN (SELECT id FROM courses WHERE instructor_id = ?))",
 			userID, userID, userID, userID,
 		)
