@@ -78,6 +78,12 @@ func TestGetChildOverview_TotalStudyMinutes_RealValue(t *testing.T) {
 	if got.TotalStudyMinutes != 9 {
 		t.Errorf("TotalStudyMinutes = %d, mong doi 9 (540 giay / 60)", got.TotalStudyMinutes)
 	}
+	// LOW-8 (review 260915): khang dinh service goi GetByUserID voi CHILD id, khong phai parent
+	// id — thieu vi nay thi mot nham lan doi childID thanh parentID tai noi goi van xanh du phu
+	// huynh se thay nham thoi gian hoc CUA CHINH MINH thay vi cua con.
+	if repo.gotUserID != childID {
+		t.Errorf("GetByUserID nhan userID = %s, mong doi childID = %s", repo.gotUserID, childID)
+	}
 }
 
 // TestGetChildOverview_TotalStudyMinutes_TruncatesPartialMinute — 119 giay la 1 phut chu khong

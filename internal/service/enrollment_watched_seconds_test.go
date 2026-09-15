@@ -24,6 +24,10 @@ type fakeEnrollmentRepoWatched struct {
 
 	enrollments []model.Enrollment
 	total       int64
+	// gotUserID (LOW-8, review 260915): ghi lai userID ma GetByUserID nhan duoc — truoc day fake
+	// nay bo qua tham so nay hoan toan, nen mot nham lan doi childID thanh parentID o tang goi
+	// (GetChildOverview) van xanh du phu huynh se thay nham thoi gian hoc CUA CHINH MINH.
+	gotUserID uuid.UUID
 
 	watched    map[uuid.UUID]int
 	watchedErr error
@@ -51,6 +55,7 @@ type fakeEnrollmentRepoWatched struct {
 }
 
 func (f *fakeEnrollmentRepoWatched) GetByUserID(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]model.Enrollment, int64, error) {
+	f.gotUserID = userID
 	return f.enrollments, f.total, nil
 }
 
