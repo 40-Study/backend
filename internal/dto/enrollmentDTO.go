@@ -53,6 +53,23 @@ type UpdateLessonProgressDTO struct {
 	VideoWatchedSecs *int `json:"video_watched_seconds" validate:"omitempty,min=0,max=86400"`
 }
 
+// BeaconProgressDTO la body ma `navigator.sendBeacon("/api/progress", ...)` gui
+// tu trinh phat video (web: app/courses/[slug]/learn/player-client.tsx).
+//
+// Hai khac biet BAT BUOC so voi UpdateLessonProgressDTO, dung thieu mot cai nao:
+//  1. Ten field la camelCase (lessonId / videoWatchedSeconds) vi client
+//     JSON.stringify thang object cua no, khong di qua lop service snake_case.
+//  2. LessonID nam TRONG body, khong phai path param — sendBeacon chi nhan
+//     mot URL co dinh nen khong the chen :lessonId vao duong dan.
+//
+// Rang buoc min/max giong UpdateLessonProgressDTO: cot nay chi TANG nen mot lan
+// nhan gia tri rac se khong bao gio bi ghi de boi request nho hon.
+type BeaconProgressDTO struct {
+	LessonID         string  `json:"lessonId" validate:"required,uuid"`
+	Status           *string `json:"status" validate:"omitempty,oneof=not_started in_progress completed"`
+	VideoWatchedSecs *int    `json:"videoWatchedSeconds" validate:"omitempty,min=0,max=86400"`
+}
+
 type LessonProgressResponseDTO struct {
 	ID               uuid.UUID       `json:"id"`
 	UserID           uuid.UUID       `json:"user_id"`

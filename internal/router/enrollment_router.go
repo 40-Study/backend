@@ -38,4 +38,11 @@ func SetupEnrollmentRoutes(
 	{
 		lessons.Put("/:lessonId/progress", enrollmentHandler.UpdateLessonProgress)
 	}
+
+	// Beacon tu trinh phat video khi dong tab (navigator.sendBeacon khong the
+	// dat header nen lessonId nam trong body, khong phai path). Xem
+	// EnrollmentHandler.TrackProgressBeacon. Thay cho progress_router.go von bi
+	// comment toan bo — khong dung mot ProgressHandler rieng de tranh nhan doi
+	// logic ghi tien do.
+	api.Post("/progress", auth, enrollmentHandler.TrackProgressBeacon)
 }

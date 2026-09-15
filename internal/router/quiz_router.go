@@ -61,6 +61,14 @@ func SetupQuizRoutes(
 	api.Get("/attempts/:attemptId/progress", auth, quizHandler.GetAttemptProgress)
 
 	// ============================================================================
+	// QUIZ THEO BAI HOC
+	// ============================================================================
+	// Web goi dung duong dan nay (services/quiz.service.ts getByLesson va
+	// lib/server-fetchers/curriculum.ts). Thieu no thi moi bai hoc nhan 404 va
+	// quiz khong bao gio tai duoc trong trinh phat. Tra 200 [] khi bai khong co quiz.
+	api.Get("/lessons/:lessonId/quizzes", auth, quizHandler.GetQuizzesByLesson)
+
+	// ============================================================================
 	// MY QUIZZES
 	// ============================================================================
 	api.Get("/me/quizzes", auth, quizHandler.GetMyCreatedQuizzes)

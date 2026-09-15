@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/gofiber/fiber/v2"
@@ -156,6 +157,64 @@ func (h *EnrollmentHandler) UpdateLessonProgress(c *fiber.Ctx) error {
 	}
 
 	progress, err := h.service.UpdateLessonProgress(c.Context(), userID, lessonID, req)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Failed to update progress", "error": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Progress updated successfully", "data": progress,
+	})
+}
+
+// TrackProgressBeacon nhan tien do do trinh phat gui bang
+// `navigator.sendBeacon("/api/progress", ...)` khi nguoi hoc dong tab hoac roi trang
+// (web: app/courses/[slug]/learn/player-client.tsx, handler beforeunload).
+//
+// Truoc ban va nay backend khong co route `/progress` nao ca (progress_router.go bi
+// comment toan bo vi ProgressHandler chua duoc viet), nen moi beacon nhan 404 va
+// tien do cua giay phut cuoi truoc khi dong tab bi mat am tham.
+//
+// Khong viet lai ProgressHandler cho viec nay: luong ghi da co san va da duoc lam
+// chi-tang trong service.UpdateLessonProgress, nen o day chi can mot adapter mong
+// dich body camelCase cua beacon sang DTO snake_case roi goi dung service do.
+// Mot ProgressHandler rieng se la ban sao thu hai cua cung mot logic ghi.
+func (h *EnrollmentHandler) TrackProgressBeacon(c *fiber.Ctx) error {
+	userID, err := extractUserID(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized", "error": err.Error(),
+		})
+	}
+
+	// KHONG dung c.BodyParser o day: sendBeacon gui Content-Type
+	// "text/plain;charset=UTF-8" va KHONG cho doi header, con BodyParser cua Fiber
+	// tu choi content-type do voi 422 Unprocessable Entity. Unmarshal body truc tiep.
+	var req dto.BeaconProgressDTO
+	if err := json.Unmarshal(c.Body(), &req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid request body", "error": err.Error(),
+		})
+	}
+
+	if errors := utils.ValidateStruct(req); len(errors) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed", "errors": errors,
+		})
+	}
+
+	lessonID, err := uuid.Parse(req.LessonID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid lesson ID", "error": err.Error(),
+		})
+	}
+
+	progress, err := h.service.UpdateLessonProgress(c.Context(), userID, lessonID, dto.UpdateLessonProgressDTO{
+		Status:           req.Status,
+		VideoWatchedSecs: req.VideoWatchedSecs,
+	})
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update progress", "error": err.Error(),
