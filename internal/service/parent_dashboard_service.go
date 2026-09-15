@@ -86,10 +86,29 @@ func (s *ParentDashboardService) GetChildOverview(ctx context.Context, parentID,
 	}
 
 	completedCount := 0
+	enrollmentIDs := make([]uuid.UUID, 0, len(enrollments))
 	for _, e := range enrollments {
+		enrollmentIDs = append(enrollmentIDs, e.ID)
 		if e.CompletedAt != nil {
 			completedCount++
 		}
+	}
+
+	// TotalStudyMinutes: thoi gian hoc THAT cua child, lay tu lesson_progress.video_watched_seconds.
+	// Tai dung SumWatchedSecondsByEnrollmentIDs (cung ham ma GET /my-enrollments dung) de toan he
+	// thong chi co MOT dinh nghia "da hoc bao nhieu" — tu viet SUM rieng o day se la ban sao thu
+	// hai, va hai ban sao se lech nhau.
+	totalStudyMinutes := 0
+	if len(enrollmentIDs) > 0 {
+		watchedByEnrollment, err := s.enrollmentRepo.SumWatchedSecondsByEnrollmentIDs(ctx, enrollmentIDs)
+		if err != nil {
+			return nil, fmt.Errorf("failed to sum watched seconds: %w", err)
+		}
+		totalWatchedSeconds := 0
+		for _, seconds := range watchedByEnrollment {
+			totalWatchedSeconds += seconds
+		}
+		totalStudyMinutes = totalWatchedSeconds / 60
 	}
 
 	// Get XP and streak from UserStatsRepository
@@ -113,7 +132,7 @@ func (s *ParentDashboardService) GetChildOverview(ctx context.Context, parentID,
 		CurrentStreak:     currentStreak,
 		EnrolledCourses:   int(totalEnrolled),
 		CompletedCourses:  completedCount,
-		TotalStudyMinutes: 0, // TODO: calculate from lesson progress
+		TotalStudyMinutes: totalStudyMinutes,
 		CanViewProgress:   relation.CanViewProgress,
 		CanViewGrades:     relation.CanViewGrades,
 		CanViewAttendance: relation.CanViewAttendance,
