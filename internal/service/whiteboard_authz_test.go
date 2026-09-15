@@ -14,19 +14,27 @@ import (
 	"study.com/v1/internal/repository"
 )
 
-// fakeLivestreamSvcForWhiteboard: chi EnsureSessionMember duoc dung.
+// fakeLivestreamSvcForWhiteboard: EnsureSessionMember va (R2-4, review vong 3) EnsureSessionManage
+// duoc dung — SaveSnapshot can ca hai khi bang dang khoa (F-4).
 type fakeLivestreamSvcForWhiteboard struct {
 	LivestreamServiceInterface
 	memberErr        error
 	memberCalls      int
 	gotMemberSession uuid.UUID
 	gotMemberUser    uuid.UUID
+	// manageErr (R2-4): khac nil nghia la nguoi goi KHONG quan tri duoc phien — dung de mo phong
+	// SaveSnapshot khi bang dang khoa va nguoi goi khong phai host/GV lop/instructor/admin.
+	manageErr error
 }
 
 func (f *fakeLivestreamSvcForWhiteboard) EnsureSessionMember(ctx context.Context, sessionID, userID uuid.UUID) error {
 	f.memberCalls++
 	f.gotMemberSession, f.gotMemberUser = sessionID, userID
 	return f.memberErr
+}
+
+func (f *fakeLivestreamSvcForWhiteboard) EnsureSessionManage(ctx context.Context, sessionID, userID uuid.UUID) error {
+	return f.manageErr
 }
 
 type fakeWhiteboardRepo struct {
@@ -160,5 +168,69 @@ func TestWhiteboardBroadcastEvent_ThanhVien_ChoPhep(t *testing.T) {
 	}
 	if livekit.sendDataCalls != 1 {
 		t.Errorf("livekitSvc.SendData duoc goi %d lan, muon 1", livekit.sendDataCalls)
+	}
+}
+
+// --- R2-4 (review vong 3): SaveSnapshot khi bang dang khoa — truoc day M-6 dao dieu kien
+// WhiteboardLocked ma suite van xanh, tuc ca hai chieu sai deu lot: hoc sinh ghi duoc khi bang
+// khoa, VA nguoi quan tri bi chan khi bang mo.
+
+func TestWhiteboardSaveSnapshot_BangDangKhoa_NguoiThuong_Bi403WhiteboardLocked(t *testing.T) {
+	sessionID := uuid.New()
+	lsSvc := &fakeLivestreamSvcForWhiteboard{manageErr: ErrNotClassTeacher} // khong quan tri duoc phien
+	sessionRepo := &fakeSessionRepoForWhiteboard{session: &model.LivestreamSession{
+		BaseModel: model.BaseModel{ID: sessionID},
+		RoomName:  "room-1",
+		Settings:  model.LivestreamSettings{WhiteboardLocked: true},
+	}}
+	repo := &fakeWhiteboardRepo{}
+	s := newWhiteboardServiceForTest(repo, sessionRepo, lsSvc)
+
+	err := s.SaveSnapshot(context.Background(), uuid.New(), dto.WhiteboardSnapshotDTO{SessionID: sessionID.String()})
+	if err != ErrWhiteboardLocked {
+		t.Fatalf("err = %v, muon ErrWhiteboardLocked", err)
+	}
+	if repo.saveCalls != 0 {
+		t.Error("repo.SaveSnapshot bi goi du bang dang khoa va nguoi goi khong quan tri duoc")
+	}
+}
+
+func TestWhiteboardSaveSnapshot_BangDangKhoa_NguoiQuanTri_ChoPhep(t *testing.T) {
+	sessionID := uuid.New()
+	lsSvc := &fakeLivestreamSvcForWhiteboard{} // manageErr = nil -> quan tri duoc phien
+	sessionRepo := &fakeSessionRepoForWhiteboard{session: &model.LivestreamSession{
+		BaseModel: model.BaseModel{ID: sessionID},
+		RoomName:  "room-1",
+		Settings:  model.LivestreamSettings{WhiteboardLocked: true},
+	}}
+	repo := &fakeWhiteboardRepo{}
+	s := newWhiteboardServiceForTest(repo, sessionRepo, lsSvc)
+
+	err := s.SaveSnapshot(context.Background(), uuid.New(), dto.WhiteboardSnapshotDTO{SessionID: sessionID.String()})
+	if err != nil {
+		t.Fatalf("khong muon loi khi nguoi quan tri ghi luc bang dang khoa: %v", err)
+	}
+	if repo.saveCalls != 1 {
+		t.Errorf("repo.SaveSnapshot duoc goi %d lan, muon 1", repo.saveCalls)
+	}
+}
+
+func TestWhiteboardSaveSnapshot_BangDangMo_NguoiThuong_ChoPhep(t *testing.T) {
+	sessionID := uuid.New()
+	lsSvc := &fakeLivestreamSvcForWhiteboard{manageErr: ErrNotClassTeacher}
+	sessionRepo := &fakeSessionRepoForWhiteboard{session: &model.LivestreamSession{
+		BaseModel: model.BaseModel{ID: sessionID},
+		RoomName:  "room-1",
+		Settings:  model.LivestreamSettings{WhiteboardLocked: false},
+	}}
+	repo := &fakeWhiteboardRepo{}
+	s := newWhiteboardServiceForTest(repo, sessionRepo, lsSvc)
+
+	err := s.SaveSnapshot(context.Background(), uuid.New(), dto.WhiteboardSnapshotDTO{SessionID: sessionID.String()})
+	if err != nil {
+		t.Fatalf("khong muon loi khi bang dang MO du nguoi goi khong phai nguoi quan tri: %v", err)
+	}
+	if repo.saveCalls != 1 {
+		t.Errorf("repo.SaveSnapshot duoc goi %d lan, muon 1", repo.saveCalls)
 	}
 }

@@ -373,3 +373,79 @@ func TestJoin_NguoiDaBiKick_KhongDuocVaoLai(t *testing.T) {
 		t.Errorf("loi = %v, mong doi ErrParticipantKicked", err)
 	}
 }
+
+// --- R2-2 (review vong 3): EnsureSessionMember phai chan nguoi da bi kick ---------------------
+//
+// F-5 (vong 2) chi chan duong Join — EnsureSessionMember la cong gac cua chat gui/doc VA bang
+// trang doc/ghi/broadcast, khong kiem IsKicked, nen nguoi bi kick van gui chat/ghi bang binh
+// thuong qua REST du da bi ngat khoi LiveKit.
+
+func TestEnsureSessionMember_NguoiDaBiKick_Bi403Kicked(t *testing.T) {
+	sessionID := uuid.New()
+	kickedUserID := uuid.New()
+	session := &model.LivestreamSession{BaseModel: model.BaseModel{ID: sessionID}, HostID: uuid.New(), ClassID: uuid.New()}
+	repo := &fakeLivestreamRepoJoin{session: session}
+	// relatedFlag=true: VAN la thanh vien lop hop le — chung minh chinh IsKicked la ly do tu choi,
+	// khong phai vi thieu quan he lop.
+	classRepo := &fakeClassRepoJoin{relatedFlag: true}
+	participantRepo := &fakeParticipantRepoJoin{
+		existing: &model.Participant{
+			BaseModel: model.BaseModel{ID: uuid.New()},
+			SessionID: sessionID,
+			UserID:    kickedUserID,
+			IsKicked:  true,
+		},
+	}
+	svc := newLivestreamServiceForJoin(classRepo, &fakeCourseRepoJoin{}, repo, participantRepo, nil)
+
+	err := svc.EnsureSessionMember(context.Background(), sessionID, kickedUserID)
+	if err != ErrParticipantKicked {
+		t.Errorf("loi = %v, mong doi ErrParticipantKicked (van la thanh vien lop nhung da bi kick khoi PHIEN NAY)", err)
+	}
+}
+
+// TestEnsureSessionMember_ChuaTungThamGia_KhongBiChanOanBoiKiemKick: hoi quy — them kiem IsKicked
+// khong duoc lam chan oan nguoi CHUA TUNG join phien (participant == nil trong DB).
+func TestEnsureSessionMember_ChuaTungThamGia_KhongBiChanOanBoiKiemKick(t *testing.T) {
+	sessionID := uuid.New()
+	userID := uuid.New()
+	session := &model.LivestreamSession{BaseModel: model.BaseModel{ID: sessionID}, HostID: uuid.New(), ClassID: uuid.New()}
+	repo := &fakeLivestreamRepoJoin{session: session}
+	classRepo := &fakeClassRepoJoin{relatedFlag: true}
+	svc := newLivestreamServiceForJoin(classRepo, &fakeCourseRepoJoin{}, repo, &fakeParticipantRepoJoin{}, nil)
+
+	if err := svc.EnsureSessionMember(context.Background(), sessionID, userID); err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
+	}
+}
+
+// --- R2-3 (review vong 3): participantGrant khong co test nao — M-5 huy toan bo D3 ma suite van
+// xanh. Bon ca bang thuan, khang dinh ca bo ba (canPublish, canSubscribe, canPublishData).
+
+func TestParticipantGrant_BangTheoVaiTroVaKhoaBang(t *testing.T) {
+	cases := []struct {
+		name                                        string
+		role                                        model.ParticipantRole
+		locked                                      bool
+		wantPublish, wantSubscribe, wantPublishData bool
+	}{
+		{"teacher_bang_mo", model.ParticipantRoleTeacher, false, true, true, true},
+		{"teacher_bang_khoa", model.ParticipantRoleTeacher, true, true, true, true},
+		{"student_bang_mo", model.ParticipantRoleStudent, false, false, true, true},
+		{"student_bang_khoa", model.ParticipantRoleStudent, true, false, true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotPublish, gotSubscribe, gotPublishData := participantGrant(c.role, c.locked)
+			if gotPublish != c.wantPublish {
+				t.Errorf("canPublish = %v, muon %v", gotPublish, c.wantPublish)
+			}
+			if gotSubscribe != c.wantSubscribe {
+				t.Errorf("canSubscribe = %v, muon %v", gotSubscribe, c.wantSubscribe)
+			}
+			if gotPublishData != c.wantPublishData {
+				t.Errorf("canPublishData = %v, muon %v", gotPublishData, c.wantPublishData)
+			}
+		})
+	}
+}
