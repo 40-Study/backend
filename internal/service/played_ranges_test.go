@@ -286,7 +286,7 @@ func TestResolveLessonStatus_DatNguongThiTuChotCompleted(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := resolveLessonStatus(c.current, c.requested, c.pct, c.minPct); got != c.want {
+			if got := resolveLessonStatus(c.current, c.requested, c.pct, c.minPct, true); got != c.want {
 				t.Fatalf("resolveLessonStatus = %q, muon %q", got, c.want)
 			}
 		})
@@ -297,7 +297,7 @@ func TestResolveLessonStatus_DatNguongThiTuChotCompleted(t *testing.T) {
 // Client tu gui status="completed" (hoac keo thanh tua roi goi API) KHONG duoc chap nhan neu
 // chinh server chua tinh ra watched_pct dat nguong.
 func TestResolveLessonStatus_ClientGuiCompletedBiBoQua(t *testing.T) {
-	got := resolveLessonStatus("in_progress", strPtr("completed"), decimal.NewFromFloat(12.5), 90)
+	got := resolveLessonStatus("in_progress", strPtr("completed"), decimal.NewFromFloat(12.5), 90, true)
 
 	if got != "in_progress" {
 		t.Fatalf("status = %q, muon \"in_progress\" — client khong duoc tu chot completed", got)
@@ -319,7 +319,7 @@ func TestResolveLessonStatus_CompletedLaBatBien(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := resolveLessonStatus("completed", c.requested, decimal.NewFromFloat(10), 90)
+			got := resolveLessonStatus("completed", c.requested, decimal.NewFromFloat(10), 90, true)
 			if got != "completed" {
 				t.Fatalf("status = %q, muon \"completed\" — status chi duoc di len", got)
 			}
@@ -330,10 +330,10 @@ func TestResolveLessonStatus_CompletedLaBatBien(t *testing.T) {
 // TestResolveLessonStatus_StatusDiLenKhongDiXuong: giua not_started/in_progress thi cap bac moi
 // phai >= cap bac hien tai moi duoc ghi; gui in_progress cho bai vua mo (not_started) la hop le.
 func TestResolveLessonStatus_StatusDiLenKhongDiXuong(t *testing.T) {
-	if got := resolveLessonStatus("not_started", strPtr("in_progress"), decimal.Zero, 90); got != "in_progress" {
+	if got := resolveLessonStatus("not_started", strPtr("in_progress"), decimal.Zero, 90, true); got != "in_progress" {
 		t.Fatalf("status = %q, muon \"in_progress\"", got)
 	}
-	if got := resolveLessonStatus("in_progress", strPtr("not_started"), decimal.Zero, 90); got != "in_progress" {
+	if got := resolveLessonStatus("in_progress", strPtr("not_started"), decimal.Zero, 90, true); got != "in_progress" {
 		t.Fatalf("status = %q, muon \"in_progress\" — khong duoc lui ve not_started", got)
 	}
 }

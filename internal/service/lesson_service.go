@@ -22,7 +22,12 @@ var ErrLessonHasNoVideo = errors.New("lesson has no video content to attach a su
 
 type LessonServiceInterface interface {
 	CreateLesson(ctx context.Context, sectionID, actorUserID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error)
-	GetAllLessons(ctx context.Context, sectionID uuid.UUID) ([]dto.LessonResponseDTO, error)
+	// GetAllLessons (C-1, review vòng 2): userID/isAdmin dùng để tính khoá cho TỪNG bài — trước
+	// bản vá này hàm KHÔNG nhận userID và trả thẳng les.Contents cho bất kỳ ai đã đăng nhập, nên
+	// GET /sections/:section_id/lessons là đường vòng lộ contents[].video_url bỏ qua hoàn toàn
+	// ResolveLessonLock (đúng lớp lỗ của B-2, chỉ khác endpoint). Route này nằm sau
+	// middleware.AuthMiddleware nên userID không bao giờ là uuid.Nil trên đường thật.
+	GetAllLessons(ctx context.Context, sectionID, userID uuid.UUID, isAdmin bool) ([]dto.LessonResponseDTO, error)
 	// GetLessonByID (B-2, review vòng 2): userID/isAdmin dùng để tính khoá — trước bản vá này
 	// hàm KHÔNG nhận userID, gọi thẳng lessonRepo.GetContentsByLessonID (bỏ qua hoàn toàn
 	// ResolveLessonLock), nên GET /lessons/:id là đường vòng lộ contents (bao gồm video_url,
@@ -167,8 +172,38 @@ func (s *LessonService) CreateLesson(ctx context.Context, sectionID, actorUserID
 	return s.toLessonResponseDTO(lesson, nil), nil
 }
 
-func (s *LessonService) GetAllLessons(ctx context.Context, sectionID uuid.UUID) ([]dto.LessonResponseDTO, error) {
-	if err := s.validateSection(ctx, sectionID); err != nil {
+// GetAllLessons (C-1, review vòng 2): bản trước trả thẳng les.Contents cho MỌI người đã đăng nhập
+// — không enroll, không kiểm khoá. Bản này dùng LẠI đúng đường khoá của GetLessonByID
+// (gatherLessonLockInput + ResolveLessonLock — xem lesson_lock.go): bài bị khoá trả contents RỖNG
+// kèm locked/lock_reason/progress, bài mở trả contents đầy đủ, nên giảng viên sở hữu khoá học
+// (BypassLock) vẫn thấy video_url.
+//
+// KHÁC GetLessonByID ở chỗ KHÔNG có lessonID tuỳ ý để xác nhận: hàm này chỉ trả các bài nằm trong
+// chính sectionID được hỏi, nên mọi bài đều thuộc khoá theo cấu trúc — không cần EnsureLessonInCourse
+// (cùng lý do SectionService.GetAllSections không gọi nó).
+func (s *LessonService) GetAllLessons(ctx context.Context, sectionID, userID uuid.UUID, isAdmin bool) ([]dto.LessonResponseDTO, error) {
+	section, err := s.sectionRepo.GetByID(ctx, sectionID)
+	if err != nil {
+		return nil, err
+	}
+	if section == nil {
+		return nil, errors.New("section not found")
+	}
+
+	course, err := s.courseRepo.GetByID(ctx, section.CourseID)
+	if err != nil {
+		return nil, err
+	}
+	// course == nil (dữ liệu mồ côi) rơi về sequential=false + không bypass — tức làn "mở" của
+	// luật khoá, giống hệt cách resolveLessonByIDLock xử lý course nil.
+	var sequential bool
+	bypass := isAdmin
+	if course != nil {
+		sequential = course.Sequential
+		bypass = isAdmin || course.InstructorID == userID
+	}
+	lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, section.CourseID, sequential, bypass)
+	if err != nil {
 		return nil, err
 	}
 
@@ -179,7 +214,17 @@ func (s *LessonService) GetAllLessons(ctx context.Context, sectionID uuid.UUID) 
 
 	result := make([]dto.LessonResponseDTO, len(lessons))
 	for i, les := range lessons {
-		result[i] = *s.toLessonResponseDTO(&les, les.Contents)
+		locked, reason, progress := ResolveLessonLock(les.ID, lockInput)
+		if locked {
+			// Bài bị khoá: KHÔNG truyền les.Contents — đó chính là đường lộ video_url mà bản vá
+			// này đóng lại.
+			result[i] = *s.toLessonResponseDTO(&les, nil)
+		} else {
+			result[i] = *s.toLessonResponseDTO(&les, les.Contents)
+		}
+		result[i].Locked = locked
+		result[i].LockReason = reason
+		result[i].Progress = progress
 	}
 
 	return result, nil

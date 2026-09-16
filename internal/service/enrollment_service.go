@@ -392,7 +392,9 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 			progress.VideoWatchedSecs = clampToDuration(*req.VideoWatchedSecs, durationSeconds)
 		}
 
-		status := resolveLessonStatus("not_started", req.Status, progress.WatchedPct, minVideoPct)
+		// C-2 (review vòng 2, BLOCKER): !usingFallbackDuration là điều kiện "mẫu số đáng tin" —
+		// xem resolveLessonStatus. Vẫn ghi watched_pct/played_ranges như cũ, chỉ KHÔNG cấp completed.
+		status := resolveLessonStatus("not_started", req.Status, progress.WatchedPct, minVideoPct, !usingFallbackDuration)
 		progress.Status = status
 		if status == "completed" {
 			progress.CompletedAt = &now
@@ -432,7 +434,9 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 			updates["watched_pct"] = pct
 		}
 	}
-	status := resolveLessonStatus(progress.Status, req.Status, watchedPct, minVideoPct)
+	// C-2 (review vòng 2, BLOCKER): xem chú thích ở nhánh INSERT phía trên — cùng một điều kiện,
+	// hai nhánh ghi phải luật giống nhau.
+	status := resolveLessonStatus(progress.Status, req.Status, watchedPct, minVideoPct, !usingFallbackDuration)
 	if status != progress.Status {
 		updates["status"] = status
 		if status == "completed" && progress.CompletedAt == nil {
@@ -530,15 +534,27 @@ const defaultMinVideoPct = 90
 //  1. `completed` la BAT BIEN — mot khi da completed thi khong bao gio ha cap (status chi di len,
 //     xem lessonProgressStatusRank). Beacon dong tab luon gui cung "in_progress", ghi de vo dieu
 //     kien se lam CountCompletedMandatory tut so va % tien do khoa hoc giam moi lan xem lai bai cu.
-//  2. Server TU chot `completed` khi watched_pct >= minVideoPct.
+//  2. Server TU chot `completed` khi watched_pct >= minVideoPct — NHUNG chi khi mẫu số của
+//     watched_pct là sự thật phía server (trustedDuration, xem luật 2b bên dưới).
 //  3. `completed` do CLIENT gui len bi BO QUA (contract §1): no chi duoc chap nhan khi chinh server
 //     cung tinh ra pct dat nguong (truong hop 2). Neu khong thi keo thanh tua toi cuoi video la
 //     xong bai — dung lo hong ma played_ranges sinh ra de bit.
 //
 // Cac gia tri status khac (not_started/in_progress) van theo luat cu: chi ghi khi cap bac moi >=
 // cap bac hien tai.
-func resolveLessonStatus(current string, requested *string, watchedPct decimal.Decimal, minVideoPct int) string {
-	reachedThreshold := minVideoPct > 0 && watchedPct.GreaterThanOrEqual(decimal.NewFromInt(int64(minVideoPct)))
+//
+// LUAT 2b (C-2, review vòng 2 — BLOCKER): trustedDuration=false nghia la KHONG co duration nao
+// phia server (lesson_contents.lesson_videos deu 0), nen mẫu số của watched_pct chinh là
+// duration_seconds do CLIENT tu khai (xem usingFallbackDuration ở UpdateLessonProgress). Lúc đó
+// watched_pct là một con số do client kiểm soát: request {"duration_seconds":10,
+// "played_ranges":[[0,10]]} cho watched_pct=100 trên một bài dài 1200s và tự chốt completed —
+// mà completed là sticky nên không thu hồi được (sticky-max của fallback_duration_seconds chỉ bảo
+// vệ các request SAU, không rút lại lần hoàn thành đã cấp). Vì vậy khi mẫu số chưa phải
+// server-truth thì KHÔNG cho watched_pct tự chốt completed; played_ranges/watched_pct vẫn được
+// ghi như thường nên không mất dữ liệu, chỉ khoản "cấp completed" bị giữ lại cho tới khi biết
+// duration thật của video. KHONG phai phép đảo luật 1: current=="completed" vẫn giữ nguyên.
+func resolveLessonStatus(current string, requested *string, watchedPct decimal.Decimal, minVideoPct int, trustedDuration bool) string {
+	reachedThreshold := trustedDuration && minVideoPct > 0 && watchedPct.GreaterThanOrEqual(decimal.NewFromInt(int64(minVideoPct)))
 
 	next := current
 	if reachedThreshold {

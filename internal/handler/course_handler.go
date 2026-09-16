@@ -117,7 +117,18 @@ func (h *CourseHandler) GetCourseByID(c *fiber.Ctx) error {
 		})
 	}
 
-	course, err := h.service.GetCourseByID(c.Context(), id)
+	// C-1 (review vòng 2): route nằm sau middleware.AuthMiddleware (course_router.go) nên user_id
+	// luôn có mặt trên đường thật — cần để service tính locked/lock_reason/progress đúng người
+	// đang xem, thay vì trả contents (video_url) cho bất kỳ ai đã đăng nhập.
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	course, err := h.service.GetCourseByID(c.Context(), id, userID, isAdmin)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Course not found",

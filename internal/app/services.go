@@ -352,7 +352,9 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Category:      service.NewCategoryService(repos.Category),
 		Tag:           service.NewTagService(repos.Tag),
 		Cart:          service.NewCartService(repos.CartItem, repos.Course, repos.Enrollment),
-		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag),
+		// C-1 (review vòng 2): toán hạng repos.Enrollment thêm vào để GetCourseByID tính được
+		// locked/lock_reason/progress theo người đang xem (xem service.NewCourseService).
+		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag, repos.Enrollment),
 		Section:       service.NewSectionService(repos.Section, repos.Course, repos.Enrollment),
 		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, repos.Course, repos.Enrollment, service.NewUploadService(resources.MinioClient, resources.Config)),
 		LessonContent: service.NewLessonContentService(repos.Lesson, repos.Section, repos.Course, repos.Enrollment, service.NewUploadService(resources.MinioClient, resources.Config), uploadSvc),

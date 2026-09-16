@@ -550,8 +550,16 @@ func TestUpdateLessonProgress_GuiStatusThiCapNhatStatus(t *testing.T) {
 	}
 
 	// (2) played_ranges phu 100% thoi luong => server TU chot completed (khong gui status).
+	//
+	// C-2 (review vòng 2, BLOCKER): ve nay CHI con dung khi duration la server-truth, nen bai nay
+	// phai co duration THAT trong lesson_contents (100s). Truoc ban va C-2, test nay chay voi
+	// fakeLessonRepoWatched RONG (server duration = 0) — dung cai mau so do client tu khai ma C-2
+	// chan lai; xem TestUpdateLessonProgress_FallbackDuration_KhongTuChotCompleted cho chinh
+	// truong hop do.
+	svcWithDuration := NewEnrollmentService(repo, &fakeCourseRepoWatched{},
+		&fakeLessonRepoWatched{contents: []model.LessonContent{{Type: "video", Duration: 100}}})
 	duration := 100
-	res2, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
+	res2, err := svcWithDuration.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
 		dto.UpdateLessonProgressDTO{
 			DurationSeconds: &duration,
 			PlayedRanges:    dto.PlayedRangesDTO{{Start: 0, End: 100}},
@@ -571,6 +579,68 @@ func TestUpdateLessonProgress_GuiStatusThiCapNhatStatus(t *testing.T) {
 	// status di qua map, khong duoc set tho trong cung cau lenh voi watched seconds.
 	if _, ok := repo.updateUpdates["video_watched_seconds"]; ok {
 		t.Error("video_watched_seconds nam trong map — phai di qua GREATEST() trong SQL")
+	}
+}
+
+// TestUpdateLessonProgress_FallbackDuration_KhongTuChotCompleted (C-2, review vòng 2, BLOCKER):
+// bai hoc KHONG co duration nao phia server (lesson_contents/lesson_videos deu 0) — mau so cua
+// watched_pct roi ve duration_seconds do CLIENT tu khai. Tren mot bai nhu vay, payload
+// {"duration_seconds":10,"played_ranges":[[0,10]]} cho watched_pct = 100 va truoc ban va C-2 se
+// TU CHOT completed — ma completed la sticky nen khong thu hoi duoc. Test nay khang dinh:
+//   - watched_pct/played_ranges/fallback_duration_seconds VAN duoc ghi (khong mat du lieu);
+//   - status KHONG duoc cap completed, khong co completed_at trong map UPDATE.
+// Day la dang PIN cua lo hong: neu ai do bo dieu kien trustedDuration trong resolveLessonStatus,
+// test nay DO ngay (con so 100% van con nguyen o cot watched_pct).
+func TestUpdateLessonProgress_FallbackDuration_KhongTuChotCompleted(t *testing.T) {
+	enrollmentID := uuid.New()
+	enrollment := newEnrollmentWithID(enrollmentID)
+	existing := &model.LessonProgress{
+		EnrollmentID: enrollmentID,
+		Status:       "in_progress",
+	}
+	repo := &fakeEnrollmentRepoWatched{
+		lessonProgress: existing,
+		enrollment:     &enrollment,
+		courseID:       uuid.New(),
+	}
+	// fakeLessonRepoWatched RONG => resolveServerVideoDuration tra 0 => usingFallbackDuration=true.
+	svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{}, &fakeLessonRepoWatched{})
+
+	khaiKhong := 10
+	res, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
+		dto.UpdateLessonProgressDTO{
+			DurationSeconds: &khaiKhong,
+			PlayedRanges:    dto.PlayedRangesDTO{{Start: 0, End: 10}},
+		})
+	if err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
+	}
+
+	// Du lieu tien do VAN duoc ghi — C-2 chi giu lai khoan "cap completed", khong chan ghi.
+	if pct, ok := repo.updateUpdates["watched_pct"].(decimal.Decimal); !ok {
+		t.Fatal("map UPDATE thieu watched_pct — C-2 khong duoc phep lam mat du lieu tien do")
+	} else if got, _ := pct.Float64(); got < 99.9 || got > 100.1 {
+		t.Fatalf("watched_pct trong map = %v, mong doi =100 (van phai ghi de khong mat du lieu)", got)
+	}
+	if _, ok := repo.updateUpdates["played_ranges"]; !ok {
+		t.Error("map UPDATE thieu played_ranges — khoang da phat van phai duoc luu")
+	}
+	if _, ok := repo.updateUpdates["fallback_duration_seconds"]; !ok {
+		t.Error("map UPDATE thieu fallback_duration_seconds — mau so client khai van phai duoc luu sticky")
+	}
+
+	// Khoan bi giu lai: completed.
+	if got, ok := repo.updateUpdates["status"].(string); ok {
+		t.Fatalf("cot status trong map UPDATE = %q — khong duoc cap completed khi mau so chua phai server-truth", got)
+	}
+	if _, ok := repo.updateUpdates["completed_at"]; ok {
+		t.Error("map UPDATE co completed_at — bai khong duoc coi la hoan thanh khi mau so chua phai server-truth")
+	}
+	if res.Status != "in_progress" {
+		t.Errorf("status tra ve = %q, mong doi \"in_progress\"", res.Status)
+	}
+	if existing.Status == "completed" {
+		t.Error("ban ghi bi chot completed — day chinh la lo hong C-2 ma ban va nay dong lai")
 	}
 }
 
