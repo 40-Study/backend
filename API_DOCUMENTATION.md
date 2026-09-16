@@ -185,6 +185,13 @@
 | PUT | `/api/courses/:id` | UpdateCourse | Cập nhật course |
 | DELETE | `/api/courses/:id` | DeleteCourse | Xóa course |
 
+**Phase 1 §2 + C-1 (review vòng 2):** `GET /api/courses/:id` (yêu cầu auth) trả thêm cho mỗi
+lesson `locked: bool`, `lock_reason: null|"previous_incomplete"|"not_enrolled"`, và
+`progress: {status, watched_pct, last_position_seconds}` — tính theo ĐÚNG người đang gọi. Bài bị
+khoá trả **`contents: []`** (rỗng) chứ không phải nội dung video; bài mở trả `contents` đầy đủ.
+Chủ khoá (`instructor_id` trùng người gọi) và admin hệ thống không bao giờ bị khoá. HTTP vẫn 200
+khi bài bị khoá, không phải 403 — client đọc `locked`/`lock_reason` để dựng danh sách khoá.
+
 **Request DTO (CreateCourseDTO):**
 ```json
 {
@@ -238,6 +245,11 @@ cho mỗi lesson `locked: bool`, `lock_reason: null|"previous_incomplete"|"not_e
 |--------|------|---------|-------|
 | POST | `/api/sections/:section_id/lessons` | CreateLesson | Tạo lesson |
 | GET | `/api/sections/:section_id/lessons` | GetAllLessons | Lấy lessons |
+
+**Phase 1 §2 + C-1 (review vòng 2):** như `GET /api/courses/:id` ở trên — route yêu cầu auth, và
+mỗi lesson trả thêm `locked`/`lock_reason`/`progress` theo người đang gọi; bài bị khoá trả
+**`contents: []`**. Đây là một trong hai đường lấy danh sách lesson (đường kia là
+`GET /api/courses/:id`), cả hai dùng CHUNG một hàm quyết định khoá nên không lệch nhau.
 | PUT | `/api/sections/:section_id/lessons/reorder` | ReorderLessons | Sắp xếp lại lessons |
 | GET | `/api/lessons/:id` | GetLessonByID | Lấy lesson theo ID |
 | PUT | `/api/lessons/:id` | UpdateLesson | Cập nhật lesson |
