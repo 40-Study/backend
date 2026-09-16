@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
@@ -70,17 +71,24 @@ type EnrollmentService struct {
 	enrollmentRepo repository.EnrollmentRepositoryInterface
 	courseRepo     repository.CourseRepositoryInterface
 	lessonRepo    repository.LessonRepositoryInterface
+	// videoUploadRepo (BLOCKER-1, review vòng 3): chỉ dùng để tự chữa lesson_contents.duration
+	// từ video_uploads.duration khi cột đó còn 0 — xem healDurationFromVideoUpload. Nil được
+	// chấp nhận ở tầng thân hàm (đường chữa tự tắt), nhưng vẫn là tham số bắt buộc của
+	// constructor để nơi gọi phải ý thức được sự phụ thuộc này.
+	videoUploadRepo repository.VideoUploadRepositoryInterface
 }
 
 func NewEnrollmentService(
 	enrollmentRepo repository.EnrollmentRepositoryInterface,
 	courseRepo repository.CourseRepositoryInterface,
 	lessonRepo repository.LessonRepositoryInterface,
+	videoUploadRepo repository.VideoUploadRepositoryInterface,
 ) *EnrollmentService {
 	return &EnrollmentService{
-		enrollmentRepo: enrollmentRepo,
-		courseRepo:     courseRepo,
-		lessonRepo:    lessonRepo,
+		enrollmentRepo:  enrollmentRepo,
+		courseRepo:      courseRepo,
+		lessonRepo:      lessonRepo,
+		videoUploadRepo: videoUploadRepo,
 	}
 }
 
@@ -506,12 +514,69 @@ func (s *EnrollmentService) resolveServerVideoDuration(ctx context.Context, less
 			return c.Duration, nil
 		}
 	}
+
+	// BLOCKER-1 (review vòng 3). lesson_contents.duration do người tạo content tự điền, nhưng
+	// web KHÔNG gửi trường này (lesson-content.service.ts: CreateVideoContentDTO có `duration?`
+	// nhưng call site duy nhất ở trang quản lý khoá không truyền) — nên trên thực tế gần như mọi
+	// bài đều là 0. Khi đó C-2 chặn luôn đường `completed` HỢP LỆ, và với sequential=true khoá
+	// học kẹt vĩnh viễn ở bài đầu.
+	//
+	// Thời lượng THẬT có trong video_uploads.duration, nhưng video worker chỉ ghi nó SAU khi
+	// ffmpeg xử lý xong (video_processor.go), mà CreateContent lại chạy trước đó — web hiện
+	// toast thành công ngay khi upload xong rồi giáo viên mới bấm tạo nội dung. Vì vậy backfill
+	// một chiều lúc tạo content sẽ đọc phải nil và không chữa được gì.
+	//
+	// Tự chữa ở ĐÂY thay vì lúc tạo: đây là thời điểm ĐỌC duration (lúc ghi tiến độ), lúc đó
+	// video đã xử lý xong nên không còn race — và nó chữa được cả những bài đã tạo từ trước.
+	if healed := s.healDurationFromVideoUpload(ctx, contents); healed > 0 {
+		return healed, nil
+	}
+
 	legacy, err := s.lessonRepo.GetLegacyVideoDurationByLessonID(ctx, lessonID)
 	if err != nil {
 		return 0, err
 	}
 	return legacy, nil
 }
+
+// healDurationFromVideoUpload chữa lesson_contents.duration = 0 bằng thời lượng thật của video
+// gốc trên video_uploads (khớp qua upload id nhúng trong URL HLS), rồi ghi lại để các nhịp
+// heartbeat sau không phải tra lại. Trả 0 khi không chữa được — mọi trường hợp không chữa được
+// đều là "không biết", không phải lỗi, nên không làm hỏng request tiến độ đang chạy.
+func (s *EnrollmentService) healDurationFromVideoUpload(ctx context.Context, contents []model.LessonContent) int {
+	if s.videoUploadRepo == nil {
+		return 0
+	}
+	for i := range contents {
+		c := &contents[i]
+		if c.Type != "video" || c.Duration > 0 || c.VideoURL == nil {
+			continue
+		}
+		m := hlsUploadIDPattern.FindStringSubmatch(*c.VideoURL)
+		if len(m) < 2 {
+			continue
+		}
+		uploadID, err := uuid.Parse(m[1])
+		if err != nil {
+			continue
+		}
+		upload, err := s.videoUploadRepo.GetUploadByID(ctx, uploadID)
+		if err != nil || upload == nil || upload.Duration == nil || *upload.Duration <= 0 {
+			continue
+		}
+		healed := int(*upload.Duration)
+		// Ghi lại để lần sau rẻ. Ghi hỏng thì vẫn trả duration vừa tìm được — không đánh đổi
+		// được lợi ích cache lấy việc chặn tiến độ học.
+		c.Duration = healed
+		_ = s.lessonRepo.UpdateContent(ctx, c)
+		return healed
+	}
+	return 0
+}
+
+// hlsUploadIDPattern khớp upload id trong URL HLS dạng "/api/hls/{uploadId}/master.m3u8" —
+// cùng dạng mà lesson_content_service.go dùng để dựng lại URL.
+var hlsUploadIDPattern = regexp.MustCompile(`/hls/([a-f0-9-]{36})`)
 
 // clampToDuration (B-1/TB, review vòng 2): CẮT (không xoá) một giá trị giây về duration khi vượt
 // quá — dùng cho đường watched-seconds cũ (video_watched_seconds) để một client khai một số giây
