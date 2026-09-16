@@ -622,6 +622,13 @@ chưa nộp bài, đọc thẳng đáp án đúng từ `GET /api/quizzes/:id/que
 | POST | `/api/videos/upload/:upload_id/reprocess` | ReprocessVideo | Re-process video |
 | GET | `/api/videos/processing/queue` | GetProcessingQueue | Queue đang xử lý |
 
+**Trường `url` của `POST /api/videos/upload/complete` (V-I, review web):** response trả thêm
+`data.url` — URL của chính object vừa upload, dựng từ `bucket` + `object_key` thật của upload
+record. Web cần trường này để lấy URL file nó vừa upload (VD file phụ đề `.vtt` gắn vào lesson
+content); trước đây response chỉ có `object_key` nên web phải yêu cầu giáo viên dán URL thủ công.
+Khi `MINIO_PUBLIC_ENDPOINT` được cấu hình, host trong `url` là endpoint public đó thay vì
+`MINIO_HOST:MINIO_PORT` nội bộ.
+
 #### 11.3 HLS Streaming (Public)
 
 | Method | Path | Handler | Mô tả |

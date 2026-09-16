@@ -304,9 +304,16 @@ Content-Type: application/json
   "upload_id": "{{upload_id}}",
   "status": "processing",
   "object_key": "videos/2026/03/01/uuid.mp4",
-  "message": "Upload completed. Video processing started."
+  "url": "http://localhost:9000/videos/videos/2026/03/01/uuid.mp4",
+  "message": "Upload completed successfully. Processing started."
 }
 ```
+
+**`url` (V-I, review web):** URL của chính object vừa upload, dựng từ `bucket` + `object_key` thật
+của upload record (`complete` trả field này trong `data.url`). Web dùng nó để lấy URL file nó vừa
+upload — VD file phụ đề `.vtt` gắn vào lesson content — thay vì bắt giáo viên dán URL thủ công.
+Khi `MINIO_PUBLIC_ENDPOINT` được cấu hình (production) thì host trong `url` là endpoint public đó,
+không phải `MINIO_HOST:MINIO_PORT` nội bộ.
 
 ---
 
