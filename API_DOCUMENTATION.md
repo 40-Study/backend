@@ -188,7 +188,8 @@
 **Phase 1 §2 + C-1 (review vòng 2):** `GET /api/courses/:id` (yêu cầu auth) trả thêm cho mỗi
 lesson `locked: bool`, `lock_reason: null|"previous_incomplete"|"not_enrolled"`, và
 `progress: {status, watched_pct, last_position_seconds}` — tính theo ĐÚNG người đang gọi. Bài bị
-khoá trả **`contents: []`** (rỗng) chứ không phải nội dung video; bài mở trả `contents` đầy đủ.
+khoá **lược bỏ hẳn key `contents`** (tag `omitempty` — key VẮNG MẶT, không phải `contents: []`),
+nên client phải đọc `contents?.length ?? 0`; bài mở trả `contents` đầy đủ.
 Chủ khoá (`instructor_id` trùng người gọi) và admin hệ thống không bao giờ bị khoá. HTTP vẫn 200
 khi bài bị khoá, không phải 403 — client đọc `locked`/`lock_reason` để dựng danh sách khoá.
 
@@ -245,22 +246,24 @@ cho mỗi lesson `locked: bool`, `lock_reason: null|"previous_incomplete"|"not_e
 |--------|------|---------|-------|
 | POST | `/api/sections/:section_id/lessons` | CreateLesson | Tạo lesson |
 | GET | `/api/sections/:section_id/lessons` | GetAllLessons | Lấy lessons |
-
-**Phase 1 §2 + C-1 (review vòng 2):** như `GET /api/courses/:id` ở trên — route yêu cầu auth, và
-mỗi lesson trả thêm `locked`/`lock_reason`/`progress` theo người đang gọi; bài bị khoá trả
-**`contents: []`**. Đây là một trong hai đường lấy danh sách lesson (đường kia là
-`GET /api/courses/:id`), cả hai dùng CHUNG một hàm quyết định khoá nên không lệch nhau.
 | PUT | `/api/sections/:section_id/lessons/reorder` | ReorderLessons | Sắp xếp lại lessons |
 | GET | `/api/lessons/:id` | GetLessonByID | Lấy lesson theo ID |
 | PUT | `/api/lessons/:id` | UpdateLesson | Cập nhật lesson |
 | DELETE | `/api/lessons/:id` | DeleteLesson | Xóa lesson |
+
+**Phase 1 §2 + C-1 (review vòng 2):** `GET /api/sections/:section_id/lessons` nay là route yêu cầu
+auth, và mỗi lesson trả thêm `locked`/`lock_reason`/`progress` theo người đang gọi; bài bị khoá
+**lược bỏ hẳn key `contents`** (không phải `contents: []` — xem ghi chú ở `GET /api/courses/:id`).
+Đây là một trong hai đường lấy danh sách lesson (đường kia là `GET /api/courses/:id`), cả hai dùng
+CHUNG một hàm quyết định khoá nên không lệch nhau.
 
 **Phase 1 §2:** `GET /api/lessons/:lesson_id/contents` trả **403** `{"message": "LESSON_LOCKED"}`
 nếu bài đang bị khoá đối với người gọi (chặn ở tầng API, không chỉ ẩn ở UI).
 
 **B-2 (review vòng 2 PR #60) — `GET /api/lessons/:id` khi bài bị khoá:** endpoint này (khác với
 `GET /api/lessons/:lesson_id/contents` ở trên) trả **200** kèm metadata của lesson (title,
-duration, is_preview...) nhưng `contents: []` và `locked: true`, `lock_reason` set đúng lý do
+duration, is_preview...) nhưng **lược bỏ key `contents`** (không phải `contents: []` — tag
+`omitempty`) và `locked: true`, `lock_reason` set đúng lý do
 (`not_enrolled` | `previous_incomplete`) — KHÔNG trả lỗi, vì đây là endpoint "xem thông tin bài"
 tổng quan (khác ngữ nghĩa "lấy nội dung để phát" của endpoint contents). Trước bản vá, endpoint
 này bỏ qua hoàn toàn việc tính khoá và luôn trả `contents` thật (kể cả `video_url`/HLS url) bất
