@@ -70,6 +70,18 @@ type Course struct {
 	IsFeatured        bool             `gorm:"default:false" json:"is_featured"`
 	IsFree            bool             `gorm:"default:false" json:"is_free"`
 
+	// ——— Phase 1 §2: hai cong tac cua khoa hoc ———
+	//
+	// Sequential: bat che do hoc tuan tu — bai N chi mo khi bai N-1 (theo thu tu hien thi,
+	// BO QUA bai preview/mien phi) da completed. Mac dinh false de MOI khoa hoc dang co giu
+	// nguyen hanh vi cu (mo het bai) — dung y "Existing courses default to non-sequential".
+	Sequential bool `gorm:"default:false" json:"sequential"`
+	// MinVideoPct: nguong watched_pct de backend tu chot status = completed (Phase 1 §1).
+	// Mac dinh 90, mien 1..100. Rang buoc mien nam o DTO (validate min=1,max=100) chu khong
+	// dat CHECK o tang DB: mot CHECK se chan ca nhung dong cu dang co gia tri 0 do cot vua
+	// duoc them bang AutoMigrate.
+	MinVideoPct int `gorm:"default:90;column:min_video_pct" json:"min_video_pct"`
+
 	// Relationships
 	Instructor  User         `gorm:"foreignKey:InstructorID" json:"-"`
 	Category    *Category    `gorm:"foreignKey:CategoryID" json:"-"`
@@ -135,6 +147,9 @@ type LessonContent struct {
 	// Video fields
 	VideoURL *string `gorm:"type:varchar(500)" json:"video_url,omitempty"`
 	Duration int     `gorm:"default:0" json:"duration"`
+	// SubtitleURL (Phase 1 §4): URL file phụ đề .vtt, upload qua luồng presigned có sẵn (bucket
+	// study-media). nil = chưa có phụ đề — web tự ẩn panel transcript, không phải lỗi.
+	SubtitleURL *string `gorm:"type:varchar(500);column:subtitle_url" json:"subtitle_url,omitempty"`
 
 	// Exercise fields (bài tập khóa học)
 	ExerciseID *uuid.UUID `gorm:"type:uuid" json:"exercise_id,omitempty"`

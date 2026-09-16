@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"fmt"
-
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -89,9 +87,18 @@ func (h *SectionHandler) GetAllSections(c *fiber.Ctx) error {
 			"error":   err.Error(),
 		})
 	}
-	fmt.Print(courseID)
 
-	sections, err := h.service.GetAllSections(c.Context(), courseID)
+	// Phase 1 §2: userID quyet dinh locked/lock_reason/progress cua tung bai. Route nay nam
+	// sau middleware.AuthMiddleware (course_router.go) nen userID luon co mat tren duong that.
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	sections, err := h.service.GetAllSections(c.Context(), courseID, userID, isAdmin)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve sections",

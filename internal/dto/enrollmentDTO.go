@@ -39,6 +39,10 @@ type EnrollmentListResponseDTO struct {
 	PageSize    int                     `json:"page_size"`
 }
 
+// PlayedRangeDTO / PlayedRangesDTO nam trong file rieng (played_range_dto.go) vi chung can
+// custom JSON marshaling: contract §1 bieu dien moi khoang bang MOT CAP SO `[start, end]`,
+// khong phai object.
+
 // LessonProgress DTOs
 
 type UpdateLessonProgressDTO struct {
@@ -51,23 +55,92 @@ type UpdateLessonProgressDTO struct {
 	// cac request nho hon nua => hong vinh vien "thoi gian hoc" tren web va
 	// total_study_time_minutes o trang ho so, chi sua duoc bang UPDATE tay trong DB.
 	VideoWatchedSecs *int `json:"video_watched_seconds" validate:"omitempty,min=0,max=86400"`
+
+	// ——— Phase 1 §1 (chong tua) ———
+	// Ca ba field deu OPTIONAL: client cu (chi gui status + video_watched_seconds) van chay
+	// nguyen ven, chi la khong duoc huong phan chong tua.
+	//
+	// PositionSeconds: vi tri hien tai cua dau phat (giay). Luu vao last_position_seconds de
+	// lan sau mo lai bai resume dung cho.
+	PositionSeconds *int `json:"position_seconds" validate:"omitempty,min=0,max=86400"`
+	// DurationSeconds: tong thoi luong client doc duoc. La MAU SO cua watched_pct.
+	DurationSeconds *int `json:"duration_seconds" validate:"omitempty,min=0,max=86400"`
+	// PlayedRanges: cac khoang VUA PHAT ke tu lan gui truoc, dang cap so `[[start, end], ...]`.
+	// KHONG validate bang struct tag — contract yeu cau khoang khong hop le bi BO QUA chu khong
+	// lam hong ca request, nen viec kiem tra nam o service (MergePlayedRanges).
+	PlayedRanges PlayedRangesDTO `json:"played_ranges"`
 }
 
 // BeaconProgressDTO la body ma `navigator.sendBeacon("/api/progress", ...)` gui
-// tu trinh phat video (web: app/courses/[slug]/learn/player-client.tsx).
+// tu trinh phat video (web: hooks/use-video-progress.ts -> lib/played-ranges.ts
+// buildHeartbeatPayload).
 //
-// Hai khac biet BAT BUOC so voi UpdateLessonProgressDTO, dung thieu mot cai nao:
-//  1. Ten field la camelCase (lessonId / videoWatchedSeconds) vi client
-//     JSON.stringify thang object cua no, khong di qua lop service snake_case.
-//  2. LessonID nam TRONG body, khong phai path param — sendBeacon chi nhan
-//     mot URL co dinh nen khong the chen :lessonId vao duong dan.
+// HAI THE HE CLIENT cung gui vao route nay, nen DTO phai doc duoc CA HAI:
+//
+//  1. Ban Phase 1 (snake_case, contract §1): {lesson_id, position_seconds, duration_seconds,
+//     played_ranges}. Day la shape `buildHeartbeatPayload` sinh ra va gui y nguyen qua
+//     JSON.stringify — ca cho beacon lan cho PUT.
+//  2. Ban truoc Phase 1 (camelCase): {lessonId, status, videoWatchedSeconds}. Giu lai de mot
+//     tab dang mo tu ban cu khong lam mat tien do khi dong tab.
+//
+// LessonID nam TRONG body (khong phai path param) o CA HAI ban vi sendBeacon chi nhan mot URL
+// co dinh nen khong the chen :lessonId vao duong dan.
 //
 // Rang buoc min/max giong UpdateLessonProgressDTO: cot nay chi TANG nen mot lan
 // nhan gia tri rac se khong bao gio bi ghi de boi request nho hon.
 type BeaconProgressDTO struct {
-	LessonID         string  `json:"lessonId" validate:"required,uuid"`
-	Status           *string `json:"status" validate:"omitempty,oneof=not_started in_progress completed"`
-	VideoWatchedSecs *int    `json:"videoWatchedSeconds" validate:"omitempty,min=0,max=86400"`
+	LessonID string `json:"lesson_id" validate:"omitempty,uuid"`
+	Status   *string `json:"status" validate:"omitempty,oneof=not_started in_progress completed"`
+	VideoWatchedSecs *int `json:"video_watched_seconds" validate:"omitempty,min=0,max=86400"`
+
+	// ——— Phase 1 §1 ———
+	PositionSeconds *int             `json:"position_seconds" validate:"omitempty,min=0,max=86400"`
+	DurationSeconds *int             `json:"duration_seconds" validate:"omitempty,min=0,max=86400"`
+	PlayedRanges    PlayedRangesDTO  `json:"played_ranges"`
+
+	// ——— Tuong thich nguoc (camelCase, ban truoc Phase 1) ———
+	LessonIDCamel    string  `json:"lessonId" validate:"omitempty,uuid"`
+	VideoWatchedSecsCamel *int `json:"videoWatchedSeconds" validate:"omitempty,min=0,max=86400"`
+}
+
+// ResolvedLessonID tra ve id bai hoc du client gui bang casing nao (snake_case truoc, camelCase
+// sau). Rong nghia la client bo sot — handler phai tra 400, KHONG duoc coi la "khong doi gi".
+func (b BeaconProgressDTO) ResolvedLessonID() string {
+	if b.LessonID != "" {
+		return b.LessonID
+	}
+	return b.LessonIDCamel
+}
+
+// ToUpdateDTO chuan hoa beacon ve dung DTO cua duong ghi, de ca hai route di qua DUNG MOT
+// ham service (khong co ban sao thu hai cua logic ghi tien do).
+func (b BeaconProgressDTO) ToUpdateDTO() UpdateLessonProgressDTO {
+	out := UpdateLessonProgressDTO{
+		Status:           b.Status,
+		VideoWatchedSecs: b.VideoWatchedSecs,
+		PositionSeconds:  b.PositionSeconds,
+		DurationSeconds:  b.DurationSeconds,
+		PlayedRanges:     b.PlayedRanges,
+	}
+	if out.VideoWatchedSecs == nil {
+		out.VideoWatchedSecs = b.VideoWatchedSecsCamel
+	}
+	return out
+}
+
+// LessonProgressStateDTO la `data` cua PUT /lessons/:lessonId/progress va POST /progress
+// (contract §1). Web doc thang shape nay trong services/enrollment.service.ts
+// (LessonProgressResponse) nen doi ten/them bot truong o day la pha vo web.
+type LessonProgressStateDTO struct {
+	LessonID           uuid.UUID `json:"lesson_id"`
+	Status             string    `json:"status"`
+	WatchedSeconds     int       `json:"watched_seconds"`
+	WatchedPct         float64   `json:"watched_pct"`
+	LastPositionSeconds int      `json:"last_position_seconds"`
+	// completed_at: KHONG omitempty — contract ghi ro `"completed_at": "...|null"`, va web khai
+	// `completed_at: string | null`. Thieu truong (omitempty) khac voi null o phia client.
+	CompletedAt        *string   `json:"completed_at"`
+	NextLessonUnlocked bool      `json:"next_lesson_unlocked"`
 }
 
 type LessonProgressResponseDTO struct {
@@ -80,6 +153,11 @@ type LessonProgressResponseDTO struct {
 	VideoWatchedSecs int             `json:"video_watched_seconds"`
 	CompletedAt      *string         `json:"completed_at,omitempty"`
 	LastAccessedAt   string          `json:"last_accessed_at"`
+
+	// Phase 1 §1: hai truong nay duoc bo sung de man chi tiet ghi danh
+	// (GET /enrollments/:id) hien duoc tien do xem video ma khong phai goi them API.
+	WatchedPct          decimal.Decimal `json:"watched_pct"`
+	LastPositionSeconds int             `json:"last_position_seconds"`
 }
 
 // Course Enrollments (Instructor view)

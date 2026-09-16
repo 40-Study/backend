@@ -15,33 +15,53 @@ import (
 // khóa học cha (qua section -> course.InstructorID) mới được tạo/sửa/xóa lesson (C-12).
 var ErrNotLessonCourseOwner = errors.New("forbidden: not the owner")
 
+// ErrLessonHasNoVideo (Phase 1 §4, bổ sung từ review web #17): PUT /lessons/:lessonId gửi
+// subtitle_url cho một bài chưa có content video nào để gắn vào — handler ánh xạ sang 400
+// {"message": "LESSON_HAS_NO_VIDEO"}, đúng contract, thay vì một message lỗi tự do.
+var ErrLessonHasNoVideo = errors.New("lesson has no video content to attach a subtitle to")
+
 type LessonServiceInterface interface {
 	CreateLesson(ctx context.Context, sectionID, actorUserID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error)
-	GetAllLessons(ctx context.Context, sectionID uuid.UUID) ([]dto.LessonResponseDTO, error)
-	GetLessonByID(ctx context.Context, lessonID uuid.UUID) (*dto.LessonResponseDTO, error)
+	// GetAllLessons (C-1, review vòng 2): userID/isAdmin dùng để tính khoá cho TỪNG bài — trước
+	// bản vá này hàm KHÔNG nhận userID và trả thẳng les.Contents cho bất kỳ ai đã đăng nhập, nên
+	// GET /sections/:section_id/lessons là đường vòng lộ contents[].video_url bỏ qua hoàn toàn
+	// ResolveLessonLock (đúng lớp lỗ của B-2, chỉ khác endpoint). Route này nằm sau
+	// middleware.AuthMiddleware nên userID không bao giờ là uuid.Nil trên đường thật.
+	GetAllLessons(ctx context.Context, sectionID, userID uuid.UUID, isAdmin bool) ([]dto.LessonResponseDTO, error)
+	// GetLessonByID (B-2, review vòng 2): userID/isAdmin dùng để tính khoá — trước bản vá này
+	// hàm KHÔNG nhận userID, gọi thẳng lessonRepo.GetContentsByLessonID (bỏ qua hoàn toàn
+	// ResolveLessonLock), nên GET /lessons/:id là đường vòng lộ contents (bao gồm video_url,
+	// hls url) của một bài đang bị khoá đối với chính người gọi. Khi khoá: trả metadata với
+	// contents=[] + locked=true + lock_reason, KHÔNG trả lỗi (khác GetContentsByLessonID/
+	// LessonContentService, nơi contract yêu cầu 403 LESSON_LOCKED — hai endpoint có ngữ nghĩa
+	// khác nhau: cái này là "xem lesson" tổng quan, cái kia là "lấy nội dung để phát").
+	GetLessonByID(ctx context.Context, lessonID, userID uuid.UUID, isAdmin bool) (*dto.LessonResponseDTO, error)
 	UpdateLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error)
 	DeleteLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool) error
 	ReorderLessons(ctx context.Context, sectionID uuid.UUID, req dto.ReorderDTO) error
 }
 
 type LessonService struct {
-	lessonRepo    repository.LessonRepositoryInterface
-	sectionRepo   repository.SectionRepositoryInterface
-	courseRepo    repository.CourseRepositoryInterface
-	uploadService UploadServiceInterface
+	lessonRepo     repository.LessonRepositoryInterface
+	sectionRepo    repository.SectionRepositoryInterface
+	courseRepo     repository.CourseRepositoryInterface
+	enrollmentRepo repository.EnrollmentRepositoryInterface
+	uploadService  UploadServiceInterface
 }
 
 func NewLessonService(
 	lessonRepo repository.LessonRepositoryInterface,
 	sectionRepo repository.SectionRepositoryInterface,
 	courseRepo repository.CourseRepositoryInterface,
+	enrollmentRepo repository.EnrollmentRepositoryInterface,
 	uploadService UploadServiceInterface,
 ) *LessonService {
 	return &LessonService{
-		lessonRepo:    lessonRepo,
-		sectionRepo:   sectionRepo,
-		courseRepo:    courseRepo,
-		uploadService: uploadService,
+		lessonRepo:     lessonRepo,
+		sectionRepo:    sectionRepo,
+		courseRepo:     courseRepo,
+		enrollmentRepo: enrollmentRepo,
+		uploadService:  uploadService,
 	}
 }
 
@@ -152,8 +172,38 @@ func (s *LessonService) CreateLesson(ctx context.Context, sectionID, actorUserID
 	return s.toLessonResponseDTO(lesson, nil), nil
 }
 
-func (s *LessonService) GetAllLessons(ctx context.Context, sectionID uuid.UUID) ([]dto.LessonResponseDTO, error) {
-	if err := s.validateSection(ctx, sectionID); err != nil {
+// GetAllLessons (C-1, review vòng 2): bản trước trả thẳng les.Contents cho MỌI người đã đăng nhập
+// — không enroll, không kiểm khoá. Bản này dùng LẠI đúng đường khoá của GetLessonByID
+// (gatherLessonLockInput + ResolveLessonLock — xem lesson_lock.go): bài bị khoá trả contents RỖNG
+// kèm locked/lock_reason/progress, bài mở trả contents đầy đủ, nên giảng viên sở hữu khoá học
+// (BypassLock) vẫn thấy video_url.
+//
+// KHÁC GetLessonByID ở chỗ KHÔNG có lessonID tuỳ ý để xác nhận: hàm này chỉ trả các bài nằm trong
+// chính sectionID được hỏi, nên mọi bài đều thuộc khoá theo cấu trúc — không cần EnsureLessonInCourse
+// (cùng lý do SectionService.GetAllSections không gọi nó).
+func (s *LessonService) GetAllLessons(ctx context.Context, sectionID, userID uuid.UUID, isAdmin bool) ([]dto.LessonResponseDTO, error) {
+	section, err := s.sectionRepo.GetByID(ctx, sectionID)
+	if err != nil {
+		return nil, err
+	}
+	if section == nil {
+		return nil, errors.New("section not found")
+	}
+
+	course, err := s.courseRepo.GetByID(ctx, section.CourseID)
+	if err != nil {
+		return nil, err
+	}
+	// course == nil (dữ liệu mồ côi) rơi về sequential=false + không bypass — tức làn "mở" của
+	// luật khoá, giống hệt cách resolveLessonByIDLock xử lý course nil.
+	var sequential bool
+	bypass := isAdmin
+	if course != nil {
+		sequential = course.Sequential
+		bypass = isAdmin || course.InstructorID == userID
+	}
+	lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, section.CourseID, sequential, bypass)
+	if err != nil {
 		return nil, err
 	}
 
@@ -164,13 +214,23 @@ func (s *LessonService) GetAllLessons(ctx context.Context, sectionID uuid.UUID) 
 
 	result := make([]dto.LessonResponseDTO, len(lessons))
 	for i, les := range lessons {
-		result[i] = *s.toLessonResponseDTO(&les, les.Contents)
+		locked, reason, progress := ResolveLessonLock(les.ID, lockInput)
+		if locked {
+			// Bài bị khoá: KHÔNG truyền les.Contents — đó chính là đường lộ video_url mà bản vá
+			// này đóng lại.
+			result[i] = *s.toLessonResponseDTO(&les, nil)
+		} else {
+			result[i] = *s.toLessonResponseDTO(&les, les.Contents)
+		}
+		result[i].Locked = locked
+		result[i].LockReason = reason
+		result[i].Progress = progress
 	}
 
 	return result, nil
 }
 
-func (s *LessonService) GetLessonByID(ctx context.Context, lessonID uuid.UUID) (*dto.LessonResponseDTO, error) {
+func (s *LessonService) GetLessonByID(ctx context.Context, lessonID, userID uuid.UUID, isAdmin bool) (*dto.LessonResponseDTO, error) {
 	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
 	if err != nil {
 		return nil, err
@@ -179,12 +239,62 @@ func (s *LessonService) GetLessonByID(ctx context.Context, lessonID uuid.UUID) (
 		return nil, errors.New("lesson not found")
 	}
 
+	// B-2 (review vòng 2): tính khoá TRƯỚC khi quyết định có nạp contents hay không — bài bị
+	// khoá đối với người gọi thì KHÔNG được nạp/tra contents (đó là đường lộ video_url/hls
+	// url mà bản vá này đóng lại), dù response vẫn 200 kèm metadata.
+	locked, lockReason, progress, err := s.resolveLessonByIDLock(ctx, lesson, userID, isAdmin)
+	if err != nil {
+		return nil, err
+	}
+	if locked {
+		resp := s.toLessonResponseDTO(lesson, nil)
+		resp.Locked = true
+		resp.LockReason = lockReason
+		resp.Progress = progress
+		resp.SubtitleURL = nil
+		return resp, nil
+	}
+
 	contents, err := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.toLessonResponseDTO(lesson, contents), nil
+	resp := s.toLessonResponseDTO(lesson, contents)
+	resp.Locked = false
+	resp.LockReason = nil
+	resp.Progress = progress
+	return resp, nil
+}
+
+// resolveLessonByIDLock (B-2 + CAO-4, review vòng 2): dùng LẠI đúng logic khoá của
+// LessonContentService.GetContentsByLessonID (gatherLessonLockInput + ResolveLessonLock) thay vì
+// viết lại — hai nơi lệch nhau là đúng thứ bug mà LessonLockInput được tách struct riêng để tránh
+// (xem chú thích tại LessonLockInput). CAO-4: giảng viên sở hữu khoá học chứa bài này, hoặc admin
+// hệ thống, KHÔNG BAO GIỜ bị khoá khỏi bài của chính khoá học đó — bypassLock truyền vào
+// gatherLessonLockInput, ResolveLessonLock áp dụng thống nhất (xem lesson_lock.go).
+func (s *LessonService) resolveLessonByIDLock(ctx context.Context, lesson *model.Lesson, userID uuid.UUID, isAdmin bool) (bool, *string, *dto.LessonProgressSummaryDTO, error) {
+	courseID, err := s.enrollmentRepo.GetCourseIDByLessonID(ctx, lesson.ID)
+	if err != nil {
+		return false, nil, nil, err
+	}
+	course, err := s.courseRepo.GetByID(ctx, courseID)
+	if err != nil {
+		return false, nil, nil, err
+	}
+	sequential := course != nil && course.Sequential
+	bypass := isAdmin || (course != nil && course.InstructorID == userID)
+	lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, courseID, sequential, bypass)
+	if err != nil {
+		return false, nil, nil, err
+	}
+	// Quyết định team lead (review vòng 2): xem chú thích tại EnsureLessonInCourse — lessonID
+	// không thuộc LessonOrder của courseID vừa suy ra là lỗi rõ ràng, không mở lén.
+	if err := EnsureLessonInCourse(lesson.ID, lockInput.LessonOrder); err != nil {
+		return false, nil, nil, err
+	}
+	locked, reason, progress := ResolveLessonLock(lesson.ID, lockInput)
+	return locked, reason, progress, nil
 }
 
 func (s *LessonService) UpdateLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error) {
@@ -197,6 +307,30 @@ func (s *LessonService) UpdateLesson(ctx context.Context, lessonID, actorUserID 
 	}
 	if err := s.checkLessonCourseOwnership(ctx, lesson, actorUserID, isAdmin); err != nil {
 		return nil, err
+	}
+
+	// (review vòng 2, TB) VALIDATE LESSON_HAS_NO_VIDEO TRƯỚC KHI GHI: nạp contents và tìm
+	// content video một lần ở đây, TRƯỚC lessonRepo.Update(lesson) bên dưới. Trước bản vá này,
+	// thứ tự là Update(lesson) rồi mới applySubtitleURL() tự nạp lại contents — nếu bài không có
+	// video, request thất bại NHƯNG title/display_order/duration_minutes ĐÃ ghi xuống DB, để lại
+	// một ghi write nửa vời (client thấy lỗi nhưng dữ liệu vẫn đổi).
+	var videoContent *model.LessonContent
+	var contents []model.LessonContent
+	if req.SubtitleURL != nil {
+		var err error
+		contents, err = s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
+		if err != nil {
+			return nil, err
+		}
+		for i := range contents {
+			if contents[i].Type == "video" {
+				videoContent = &contents[i]
+				break
+			}
+		}
+		if videoContent == nil {
+			return nil, ErrLessonHasNoVideo
+		}
 	}
 
 	if req.Title != nil {
@@ -222,9 +356,34 @@ func (s *LessonService) UpdateLesson(ctx context.Context, lessonID, actorUserID 
 		return nil, err
 	}
 
-	contents, _ := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
+	if req.SubtitleURL != nil {
+		if err := s.applySubtitleURL(ctx, videoContent, req.SubtitleURL); err != nil {
+			return nil, err
+		}
+	}
+
+	contents, err = s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
+	if err != nil {
+		contents = nil
+	}
 
 	return s.toLessonResponseDTO(lesson, contents), nil
+}
+
+// applySubtitleURL (Phase 1 §4): ghi subtitle_url vao dung content TYPE="video" cua bai — day
+// la "duong lane" ma web da chot (PUT /lessons/:id -> backend PERSIST vao lesson_videos, tra
+// lai o lesson content). Chuoi rong duoc coi la "go phu de" (chuyen ve nil), khac voi khong gui
+// gi (req.SubtitleURL == nil, khong cham toi ham nay).
+//
+// video (review vòng 2, TB): TRUYỀN VÀO thay vì tự nạp lại — content video đã được tìm và xác
+// nhận tồn tại ở UpdateLesson TRƯỚC KHI ghi bất cứ gì, để tránh ghi nửa vời (xem comment gọi).
+func (s *LessonService) applySubtitleURL(ctx context.Context, video *model.LessonContent, subtitleURL *string) error {
+	cleaned := subtitleURL
+	if cleaned != nil && *cleaned == "" {
+		cleaned = nil
+	}
+	video.SubtitleURL = cleaned
+	return s.lessonRepo.UpdateContent(ctx, video)
 }
 
 func (s *LessonService) DeleteLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool) error {
@@ -306,8 +465,15 @@ func (s *LessonService) toLessonResponseDTO(lesson *model.Lesson, contents []mod
 				// N10 (review vòng 2, từ review web): xem chú thích tại model.LessonContent.
 				LivestreamSessionID: c.LivestreamSessionID,
 				DisplayOrder:        c.DisplayOrder,
+				SubtitleURL:         c.SubtitleURL,
 				CreatedAt:           c.CreatedAt,
 				UpdatedAt:           c.UpdatedAt,
+			}
+			// Phase 1 §4: web doc subtitle_url AUTHORITATIVE tu chinh lesson content (item o
+			// tren); truong resp.SubtitleURL o cap lesson chi la BAN DU PHONG (web tu ghi chu
+			// "giu field nay lam du phong neu curriculum cung tra kem") — gan tu content video.
+			if c.Type == "video" && c.SubtitleURL != nil {
+				resp.SubtitleURL = c.SubtitleURL
 			}
 			// Extract upload ID and generate HLS + fallback URLs
 			if c.VideoURL != nil && *c.VideoURL != "" {

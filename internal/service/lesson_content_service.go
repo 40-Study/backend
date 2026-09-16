@@ -16,7 +16,12 @@ type LessonContentServiceInterface interface {
 	GetContentByID(ctx context.Context, contentID uuid.UUID) (*dto.LessonContentResponseDTO, error)
 	UpdateContent(ctx context.Context, contentID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateLessonContentDTO) (*dto.LessonContentResponseDTO, error)
 	DeleteContent(ctx context.Context, contentID, actorUserID uuid.UUID, isAdmin bool) error
-	GetContentsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]dto.LessonContentResponseDTO, error)
+	// GetContentsByLessonID (Phase 1 §2): userID dung de chan noi dung cua bai dang bi khoa —
+	// tra ve ErrLessonLocked (handler anh xa sang 403 {message:"LESSON_LOCKED"}) khi bai chua
+	// mo doi voi CHINH nguoi dang goi. Contract yeu cau chan ca tang API, khong chi an o UI.
+	// isAdmin (CAO-4, review vòng 2): giảng viên sở hữu khóa học chứa bài này, hoặc admin hệ
+	// thống, KHÔNG BAO GIỜ bị khoá (xem BypassLock tại lesson_lock.go).
+	GetContentsByLessonID(ctx context.Context, lessonID, userID uuid.UUID, isAdmin bool) ([]dto.LessonContentResponseDTO, error)
 	// ReorderContents (M2-03, review vòng 3): thêm actorUserID/isAdmin — trước đây hàm này chỉ
 	// validateLesson (kiểm TỒN TẠI), không kiểm CHỦ SỞ HỮU, khác với mọi CRUD content khác
 	// (Create/Update/Delete đều gọi requireContentLessonOwnerOrAdmin/requireLessonCourseOwnerOrAdmin).
@@ -27,6 +32,7 @@ type LessonContentService struct {
 	lessonRepo         repository.LessonRepositoryInterface
 	sectionRepo        repository.SectionRepositoryInterface
 	courseRepo         repository.CourseRepositoryInterface
+	enrollmentRepo     repository.EnrollmentRepositoryInterface
 	uploadService      UploadServiceInterface
 	videoUploadService VideoUploadServiceInterface
 }
@@ -35,6 +41,7 @@ func NewLessonContentService(
 	lessonRepo repository.LessonRepositoryInterface,
 	sectionRepo repository.SectionRepositoryInterface,
 	courseRepo repository.CourseRepositoryInterface,
+	enrollmentRepo repository.EnrollmentRepositoryInterface,
 	uploadService UploadServiceInterface,
 	videoUploadService VideoUploadServiceInterface,
 ) *LessonContentService {
@@ -42,6 +49,7 @@ func NewLessonContentService(
 		lessonRepo:         lessonRepo,
 		sectionRepo:        sectionRepo,
 		courseRepo:         courseRepo,
+		enrollmentRepo:     enrollmentRepo,
 		uploadService:      uploadService,
 		videoUploadService: videoUploadService,
 	}
@@ -63,17 +71,6 @@ func (s *LessonContentService) requireContentLessonOwnerOrAdmin(ctx context.Cont
 		return errors.New("lesson not found")
 	}
 	return requireLessonCourseOwnerOrAdmin(ctx, s.sectionRepo, s.courseRepo, lesson, actorUserID, isAdmin)
-}
-
-func (s *LessonContentService) validateLesson(ctx context.Context, lessonID uuid.UUID) error {
-	exists, err := s.lessonRepo.Exists(ctx, lessonID)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return errors.New("lesson not found")
-	}
-	return nil
 }
 
 func (s *LessonContentService) CreateContent(ctx context.Context, lessonID uuid.UUID, actorUserID uuid.UUID, isAdmin bool, req dto.CreateLessonContentDTO) (*dto.LessonContentResponseDTO, error) {
@@ -98,6 +95,7 @@ func (s *LessonContentService) CreateContent(ctx context.Context, lessonID uuid.
 		ExerciseID:   req.ExerciseID,
 		IsMandatory:  true,
 		DisplayOrder: 0,
+		SubtitleURL:  req.SubtitleURL,
 	}
 
 	if req.Duration != nil {
@@ -129,9 +127,44 @@ func (s *LessonContentService) GetContentByID(ctx context.Context, contentID uui
 	return s.toContentResponseDTO(content), nil
 }
 
-func (s *LessonContentService) GetContentsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]dto.LessonContentResponseDTO, error) {
-	if err := s.validateLesson(ctx, lessonID); err != nil {
+func (s *LessonContentService) GetContentsByLessonID(ctx context.Context, lessonID, userID uuid.UUID, isAdmin bool) ([]dto.LessonContentResponseDTO, error) {
+	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
+	if err != nil {
 		return nil, err
+	}
+	if lesson == nil {
+		return nil, errors.New("lesson not found")
+	}
+
+	// Phase 1 §2: chan noi dung bai bi khoa o CHINH tang API — contract ghi ro "khong chi chan
+	// UI". Bai preview/mien phi bo qua nhanh nay (ResolveLessonLock tu tra locked=false).
+	// CAO-4: chu so huu khoa hoc / admin duoc bypass qua BypassLock (gatherLessonLockInput),
+	// nen van phai chay het nhanh nay (khong short-circuit rieng o day) de logic bypass nam
+	// DUY NHAT o mot cho (lesson_lock.go), khong lech voi SectionService/LessonService.
+	if !lesson.IsPreview {
+		courseID, err := s.enrollmentRepo.GetCourseIDByLessonID(ctx, lessonID)
+		if err != nil {
+			return nil, err
+		}
+		course, err := s.courseRepo.GetByID(ctx, courseID)
+		if err != nil {
+			return nil, err
+		}
+		sequential := course != nil && course.Sequential
+		bypass := isAdmin || (course != nil && course.InstructorID == userID)
+		lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, courseID, sequential, bypass)
+		if err != nil {
+			return nil, err
+		}
+		// Quyết định team lead (review vòng 2): lessonID không thực sự thuộc LessonOrder của
+		// courseID vừa suy ra (dữ liệu không nhất quán) không được ResolveLessonLock âm thầm mở
+		// (idx==-1) hay khoá nhầm lý do — phải là lỗi rõ ràng. Xem EnsureLessonInCourse.
+		if err := EnsureLessonInCourse(lessonID, lockInput.LessonOrder); err != nil {
+			return nil, err
+		}
+		if locked, _, _ := ResolveLessonLock(lessonID, lockInput); locked {
+			return nil, ErrLessonLocked
+		}
 	}
 
 	contents, err := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
@@ -179,6 +212,14 @@ func (s *LessonContentService) UpdateContent(ctx context.Context, contentID, act
 	}
 	if req.DisplayOrder != nil {
 		content.DisplayOrder = *req.DisplayOrder
+	}
+	if req.SubtitleURL != nil {
+		// Chuoi rong = go phu de dang co (contract §4), khac voi khong gui truong nay.
+		if *req.SubtitleURL == "" {
+			content.SubtitleURL = nil
+		} else {
+			content.SubtitleURL = req.SubtitleURL
+		}
 	}
 
 	if err := s.lessonRepo.UpdateContent(ctx, content); err != nil {
@@ -270,6 +311,7 @@ func (s *LessonContentService) toContentResponseDTO(c *model.LessonContent) *dto
 		// N10 (review vòng 2, từ review web): xem chú thích tại model.LessonContent.
 		LivestreamSessionID: c.LivestreamSessionID,
 		DisplayOrder:        c.DisplayOrder,
+		SubtitleURL:         c.SubtitleURL,
 		CreatedAt:           c.CreatedAt,
 		UpdatedAt:           c.UpdatedAt,
 	}

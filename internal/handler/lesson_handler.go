@@ -86,7 +86,18 @@ func (h *LessonHandler) GetAllLessons(c *fiber.Ctx) error {
 		})
 	}
 
-	lessons, err := h.service.GetAllLessons(c.Context(), sectionID)
+	// C-1 (review vòng 2): route nằm sau middleware.AuthMiddleware (course_router.go) nên user_id
+	// luôn có mặt trên đường thật — cần để service tính locked/lock_reason/progress đúng người
+	// đang xem, thay vì trả contents (video_url) cho bất kỳ ai đã đăng nhập.
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	lessons, err := h.service.GetAllLessons(c.Context(), sectionID, userID, isAdmin)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve lessons",
@@ -109,7 +120,18 @@ func (h *LessonHandler) GetLessonByID(c *fiber.Ctx) error {
 		})
 	}
 
-	lesson, err := h.service.GetLessonByID(c.Context(), lessonID)
+	// B-2 (review vòng 2): route nằm sau middleware.AuthMiddleware (course_router.go) nên
+	// user_id luôn có mặt trên đường thật — cần để service tính locked/lock_reason đúng người
+	// đang xem (xem LessonServiceInterface.GetLessonByID).
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	lesson, err := h.service.GetLessonByID(c.Context(), lessonID, userID, isAdmin)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Lesson not found",
@@ -159,6 +181,13 @@ func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
 	if err != nil {
 		if lessonForbiddenResponse(c, err) {
 			return nil
+		}
+		// Phase 1 §4 (bổ sung từ review web #17): message CỐ ĐỊNH, không phải câu tự do —
+		// web so khớp đúng chuỗi này để hiện thông báo "bài chưa có video".
+		if err == service.ErrLessonHasNoVideo {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "LESSON_HAS_NO_VIDEO",
+			})
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update lesson",

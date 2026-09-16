@@ -91,6 +91,9 @@ type QuizAttempt struct {
 	CreatedAt     time.Time        `json:"created_at"`
 	UserID        uuid.UUID        `gorm:"type:uuid;not null;index" json:"user_id"`
 	QuizID        uuid.UUID        `gorm:"type:uuid;not null;index" json:"quiz_id"`
+	// Mode (Phase 1 §6): "official" (mặc định, tính điểm vào khoá + đếm vào quiz_max_attempts)
+	// hoặc "practice" (luyện tập — không tính điểm khoá, không đếm vào số lần làm tối đa).
+	Mode string `gorm:"type:varchar(20);not null;default:'official'" json:"mode"`
 	Score         *decimal.Decimal `gorm:"type:decimal(5,2)" json:"score,omitempty"`
 	TotalPoints   *decimal.Decimal `gorm:"type:decimal(5,2)" json:"total_points,omitempty"`
 	Percentage    *decimal.Decimal `gorm:"type:decimal(5,2)" json:"percentage,omitempty"`

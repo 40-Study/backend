@@ -54,6 +54,7 @@ func SetupAllRoutes(
 	parentInvitationHandler *handler.ParentInvitationHandler,
 	parentDashboardHandler *handler.ParentDashboardHandler,
 	discussionHandler *handler.DiscussionHandler,
+	noteHandler *handler.NoteHandler,
 	notificationHandler *handler.NotificationHandler,
 	userPreferenceHandler *handler.UserPreferenceHandler,
 	scheduleHandler *handler.ScheduleHandler,
@@ -125,6 +126,9 @@ func SetupAllRoutes(
 	SetupParentDashboardRoutes(api, cfg, parentDashboardHandler, redis)
 	// Discussion forum routes
 	SetupDiscussionRoutes(api, cfg, discussionHandler, redis)
+
+	// Note routes (Phase 1 §3)
+	SetupNoteRoutes(api, cfg, noteHandler, redis)
 
 	// Notification routes
 	SetupNotificationRoutes(api, cfg, notificationHandler, redis)

@@ -48,6 +48,10 @@ type UpdateCourseDTO struct {
 	IsFeatured        *bool           `json:"is_featured"`
 	Status            *string         `json:"status" validate:"omitempty,oneof=draft pending_review published archived"`
 	TagIDs            []uuid.UUID      `json:"tag_ids"`
+
+	// ——— Phase 1 §2 (2/4 công tắc khoá học) ———
+	Sequential  *bool `json:"sequential"`
+	MinVideoPct *int  `json:"min_video_pct" validate:"omitempty,min=1,max=100"`
 }
 
 type CourseResponseDTO struct {
@@ -82,6 +86,10 @@ type CourseResponseDTO struct {
 	Tags              []TagResponseDTO   `json:"tags,omitempty"`
 	CreatedAt         time.Time        `json:"created_at"`
 	UpdatedAt         time.Time        `json:"updated_at"`
+
+	// ——— Phase 1 §2 ———
+	Sequential  bool `json:"sequential"`
+	MinVideoPct int  `json:"min_video_pct"`
 }
 
 type CourseInstructorDTO struct {

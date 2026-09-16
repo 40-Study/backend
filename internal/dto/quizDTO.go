@@ -119,10 +119,16 @@ type QuestionResponseDTO struct {
 }
 
 type AnswerResponseDTO struct {
-	ID           uuid.UUID `json:"id"`
-	AnswerText   string    `json:"answer_text"`
-	IsCorrect    bool      `json:"is_correct,omitempty"`
-	DisplayOrder int       `json:"display_order"`
+	ID         uuid.UUID `json:"id"`
+	AnswerText string    `json:"answer_text"`
+	// IsCorrect (B-3, review vòng 2): đổi thành pointer — nil = bị GIẤU khỏi người xem không
+	// phải chủ khoá học/instructor/admin (GET /quizzes/:id, GET /quizzes/:id/questions, trước
+	// khi nộp bài). Trước bản vá này field là `bool` với `omitempty`: `false` bị omitempty ẩn đi
+	// (vô tình) nhưng `true` luôn hiện — nghĩa là "biết field bị thiếu = đáp án đó SAI", một
+	// side-channel lộ đáp án còn tệ hơn cả để lộ thẳng. LƯU Ý cho web: field này giờ optional,
+	// QuizAnswer.is_correct phía FE phải đổi sang kiểu optional (team-lead đã báo web riêng).
+	IsCorrect    *bool `json:"is_correct,omitempty"`
+	DisplayOrder int   `json:"display_order"`
 }
 
 type ReorderQuestionsDTO struct {
@@ -137,6 +143,12 @@ type BulkCreateQuestionsDTO struct {
 // QUIZ ATTEMPT
 // ============================================================================
 
+// StartQuizDTO là body của POST /quizzes/:id/start (Phase 1 §6). Optional — thiếu hoặc rỗng
+// mặc định "official", đúng ý contract "mặc định official".
+type StartQuizDTO struct {
+	Mode string `json:"mode" validate:"omitempty,oneof=official practice"`
+}
+
 type StartQuizResponseDTO struct {
 	AttemptID     uuid.UUID             `json:"attempt_id"`
 	QuizID        uuid.UUID             `json:"quiz_id"`
@@ -144,6 +156,8 @@ type StartQuizResponseDTO struct {
 	TimeLimitMins *int                  `json:"time_limit_minutes,omitempty"`
 	Questions     []AttemptQuestionDTO  `json:"questions"`
 	StartedAt     time.Time             `json:"started_at"`
+	// Mode (Phase 1 §6): "official" | "practice" — phản hồi lại đúng chế độ đã bắt đầu.
+	Mode string `json:"mode"`
 }
 
 type AttemptQuestionDTO struct {
@@ -164,6 +178,11 @@ type AttemptAnswerDTO struct {
 
 type SubmitQuizDTO struct {
 	Answers []SubmitAnswerDTO `json:"answers" validate:"required"`
+	// AttemptID (CAO-6, review vòng 2): optional — client (đã nhận attempt_id từ POST
+	// /quizzes/:id/start) gửi lại để nộp ĐÚNG attempt đang dở, tránh mơ hồ khi người dùng có
+	// CẢ MỘT attempt "official" VÀ một attempt "practice" cùng dang dở cho cùng quiz (ví dụ mở
+	// hai tab). Không gửi (client cũ) → giữ hành vi cũ: chọn attempt dang dở MỚI NHẤT.
+	AttemptID *string `json:"attempt_id" validate:"omitempty,uuid"`
 }
 
 type SubmitAnswerDTO struct {

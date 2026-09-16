@@ -26,9 +26,20 @@ type LessonRepositoryInterface interface {
 	GetContentByID(ctx context.Context, id uuid.UUID) (*model.LessonContent, error)
 	GetContentsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]model.LessonContent, error)
 	UpdateContent(ctx context.Context, content *model.LessonContent) error
+	// UpdateContentDuration (C-5, review vòng 3): cập nhật DUY NHẤT cột duration. UpdateContent
+	// ở trên là db.Save() — ghi ĐÈ MỌI cột từ struct đang giữ, nên dùng nó để chữa một cột sẽ
+	// nuốt im lặng mọi thay đổi mà request song song vừa ghi (đúng anti-pattern mà
+	// UpdateLessonProgressFields được tạo ra để tránh cho bảng tiến độ).
+	UpdateContentDuration(ctx context.Context, id uuid.UUID, duration int) error
 	DeleteContent(ctx context.Context, id uuid.UUID) error
 	ReorderContents(ctx context.Context, items []ReorderItem) error
 	CountContentsByIDsAndLesson(ctx context.Context, ids []uuid.UUID, lessonID uuid.UUID) (int64, error)
+
+	// GetLegacyVideoDurationByLessonID doc duration (giay) tu bang legacy lesson_videos
+	// (model.LessonVideo) — la nguon du phong THU HAI trong chuoi uu tien server-truth cua B-1
+	// (lesson_contents truoc, lesson_videos sau, chi khi ca hai deu 0 moi roi ve client). Tra
+	// (0, nil) khi khong co ban ghi — KHONG phai loi, chi la "khong co du lieu o day".
+	GetLegacyVideoDurationByLessonID(ctx context.Context, lessonID uuid.UUID) (int, error)
 }
 
 type LessonRepository struct {
@@ -159,6 +170,14 @@ func (r *LessonRepository) UpdateContent(ctx context.Context, content *model.Les
 	return r.db.WithContext(ctx).Save(content).Error
 }
 
+// UpdateContentDuration (C-5, review vòng 3): update MỘT cột, cùng dạng với ReorderContents.
+// Không dùng UpdateContent (db.Save) vì nó ghi đè mọi cột từ bản chụp trong bộ nhớ.
+func (r *LessonRepository) UpdateContentDuration(ctx context.Context, id uuid.UUID, duration int) error {
+	return r.db.WithContext(ctx).Model(&model.LessonContent{}).
+		Where("id = ?", id).
+		Update("duration", duration).Error
+}
+
 func (r *LessonRepository) DeleteContent(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).Unscoped().Delete(&model.LessonContent{}, "id = ?", id).Error
 }
@@ -183,4 +202,18 @@ func (r *LessonRepository) CountContentsByIDsAndLesson(ctx context.Context, ids 
 		Where("id IN ? AND lesson_id = ?", ids, lessonID).
 		Count(&count).Error
 	return count, err
+}
+
+func (r *LessonRepository) GetLegacyVideoDurationByLessonID(ctx context.Context, lessonID uuid.UUID) (int, error) {
+	var video model.LessonVideo
+	err := r.db.WithContext(ctx).
+		Where("lesson_id = ?", lessonID).
+		First(&video).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return video.DurationSeconds, nil
 }

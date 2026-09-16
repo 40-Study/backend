@@ -80,8 +80,29 @@ func (h *LessonContentHandler) GetContent(c *fiber.Ctx) error {
 		})
 	}
 
-	contents, err := h.service.GetContentsByLessonID(c.Context(), lessonID)
+	// Phase 1 §2: userID de service chan noi dung bai bi khoa (ErrLessonLocked -> 403 ben duoi).
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	contents, err := h.service.GetContentsByLessonID(c.Context(), lessonID, userID, isAdmin)
 	if err != nil {
+		if err == service.ErrLessonLocked {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"message": "LESSON_LOCKED",
+			})
+		}
+		// Quyết định team lead (review vòng 2): lessonID không thuộc khoá đang xét -> 404 rõ
+		// ràng, không lẫn với 403 LESSON_LOCKED và không mở lén.
+		if err == service.ErrLessonNotInCourse {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"message": "Lesson does not belong to this course",
+			})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve contents", "error": err.Error(),
 		})

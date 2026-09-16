@@ -185,6 +185,14 @@
 | PUT | `/api/courses/:id` | UpdateCourse | Cập nhật course |
 | DELETE | `/api/courses/:id` | DeleteCourse | Xóa course |
 
+**Phase 1 §2 + C-1 (review vòng 2):** `GET /api/courses/:id` (yêu cầu auth) trả thêm cho mỗi
+lesson `locked: bool`, `lock_reason: null|"previous_incomplete"|"not_enrolled"`, và
+`progress: {status, watched_pct, last_position_seconds}` — tính theo ĐÚNG người đang gọi. Bài bị
+khoá **lược bỏ hẳn key `contents`** (tag `omitempty` — key VẮNG MẶT, không phải `contents: []`),
+nên client phải đọc `contents?.length ?? 0`; bài mở trả `contents` đầy đủ.
+Chủ khoá (`instructor_id` trùng người gọi) và admin hệ thống không bao giờ bị khoá. HTTP vẫn 200
+khi bài bị khoá, không phải 403 — client đọc `locked`/`lock_reason` để dựng danh sách khoá.
+
 **Request DTO (CreateCourseDTO):**
 ```json
 {
@@ -208,6 +216,12 @@
 }
 ```
 
+**Phase 1 §2 — khoá học tuần tự (2 công tắc trong `UpdateCourseDTO`, PUT `/api/courses/:id`):**
+- `sequential: bool` (mặc định `false`) — bật thì bài N chỉ mở khi bài N-1 (bỏ qua bài
+  preview/miễn phí) đã `completed`.
+- `min_video_pct: int` (1..100, mặc định `90`) — ngưỡng `watched_pct` để server tự chốt
+  `completed` cho tiến độ xem video (xem §7).
+
 #### 4.2 Sections
 
 | Method | Path | Handler | Mô tả |
@@ -218,6 +232,13 @@
 | PUT | `/api/courses/:course_id/sections/reorder` | ReorderSections | Sắp xếp lại sections |
 | PUT | `/api/courses/:course_id/sections/:id` | UpdateSection | Cập nhật section |
 | DELETE | `/api/courses/:course_id/sections/:id` | DeleteSection | Xóa section |
+
+**Phase 1 §2:** `GET /api/courses/:course_id/sections` (curriculum thật của trang học) trả thêm
+cho mỗi lesson `locked: bool`, `lock_reason: null|"previous_incomplete"|"not_enrolled"`,
+`progress: {status, watched_pct, last_position_seconds}` — tính theo ĐÚNG người dùng đang gọi
+(route yêu cầu auth). `GET /api/courses/slug/:slug` (public, xem trước khi mua) cũng trả
+`locked`/`lock_reason` nhưng chỉ biết "chưa enroll" (không biết tiến độ), nên mọi bài không phải
+`is_preview` đều `locked: true, lock_reason: "not_enrolled"`; không có `progress`.
 
 #### 4.3 Lessons
 
@@ -230,14 +251,50 @@
 | PUT | `/api/lessons/:id` | UpdateLesson | Cập nhật lesson |
 | DELETE | `/api/lessons/:id` | DeleteLesson | Xóa lesson |
 
+**Phase 1 §2 + C-1 (review vòng 2):** `GET /api/sections/:section_id/lessons` nay là route yêu cầu
+auth, và mỗi lesson trả thêm `locked`/`lock_reason`/`progress` theo người đang gọi; bài bị khoá
+**lược bỏ hẳn key `contents`** (không phải `contents: []` — xem ghi chú ở `GET /api/courses/:id`).
+Đây là một trong hai đường lấy danh sách lesson (đường kia là `GET /api/courses/:id`), cả hai dùng
+CHUNG một hàm quyết định khoá nên không lệch nhau.
+
+**Phase 1 §2:** `GET /api/lessons/:lesson_id/contents` trả **403** `{"message": "LESSON_LOCKED"}`
+nếu bài đang bị khoá đối với người gọi (chặn ở tầng API, không chỉ ẩn ở UI).
+
+**B-2 (review vòng 2 PR #60) — `GET /api/lessons/:id` khi bài bị khoá:** endpoint này (khác với
+`GET /api/lessons/:lesson_id/contents` ở trên) trả **200** kèm metadata của lesson (title,
+duration, is_preview...) nhưng **lược bỏ key `contents`** (không phải `contents: []` — tag
+`omitempty`) và `locked: true`, `lock_reason` set đúng lý do
+(`not_enrolled` | `previous_incomplete`) — KHÔNG trả lỗi, vì đây là endpoint "xem thông tin bài"
+tổng quan (khác ngữ nghĩa "lấy nội dung để phát" của endpoint contents). Trước bản vá, endpoint
+này bỏ qua hoàn toàn việc tính khoá và luôn trả `contents` thật (kể cả `video_url`/HLS url) bất
+kể người gọi có được xem bài đó hay không.
+
+**CAO-4 (review vòng 2):** giảng viên sở hữu khoá học chứa bài học, hoặc admin hệ thống, KHÔNG
+BAO GIỜ bị khoá — áp dụng thống nhất trên cả ba nơi tính khoá: `GET /api/lessons/:id`,
+`GET /api/lessons/:lesson_id/contents`, và `GET /api/courses/:course_id/sections`.
+
+**Lưu ý bảo mật đã biết, CHƯA sửa trong PR này (B-2):** các route `/api/hls/*` (phát HLS
+segment/manifest) hiện KHÔNG có middleware xác thực — bất kỳ ai biết URL (kể cả suy đoán từ
+`video_url`/`video_hls_url` trả về) đều phát được video mà không cần đăng nhập hay kiểm tra
+khoá/enrollment. Đây là lỗi có TRƯỚC PR #60 (không phải hồi quy do các thay đổi trong PR này) —
+xem issue theo dõi riêng: [40-Study/backend#61](https://github.com/40-Study/backend/issues/61).
+
+**Phase 1 §4 — phụ đề:** `PUT /api/lessons/:id` (`UpdateLessonDTO`) nhận thêm
+`subtitle_url: string|null` — đây là đường GHI mà web dùng thật; backend lưu vào đúng
+`lesson_content` type=`video` của bài và trả lại ở `LessonContentResponseDTO.subtitle_url`
+(nguồn authoritative). `LessonResponseDTO.subtitle_url` chỉ là bản dự phòng. Gửi `""` để gỡ
+phụ đề đang có. Bài **chưa có** content type=`video` nào thì trả **400**
+`{"message": "LESSON_HAS_NO_VIDEO"}` (message cố định, không âm thầm bỏ qua) — đúng dạng với
+`LESSON_LOCKED` ở §2.
+
 #### 4.4 Lesson Content
 
 | Method | Path | Handler | Mô tả |
 |--------|------|---------|-------|
 | POST | `/api/lessons/:lesson_id/contents` | CreateContent | Tạo content |
-| GET | `/api/lessons/:lesson_id/contents` | GetContent | Lấy contents |
+| GET | `/api/lessons/:lesson_id/contents` | GetContent | Lấy contents (403 `LESSON_LOCKED` nếu bài chưa mở) |
 | PUT | `/api/lessons/:lesson_id/contents/reorder` | ReorderContents | Sắp xếp lại contents |
-| PUT | `/api/lessons/:lesson_id/contents/:id` | UpdateContent | Cập nhật content |
+| PUT | `/api/lessons/:lesson_id/contents/:id` | UpdateContent | Cập nhật content (nhận `subtitle_url`) |
 | DELETE | `/api/lessons/:lesson_id/contents/:id` | DeleteContent | Xóa content |
 
 #### 4.5 Categories & Tags
@@ -351,6 +408,117 @@ bất kỳ, hoặc đọc được lịch/tên lớp của lớp bất kỳ.
 Ghi chú về `GET /api/lessons/:lessonId/quizzes`: trả **mảng phẳng** (không bọc envelope)
 vì web unwrap một lớp rồi gọi `.length`; trả `200 []` chứ không `404` khi bài không có
 quiz, để client phân biệt được "bài rỗng" với "route không tồn tại".
+
+**Phase 1 §1 — chống tua (mở rộng `PUT /lessons/:lessonId/progress` và `POST /progress`):**
+
+Request (cả 2 đường, 3 field mới đều optional để client cũ vẫn chạy):
+```json
+{
+  "position_seconds": 754,
+  "duration_seconds": 1200,
+  "played_ranges": [[0, 120], [118, 754]]
+}
+```
+Server merge `played_ranges` với dữ liệu đã lưu (`lesson_progress.played_ranges`, JSONB). Một
+khoảng có `end` vượt quá `duration` (sai số làm tròn phía client, hoặc heartbeat cuối trước khi
+video kết thúc) bị **CẮT (clamp)** về `duration`, KHÔNG bị bỏ — chỉ khi `start` CŨNG đã vượt quá
+`duration` (vô lý, không clamp về gì được) thì khoảng đó mới bị loại hoàn toàn. `watched_seconds`
+= tổng độ dài sau merge, `watched_pct = round(watched_seconds/duration*100, 1)`. Server tự chốt
+`completed` khi `watched_pct >= course.min_video_pct`; client gửi thẳng `status: "completed"` mà
+chưa đạt ngưỡng thì bị **bỏ qua** (không phải lỗi — response vẫn trả `status` thật). `completed`
+là bất biến (không bao giờ hạ cấp) — client cũ vẫn có thể gửi kèm `status` (vd `in_progress` khi
+đóng tab) trong body heartbeat, giá trị này bị bỏ qua hoàn toàn nếu bài đã `completed`, không lỗi
+và không hạ cấp.
+
+**B-1 (review vòng 2 PR #60) — `duration` dùng để tính `watched_pct` LUÔN LÀ GIÁ TRỊ SERVER, không
+phải `duration_seconds` client gửi lên:** trước bản vá, server tin thẳng `duration_seconds` do
+client tự khai làm mẫu số — một client (lỗi hoặc cố ý) khai `duration_seconds` nhỏ hơn nhiều so
+với độ dài thật của video khiến `watched_pct` nhảy gần 100% chỉ với vài giây xem thật. Từ bản vá
+này, mẫu số ưu tiên `lesson_contents.duration` (content type=`video` của bài), sau đó
+`lesson_videos.duration_seconds` (bảng legacy) — `duration_seconds` client gửi CHỈ được dùng khi
+CẢ HAI nguồn trên đều bằng 0 (bài chưa gắn content video nào, dữ liệu thiếu), và giá trị đó khi
+dùng sẽ được lưu **sticky-max** (không bao giờ giảm) trên bản ghi tiến độ — một request sau đó
+khai một `duration_seconds` nhỏ hơn không được phép hạ mẫu số xuống.
+
+**Đơn vị:** `duration_seconds` (request) là **giây**, do client đọc trực tiếp từ media player;
+`lesson_contents.duration` (đã có từ trước) cũng lưu **giây**, cùng đơn vị. `lessons.duration_minutes`
+là **phút** — không dùng trường này để tính `watched_pct`, chỉ hiển thị tổng thời lượng bài học.
+
+Response `data` (`LessonProgressStateDTO`, đổi kiểu trả về so với bản trước Phase 1):
+```json
+{
+  "lesson_id": "uuid",
+  "status": "not_started|in_progress|completed",
+  "watched_seconds": 700,
+  "watched_pct": 58.3,
+  "last_position_seconds": 754,
+  "completed_at": "2026-09-15T05:00:00Z|null",
+  "next_lesson_unlocked": true
+}
+```
+
+---
+
+### 7b. Notes (Ghi chú theo mốc thời gian — Phase 1 §3)
+
+| Method | Path | Handler | Mô tả |
+|--------|------|---------|-------|
+| GET | `/api/lessons/:lessonId/notes` | ListByLesson | Ghi chú của TÔI trong 1 bài — `?sort=newest\|oldest` (mặc định newest) |
+| POST | `/api/lessons/:lessonId/notes` | CreateNote | Tạo ghi chú (`{timestamp_seconds, content}`), 201 |
+| GET | `/api/courses/:courseId/notes` | ListByCourse | Ghi chú của TÔI trong cả khoá — `?section_id=&sort=` |
+| PUT | `/api/notes/:id` | UpdateNote | Sửa (`timestamp_seconds?`, `content?`) |
+| DELETE | `/api/notes/:id` | DeleteNote | Xóa |
+
+`Note`: `{id, lesson_id, lesson_title, section_id, section_title, course_id, timestamp_seconds,
+content, created_at, updated_at}`. Chỉ chủ sở hữu đọc/sửa/xoá (so `user_id`); tạo ghi chú yêu
+cầu đã enroll khoá chứa bài học đó. `content` tối đa 2000 ký tự.
+
+---
+
+### 7c. Quiz — chế độ practice/official (Phase 1 §6)
+
+Dùng lại 22 route quiz đã có (chưa liệt kê đầy đủ trong tài liệu này — xem `internal/router/quiz_router.go`).
+Hai thay đổi của Phase 1:
+
+- `POST /api/quizzes/:id/start` nhận thêm body optional `{"mode": "official"|"practice"}`
+  (mặc định `official`). `practice` không tính vào `quiz_max_attempts` (không tính điểm khoá —
+  `quiz_pass_score` để Phase 2). Response thêm `mode` để client biết đang ở chế độ nào.
+- `GET /api/quizzes/:id/attempts/:attemptId` — mỗi câu trong `answers[]` trả thêm
+  `correct_answer_ids: string[]`; trường này và `explanation` **chỉ xuất hiện sau khi đã nộp bài**
+  (`attempt.completed_at != null`) — đang làm dở thì cả hai đều vắng mặt, tránh lộ đáp án đúng.
+
+**BREAKING CHANGE (B-3, review vòng 2 PR #60) — `is_correct`/`explanation` giấu trước khi nộp
+bài trên `GET /api/quizzes/:id` và `GET /api/quizzes/:id/questions`:**
+
+Trước bản vá này, hai endpoint đọc quiz THÔ (không phải attempt) trả về nguyên vẹn
+`Question.explanation` và `Answer.is_correct` cho BẤT KỲ ai gọi có đăng nhập — kể cả học viên
+chưa nộp bài, đọc thẳng đáp án đúng từ `GET /api/quizzes/:id/questions` trước khi làm bài.
+
+- `AnswerResponseDTO.is_correct` đổi từ `bool` (`omitempty`, luôn hiện khi `true`) sang
+  **`*bool` optional** (`omitempty`) — **web phải đổi kiểu `QuizAnswer.is_correct` sang
+  optional/nullable** để đọc đúng trường hợp field này VẮNG MẶT trong response.
+- `QuestionResponseDTO.explanation` (đã là `*string, omitempty` từ trước) giờ cũng bị đặt `null`
+  cùng điều kiện.
+- **Điều kiện hiện đầy đủ:** người gọi là instructor sở hữu khoá học chứa quiz này (qua
+  `Quiz.CourseID` trực tiếp, hoặc `Quiz.LessonID` → section → course, hoặc — với quiz gắn
+  livestream — `Quiz.SessionID.HostID == userID` hoặc `Quiz.SessionID.CourseID`), hoặc admin hệ
+  thống. Mọi người gọi khác (kể cả đã đăng nhập, đã enroll khoá) nhận `is_correct`/`explanation`
+  = vắng mặt (`null`) trên CẢ HAI endpoint này.
+- Đáp án đúng vẫn xem được đúng như trước qua `GET /api/quizzes/:id/attempts/:attemptId` **sau
+  khi nộp bài** — không đổi gì ở đường đó.
+
+**CAO-6 (review vòng 2) — chế độ `practice` không lẫn vào thống kê giảng viên:**
+
+- Attempt mode=`practice` **vẫn được chấm điểm** để học viên thấy kết quả ngay (không đổi hành
+  vi `SubmitQuiz`).
+- `GET /api/quizzes/:id/results` (`GetQuizResults`, danh sách attempt cho GV) và
+  `GET /api/quizzes/:id/statistics` (`GetQuizStatistics`, điểm trung bình/cao/thấp/pass-rate)
+  giờ **CHỈ tính trên attempt `mode="official"`** — attempt `practice` không còn kéo lệch số
+  liệu GV nhìn thấy.
+- `POST /api/quizzes/:id/submit` nhận thêm body optional `attempt_id: string` (uuid) — client đã
+  nhận `attempt_id` từ response của `POST /start`, gửi lại để nộp ĐÚNG attempt đang dở khi có
+  CẢ MỘT attempt `official` VÀ một attempt `practice` cùng dang dở cho cùng quiz (ví dụ mở hai
+  tab). Không gửi (client cũ) → hành vi cũ được giữ nguyên: chọn attempt dang dở MỚI NHẤT.
 
 ---
 
@@ -692,11 +860,19 @@ path/body field nào — chỉ thêm kiểm quyền.
 |--------|------|---------|-------|
 | GET | `/api/discussions` | ListPosts | Lấy posts (public) |
 | GET | `/api/discussions/:slug` | GetPostBySlug | Post theo slug |
-| POST | `/api/discussions` | CreatePost | Tạo post |
+| POST | `/api/discussions` | CreatePost | Tạo post — nhận thêm `lesson_id` (optional, Phase 1 §5) |
+| GET | `/api/lessons/:lessonId/discussions` | ListByLesson | Hỏi đáp theo bài (Phase 1 §5) — `?page=&limit=`, cùng shape `ListPosts`, **yêu cầu đăng nhập (xem CAO-5 dưới)** |
 | POST | `/api/discussions/:slug/comments` | AddComment | Thêm comment |
 | POST | `/api/discussions/:id/vote` | Vote | Vote post/comment |
 | DELETE | `/api/discussions/:id/vote` | RemoveVote | Xóa vote |
 | DELETE | `/api/discussions/:id` | DeletePost | Xóa post |
+
+**BREAKING CHANGE (CAO-5, review vòng 2 PR #60):** `GET /api/lessons/:lessonId/discussions`
+TRƯỚC ĐÂY đăng ký "public" (không auth) — nhưng handler đã viết sẵn logic đọc `user_id` optional
+để tính `user_vote` (đúng như `ListPosts`), nên trên đường public thật, `user_id` không bao giờ
+được điền và `user_vote` LUÔN sai/rỗng ngay cả với chính người đang đăng nhập. Route này giờ nằm
+sau `AuthMiddleware` — **cần token hợp lệ** (đổi từ public sang yêu cầu đăng nhập), đổi lại
+`user_vote` tính đúng. `GET /api/discussions` (không theo lesson) KHÔNG đổi, vẫn public.
 
 ---
 

@@ -255,6 +255,9 @@ func (r *QuizRepository) GetAttemptWithAnswers(ctx context.Context, id uuid.UUID
 	err := r.db.WithContext(ctx).
 		Preload("Answers").
 		Preload("Answers.Question").
+		// Phase 1 §6: can Answers.Question.Answers (danh sach dap an cua CAU HOI, kem
+		// IsCorrect) de tinh correct_answer_ids — khac voi Answers (dap an NGUOI DUNG da chon).
+		Preload("Answers.Question.Answers").
 		First(&attempt, "id = ?", id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -278,21 +281,26 @@ func (r *QuizRepository) GetAttemptsByUserAndQuiz(ctx context.Context, userID, q
 	return attempts, err
 }
 
+// GetAttemptsByQuiz (CAO-6, review vòng 2): CHỈ lấy attempt mode="official" — day la nguon cho
+// GV xem GetQuizResults (danh sach attempt cua hoc vien) va moi tinh toan "best score", KHONG
+// duoc de attempt "practice" (hoc thu, khong tinh diem chinh thuc) lam nhieu thong ke cua GV.
 func (r *QuizRepository) GetAttemptsByQuiz(ctx context.Context, quizID uuid.UUID) ([]model.QuizAttempt, error) {
 	var attempts []model.QuizAttempt
 	err := r.db.WithContext(ctx).
 		Preload("User").
-		Where("quiz_id = ?", quizID).
+		Where("quiz_id = ? AND mode = ?", quizID, "official").
 		Order("created_at DESC").
 		Find(&attempts).Error
 	return attempts, err
 }
 
+// CountAttemptsByUserAndQuiz (Phase 1 §6): CHỈ đếm attempt mode="official" — dùng riêng cho
+// gate quiz_max_attempts, và contract ghi rõ practice "không đếm vào quiz_max_attempts".
 func (r *QuizRepository) CountAttemptsByUserAndQuiz(ctx context.Context, userID, quizID uuid.UUID) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).
 		Model(&model.QuizAttempt{}).
-		Where("user_id = ? AND quiz_id = ?", userID, quizID).
+		Where("user_id = ? AND quiz_id = ? AND mode = ?", userID, quizID, "official").
 		Count(&count).Error
 	return count, err
 }
@@ -318,10 +326,13 @@ func (r *QuizRepository) GetAttemptAnswersByAttemptID(ctx context.Context, attem
 // STATISTICS
 // ============================================================================
 
+// GetQuizStatistics (CAO-6, review vòng 2): chỉ tính trên attempt mode="official" — cùng lý do
+// với GetAttemptsByQuiz phía trên, tránh attempt "practice" kéo lệch điểm trung bình/cao/thấp
+// mà GV nhìn thấy.
 func (r *QuizRepository) GetQuizStatistics(ctx context.Context, quizID uuid.UUID) (totalAttempts int64, avgScore, highScore, lowScore float64, passCount int64, avgTime float64, err error) {
 	row := r.db.WithContext(ctx).
 		Model(&model.QuizAttempt{}).
-		Where("quiz_id = ? AND completed_at IS NOT NULL", quizID).
+		Where("quiz_id = ? AND mode = ? AND completed_at IS NOT NULL", quizID, "official").
 		Select(`
 			COUNT(*) as total_attempts,
 			COALESCE(AVG(score), 0) as avg_score,

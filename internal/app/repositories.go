@@ -101,6 +101,8 @@ type Repositories struct {
 	ParentInvitation repository.ParentInvitationRepositoryInterface
 	// ===== Discussion Forum =====
 	Discussion *repository.DiscussionRepository
+	// ===== Note (Phase 1 §3) =====
+	Note repository.NoteRepositoryInterface
 
 	// ===== Notification =====
 	Notification *repository.NotificationRepository
@@ -227,6 +229,8 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		ParentInvitation: repository.NewParentInvitationRepository(db),
 		// ===== Discussion Forum =====
 		Discussion: repository.NewDiscussionRepository(db),
+		// ===== Note (Phase 1 §3) =====
+		Note: repository.NewNoteRepository(db),
 
 		// ===== Notification =====
 		Notification: repository.NewNotificationRepository(db),

@@ -11,6 +11,9 @@ type CreateForumPostDTO struct {
 	Title    string `json:"title" validate:"required,min=3,max=255"`
 	Content  string `json:"content" validate:"required"`
 	Category string `json:"category" validate:"required,oneof=programming design learning-tips project"`
+	// LessonID (Phase 1 §5): optional — co mat thi bai dang duoc tao la MOT cau hoi gan voi
+	// bai hoc cu the (hien o panel "Hoi dap" cua bai), khong phai bai dang dien dan chung.
+	LessonID *string `json:"lesson_id" validate:"omitempty,uuid"`
 }
 
 // CreateForumCommentDTO - reply to a forum post
@@ -39,6 +42,8 @@ type ForumPostResponseDTO struct {
 	UpvoteCount int       `json:"upvote_count"`
 	ReplyCount  int       `json:"reply_count"`
 	UserVote    *string   `json:"user_vote,omitempty"`
+	// LessonID (Phase 1 §5): co mat khi bai la cau hoi gan voi mot bai hoc cu the.
+	LessonID *uuid.UUID `json:"lesson_id,omitempty"`
 }
 
 // ForumCommentResponseDTO - single comment/reply

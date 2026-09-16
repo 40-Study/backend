@@ -17,6 +17,8 @@ type CreateLessonContentDTO struct {
 	ExerciseID   *uuid.UUID `json:"exercise_id"`
 	IsMandatory  *bool      `json:"is_mandatory"`
 	DisplayOrder *int       `json:"display_order"`
+	// SubtitleURL (Phase 1 §4): URL file .vtt đã upload sẵn qua luồng presigned có sẵn.
+	SubtitleURL *string `json:"subtitle_url"`
 }
 
 type UpdateLessonContentDTO struct {
@@ -27,6 +29,8 @@ type UpdateLessonContentDTO struct {
 	ExerciseID   *uuid.UUID `json:"exercise_id"`
 	IsMandatory  *bool      `json:"is_mandatory"`
 	DisplayOrder *int       `json:"display_order"`
+	// SubtitleURL (Phase 1 §4): gửi chuỗi rỗng "" hoặc null để gỡ phụ đề đang có.
+	SubtitleURL *string `json:"subtitle_url"`
 }
 
 type LessonContentResponseDTO struct {
@@ -47,6 +51,8 @@ type LessonContentResponseDTO struct {
 	// nên field này luôn xuất hiện trong response, giá trị null khi chưa có phiên.
 	LivestreamSessionID *uuid.UUID `json:"livestream_session_id"`
 	DisplayOrder        int        `json:"display_order"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	// SubtitleURL (Phase 1 §4): null khi bài chưa có phụ đề — web tự ẩn panel transcript.
+	SubtitleURL *string   `json:"subtitle_url"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }

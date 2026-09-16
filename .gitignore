@@ -54,3 +54,4 @@ docs/client_secret_*.json
 # M-08 (audit 260909): chỉ chặn tmp/*.log trước đây nên backend-dev.log/backend-dev.err.log
 # ở thư mục gốc không được ignore, dễ bị "git add ." cuốn vào.
 *.log
+.gotmp/

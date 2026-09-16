@@ -82,6 +82,8 @@ type Services struct {
 	ParentDashboard *service.ParentDashboardService
 	// ===== Discussion Forum =====
 	Discussion *service.DiscussionService
+	// ===== Note (Phase 1 §3) =====
+	Note service.NoteServiceInterface
 
 	// ===== Notification =====
 	Notification *service.NotificationService
@@ -350,11 +352,13 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Category:      service.NewCategoryService(repos.Category),
 		Tag:           service.NewTagService(repos.Tag),
 		Cart:          service.NewCartService(repos.CartItem, repos.Course, repos.Enrollment),
-		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag),
-		Section:       service.NewSectionService(repos.Section, repos.Course),
-		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, repos.Course, service.NewUploadService(resources.MinioClient, resources.Config)),
-		LessonContent: service.NewLessonContentService(repos.Lesson, repos.Section, repos.Course, service.NewUploadService(resources.MinioClient, resources.Config), uploadSvc),
-		Enrollment:    service.NewEnrollmentService(repos.Enrollment, repos.Course, repos.Lesson),
+		// C-1 (review vòng 2): toán hạng repos.Enrollment thêm vào để GetCourseByID tính được
+		// locked/lock_reason/progress theo người đang xem (xem service.NewCourseService).
+		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag, repos.Enrollment),
+		Section:       service.NewSectionService(repos.Section, repos.Course, repos.Enrollment),
+		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, repos.Course, repos.Enrollment, service.NewUploadService(resources.MinioClient, resources.Config)),
+		LessonContent: service.NewLessonContentService(repos.Lesson, repos.Section, repos.Course, repos.Enrollment, service.NewUploadService(resources.MinioClient, resources.Config), uploadSvc),
+		Enrollment:    service.NewEnrollmentService(repos.Enrollment, repos.Course, repos.Lesson, repos.VideoUpload),
 
 		// ===== Upload & Video =====
 		Upload:          service.NewUploadService(resources.MinioClient, resources.Config),
@@ -409,6 +413,8 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 
 		// ===== Discussion Forum =====
 		Discussion: service.NewDiscussionService(repos.Discussion),
+		// ===== Note (Phase 1 §3) =====
+		Note: service.NewNoteService(repos.Note, repos.Enrollment),
 
 		// ===== Notification =====
 		Notification: service.NewNotificationService(repos.Notification, notifier),
@@ -420,7 +426,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Schedule: service.NewScheduleService(repos.Schedule, resources.Redis, resources.Queue),
 
 		// ===== Quiz (Redis cache) =====
-		Quiz: service.NewQuizService(repos.Quiz, resources.Redis),
+		Quiz: service.NewQuizService(repos.Quiz, resources.Redis, repos.Course, repos.Section, repos.Lesson, repos.Livestream),
 
 		// ===== Grade (Redis cache) =====
 		Grade: service.NewGradeService(repos.Grade, repos.Class, resources.Redis),

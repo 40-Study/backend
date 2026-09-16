@@ -18,7 +18,9 @@ func (s *publicCourseRepoStub) GetDetailBySlug(context.Context, string) (*model.
 }
 
 func TestGetCourseBySlugRejectsUnpublishedCourse(t *testing.T) {
-	svc := NewCourseService(&publicCourseRepoStub{course: &model.Course{Status: "draft"}}, nil, nil)
+	// Tham so thu 4 (C-1, review vòng 2): enrollmentRepo — nil duoc vi GetCourseBySlug (public,
+	// khong co nguoi dang nhap) khong di qua duong khoa nao.
+	svc := NewCourseService(&publicCourseRepoStub{course: &model.Course{Status: "draft"}}, nil, nil, nil)
 
 	if _, err := svc.GetCourseBySlug(context.Background(), "draft-course"); err == nil {
 		t.Fatal("muon public slug tu choi course chua published")
@@ -31,7 +33,7 @@ func TestGetCourseBySlugDoesNotExposeLessonContents(t *testing.T) {
 		Sections: []model.Section{{
 			Lessons: []model.Lesson{{Contents: []model.LessonContent{{Type: "video"}}}},
 		}},
-	}}, nil, nil)
+	}}, nil, nil, nil)
 
 	got, err := svc.GetCourseBySlug(context.Background(), "published-course")
 	if err != nil {

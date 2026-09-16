@@ -18,7 +18,11 @@ var ErrNotCourseOwner = errors.New("forbidden: not the owner")
 type CourseServiceInterface interface {
 	CreateCourse(ctx context.Context, req dto.CreateCourseDTO) (*dto.CourseResponseDTO, error)
 	GetAllCourses(ctx context.Context, params dto.CourseFilterParams) (*dto.CourseListResponseDTO, error)
-	GetCourseByID(ctx context.Context, id uuid.UUID) (*dto.CourseDetailDTO, error)
+	// GetCourseByID (C-1, review vòng 2): userID/isAdmin dùng để tính khoá cho TỪNG bài — trước
+	// bản vá này hàm KHÔNG nhận userID và trả thẳng les.Contents cho bất kỳ ai đã đăng nhập, nên
+	// GET /courses/:id là đường vòng lộ contents[].video_url bỏ qua hoàn toàn ResolveLessonLock
+	// (đúng lớp lỗ của B-2, chỉ khác endpoint). Xem chú thích ở phần thân hàm.
+	GetCourseByID(ctx context.Context, id, userID uuid.UUID, isAdmin bool) (*dto.CourseDetailDTO, error)
 	GetCourseBySlug(ctx context.Context, slug string) (*dto.CourseDetailDTO, error)
 	UpdateCourse(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateCourseDTO) (*dto.CourseResponseDTO, error)
 	DeleteCourse(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool) error
@@ -28,17 +32,23 @@ type CourseService struct {
 	courseRepo   repository.CourseRepositoryInterface
 	categoryRepo repository.CategoryRepositoryInterface
 	tagRepo      repository.TagRepositoryInterface
+	// enrollmentRepo (C-1, review vòng 2): cần cho gatherLessonLockInput khi GetCourseByID phải
+	// tính locked/lock_reason/progress theo người đang xem — cùng nguồn dữ liệu mà SectionService
+	// và LessonService đã dùng, không tự tra bằng đường khác.
+	enrollmentRepo repository.EnrollmentRepositoryInterface
 }
 
 func NewCourseService(
 	courseRepo repository.CourseRepositoryInterface,
 	categoryRepo repository.CategoryRepositoryInterface,
 	tagRepo repository.TagRepositoryInterface,
+	enrollmentRepo repository.EnrollmentRepositoryInterface,
 ) *CourseService {
 	return &CourseService{
-		courseRepo:   courseRepo,
-		categoryRepo: categoryRepo,
-		tagRepo:      tagRepo,
+		courseRepo:     courseRepo,
+		categoryRepo:   categoryRepo,
+		tagRepo:        tagRepo,
+		enrollmentRepo: enrollmentRepo,
 	}
 }
 
@@ -152,13 +162,29 @@ func (s *CourseService) GetAllCourses(ctx context.Context, params dto.CourseFilt
 	}, nil
 }
 
-func (s *CourseService) GetCourseByID(ctx context.Context, id uuid.UUID) (*dto.CourseDetailDTO, error) {
+// GetCourseByID (C-1, review vòng 2): bản trước trả thẳng les.Contents cho MỌI người đã đăng nhập
+// — không enroll, không kiểm khoá — nên đây là đường vòng lấy contents[].video_url của một bài
+// đang bị khoá (đúng lớp lỗ của B-2 ở GET /lessons/:id, chỉ khác endpoint). Bản này dùng LẠI
+// đúng đường khoá của LessonService.GetLessonByID (gatherLessonLockInput + ResolveLessonLock,
+// xem lesson_lock.go và lesson_service.go:resolveLessonByIDLock): bài bị khoá trả contents RỖNG
+// kèm locked/lock_reason/progress, bài mở trả contents đầy đủ — nên giảng viên sở hữu khoá học
+// (BypassLock) vẫn thấy video_url như trang quản lý khoá của họ cần.
+func (s *CourseService) GetCourseByID(ctx context.Context, id, userID uuid.UUID, isAdmin bool) (*dto.CourseDetailDTO, error) {
 	course, err := s.courseRepo.GetDetailByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if course == nil {
 		return nil, errors.New("course not found")
+	}
+
+	// Một lần cho CẢ khoá học, không phải mỗi bài một lần: enrollment/thứ tự bài/progress là dữ
+	// liệu của (người dùng, khoá học), không đổi giữa các bài — lặp lại trong vòng lặp là N+1
+	// truy vấn trên chính endpoint này. Cùng cách SectionService.GetAllSections đang làm.
+	bypass := isAdmin || course.InstructorID == userID
+	lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, course.ID, course.Sequential, bypass)
+	if err != nil {
+		return nil, err
 	}
 
 	detail := &dto.CourseDetailDTO{
@@ -169,7 +195,18 @@ func (s *CourseService) GetCourseByID(ctx context.Context, id uuid.UUID) (*dto.C
 	for i, sec := range course.Sections {
 		lessons := make([]dto.LessonResponseDTO, len(sec.Lessons))
 		for j, les := range sec.Lessons {
-			lessons[j] = s.toLessonResponseDTO(&les, les.Contents)
+			locked, reason, progress := ResolveLessonLock(les.ID, lockInput)
+			if locked {
+				// Bài bị khoá: KHÔNG truyền les.Contents — đó chính là đường lộ video_url mà bản
+				// vá này đóng lại. Vẫn trả metadata + locked/lock_reason/progress để client dựng
+				// được danh sách khoá (không trả lỗi, giống GetLessonByID).
+				lessons[j] = s.toLessonResponseDTO(&les, nil)
+			} else {
+				lessons[j] = s.toLessonResponseDTO(&les, les.Contents)
+			}
+			lessons[j].Locked = locked
+			lessons[j].LockReason = reason
+			lessons[j].Progress = progress
 		}
 		sections[i] = dto.SectionResponseDTO{
 			ID:           sec.ID,
@@ -210,6 +247,17 @@ func (s *CourseService) GetCourseBySlug(ctx context.Context, slug string) (*dto.
 		for j, les := range sec.Lessons {
 			// Public course detail exposes the syllabus, never protected content URLs.
 			lessons[j] = s.toLessonResponseDTO(&les, nil)
+
+			// Phase 1 §2: route nay KHONG co user dang nhap (public, xem truoc khi mua) nen
+			// khong biet duoc "bai truoc da completed chua" — chi biet CHAC MOT dieu: nguoi
+			// xem CHUA enroll. Bai preview/mien phi luon mo (dung y "bo qua bai preview" cua
+			// contract); moi bai con lai khoa voi ly do "not_enrolled". Khong co progress vi
+			// khong biet la ai.
+			if !les.IsPreview {
+				reason := LockReasonNotEnrolled
+				lessons[j].Locked = true
+				lessons[j].LockReason = &reason
+			}
 		}
 		sections[i] = dto.SectionResponseDTO{
 			ID:           sec.ID,
@@ -313,6 +361,12 @@ func (s *CourseService) UpdateCourse(ctx context.Context, id, actorUserID uuid.U
 	if req.IsFeatured != nil {
 		course.IsFeatured = *req.IsFeatured
 	}
+	if req.Sequential != nil {
+		course.Sequential = *req.Sequential
+	}
+	if req.MinVideoPct != nil {
+		course.MinVideoPct = *req.MinVideoPct
+	}
 
 	if err := s.courseRepo.Update(ctx, course); err != nil {
 		return nil, err
@@ -378,6 +432,13 @@ func (s *CourseService) toCourseResponseDTO(course *model.Course) *dto.CourseRes
 		IsFree:            course.IsFree,
 		CreatedAt:         course.CreatedAt,
 		UpdatedAt:         course.UpdatedAt,
+		Sequential:        course.Sequential,
+		MinVideoPct:       course.MinVideoPct,
+	}
+	if resp.MinVideoPct <= 0 {
+		// Dong cu duoc AutoMigrate them cot voi gia tri 0 — tra ve dung nguong THUC TE dang
+		// duoc dung (xem defaultMinVideoPct, enrollment_service.go) thay vi mot con so sai.
+		resp.MinVideoPct = defaultMinVideoPct
 	}
 
 	if course.Instructor.ID != uuid.Nil {

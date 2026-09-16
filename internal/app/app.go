@@ -223,6 +223,8 @@ func New() (*App, error) {
 		handlers.ParentDashboard,
 		// ===== Discussion Forum =====
 		handlers.Discussion,
+		// ===== Note (Phase 1 §3) =====
+		handlers.Note,
 
 		// ===== Notification =====
 		handlers.Notification,

@@ -3,10 +3,13 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -42,7 +45,25 @@ type EnrollmentServiceInterface interface {
 	Unenroll(ctx context.Context, userID, courseID uuid.UUID) error
 	GetMyEnrollments(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.EnrollmentListResponseDTO, error)
 	GetEnrollmentDetail(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*dto.EnrollmentDetailDTO, error)
-	UpdateLessonProgress(ctx context.Context, userID, lessonID uuid.UUID, req dto.UpdateLessonProgressDTO) (*dto.LessonProgressResponseDTO, error)
+	// UpdateLessonProgress ghi tien do xem video cho mot bai hoc.
+	//
+	// Phase 1 §1 (chong tua): ngoai `status`/`video_watched_seconds` nhu truoc, request co the mang
+	// them `position_seconds`, `duration_seconds` va `played_ranges`. Khi co `played_ranges` +
+	// `duration_seconds`:
+	//   - hop nhat khoang vua phat vao khoang da luu (MergePlayedRanges),
+	//   - `watched_seconds` = tong do dai sau merge (KHONG phai so client tu khai),
+	//   - `watched_pct`   = round(watched_seconds / duration * 100, 1),
+	//   - tu chot `completed` khi watched_pct >= course.min_video_pct (mac dinh 90).
+	//
+	// `completed` do CLIENT gui len bi BO QUA: neu khong thi chi can keo thanh tua toi cuoi video
+	// la co ngay 100% — dung cai lo hong ma cot played_ranges sinh ra de bit.
+	//
+	// Khong co `played_ranges` (client cu) thi ham chay y nguyen nhu truoc: chi ghi
+	// status/video_watched_seconds theo duong GREATEST() cu.
+	//
+	// Tra ve LessonProgressStateDTO (contract §1) chu khong phai LessonProgressResponseDTO:
+	// web doc thang shape nay trong services/enrollment.service.ts.
+	UpdateLessonProgress(ctx context.Context, userID, lessonID uuid.UUID, req dto.UpdateLessonProgressDTO) (*dto.LessonProgressStateDTO, error)
 	GetCourseEnrollments(ctx context.Context, courseID uuid.UUID, page, pageSize int) (*dto.CourseEnrollmentListDTO, error)
 	DebugGetCourseEnrollments(ctx context.Context, courseID uuid.UUID) ([]dto.DebugEnrollmentDTO, error)
 }
@@ -51,17 +72,24 @@ type EnrollmentService struct {
 	enrollmentRepo repository.EnrollmentRepositoryInterface
 	courseRepo     repository.CourseRepositoryInterface
 	lessonRepo    repository.LessonRepositoryInterface
+	// videoUploadRepo (BLOCKER-1, review vòng 3): chỉ dùng để tự chữa lesson_contents.duration
+	// từ video_uploads.duration khi cột đó còn 0 — xem healDurationFromVideoUpload. Nil được
+	// chấp nhận ở tầng thân hàm (đường chữa tự tắt), nhưng vẫn là tham số bắt buộc của
+	// constructor để nơi gọi phải ý thức được sự phụ thuộc này.
+	videoUploadRepo repository.VideoUploadRepositoryInterface
 }
 
 func NewEnrollmentService(
 	enrollmentRepo repository.EnrollmentRepositoryInterface,
 	courseRepo repository.CourseRepositoryInterface,
 	lessonRepo repository.LessonRepositoryInterface,
+	videoUploadRepo repository.VideoUploadRepositoryInterface,
 ) *EnrollmentService {
 	return &EnrollmentService{
-		enrollmentRepo: enrollmentRepo,
-		courseRepo:     courseRepo,
-		lessonRepo:    lessonRepo,
+		enrollmentRepo:  enrollmentRepo,
+		courseRepo:      courseRepo,
+		lessonRepo:      lessonRepo,
+		videoUploadRepo: videoUploadRepo,
 	}
 }
 
@@ -246,7 +274,7 @@ func (s *EnrollmentService) GetEnrollmentDetail(ctx context.Context, id uuid.UUI
 	return detail, nil
 }
 
-func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, lessonID uuid.UUID, req dto.UpdateLessonProgressDTO) (*dto.LessonProgressResponseDTO, error) {
+func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, lessonID uuid.UUID, req dto.UpdateLessonProgressDTO) (*dto.LessonProgressStateDTO, error) {
 	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
 	if err != nil {
 		return nil, err
@@ -275,7 +303,71 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		return nil, err
 	}
 
+	// Cau hinh khoa hoc (Phase 1 §2): `sequential` quyet dinh next_lesson_unlocked,
+	// `min_video_pct` quyet dinh nguong tu chot completed. Doc TRUOC khi ghi: neu buoc doc nay
+	// loi thi khong duoc de lai mot ban ghi da ghi xong nhung response bao loi.
+	course, err := s.courseRepo.GetByID(ctx, courseID)
+	if err != nil {
+		return nil, err
+	}
+	minVideoPct := defaultMinVideoPct
+	sequential := false
+	if course != nil {
+		sequential = course.Sequential
+		if course.MinVideoPct > 0 {
+			minVideoPct = course.MinVideoPct
+		}
+	}
+
+	// Thu tu bai hoc trong khoa, de biet bai ke tiep la bai nao (next_lesson_unlocked).
+	// Cung la du lieu ma §2 dung lai cho khoa tuan tu.
+	lessonOrder, err := s.enrollmentRepo.GetLessonIDsByCourseID(ctx, courseID)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now()
+
+	// ——— Hop nhat khoang da phat (chong tua) ———
+	var storedRanges model.PlayedRanges
+	storedFallbackDuration := 0
+	if progress != nil {
+		storedRanges = progress.PlayedRanges
+		storedFallbackDuration = progress.FallbackDurationSeconds
+	}
+
+	// B-1 (review vòng 2, BLOCKER): nguồn sự thật thời lượng LÀ SERVER (lesson_contents, sau đó
+	// lesson_videos) — KHÔNG BAO GIỜ tin duration_seconds client tự khai khi server đã biết,
+	// đóng đường tấn công "khai duration=10 trên bài 1200s" biến 10 giây xem thật thành watched_pct
+	// ≈100%. Chỉ khi server = 0 (bài chưa gắn content video, dữ liệu thiếu) mới rơi về
+	// duration_seconds client khai, và giá trị đó BẮT BUỘC lưu STICKY-MAX (fallback_duration_seconds,
+	// xem model.LessonProgress) — một request sau đó khai duration NHỎ HƠN không được phép hạ mẫu
+	// số xuống (mất dữ liệu/pct nhảy lùi).
+	serverDuration, err := s.resolveServerVideoDuration(ctx, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	clientDuration := 0
+	if req.DurationSeconds != nil {
+		clientDuration = *req.DurationSeconds
+	}
+	durationSeconds := serverDuration
+	usingFallbackDuration := serverDuration <= 0
+	if usingFallbackDuration {
+		durationSeconds = storedFallbackDuration
+		if clientDuration > durationSeconds {
+			durationSeconds = clientDuration
+		}
+	}
+
+	// Chi hop nhat khi client THAT SU gui khoang moi VA co thoi luong lam mau so. Client cu
+	// (chi gui status + video_watched_seconds) di nguyen duong cu ben duoi.
+	hasRangePayload := len(req.PlayedRanges) > 0 && durationSeconds > 0
+	var mergedRanges model.PlayedRanges
+	var mergedSeconds int
+	if hasRangePayload {
+		mergedRanges, mergedSeconds = MergePlayedRanges(storedRanges, toModelPlayedRanges(req.PlayedRanges), durationSeconds)
+	}
 
 	// Duong INSERT: ban ghi chua ton tai thi tao moi bang Save() nhu cu (khong co UPDATE de
 	// GREATEST() dua vao, va khong co gi de ghi de). Ban ghi DA ton tai thi di duong UPDATE
@@ -288,22 +380,42 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 			Status:         "not_started",
 			LastAccessedAt: now,
 		}
-		if req.Status != nil {
-			progress.Status = *req.Status
-			if *req.Status == "completed" {
-				progress.CompletedAt = &now
+		if req.PositionSeconds != nil {
+			progress.LastPositionSeconds = *req.PositionSeconds
+		}
+		if usingFallbackDuration && durationSeconds > 0 {
+			// Ban ghi moi tao: chua co gia tri fallback cu nao de GREATEST, ghi thang durationSeconds
+			// (da la max(0, clientDuration) o tren).
+			progress.FallbackDurationSeconds = durationSeconds
+		}
+		if hasRangePayload {
+			progress.PlayedRanges = mergedRanges
+			progress.VideoWatchedSecs = mergedSeconds
+			if pct, ok := WatchedPercent(mergedSeconds, durationSeconds); ok {
+				progress.WatchedPct = pct
 			}
+		} else if req.VideoWatchedSecs != nil {
+			// TB (review vòng 2): clamp theo duration server-truth — khong cho client tu khai
+			// mot so giay da xem VUOT QUA do dai that cua video (chi so "thoi gian hoc" khong duoc
+			// phinh to vo han qua duong cu nay).
+			progress.VideoWatchedSecs = clampToDuration(*req.VideoWatchedSecs, durationSeconds)
+		}
+
+		// C-2 (review vòng 2, BLOCKER): !usingFallbackDuration là điều kiện "mẫu số đáng tin" —
+		// xem resolveLessonStatus. Vẫn ghi watched_pct/played_ranges như cũ, chỉ KHÔNG cấp completed.
+		status := resolveLessonStatus("not_started", req.Status, progress.WatchedPct, minVideoPct, !usingFallbackDuration)
+		progress.Status = status
+		if status == "completed" {
+			progress.CompletedAt = &now
 		}
 		if req.ProgressPercent != nil {
 			progress.ProgressPercent = *req.ProgressPercent
 		}
-		if req.VideoWatchedSecs != nil {
-			progress.VideoWatchedSecs = *req.VideoWatchedSecs
-		}
+
 		if err := s.enrollmentRepo.UpsertLessonProgress(ctx, progress); err != nil {
 			return nil, err
 		}
-		return s.finishLessonProgressUpdate(ctx, enrollment, progress)
+		return s.finishLessonProgressStateUpdate(ctx, enrollment, progress, nextLessonUnlocked(lessonOrder, lessonID, sequential, status))
 	}
 
 	// Trinh phat gui VI TRI phat hien tai (currentTime), khong phai so giay cong don.
@@ -321,12 +433,22 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		// cot nay dung yen mai mai.
 		"updated_at": now,
 	}
-	// HIGH-2 (review 260915): chi ghi status khi cap bac MOI >= cap bac HIEN TAI — xem
-	// lessonProgressStatusRank. Bo qua ca hai request khong gui status VA request muon ha cap:
-	// khong dua "status" vao map thi cau UPDATE khong dung toi cot do, giu nguyen gia tri cu.
-	if req.Status != nil && lessonProgressStatusRank[*req.Status] >= lessonProgressStatusRank[progress.Status] {
-		updates["status"] = *req.Status
-		if *req.Status == "completed" && progress.CompletedAt == nil {
+
+	// ——— status: sticky, tu chot theo nguong, client khong duoc tu phong ———
+	// watchedPctMoi la pct SAU khi hop nhat (hoac giu nguyen pct cu neu lan nay khong gui khoang).
+	watchedPct := progress.WatchedPct
+	if hasRangePayload {
+		if pct, ok := WatchedPercent(mergedSeconds, durationSeconds); ok {
+			watchedPct = pct
+			updates["watched_pct"] = pct
+		}
+	}
+	// C-2 (review vòng 2, BLOCKER): xem chú thích ở nhánh INSERT phía trên — cùng một điều kiện,
+	// hai nhánh ghi phải luật giống nhau.
+	status := resolveLessonStatus(progress.Status, req.Status, watchedPct, minVideoPct, !usingFallbackDuration)
+	if status != progress.Status {
+		updates["status"] = status
+		if status == "completed" && progress.CompletedAt == nil {
 			updates["completed_at"] = now
 		}
 	}
@@ -334,11 +456,34 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		updates["progress_percentage"] = *req.ProgressPercent
 	}
 
+	if hasRangePayload {
+		// played_ranges duoc GHI DE (khong phai GREATEST): no la hop nhat cua khoang cu + khoang
+		// moi, nen gia tri moi DA bao gom gia tri cu. Dung GREATEST o day la vo nghia.
+		updates["played_ranges"] = mergedRanges
+	}
+	if req.PositionSeconds != nil {
+		updates["last_position_seconds"] = *req.PositionSeconds
+	}
+	if usingFallbackDuration && clientDuration > 0 {
+		// B-1 (review vòng 2): GREATEST() ngay trong SQL — cùng lý do với video_watched_seconds
+		// bên dưới, phép max phải NGUYÊN TỬ ở tầng DB, không phải đọc-so sánh-ghi ở tầng Go (hai
+		// request song song đọc cùng storedFallbackDuration cũ thì request ghi SAU sẽ đè mất giá
+		// trị lớn hơn của request ghi TRƯỚC nếu làm ở Go).
+		updates["fallback_duration_seconds"] = gorm.Expr("GREATEST(fallback_duration_seconds, ?)", clientDuration)
+	}
+
 	// watchedSeconds duoc truyen RIENG chu khong nam trong map: gia tri cua no phai di qua
 	// GREATEST() trong cau UPDATE, khong duoc set tho.
 	var watchedSeconds *int
-	if req.VideoWatchedSecs != nil {
-		watchedSeconds = req.VideoWatchedSecs
+	if hasRangePayload {
+		// Tong do dai sau merge, KHONG phai con so client tu khai.
+		watchedSeconds = &mergedSeconds
+	} else if req.VideoWatchedSecs != nil {
+		// TB (review vòng 2): clamp truoc khi day vao GREATEST() — khong clamp o day thi mot gia
+		// tri client khai vuot duration van thang GREATEST va lam phinh video_watched_seconds vo
+		// han qua duong cu nay.
+		clamped := clampToDuration(*req.VideoWatchedSecs, durationSeconds)
+		watchedSeconds = &clamped
 	}
 
 	updated, err := s.enrollmentRepo.UpdateLessonProgressFields(ctx, userID, lessonID, updates, watchedSeconds)
@@ -351,15 +496,235 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		return nil, errors.New("lesson progress not found")
 	}
 
-	return s.finishLessonProgressUpdate(ctx, enrollment, updated)
+	return s.finishLessonProgressStateUpdate(ctx, enrollment, updated, nextLessonUnlocked(lessonOrder, lessonID, sequential, updated.Status))
 }
 
-// finishLessonProgressUpdate tinh lai tien do ghi danh va tra ve DTO cua ban ghi vua ghi.
-func (s *EnrollmentService) finishLessonProgressUpdate(ctx context.Context, enrollment *model.Enrollment, progress *model.LessonProgress) (*dto.LessonProgressResponseDTO, error) {
+// resolveServerVideoDuration (B-1, review vòng 2): nguồn sự thật thời lượng LÀ SERVER — ưu tiên
+// lesson_contents (content Type="video".Duration, đây là loại content video THỰC SỰ được đọc/ghi
+// bởi mọi service khác trong hệ thống), sau đó lesson_videos (bảng legacy — AutoMigrate vẫn tạo
+// nhưng không repository/service nào khác đọc/ghi; tra theo đúng quyết định review dù trong thực
+// tế gần như luôn trả 0). Trả 0 khi CẢ HAI đều không có duration dương (bài chưa gắn content
+// video nào) — lúc đó caller (UpdateLessonProgress) mới được rơi về duration_seconds CLIENT khai.
+func (s *EnrollmentService) resolveServerVideoDuration(ctx context.Context, lessonID uuid.UUID) (int, error) {
+	contents, err := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
+	if err != nil {
+		return 0, err
+	}
+	for _, c := range contents {
+		if c.Type == "video" && c.Duration > 0 {
+			return c.Duration, nil
+		}
+	}
+
+	// BLOCKER-1 (review vòng 3). lesson_contents.duration do người tạo content tự điền, nhưng
+	// web KHÔNG gửi trường này (lesson-content.service.ts: CreateVideoContentDTO có `duration?`
+	// nhưng call site duy nhất ở trang quản lý khoá không truyền) — nên trên thực tế gần như mọi
+	// bài đều là 0. Khi đó C-2 chặn luôn đường `completed` HỢP LỆ, và với sequential=true khoá
+	// học kẹt vĩnh viễn ở bài đầu.
+	//
+	// Thời lượng THẬT có trong video_uploads.duration, nhưng video worker chỉ ghi nó SAU khi
+	// ffmpeg xử lý xong (video_processor.go), mà CreateContent lại chạy trước đó — web hiện
+	// toast thành công ngay khi upload xong rồi giáo viên mới bấm tạo nội dung. Vì vậy backfill
+	// một chiều lúc tạo content sẽ đọc phải nil và không chữa được gì.
+	//
+	// Tự chữa ở ĐÂY thay vì lúc tạo: đây là thời điểm ĐỌC duration (lúc ghi tiến độ), lúc đó
+	// video đã xử lý xong nên không còn race — và nó chữa được cả những bài đã tạo từ trước.
+	if healed := s.healDurationFromVideoUpload(ctx, contents); healed > 0 {
+		return healed, nil
+	}
+
+	legacy, err := s.lessonRepo.GetLegacyVideoDurationByLessonID(ctx, lessonID)
+	if err != nil {
+		return 0, err
+	}
+	return legacy, nil
+}
+
+// healDurationFromVideoUpload chữa lesson_contents.duration = 0 bằng thời lượng thật của video
+// gốc trên video_uploads (khớp qua upload id nhúng trong URL HLS), rồi ghi lại để các nhịp
+// heartbeat sau không phải tra lại. Trả 0 khi không chữa được — mọi trường hợp không chữa được
+// đều là "không biết", không phải lỗi, nên không làm hỏng request tiến độ đang chạy.
+func (s *EnrollmentService) healDurationFromVideoUpload(ctx context.Context, contents []model.LessonContent) int {
+	if s.videoUploadRepo == nil {
+		return 0
+	}
+	for i := range contents {
+		c := &contents[i]
+		if c.Type != "video" || c.Duration > 0 || c.VideoURL == nil {
+			continue
+		}
+		m := hlsUploadIDPattern.FindStringSubmatch(*c.VideoURL)
+		if len(m) < 2 {
+			continue
+		}
+		uploadID, err := uuid.Parse(m[1])
+		if err != nil {
+			continue
+		}
+		upload, err := s.videoUploadRepo.GetUploadByID(ctx, uploadID)
+		if err != nil || upload == nil || upload.Duration == nil || *upload.Duration <= 0 {
+			continue
+		}
+		healed := int(*upload.Duration)
+		// Ghi lại để lần sau rẻ. Dùng UpdateContentDuration (một cột) chứ KHÔNG dùng
+		// UpdateContent — UpdateContent là db.Save() nên ghi đè MỌI cột từ struct vừa nạp, sẽ
+		// nuốt im lặng thay đổi của request song song (C-5). Ghi hỏng thì vẫn trả duration vừa
+		// tìm được: không đánh đổi lợi ích cache lấy việc chặn tiến độ học — nhưng phải LOG,
+		// không được nuốt.
+		if err := s.lessonRepo.UpdateContentDuration(ctx, c.ID, healed); err != nil {
+			log.Printf("[WARN] Khong ghi nguoc duoc duration cho lesson_content %s: %v", c.ID, err)
+		}
+		return healed
+	}
+	return 0
+}
+
+// hlsUploadIDPattern khớp upload id trong URL HLS dạng "/api/hls/{uploadId}/master.m3u8" —
+// cùng dạng mà lesson_content_service.go dùng để dựng lại URL.
+var hlsUploadIDPattern = regexp.MustCompile(`/hls/([a-f0-9-]{36})`)
+
+// clampToDuration (B-1/TB, review vòng 2): CẮT (không xoá) một giá trị giây về duration khi vượt
+// quá — dùng cho đường watched-seconds cũ (video_watched_seconds) để một client khai một số giây
+// lớn hơn độ dài thật của video không thể phình "thời gian học" vô hạn. duration<=0 (chưa biết
+// duration nào, kể cả fallback) nghĩa là không có gì để clamp — trả nguyên giá trị.
+func clampToDuration(seconds, duration int) int {
+	if duration > 0 && seconds > duration {
+		return duration
+	}
+	return seconds
+}
+
+// defaultMinVideoPct la nguong watched_pct mac dinh (contract §1) khi course.min_video_pct
+// chua duoc set (0 tren cac dong cu vua duoc AutoMigrate them cot).
+const defaultMinVideoPct = 90
+
+// resolveLessonStatus quyet dinh status SAU cung cua mot lan ghi tien do.
+//
+// Ba luat, theo dung thu tu:
+//  1. `completed` la BAT BIEN — mot khi da completed thi khong bao gio ha cap (status chi di len,
+//     xem lessonProgressStatusRank). Beacon dong tab luon gui cung "in_progress", ghi de vo dieu
+//     kien se lam CountCompletedMandatory tut so va % tien do khoa hoc giam moi lan xem lai bai cu.
+//  2. Server TU chot `completed` khi watched_pct >= minVideoPct — NHUNG chi khi mẫu số của
+//     watched_pct là sự thật phía server (trustedDuration, xem luật 2b bên dưới).
+//  3. `completed` do CLIENT gui len bi BO QUA (contract §1): no chi duoc chap nhan khi chinh server
+//     cung tinh ra pct dat nguong (truong hop 2). Neu khong thi keo thanh tua toi cuoi video la
+//     xong bai — dung lo hong ma played_ranges sinh ra de bit.
+//
+// Cac gia tri status khac (not_started/in_progress) van theo luat cu: chi ghi khi cap bac moi >=
+// cap bac hien tai.
+//
+// LUAT 2b (C-2, review vòng 2 — BLOCKER): trustedDuration=false nghia la KHONG co duration nao
+// phia server (lesson_contents.lesson_videos deu 0), nen mẫu số của watched_pct chinh là
+// duration_seconds do CLIENT tu khai (xem usingFallbackDuration ở UpdateLessonProgress). Lúc đó
+// watched_pct là một con số do client kiểm soát: request {"duration_seconds":10,
+// "played_ranges":[[0,10]]} cho watched_pct=100 trên một bài dài 1200s và tự chốt completed —
+// mà completed là sticky nên không thu hồi được (sticky-max của fallback_duration_seconds chỉ bảo
+// vệ các request SAU, không rút lại lần hoàn thành đã cấp). Vì vậy khi mẫu số chưa phải
+// server-truth thì KHÔNG cho watched_pct tự chốt completed; played_ranges/watched_pct vẫn được
+// ghi như thường nên không mất dữ liệu, chỉ khoản "cấp completed" bị giữ lại cho tới khi biết
+// duration thật của video. KHONG phai phép đảo luật 1: current=="completed" vẫn giữ nguyên.
+func resolveLessonStatus(current string, requested *string, watchedPct decimal.Decimal, minVideoPct int, trustedDuration bool) string {
+	reachedThreshold := trustedDuration && minVideoPct > 0 && watchedPct.GreaterThanOrEqual(decimal.NewFromInt(int64(minVideoPct)))
+
+	next := current
+	if reachedThreshold {
+		next = "completed"
+	}
+
+	if requested == nil {
+		return next
+	}
+	if *requested == "completed" {
+		// Chi nhan khi server cung da ket luan dat nguong. Xem luat 3.
+		return next
+	}
+	if lessonProgressStatusRank[*requested] >= lessonProgressStatusRank[next] {
+		return *requested
+	}
+	return next
+}
+
+// nextLessonUnlocked tra ve bai ke tiep theo thu tu hien thi da MO chua, sau khi bai hien tai
+// duoc ghi (contract §1, `next_lesson_unlocked`).
+//
+// Khoa khong bat `sequential` thi moi bai deu mo, nen chi can biet co bai ke tiep hay khong.
+// Khoa bat `sequential` thi bai ke tiep chi mo khi bai hien tai da completed — day chinh la
+// dieu kien ma §2 dung lai de tinh `locked` cho curriculum.
+//
+// Bai cuoi cua khoa tra ve false: khong co bai nao de mo them.
+func nextLessonUnlocked(lessonOrder []uuid.UUID, currentLessonID uuid.UUID, sequential bool, currentStatus string) bool {
+	idx := -1
+	for i, id := range lessonOrder {
+		if id == currentLessonID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || idx+1 >= len(lessonOrder) {
+		return false
+	}
+	if !sequential {
+		return true
+	}
+	return currentStatus == "completed"
+}
+
+// toModelPlayedRanges doi khuon DTO sang kieu cua model (dto khong duoc biet ve model).
+func toModelPlayedRanges(in []dto.PlayedRangeDTO) []model.PlayedRange {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]model.PlayedRange, 0, len(in))
+	for _, r := range in {
+		out = append(out, model.PlayedRange{Start: r.Start, End: r.End})
+	}
+	return out
+}
+
+// watchedSecondsCuaBanGhi tra ve "da xem bao nhieu giay" theo contract §1.
+//
+// Uu tien played_ranges: do la du lieu chong tua, va tong do dai sau merge moi la con so dung.
+// Ban ghi cu (ghi truoc Phase 1, chua co khoang nao) van phai doc duoc so cu tu
+// video_watched_seconds, neu khong man hinh chi tiet se hien "0 giay da xem" cho nguoi hoc da
+// hoc tu truoc.
+func watchedSecondsCuaBanGhi(p *model.LessonProgress) int {
+	if len(p.PlayedRanges) > 0 {
+		return totalPlayedSeconds(p.PlayedRanges)
+	}
+	return p.VideoWatchedSecs
+}
+
+// finishLessonProgressStateUpdate tinh lai tien do ghi danh va tra ve DTO trang thai (contract §1).
+func (s *EnrollmentService) finishLessonProgressStateUpdate(
+	ctx context.Context,
+	enrollment *model.Enrollment,
+	progress *model.LessonProgress,
+	nextUnlocked bool,
+) (*dto.LessonProgressStateDTO, error) {
 	if err := s.recalculateProgress(ctx, enrollment); err != nil {
 		return nil, err
 	}
-	return s.toLessonProgressResponseDTO(progress), nil
+	return toLessonProgressStateDTO(progress, nextUnlocked), nil
+}
+
+func toLessonProgressStateDTO(p *model.LessonProgress, nextUnlocked bool) *dto.LessonProgressStateDTO {
+	watchedPct, _ := p.WatchedPct.Float64()
+	out := &dto.LessonProgressStateDTO{
+		LessonID:            p.LessonID,
+		Status:              p.Status,
+		WatchedSeconds:      watchedSecondsCuaBanGhi(p),
+		WatchedPct:          watchedPct,
+		LastPositionSeconds: p.LastPositionSeconds,
+		NextLessonUnlocked:  nextUnlocked,
+	}
+	if p.CompletedAt != nil {
+		// .UTC() BAT BUOC: Format voi layout "...15:04:05Z" chi la mot CHU CAI 'Z' theo dung nghia
+		// den, khong phai chi thi UTC — neu p.CompletedAt la gio dia phuong (khong phai UTC), no
+		// van bi gan hau to Z, ngu y SAI la UTC. time.RFC3339 + .UTC() moi dung.
+		formatted := p.CompletedAt.UTC().Format(time.RFC3339)
+		out.CompletedAt = &formatted
+	}
+	return out
 }
 
 func (s *EnrollmentService) recalculateProgress(ctx context.Context, enrollment *model.Enrollment) error {
