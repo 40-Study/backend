@@ -243,15 +243,21 @@ func (f *fakeVideoUploadRepoWatched) GetUploadByID(ctx context.Context, uploadID
 	return f.uploads[uploadID], nil
 }
 
-// fakeLessonRepoHealWatched: nhu fakeLessonRepoWatched nhung ghi lai UpdateContent, de khang dinh
-// duration tim duoc CO duoc ghi nguoc xuong lesson_contents hay khong.
+// fakeLessonRepoHealWatched: nhu fakeLessonRepoWatched nhung ghi lai UpdateContentDuration, de
+// khang dinh duration tim duoc CO duoc ghi nguoc xuong lesson_contents hay khong.
+//
+// C-5 (review vòng 3): fake nay CHI override UpdateContentDuration, khong override UpdateContent.
+// Neu ai do doi nguoc duong chua ve `UpdateContent` (db.Save — ghi de moi cot), loi goi se roi
+// vao interface nhung (nil) o fakeLessonRepoWatched va PANIC => test do ngay. Do la pin cho C-5.
 type fakeLessonRepoHealWatched struct {
 	fakeLessonRepoWatched
-	updated []model.LessonContent
+	updatedIDs       []uuid.UUID
+	updatedDurations []int
 }
 
-func (f *fakeLessonRepoHealWatched) UpdateContent(ctx context.Context, content *model.LessonContent) error {
-	f.updated = append(f.updated, *content)
+func (f *fakeLessonRepoHealWatched) UpdateContentDuration(ctx context.Context, id uuid.UUID, duration int) error {
+	f.updatedIDs = append(f.updatedIDs, id)
+	f.updatedDurations = append(f.updatedDurations, duration)
 	return nil
 }
 
@@ -279,7 +285,8 @@ func TestUpdateLessonProgress_TuChuaDurationTuVideoUpload(t *testing.T) {
 		lessonOrder:    []uuid.UUID{lessonID},
 	}
 	lessonRepo := &fakeLessonRepoHealWatched{}
-	lessonRepo.contents = []model.LessonContent{{Type: "video", Duration: 0, VideoURL: &hlsURL}}
+	contentID := uuid.New()
+	lessonRepo.contents = []model.LessonContent{{ID: contentID, Type: "video", Duration: 0, VideoURL: &hlsURL}}
 	videoRepo := &fakeVideoUploadRepoWatched{
 		uploads: map[uuid.UUID]*model.VideoUpload{uploadID: {Duration: &duration}},
 	}
@@ -298,11 +305,16 @@ func TestUpdateLessonProgress_TuChuaDurationTuVideoUpload(t *testing.T) {
 		t.Errorf("status = %q, muon \"completed\": duration lay tu video_uploads phai la server-truth "+
 			"nen nguong tu chot completed phai co hieu luc", res.Status)
 	}
-	if len(lessonRepo.updated) != 1 {
-		t.Fatalf("so lan ghi nguoc duration = %d, muon 1", len(lessonRepo.updated))
+	if len(lessonRepo.updatedDurations) != 1 {
+		t.Fatalf("so lan ghi nguoc duration = %d, muon 1", len(lessonRepo.updatedDurations))
 	}
-	if lessonRepo.updated[0].Duration != 120 {
-		t.Errorf("duration ghi nguoc = %d, muon 120", lessonRepo.updated[0].Duration)
+	if lessonRepo.updatedDurations[0] != 120 {
+		t.Errorf("duration ghi nguoc = %d, muon 120", lessonRepo.updatedDurations[0])
+	}
+	// C-5: phai ghi qua duong MOT COT, khong phai db.Save — neu khong se de im lang thay doi
+	// cua request song song. Khang dinh content dung ID da duoc chua.
+	if lessonRepo.updatedIDs[0] != contentID {
+		t.Errorf("ghi nguoc vao content %s, muon %s", lessonRepo.updatedIDs[0], contentID)
 	}
 }
 

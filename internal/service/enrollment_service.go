@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
 	"regexp"
 	"time"
 
@@ -565,10 +566,14 @@ func (s *EnrollmentService) healDurationFromVideoUpload(ctx context.Context, con
 			continue
 		}
 		healed := int(*upload.Duration)
-		// Ghi lại để lần sau rẻ. Ghi hỏng thì vẫn trả duration vừa tìm được — không đánh đổi
-		// được lợi ích cache lấy việc chặn tiến độ học.
-		c.Duration = healed
-		_ = s.lessonRepo.UpdateContent(ctx, c)
+		// Ghi lại để lần sau rẻ. Dùng UpdateContentDuration (một cột) chứ KHÔNG dùng
+		// UpdateContent — UpdateContent là db.Save() nên ghi đè MỌI cột từ struct vừa nạp, sẽ
+		// nuốt im lặng thay đổi của request song song (C-5). Ghi hỏng thì vẫn trả duration vừa
+		// tìm được: không đánh đổi lợi ích cache lấy việc chặn tiến độ học — nhưng phải LOG,
+		// không được nuốt.
+		if err := s.lessonRepo.UpdateContentDuration(ctx, c.ID, healed); err != nil {
+			log.Printf("[WARN] Khong ghi nguoc duoc duration cho lesson_content %s: %v", c.ID, err)
+		}
 		return healed
 	}
 	return 0

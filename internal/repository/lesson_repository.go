@@ -26,6 +26,11 @@ type LessonRepositoryInterface interface {
 	GetContentByID(ctx context.Context, id uuid.UUID) (*model.LessonContent, error)
 	GetContentsByLessonID(ctx context.Context, lessonID uuid.UUID) ([]model.LessonContent, error)
 	UpdateContent(ctx context.Context, content *model.LessonContent) error
+	// UpdateContentDuration (C-5, review vòng 3): cập nhật DUY NHẤT cột duration. UpdateContent
+	// ở trên là db.Save() — ghi ĐÈ MỌI cột từ struct đang giữ, nên dùng nó để chữa một cột sẽ
+	// nuốt im lặng mọi thay đổi mà request song song vừa ghi (đúng anti-pattern mà
+	// UpdateLessonProgressFields được tạo ra để tránh cho bảng tiến độ).
+	UpdateContentDuration(ctx context.Context, id uuid.UUID, duration int) error
 	DeleteContent(ctx context.Context, id uuid.UUID) error
 	ReorderContents(ctx context.Context, items []ReorderItem) error
 	CountContentsByIDsAndLesson(ctx context.Context, ids []uuid.UUID, lessonID uuid.UUID) (int64, error)
@@ -163,6 +168,14 @@ func (r *LessonRepository) GetContentsByLessonID(ctx context.Context, lessonID u
 
 func (r *LessonRepository) UpdateContent(ctx context.Context, content *model.LessonContent) error {
 	return r.db.WithContext(ctx).Save(content).Error
+}
+
+// UpdateContentDuration (C-5, review vòng 3): update MỘT cột, cùng dạng với ReorderContents.
+// Không dùng UpdateContent (db.Save) vì nó ghi đè mọi cột từ bản chụp trong bộ nhớ.
+func (r *LessonRepository) UpdateContentDuration(ctx context.Context, id uuid.UUID, duration int) error {
+	return r.db.WithContext(ctx).Model(&model.LessonContent{}).
+		Where("id = ?", id).
+		Update("duration", duration).Error
 }
 
 func (r *LessonRepository) DeleteContent(ctx context.Context, id uuid.UUID) error {
