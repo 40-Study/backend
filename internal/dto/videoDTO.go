@@ -73,7 +73,13 @@ type CompleteVideoUploadResponse struct {
 	UploadID  uuid.UUID               `json:"upload_id"`
 	Status    model.VideoUploadStatus `json:"status"`
 	ObjectKey string                  `json:"object_key"`
-	Message   string                  `json:"message"`
+	// URL (V-I, review web): URL public của chính object vừa upload xong. Web cần trường này để
+	// lấy URL của file nó vừa upload (VD: file phụ đề .vtt gắn vào lesson content) — trước đây
+	// response chỉ có object_key, web không dựng được URL và phải bắt giáo viên dán URL thủ công,
+	// trong khi không màn hình nào hiển thị URL đó.
+	// Tên JSON key giữ đúng "url" (không đổi thành object_url/...): web đọc data.url.
+	URL     string `json:"url"`
+	Message string `json:"message"`
 }
 
 // GetUploadStatusResponse - Current status of upload

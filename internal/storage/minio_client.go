@@ -214,6 +214,29 @@ func (m *MinioClient) replaceWithPublicEndpoint(presignedURL string) string {
 	return strings.Replace(presignedURL, internalEndpoint, m.cfg.MinioPublicEndpoint, 1)
 }
 
+// ObjectURL trả về URL public đầy đủ để truy cập một object trên MinIO
+// Format: protocol://host:port/bucket/objectKey
+// VD: http://localhost:9000/videos/videos/course/<id>/bai1.vtt
+//
+// V-I (review web): web cần URL này cho file nó vừa upload xong (nội dung .vtt gắn vào lesson
+// content). Cùng format với service.constructFileURL, nhưng đường này TÔN TRỌNG
+// MINIO_PUBLIC_ENDPOINT — URL trả về đây đi thẳng ra browser/tag <track>, còn MinioHost:MinioPort
+// ở production thường là hostname nội bộ (VD: minio:9000) mà browser không resolve được. Dùng lại
+// replaceWithPublicEndpoint để nhất quán với URL presigned của GetPresignedUploadURL /
+// GetPresignedDownloadURL; khi MINIO_PUBLIC_ENDPOINT rỗng thì kết quả giống hệt constructFileURL.
+func (m *MinioClient) ObjectURL(bucket, objectKey string) string {
+	// Mặc định HTTP, chuyển HTTPS nếu config bật SSL — phải khớp với cách
+	// replaceWithPublicEndpoint dựng internalEndpoint bên dưới, nếu lệch protocol thì phần thay
+	// thế endpoint sẽ không khớp và URL public bị bỏ qua lặng lẽ.
+	protocol := "http"
+	if m.cfg.MinioUseSSL {
+		protocol = "https"
+	}
+	objectURL := fmt.Sprintf("%s://%s:%s/%s/%s",
+		protocol, m.cfg.MinioHost, m.cfg.MinioPort, bucket, objectKey)
+	return m.replaceWithPublicEndpoint(objectURL)
+}
+
 // CompleteMultipartUpload hoàn tất quá trình multipart upload
 // MinIO sẽ ghép tất cả các part thành 1 file hoàn chỉnh theo đúng thứ tự
 func (m *MinioClient) CompleteMultipartUpload(ctx context.Context, bucket, objectKey, uploadID string, parts []CompletePart) (string, error) {

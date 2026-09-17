@@ -302,6 +302,27 @@ func (s *VideoUploadService) CompleteChunkUpload(ctx context.Context, req *dto.C
 	}, nil
 }
 
+// newCompleteResponse dựng response cho CompleteVideoUpload
+//
+// Tách riêng thành helper để test được phần cốt lõi của V-I (review web): trường URL phải được
+// populate từ bucket + object_key THẬT của upload record. Không test trực tiếp qua
+// CompleteVideoUpload() được vì hàm đó gọi MinIO thật (CompleteMultipartUpload) mà
+// VideoUploadService giữ *storage.MinioClient concrete — không thay bằng mock được.
+func (s *VideoUploadService) newCompleteResponse(upload *model.VideoUpload, success bool, status model.VideoUploadStatus, message string) *dto.CompleteVideoUploadResponse {
+	return &dto.CompleteVideoUploadResponse{
+		Success:   success,
+		UploadID:  upload.ID, // upload được lấy bằng GetUploadByID(req.UploadID) nên trùng req.UploadID
+		Status:    status,
+		ObjectKey: upload.ObjectKey,
+		// V-I (review web): URL của chính object vừa upload, dựng từ cặp bucket/object_key thật
+		// của record — client upload part theo đúng cặp giá trị này (GetPresignedURLs ký
+		// presigned URL bằng upload.Bucket + upload.ObjectKey), nên URL trỏ đúng object đã lên
+		// MinIO, không phải một key suy đoán.
+		URL:     s.storage.ObjectURL(upload.Bucket, upload.ObjectKey),
+		Message: message,
+	}
+}
+
 func (s *VideoUploadService) CompleteVideoUpload(ctx context.Context, req *dto.CompleteVideoUploadRequest) (*dto.CompleteVideoUploadResponse, error) {
 	// Get upload record with chunks
 	upload, err := s.uploadRepo.GetUploadByID(ctx, req.UploadID)
@@ -398,13 +419,10 @@ func (s *VideoUploadService) CompleteVideoUpload(ctx context.Context, req *dto.C
 			log.Printf("Failed to update upload status after queue error: %v", updateErr)
 		}
 
-		return &dto.CompleteVideoUploadResponse{
-			Success:   false,
-			UploadID:  req.UploadID,
-			Status:    model.VideoUploadStatusFailed,
-			ObjectKey: upload.ObjectKey,
-			Message:   "Upload completed but processing queue failed. Please contact support.",
-		}, nil
+		// Object đã tồn tại thật tại đây (CompleteMultipartUpload ở trên đã return sớm nếu lỗi),
+		// nên vẫn trả URL cùng object_key — web có thể dùng lại file này khi retry reprocess.
+		return s.newCompleteResponse(upload, false, model.VideoUploadStatusFailed,
+			"Upload completed but processing queue failed. Please contact support."), nil
 	}
 
 	// Update status to processing
@@ -423,13 +441,11 @@ func (s *VideoUploadService) CompleteVideoUpload(ctx context.Context, req *dto.C
 		log.Printf("✅ Cleaned up Redis keys for upload %s", req.UploadID)
 	}
 
-	return &dto.CompleteVideoUploadResponse{
-		Success:   true,
-		UploadID:  req.UploadID,
-		Status:    model.VideoUploadStatusProcessing,
-		ObjectKey: upload.ObjectKey,
-		Message:   "Upload completed successfully. Processing started.",
-	}, nil
+	// "processing" ở đây là TRẠNG THÁI đã đẩy job vào RabbitMQ — không phải kết quả xử lý video.
+	// Object gốc đã tồn tại thật (CompleteMultipartUpload ở trên thành công), nên URL trả về
+	// trong response là URL dùng được ngay, không phải URL của một object sẽ có sau.
+	return s.newCompleteResponse(upload, true, model.VideoUploadStatusProcessing,
+		"Upload completed successfully. Processing started."), nil
 }
 
 // GetUploadStatus returns the current status of an upload
