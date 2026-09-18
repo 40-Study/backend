@@ -7,16 +7,21 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
 
 type EnrollmentHandler struct {
 	service service.EnrollmentServiceInterface
+	// permChecker (F3, audit 260917-live): can de tinh isAdmin qua isAdminActor, truyen xuong
+	// EnrollmentService.UpdateLessonProgress lam bypass luat khoa tuan tu — co the nil (test
+	// khong truyen), isAdminActor fail-closed.
+	permChecker *middleware.PermissionChecker
 }
 
-func NewEnrollmentHandler(service service.EnrollmentServiceInterface) *EnrollmentHandler {
-	return &EnrollmentHandler{service: service}
+func NewEnrollmentHandler(service service.EnrollmentServiceInterface, permChecker *middleware.PermissionChecker) *EnrollmentHandler {
+	return &EnrollmentHandler{service: service, permChecker: permChecker}
 }
 
 func (h *EnrollmentHandler) Enroll(c *fiber.Ctx) error {
@@ -156,8 +161,16 @@ func (h *EnrollmentHandler) UpdateLessonProgress(c *fiber.Ctx) error {
 		})
 	}
 
-	progress, err := h.service.UpdateLessonProgress(c.Context(), userID, lessonID, req)
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	progress, err := h.service.UpdateLessonProgress(c.Context(), userID, lessonID, req, isAdmin)
 	if err != nil {
+		// F3 (audit 260917-live): bai dang bi khoa boi luat hoc tuan tu -> 403, giong het cach
+		// LessonContentHandler.GetContent map ErrLessonLocked (xem lesson_content_handler.go).
+		if err == service.ErrLessonLocked {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"message": "LESSON_LOCKED",
+			})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update progress", "error": err.Error(),
 		})
@@ -225,8 +238,16 @@ func (h *EnrollmentHandler) TrackProgressBeacon(c *fiber.Ctx) error {
 		})
 	}
 
-	progress, err := h.service.UpdateLessonProgress(c.Context(), userID, lessonID, req.ToUpdateDTO())
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	progress, err := h.service.UpdateLessonProgress(c.Context(), userID, lessonID, req.ToUpdateDTO(), isAdmin)
 	if err != nil {
+		// F3 (audit 260917-live): beacon di qua CUNG mot service, phai map loi khoa giong het
+		// nhanh PUT /lessons/:lessonId/progress o tren.
+		if err == service.ErrLessonLocked {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"message": "LESSON_LOCKED",
+			})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update progress", "error": err.Error(),
 		})

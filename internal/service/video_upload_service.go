@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -24,16 +25,16 @@ import (
 type VideoUploadServiceInterface interface {
 	// Vòng đời upload
 	InitVideoUpload(ctx context.Context, req *dto.InitVideoUploadRequest, userID uuid.UUID) (*dto.InitVideoUploadResponse, error) // Khởi tạo upload session
-	GetPresignedURLs(ctx context.Context, req *dto.GetPresignedURLsRequest) (*dto.GetPresignedURLsResponse, error)                // Lấy presigned URLs cho chunks
-	CompleteChunkUpload(ctx context.Context, req *dto.CompleteChunkUploadRequest) (*dto.CompleteChunkUploadResponse, error)       // Đánh dấu chunk đã upload xong
-	CompleteVideoUpload(ctx context.Context, req *dto.CompleteVideoUploadRequest) (*dto.CompleteVideoUploadResponse, error)       // Hoàn tất upload và bắt đầu xử lý
+	GetPresignedURLs(ctx context.Context, req *dto.GetPresignedURLsRequest, userID uuid.UUID) (*dto.GetPresignedURLsResponse, error)                // Lấy presigned URLs cho chunks
+	CompleteChunkUpload(ctx context.Context, req *dto.CompleteChunkUploadRequest, userID uuid.UUID) (*dto.CompleteChunkUploadResponse, error)       // Đánh dấu chunk đã upload xong
+	CompleteVideoUpload(ctx context.Context, req *dto.CompleteVideoUploadRequest, userID uuid.UUID) (*dto.CompleteVideoUploadResponse, error)       // Hoàn tất upload và bắt đầu xử lý
 
 	// Trạng thái và resume
-	GetUploadStatus(ctx context.Context, uploadID uuid.UUID) (*dto.GetUploadStatusResponse, error) // Lấy trạng thái upload hiện tại
-	GetResumeInfo(ctx context.Context, uploadID uuid.UUID) (*dto.GetResumeInfoResponse, error)     // Lấy thông tin để resume upload
+	GetUploadStatus(ctx context.Context, uploadID, userID uuid.UUID) (*dto.GetUploadStatusResponse, error) // Lấy trạng thái upload hiện tại
+	GetResumeInfo(ctx context.Context, uploadID, userID uuid.UUID) (*dto.GetResumeInfoResponse, error)     // Lấy thông tin để resume upload
 
 	// Quản lý
-	AbortUpload(ctx context.Context, req *dto.AbortUploadRequest, uploadID uuid.UUID) (*dto.AbortUploadResponse, error) // Hủy upload
+	AbortUpload(ctx context.Context, req *dto.AbortUploadRequest, uploadID, userID uuid.UUID) (*dto.AbortUploadResponse, error) // Hủy upload
 	GetIncompleteUploads(ctx context.Context, userID uuid.UUID) ([]model.VideoUpload, error)                            // Lấy danh sách upload chưa hoàn thành
 	GetProcessingQueue(ctx context.Context, userID uuid.UUID) ([]model.VideoUpload, error)                              // Lấy danh sách video đang xử lý
 
@@ -42,7 +43,7 @@ type VideoUploadServiceInterface interface {
 	CleanupIncompleteUploads(ctx context.Context, olderThanHours int) error // Dọn upload chưa hoàn thành lâu
 
 	// Reprocess
-	ReprocessVideo(ctx context.Context, uploadID uuid.UUID) error // Re-enqueue video for processing
+	ReprocessVideo(ctx context.Context, uploadID, userID uuid.UUID) error // Re-enqueue video for processing
 
 	// Delete
 	DeleteUpload(ctx context.Context, uploadID uuid.UUID) error // Xóa upload và tất cả files liên quan (original, HLS, thumbnail)
@@ -70,6 +71,30 @@ func NewVideoUploadService(
 		videoQueue:   videoQueue,
 		redisClient:  redisClient,
 	}
+}
+
+// ErrUploadNotOwned: nguoi goi khong phai chu cua upload_id dang thao tac. Handler anh xa sang 403.
+var ErrUploadNotOwned = errors.New("forbidden: not the owner of this upload")
+
+// getOwnedUpload doc upload theo ID va CHI tra ve khi nguoi goi la chu so huu.
+//
+// Truoc ban va nay moi endpoint nhan upload_id (presigned-urls, chunk-complete, complete, status,
+// resume, abort, reprocess) doc thang GetUploadByID ma khong so upload.UserID voi nguoi goi: ai dang
+// nhap va biet upload_id cua nguoi khac deu hoan tat/huy/doc duoc upload do, va tu #63 con nhan ve
+// URL public cua video (review 260917, da tai hien tren server that). Moi duong vao phai di qua day
+// TRUOC khi cham Redis, bang parts hay MinIO.
+func (s *VideoUploadService) getOwnedUpload(ctx context.Context, uploadID, userID uuid.UUID) (*model.VideoUpload, error) {
+	upload, err := s.uploadRepo.GetUploadByID(ctx, uploadID)
+	if err != nil {
+		return nil, fmt.Errorf("upload not found: %w", err)
+	}
+	if upload == nil {
+		return nil, fmt.Errorf("upload not found")
+	}
+	if upload.UserID != userID {
+		return nil, ErrUploadNotOwned
+	}
+	return upload, nil
 }
 
 // InitVideoUpload - Khởi tạo session upload mới
@@ -193,9 +218,9 @@ func (s *VideoUploadService) InitVideoUpload(ctx context.Context, req *dto.InitV
 }
 
 // GetPresignedURLs generates presigned URLs for specific chunks
-func (s *VideoUploadService) GetPresignedURLs(ctx context.Context, req *dto.GetPresignedURLsRequest) (*dto.GetPresignedURLsResponse, error) {
-	// Get upload record
-	upload, err := s.uploadRepo.GetUploadByID(ctx, req.UploadID)
+func (s *VideoUploadService) GetPresignedURLs(ctx context.Context, req *dto.GetPresignedURLsRequest, userID uuid.UUID) (*dto.GetPresignedURLsResponse, error) {
+	// Get upload record (chi chu so huu - xem getOwnedUpload)
+	upload, err := s.getOwnedUpload(ctx, req.UploadID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("upload not found: %w", err)
 	}
@@ -246,7 +271,14 @@ func (s *VideoUploadService) GetPresignedURLs(ctx context.Context, req *dto.GetP
 // CompleteChunkUpload - Dùng Redis để track chunk state, không ghi DB mỗi chunk
 // Redis key: upload:{uploadID}:chunks (Hash) - field = chunk_number, value = "etag|size"
 // Chỉ flush vào DB khi CompleteVideoUpload được gọi → giảm DB writes từ 205 → 0 trong quá trình upload
-func (s *VideoUploadService) CompleteChunkUpload(ctx context.Context, req *dto.CompleteChunkUploadRequest) (*dto.CompleteChunkUploadResponse, error) {
+func (s *VideoUploadService) CompleteChunkUpload(ctx context.Context, req *dto.CompleteChunkUploadRequest, userID uuid.UUID) (*dto.CompleteChunkUploadResponse, error) {
+	// Kiem chu so huu TRUOC moi thao tac Redis: nhanh doc meta tu Redis ben duoi khong cham DB,
+	// nen truoc ban va nay khong co cho nao so upload.UserID voi nguoi goi. Doi lai 1 truy van/chunk.
+	owned, err := s.getOwnedUpload(ctx, req.UploadID, userID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Lấy total_chunks từ Redis meta (lưu lúc init), fallback DB nếu Redis không có
 	totalChunks := 0
 	if s.redisClient != nil {
@@ -257,11 +289,7 @@ func (s *VideoUploadService) CompleteChunkUpload(ctx context.Context, req *dto.C
 	}
 	if totalChunks == 0 {
 		// Fallback to DB (Redis miss hoặc không khả dụng)
-		upload, err := s.uploadRepo.GetUploadByID(ctx, req.UploadID)
-		if err != nil {
-			return nil, fmt.Errorf("upload not found: %w", err)
-		}
-		totalChunks = upload.TotalChunks
+		totalChunks = owned.TotalChunks // ban ghi da doc o getOwnedUpload phia tren
 	}
 
 	// Validate chunk number
@@ -323,9 +351,9 @@ func (s *VideoUploadService) newCompleteResponse(upload *model.VideoUpload, succ
 	}
 }
 
-func (s *VideoUploadService) CompleteVideoUpload(ctx context.Context, req *dto.CompleteVideoUploadRequest) (*dto.CompleteVideoUploadResponse, error) {
-	// Get upload record with chunks
-	upload, err := s.uploadRepo.GetUploadByID(ctx, req.UploadID)
+func (s *VideoUploadService) CompleteVideoUpload(ctx context.Context, req *dto.CompleteVideoUploadRequest, userID uuid.UUID) (*dto.CompleteVideoUploadResponse, error) {
+	// Get upload record with chunks (chi chu so huu - xem getOwnedUpload)
+	upload, err := s.getOwnedUpload(ctx, req.UploadID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("upload not found: %w", err)
 	}
@@ -449,8 +477,8 @@ func (s *VideoUploadService) CompleteVideoUpload(ctx context.Context, req *dto.C
 }
 
 // GetUploadStatus returns the current status of an upload
-func (s *VideoUploadService) GetUploadStatus(ctx context.Context, uploadID uuid.UUID) (*dto.GetUploadStatusResponse, error) {
-	upload, err := s.uploadRepo.GetUploadByID(ctx, uploadID)
+func (s *VideoUploadService) GetUploadStatus(ctx context.Context, uploadID, userID uuid.UUID) (*dto.GetUploadStatusResponse, error) {
+	upload, err := s.getOwnedUpload(ctx, uploadID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("upload not found: %w", err)
 	}
@@ -506,8 +534,8 @@ func (s *VideoUploadService) GetUploadStatus(ctx context.Context, uploadID uuid.
 }
 
 // GetResumeInfo provides information needed to resume an upload
-func (s *VideoUploadService) GetResumeInfo(ctx context.Context, uploadID uuid.UUID) (*dto.GetResumeInfoResponse, error) {
-	upload, err := s.uploadRepo.GetUploadByID(ctx, uploadID)
+func (s *VideoUploadService) GetResumeInfo(ctx context.Context, uploadID, userID uuid.UUID) (*dto.GetResumeInfoResponse, error) {
+	upload, err := s.getOwnedUpload(ctx, uploadID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("upload not found: %w", err)
 	}
@@ -572,8 +600,8 @@ func (s *VideoUploadService) GetResumeInfo(ctx context.Context, uploadID uuid.UU
 }
 
 // AbortUpload cancels an ongoing upload
-func (s *VideoUploadService) AbortUpload(ctx context.Context, req *dto.AbortUploadRequest, uploadID uuid.UUID) (*dto.AbortUploadResponse, error) {
-	upload, err := s.uploadRepo.GetUploadByID(ctx, uploadID)
+func (s *VideoUploadService) AbortUpload(ctx context.Context, req *dto.AbortUploadRequest, uploadID, userID uuid.UUID) (*dto.AbortUploadResponse, error) {
+	upload, err := s.getOwnedUpload(ctx, uploadID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("upload not found: %w", err)
 	}
@@ -753,8 +781,8 @@ func (s *VideoUploadService) GetProcessingQueue(ctx context.Context, userID uuid
 }
 
 // ReprocessVideo re-enqueues a completed upload for HLS processing
-func (s *VideoUploadService) ReprocessVideo(ctx context.Context, uploadID uuid.UUID) error {
-	upload, err := s.uploadRepo.GetUploadByID(ctx, uploadID)
+func (s *VideoUploadService) ReprocessVideo(ctx context.Context, uploadID, userID uuid.UUID) error {
+	upload, err := s.getOwnedUpload(ctx, uploadID, userID)
 	if err != nil {
 		return fmt.Errorf("failed to find upload: %w", err)
 	}

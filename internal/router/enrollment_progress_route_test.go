@@ -26,7 +26,7 @@ func mountEnrollmentRoutesForOriginTest() *fiber.App {
 	app := fiber.New()
 	api := app.Group("/api")
 	cfg := &config.Config{AllowedOrigins: testAllowedOrigin}
-	SetupEnrollmentRoutes(api, cfg, handler.NewEnrollmentHandler(&fakeEnrollmentService{}), nil)
+	SetupEnrollmentRoutes(api, cfg, handler.NewEnrollmentHandler(&fakeEnrollmentService{}, nil), nil)
 	return app
 }
 
