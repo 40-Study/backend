@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"log"
 
 	"github.com/gofiber/fiber/v2"
@@ -115,7 +116,7 @@ func (h *VideoUploadHandler) GetPresignedURLs(c *fiber.Ctx) error {
 	}
 
 	// Get user ID from JWT middleware
-	_, ok := c.Locals("user_id").(uuid.UUID)
+	userID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok {
 		return c.Status(401).JSON(fiber.Map{
 			"success": false,
@@ -123,8 +124,11 @@ func (h *VideoUploadHandler) GetPresignedURLs(c *fiber.Ctx) error {
 		})
 	}
 
-	response, err := h.videoUploadService.GetPresignedURLs(c.Context(), &req)
+	response, err := h.videoUploadService.GetPresignedURLs(c.Context(), &req, userID)
 	if err != nil {
+		if resp, handled := respondUploadNotOwned(c, err); handled {
+			return resp
+		}
 		return c.Status(500).JSON(fiber.Map{
 			"success": false,
 			"error":   "Failed to generate presigned URL",
@@ -151,7 +155,7 @@ func (h *VideoUploadHandler) CompleteChunkUpload(c *fiber.Ctx) error {
 	}
 
 	// Get user ID from JWT middleware
-	_, ok := c.Locals("user_id").(uuid.UUID)
+	userID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok {
 		return c.Status(401).JSON(fiber.Map{
 			"success": false,
@@ -159,8 +163,11 @@ func (h *VideoUploadHandler) CompleteChunkUpload(c *fiber.Ctx) error {
 		})
 	}
 
-	result, err := h.videoUploadService.CompleteChunkUpload(c.Context(), &req)
+	result, err := h.videoUploadService.CompleteChunkUpload(c.Context(), &req, userID)
 	if err != nil {
+		if resp, handled := respondUploadNotOwned(c, err); handled {
+			return resp
+		}
 		return c.Status(500).JSON(fiber.Map{
 			"success": false,
 			"error":   "Failed to complete chunk upload",
@@ -192,7 +199,7 @@ func (h *VideoUploadHandler) CompleteVideoUpload(c *fiber.Ctx) error {
 	}
 
 	// Get user ID from JWT middleware
-	_, ok := c.Locals("user_id").(uuid.UUID)
+	userID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok {
 		return c.Status(401).JSON(fiber.Map{
 			"success": false,
@@ -200,8 +207,11 @@ func (h *VideoUploadHandler) CompleteVideoUpload(c *fiber.Ctx) error {
 		})
 	}
 
-	response, err := h.videoUploadService.CompleteVideoUpload(c.Context(), &req)
+	response, err := h.videoUploadService.CompleteVideoUpload(c.Context(), &req, userID)
 	if err != nil {
+		if resp, handled := respondUploadNotOwned(c, err); handled {
+			return resp
+		}
 		return c.Status(500).JSON(fiber.Map{
 			"success": false,
 			"error":   "Failed to complete upload",
@@ -228,7 +238,7 @@ func (h *VideoUploadHandler) AbortUpload(c *fiber.Ctx) error {
 	}
 
 	// Get user ID from JWT middleware
-	_, ok := c.Locals("user_id").(uuid.UUID)
+	userID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok {
 		return c.Status(401).JSON(fiber.Map{
 			"success": false,
@@ -254,8 +264,11 @@ func (h *VideoUploadHandler) AbortUpload(c *fiber.Ctx) error {
 	}
 
 
-	_, delErr := h.videoUploadService.AbortUpload(c.Context(), &req, uploadId)
+	_, delErr := h.videoUploadService.AbortUpload(c.Context(), &req, uploadId, userID)
 	if delErr != nil {
+		if resp, handled := respondUploadNotOwned(c, delErr); handled {
+			return resp
+		}
 		return c.Status(500).JSON(fiber.Map{
 			"success": false,
 			"error":   "Failed to abort upload",
@@ -280,7 +293,7 @@ func (h *VideoUploadHandler) GetUploadStatus(c *fiber.Ctx) error {
 	}
 
 	// Get user ID from JWT middleware
-	_, ok := c.Locals("user_id").(uuid.UUID)
+	userID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok {
 		return c.Status(401).JSON(fiber.Map{
 			"success": false,
@@ -296,8 +309,11 @@ func (h *VideoUploadHandler) GetUploadStatus(c *fiber.Ctx) error {
 		})
 	}
 
-	status, err := h.videoUploadService.GetUploadStatus(c.Context(), uploadIDUUID)
+	status, err := h.videoUploadService.GetUploadStatus(c.Context(), uploadIDUUID, userID)
 	if err != nil {
+		if resp, handled := respondUploadNotOwned(c, err); handled {
+			return resp
+		}
 		return c.Status(500).JSON(fiber.Map{
 			"success": false,
 			"error":   "Failed to get upload status",
@@ -322,7 +338,7 @@ func (h *VideoUploadHandler) GetResumeInfo(c *fiber.Ctx) error {
 	}
 
 	// Get user ID from JWT middleware
-	_, ok := c.Locals("user_id").(uuid.UUID)
+	userID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok {
 		return c.Status(401).JSON(fiber.Map{
 			"success": false,
@@ -338,8 +354,11 @@ func (h *VideoUploadHandler) GetResumeInfo(c *fiber.Ctx) error {
 		})
 	}
 
-	resumeInfo, err := h.videoUploadService.GetResumeInfo(c.Context(), uploadIDUUID)
+	resumeInfo, err := h.videoUploadService.GetResumeInfo(c.Context(), uploadIDUUID, userID)
 	if err != nil {
+		if resp, handled := respondUploadNotOwned(c, err); handled {
+			return resp
+		}
 		return c.Status(500).JSON(fiber.Map{
 			"success": false,
 			"error":   "Failed to get resume information",
@@ -409,7 +428,18 @@ func (h *VideoUploadHandler) ReprocessVideo(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.videoUploadService.ReprocessVideo(c.Context(), uploadIDUUID); err != nil {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(401).JSON(fiber.Map{
+			"success": false,
+			"error":   "User not authenticated",
+		})
+	}
+
+	if err := h.videoUploadService.ReprocessVideo(c.Context(), uploadIDUUID, userID); err != nil {
+		if resp, handled := respondUploadNotOwned(c, err); handled {
+			return resp
+		}
 		return c.Status(500).JSON(fiber.Map{
 			"success": false,
 			"error":   "Failed to reprocess video",
@@ -421,4 +451,17 @@ func (h *VideoUploadHandler) ReprocessVideo(c *fiber.Ctx) error {
 		"success": true,
 		"message": "Video queued for reprocessing",
 	})
+}
+
+// respondUploadNotOwned anh xa service.ErrUploadNotOwned sang 403. Moi endpoint thao tac tren mot
+// upload_id cu the goi ham nay TRUOC nhanh 500 chung, de nguoi khong so huu nhan 403 ro rang thay
+// vi mot loi 500 lan voi loi ha tang (review 260917: IDOR hoan tat upload cua nguoi khac).
+func respondUploadNotOwned(c *fiber.Ctx, err error) (error, bool) {
+	if errors.Is(err, service.ErrUploadNotOwned) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"success": false,
+			"error":   "Forbidden",
+		}), true
+	}
+	return nil, false
 }
