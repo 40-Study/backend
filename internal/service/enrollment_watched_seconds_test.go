@@ -37,6 +37,8 @@ type fakeEnrollmentRepoWatched struct {
 
 	lessonProgress *model.LessonProgress
 	upserted       *model.LessonProgress
+	// lockCalls (F2): so lan UpdateLessonProgress di qua WithLessonProgressLock.
+	lockCalls int
 	courseID       uuid.UUID
 	enrollment     *model.Enrollment
 	// lessonOrder: thu tu bai hoc trong khoa ma GetLessonIDsByCourseID tra ve (Phase 1 §1,
@@ -66,6 +68,20 @@ func (f *fakeEnrollmentRepoWatched) GetByUserID(ctx context.Context, userID uuid
 // "khong co bai ke tiep" — de cac test khong lien quan toi next_lesson_unlocked khong phai khai.
 func (f *fakeEnrollmentRepoWatched) GetLessonIDsByCourseID(ctx context.Context, courseID uuid.UUID) ([]uuid.UUID, error) {
 	return f.lessonOrder, nil
+}
+
+// GetLessonOrderInfoByCourseID / GetLessonProgressMapByUserAndCourse (F3, audit 260917-live):
+// UpdateLessonProgress gio goi gatherLessonLockInput (lesson_lock.go) truoc khi ghi, ham do can
+// CA HAI method nay — thieu mot trong hai se goi thang xuong interface nhung (nil) va panic.
+// Tra rong: khong co bai nao trong LessonOrder => ResolveLessonLock khong tim thay lessonID
+// (idx=-1) nen khong khoa, dung voi hanh vi TRUOC ban va nay cua toan bo test trong file (khong
+// test nao o day co y kiem tra khoa tuan tu).
+func (f *fakeEnrollmentRepoWatched) GetLessonOrderInfoByCourseID(ctx context.Context, courseID uuid.UUID) ([]repository.LessonOrderInfo, error) {
+	return nil, nil
+}
+
+func (f *fakeEnrollmentRepoWatched) GetLessonProgressMapByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (map[uuid.UUID]*model.LessonProgress, error) {
+	return map[uuid.UUID]*model.LessonProgress{}, nil
 }
 
 func (f *fakeEnrollmentRepoWatched) SumWatchedSecondsByEnrollmentIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]int, error) {
@@ -100,9 +116,17 @@ func (f *fakeEnrollmentRepoWatched) GetLessonProgress(ctx context.Context, userI
 	return f.lessonProgress, nil
 }
 
-func (f *fakeEnrollmentRepoWatched) UpsertLessonProgress(ctx context.Context, p *model.LessonProgress) error {
+func (f *fakeEnrollmentRepoWatched) InsertLessonProgressIfAbsent(ctx context.Context, p *model.LessonProgress) (bool, error) {
 	f.upserted = p
-	return nil
+	return true, nil
+}
+
+// WithLessonProgressLock: fake khong co transaction that; goi thang fn voi chinh fake va ban ghi
+// hien tai, de cac test hanh vi phia duoi chay dung duong code nhu truoc. Viec khoa FOR UPDATE that
+// duoc kiem o test repository (DryRun) va test race tren server that.
+func (f *fakeEnrollmentRepoWatched) WithLessonProgressLock(ctx context.Context, userID, lessonID uuid.UUID, fn func(repo repository.EnrollmentRepositoryInterface, locked *model.LessonProgress) error) error {
+	f.lockCalls++
+	return fn(f, f.lessonProgress)
 }
 
 // UpdateLessonProgressFields: mo phong dung ngu nghia cua cau UPDATE that (chi set cac cot co
@@ -297,7 +321,7 @@ func TestUpdateLessonProgress_TuChuaDurationTuVideoUpload(t *testing.T) {
 		dto.UpdateLessonProgressDTO{
 			DurationSeconds: &khaiSai,
 			PlayedRanges:    dto.PlayedRangesDTO{{Start: 0, End: 120}},
-		})
+		}, false)
 	if err != nil {
 		t.Fatalf("UpdateLessonProgress loi: %v", err)
 	}
@@ -540,7 +564,7 @@ func TestUpdateLessonProgress_WatchedSecondsChiTangKhongGiam(t *testing.T) {
 
 			secs := tc.guiLen
 			res, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
-				dto.UpdateLessonProgressDTO{VideoWatchedSecs: &secs})
+				dto.UpdateLessonProgressDTO{VideoWatchedSecs: &secs}, false)
 			if err != nil {
 				t.Fatalf("khong mong doi loi: %v", err)
 			}
@@ -626,7 +650,7 @@ func TestUpdateLessonProgress_GuiStatusThiCapNhatStatus(t *testing.T) {
 	status := "completed"
 	secs := 10
 	res, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
-		dto.UpdateLessonProgressDTO{Status: &status, VideoWatchedSecs: &secs})
+		dto.UpdateLessonProgressDTO{Status: &status, VideoWatchedSecs: &secs}, false)
 	if err != nil {
 		t.Fatalf("khong mong doi loi: %v", err)
 	}
@@ -654,7 +678,7 @@ func TestUpdateLessonProgress_GuiStatusThiCapNhatStatus(t *testing.T) {
 		dto.UpdateLessonProgressDTO{
 			DurationSeconds: &duration,
 			PlayedRanges:    dto.PlayedRangesDTO{{Start: 0, End: 100}},
-		})
+		}, false)
 	if err != nil {
 		t.Fatalf("khong mong doi loi: %v", err)
 	}
@@ -702,7 +726,7 @@ func TestUpdateLessonProgress_FallbackDuration_KhongTuChotCompleted(t *testing.T
 		dto.UpdateLessonProgressDTO{
 			DurationSeconds: &khaiKhong,
 			PlayedRanges:    dto.PlayedRangesDTO{{Start: 0, End: 10}},
-		})
+		}, false)
 	if err != nil {
 		t.Fatalf("khong mong doi loi: %v", err)
 	}
@@ -763,7 +787,7 @@ func TestUpdateLessonProgress_ServerDurationThangTheKhaiGiaCuaClient(t *testing.
 		dto.UpdateLessonProgressDTO{
 			DurationSeconds: &spoofedDuration,
 			PlayedRanges:    dto.PlayedRangesDTO{{Start: 0, End: 10}},
-		})
+		}, false)
 	if err != nil {
 		t.Fatalf("khong mong doi loi: %v", err)
 	}
@@ -794,7 +818,7 @@ func TestUpdateLessonProgress_ServerDurationThangTheKhaiGiaCuaClient(t *testing.
 		dto.UpdateLessonProgressDTO{
 			DurationSeconds: &secondSpoof,
 			PlayedRanges:    dto.PlayedRangesDTO{{Start: 20, End: 30}},
-		})
+		}, false)
 	if err != nil {
 		t.Fatalf("khong mong doi loi (lan 2): %v", err)
 	}
@@ -872,7 +896,7 @@ func TestUpdateLessonProgress_BanGhiMoiThiTaoVoiGiaTriClientGui(t *testing.T) {
 	status := "in_progress"
 	secs := 87
 	res, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
-		dto.UpdateLessonProgressDTO{Status: &status, VideoWatchedSecs: &secs})
+		dto.UpdateLessonProgressDTO{Status: &status, VideoWatchedSecs: &secs}, false)
 	if err != nil {
 		t.Fatalf("khong mong doi loi: %v", err)
 	}
@@ -938,7 +962,7 @@ func TestUpdateLessonProgress_StatusKhongDuocHaCap(t *testing.T) {
 
 			gui := tc.gui
 			res, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
-				dto.UpdateLessonProgressDTO{Status: &gui})
+				dto.UpdateLessonProgressDTO{Status: &gui}, false)
 			if err != nil {
 				t.Fatalf("khong mong doi loi: %v", err)
 			}
@@ -980,7 +1004,7 @@ func TestUpdateLessonProgress_HaCapKhongDongThoiXoaCompletedAt(t *testing.T) {
 
 	status := "in_progress"
 	if _, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
-		dto.UpdateLessonProgressDTO{Status: &status}); err != nil {
+		dto.UpdateLessonProgressDTO{Status: &status}, false); err != nil {
 		t.Fatalf("khong mong doi loi: %v", err)
 	}
 	if _, ok := repo.updateUpdates["completed_at"]; ok {

@@ -155,7 +155,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		Section:       handler.NewSectionHandler(services.Section, permChecker),
 		Lesson:        handler.NewLessonHandler(services.Lesson, permChecker),
 		LessonContent: handler.NewLessonContentHandler(services.LessonContent, permChecker),
-		Enrollment:    handler.NewEnrollmentHandler(services.Enrollment),
+		Enrollment:    handler.NewEnrollmentHandler(services.Enrollment, permChecker),
 
 		// ===== Upload & Video =====
 		Upload:      handler.NewUploadHandler(services.Upload),

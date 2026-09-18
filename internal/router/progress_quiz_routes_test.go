@@ -66,7 +66,7 @@ type fakeEnrollmentService struct {
 }
 
 func (f *fakeEnrollmentService) UpdateLessonProgress(
-	_ context.Context, userID, lessonID uuid.UUID, req dto.UpdateLessonProgressDTO,
+	_ context.Context, userID, lessonID uuid.UUID, req dto.UpdateLessonProgressDTO, _ bool,
 ) (*dto.LessonProgressStateDTO, error) {
 	f.called++
 	f.gotUserID = userID
@@ -111,7 +111,7 @@ func TestProgressBeaconRoute_IsRegistered(t *testing.T) {
 	app := fiber.New()
 	api := app.Group("/api")
 
-	SetupEnrollmentRoutes(api, nil, handler.NewEnrollmentHandler(&fakeEnrollmentService{}), nil)
+	SetupEnrollmentRoutes(api, nil, handler.NewEnrollmentHandler(&fakeEnrollmentService{}, nil), nil)
 
 	want := "POST /api/progress"
 	if got := routePaths(app); !got[want] {
@@ -210,7 +210,7 @@ func TestTrackProgressBeacon_ParsesTextPlainBody(t *testing.T) {
 	app.Post("/api/progress", func(c *fiber.Ctx) error {
 		c.Locals("user_id", userID)
 		return c.Next()
-	}, handler.NewEnrollmentHandler(fake).TrackProgressBeacon)
+	}, handler.NewEnrollmentHandler(fake, nil).TrackProgressBeacon)
 
 	// Body camelCase y nguyen nhu player-client.tsx gui.
 	body := `{"lessonId":"` + lessonID.String() + `","status":"in_progress","videoWatchedSeconds":137}`
@@ -253,7 +253,7 @@ func TestTrackProgressBeacon_RejectsNegativeSeconds(t *testing.T) {
 	app.Post("/api/progress", func(c *fiber.Ctx) error {
 		c.Locals("user_id", uuid.New())
 		return c.Next()
-	}, handler.NewEnrollmentHandler(fake).TrackProgressBeacon)
+	}, handler.NewEnrollmentHandler(fake, nil).TrackProgressBeacon)
 
 	body := `{"lessonId":"` + uuid.New().String() + `","status":"in_progress","videoWatchedSeconds":-999999}`
 	req := httptest.NewRequest("POST", "/api/progress", strings.NewReader(body))
@@ -280,7 +280,7 @@ func TestTrackProgressBeacon_RejectsMissingLessonID(t *testing.T) {
 	app.Post("/api/progress", func(c *fiber.Ctx) error {
 		c.Locals("user_id", uuid.New())
 		return c.Next()
-	}, handler.NewEnrollmentHandler(fake).TrackProgressBeacon)
+	}, handler.NewEnrollmentHandler(fake, nil).TrackProgressBeacon)
 
 	req := httptest.NewRequest("POST", "/api/progress", strings.NewReader(`{"status":"in_progress","videoWatchedSeconds":10}`))
 	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")

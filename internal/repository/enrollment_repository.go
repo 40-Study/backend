@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/utils"
 )
@@ -54,7 +55,12 @@ type EnrollmentRepositoryInterface interface {
 	GetEnrolledUserIDsByCourseID(ctx context.Context, courseID uuid.UUID) ([]uuid.UUID, error)
 
 	// LessonProgress
-	UpsertLessonProgress(ctx context.Context, progress *model.LessonProgress) error
+	// InsertLessonProgressIfAbsent (F2, review 260917): INSERT ... ON CONFLICT (user_id, lesson_id)
+	// WHERE deleted_at IS NULL DO NOTHING. inserted=false nghia la request khac vua tao ban ghi
+	// nay truoc; caller KHONG duoc coi do la loi, ma phai hop nhat len ban ghi do (xem
+	// EnrollmentService.UpdateLessonProgress). Truoc day la Save() tho: 2 request dau tien song
+	// song cho cung bai thi request thu hai tra 400 "duplicated key not allowed" va mat khoang da xem.
+	InsertLessonProgressIfAbsent(ctx context.Context, progress *model.LessonProgress) (inserted bool, err error)
 	// UpdateLessonProgressFields (review 260912, finding #2): UPDATE chỉ đúng các cột trong
 	// updates (map) cho bản ghi lesson_progress của (userID, lessonID) — đọc lại bản ghi SAU khi
 	// ghi. Trả về (nil, nil) khi không tìm thấy bản ghi nào để UPDATE.
@@ -69,6 +75,13 @@ type EnrollmentRepositoryInterface interface {
 	// vì so sánh read-then-write ở Go (hai request song song vẫn có thể làm giá trị giảm).
 	UpdateLessonProgressFields(ctx context.Context, userID, lessonID uuid.UUID, updates map[string]interface{}, watchedSeconds *int) (*model.LessonProgress, error)
 	GetLessonProgress(ctx context.Context, userID, lessonID uuid.UUID) (*model.LessonProgress, error)
+	// WithLessonProgressLock (F2, review 260917; tai hien that: 8 request dong thoi deu 200 nhung DB
+	// chi giu 2/8 khoang): mo transaction, khoa dong lesson_progress (userID, lessonID) bang
+	// SELECT ... FOR UPDATE, roi goi fn voi mot repo gan vao CHINH transaction do va ban ghi vua khoa
+	// (nil neu chua co). Doc -> hop nhat played_ranges o Go -> ghi phai nam tron trong fn, de hai
+	// request song song (heartbeat + beacon, nhieu tab) tuan tu hoa thay vi cung doc mot ban cu roi
+	// ghi de nhau. fn tra loi -> rollback toan bo.
+	WithLessonProgressLock(ctx context.Context, userID, lessonID uuid.UUID, fn func(repo EnrollmentRepositoryInterface, locked *model.LessonProgress) error) error
 	CountCompletedMandatory(ctx context.Context, enrollmentID uuid.UUID) (int64, error)
 	CountTotalMandatory(ctx context.Context, courseID uuid.UUID) (int64, error)
 	UpdateEnrollmentProgress(ctx context.Context, enrollmentID uuid.UUID, progress decimal.Decimal) error
@@ -378,8 +391,19 @@ func (r *EnrollmentRepository) GetByCourseIDIncludeDeleted(ctx context.Context, 
 
 // LessonProgress
 
-func (r *EnrollmentRepository) UpsertLessonProgress(ctx context.Context, progress *model.LessonProgress) error {
-	return r.db.WithContext(ctx).Save(progress).Error
+// InsertLessonProgressIfAbsent: xem comment tai interface. TargetWhere bat buoc vi idx_user_lesson la
+// unique index PARTIAL (WHERE deleted_at IS NULL, migrations.go); Postgres chi chap nhan ON CONFLICT
+// khop dung predicate do.
+func (r *EnrollmentRepository) InsertLessonProgressIfAbsent(ctx context.Context, progress *model.LessonProgress) (bool, error) {
+	res := r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:     []clause.Column{{Name: "user_id"}, {Name: "lesson_id"}},
+		TargetWhere: clause.Where{Exprs: []clause.Expression{clause.Expr{SQL: "deleted_at IS NULL"}}},
+		DoNothing:   true,
+	}).Create(progress)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
 }
 
 // buildUpdateLessonProgressFieldsQuery (review 260912, finding #2) — tach phan XAY cau UPDATE ra
@@ -425,7 +449,7 @@ func (r *EnrollmentRepository) UpdateLessonProgressFields(
 		return nil, res.Error
 	}
 	if res.RowsAffected == 0 {
-		// Khong co ban ghi nao de UPDATE: KHONG tao moi o day (handler da tao qua UpsertLessonProgress).
+		// Khong co ban ghi nao de UPDATE: KHONG tao moi o day (nhanh tao moi di qua InsertLessonProgressIfAbsent).
 		// Tra (nil, nil) de service biet day la duong "ban ghi da bien mat giua hai buoc" va tra loi
 		// loi thay vi tra ve mot DTO mang gia tri chua he duoc ghi xuong DB.
 		return nil, nil
@@ -445,6 +469,35 @@ func (r *EnrollmentRepository) GetLessonProgress(ctx context.Context, userID, le
 		return nil, err
 	}
 	return &progress, nil
+}
+
+// getLessonProgressForUpdate: giong GetLessonProgress, them FOR UPDATE. CHI goi ben trong
+// WithLessonProgressLock: tren connection goc moi cau SQL tu commit nen khoa nha ngay, vo tac dung.
+func (r *EnrollmentRepository) getLessonProgressForUpdate(ctx context.Context, userID, lessonID uuid.UUID) (*model.LessonProgress, error) {
+	var progress model.LessonProgress
+	err := r.db.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("user_id = ? AND lesson_id = ?", userID, lessonID).
+		First(&progress).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &progress, nil
+}
+
+// WithLessonProgressLock: xem comment tai interface.
+func (r *EnrollmentRepository) WithLessonProgressLock(ctx context.Context, userID, lessonID uuid.UUID, fn func(repo EnrollmentRepositoryInterface, locked *model.LessonProgress) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepo := &EnrollmentRepository{db: tx}
+		locked, err := txRepo.getLessonProgressForUpdate(ctx, userID, lessonID)
+		if err != nil {
+			return err
+		}
+		return fn(txRepo, locked)
+	})
 }
 
 func (r *EnrollmentRepository) CountCompletedMandatory(ctx context.Context, enrollmentID uuid.UUID) (int64, error) {

@@ -63,7 +63,10 @@ type EnrollmentServiceInterface interface {
 	//
 	// Tra ve LessonProgressStateDTO (contract §1) chu khong phai LessonProgressResponseDTO:
 	// web doc thang shape nay trong services/enrollment.service.ts.
-	UpdateLessonProgress(ctx context.Context, userID, lessonID uuid.UUID, req dto.UpdateLessonProgressDTO) (*dto.LessonProgressStateDTO, error)
+	// isAdmin (F3, audit 260917-live): actor la SYSTEM_ADMIN hay khong, do handler tinh qua
+	// isAdminActor va truyen xuong — dung de bypass luat khoa tuan tu, giong het cach
+	// LessonContentService.GetContentsByLessonID lam. Xem chu thich tai impl.
+	UpdateLessonProgress(ctx context.Context, userID, lessonID uuid.UUID, req dto.UpdateLessonProgressDTO, isAdmin bool) (*dto.LessonProgressStateDTO, error)
 	GetCourseEnrollments(ctx context.Context, courseID uuid.UUID, page, pageSize int) (*dto.CourseEnrollmentListDTO, error)
 	DebugGetCourseEnrollments(ctx context.Context, courseID uuid.UUID) ([]dto.DebugEnrollmentDTO, error)
 }
@@ -274,7 +277,7 @@ func (s *EnrollmentService) GetEnrollmentDetail(ctx context.Context, id uuid.UUI
 	return detail, nil
 }
 
-func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, lessonID uuid.UUID, req dto.UpdateLessonProgressDTO) (*dto.LessonProgressStateDTO, error) {
+func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, lessonID uuid.UUID, req dto.UpdateLessonProgressDTO, isAdmin bool) (*dto.LessonProgressStateDTO, error) {
 	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
 	if err != nil {
 		return nil, err
@@ -298,11 +301,6 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		return nil, errors.New("not enrolled in the course containing this lesson")
 	}
 
-	progress, err := s.enrollmentRepo.GetLessonProgress(ctx, userID, lessonID)
-	if err != nil {
-		return nil, err
-	}
-
 	// Cau hinh khoa hoc (Phase 1 §2): `sequential` quyet dinh next_lesson_unlocked,
 	// `min_video_pct` quyet dinh nguong tu chot completed. Doc TRUOC khi ghi: neu buoc doc nay
 	// loi thi khong duoc de lai mot ban ghi da ghi xong nhung response bao loi.
@@ -319,6 +317,24 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		}
 	}
 
+	// F3 (audit 260917-live, review report review-260917-phase1-merged): endpoint nay (ca
+	// PUT /lessons/:lessonId/progress lan beacon POST /api/progress, hai handler deu goi ham
+	// nay) TRUOC ban va nay khong kiem tra locked/lock_reason gi ca — mot hoc vien vuot qua
+	// bai truoc chua hoan thanh (goi thang API, khong qua UI/lesson-content-guard) van GHI
+	// DUOC tien do cho bai dang bi khoa boi luat hoc tuan tu. Ap dung DUNG luat khoa nhu doc
+	// noi dung bai (LessonContentService.GetContentsByLessonID) — chu so huu khoa
+	// (course.InstructorID) va admin duoc bypass toan bo, dung tham so isAdmin tu handler qua
+	// isAdminActor, de logic bypass nam DUY NHAT o mot cho (lesson_lock.go), khong lech giua
+	// hai endpoint. Kiem TRUOC moi thao tac doc/ghi tien do phia duoi.
+	bypass := isAdmin || (course != nil && course.InstructorID == userID)
+	lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, courseID, sequential, bypass)
+	if err != nil {
+		return nil, err
+	}
+	if locked, _, _ := ResolveLessonLock(lessonID, lockInput); locked {
+		return nil, ErrLessonLocked
+	}
+
 	// Thu tu bai hoc trong khoa, de biet bai ke tiep la bai nao (next_lesson_unlocked).
 	// Cung la du lieu ma §2 dung lai cho khoa tuan tu.
 	lessonOrder, err := s.enrollmentRepo.GetLessonIDsByCourseID(ctx, courseID)
@@ -326,8 +342,54 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		return nil, err
 	}
 
+	serverDuration, err := s.resolveServerVideoDuration(ctx, lessonID)
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now()
 
+	// F2 (review 260917): doc -> hop nhat -> ghi chay trong transaction, dong lesson_progress bi khoa
+	// FOR UPDATE, nen heartbeat + beacon + nhieu tab tuan tu hoa thay vi ghi de khoang cua nhau.
+	var saved *model.LessonProgress
+	write := func() error {
+		return s.enrollmentRepo.WithLessonProgressLock(ctx, userID, lessonID, func(repo repository.EnrollmentRepositoryInterface, progress *model.LessonProgress) error {
+			p, err := s.writeLessonProgressLocked(ctx, repo, progress, userID, lessonID, enrollment, req, serverDuration, minVideoPct, now)
+			if err != nil {
+				return err
+			}
+			saved = p
+			return nil
+		})
+	}
+	err = write()
+	if errors.Is(err, errLessonProgressInsertRace) {
+		// Chi can MOT lan: ban ghi da ton tai, lan nay FOR UPDATE khoa duoc no va di nhanh UPDATE.
+		err = write()
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.finishLessonProgressStateUpdate(ctx, enrollment, saved, nextLessonUnlocked(lessonOrder, lessonID, sequential, saved.Status))
+}
+
+// errLessonProgressInsertRace: nhanh INSERT cua writeLessonProgressLocked thua race tao ban ghi.
+// Chi dung noi bo UpdateLessonProgress de rollback roi chay lai dung MOT lan.
+var errLessonProgressInsertRace = errors.New("lesson progress created concurrently")
+
+// writeLessonProgressLocked: doc -> hop nhat played_ranges -> ghi cho MOT ban ghi lesson_progress.
+// CHI goi ben trong EnrollmentRepository.WithLessonProgressLock: progress la ban ghi da khoa FOR
+// UPDATE (nil neu chua co), repo gan vao chinh transaction do. Truoc ban va F2 (review 260917) doan
+// nay chay khong khoa: 8 request dong thoi deu 200 nhung DB chi giu 2/8 khoang da xem.
+func (s *EnrollmentService) writeLessonProgressLocked(
+	ctx context.Context,
+	repo repository.EnrollmentRepositoryInterface,
+	progress *model.LessonProgress,
+	userID, lessonID uuid.UUID,
+	enrollment *model.Enrollment,
+	req dto.UpdateLessonProgressDTO,
+	serverDuration, minVideoPct int,
+	now time.Time,
+) (*model.LessonProgress, error) {
 	// ——— Hop nhat khoang da phat (chong tua) ———
 	var storedRanges model.PlayedRanges
 	storedFallbackDuration := 0
@@ -343,10 +405,6 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 	// duration_seconds client khai, và giá trị đó BẮT BUỘC lưu STICKY-MAX (fallback_duration_seconds,
 	// xem model.LessonProgress) — một request sau đó khai duration NHỎ HƠN không được phép hạ mẫu
 	// số xuống (mất dữ liệu/pct nhảy lùi).
-	serverDuration, err := s.resolveServerVideoDuration(ctx, lessonID)
-	if err != nil {
-		return nil, err
-	}
 	clientDuration := 0
 	if req.DurationSeconds != nil {
 		clientDuration = *req.DurationSeconds
@@ -412,10 +470,17 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 			progress.ProgressPercent = *req.ProgressPercent
 		}
 
-		if err := s.enrollmentRepo.UpsertLessonProgress(ctx, progress); err != nil {
+		// F2: ON CONFLICT DO NOTHING thay cho Save() tho. inserted=false = request song song vua tao
+		// ban ghi truoc (FOR UPDATE o tren khong khoa duoc dong chua ton tai): bao caller chay lai,
+		// lan sau khoa duoc ban ghi do va di nhanh UPDATE, hop nhat len tren thay vi tra 400.
+		inserted, err := repo.InsertLessonProgressIfAbsent(ctx, progress)
+		if err != nil {
 			return nil, err
 		}
-		return s.finishLessonProgressStateUpdate(ctx, enrollment, progress, nextLessonUnlocked(lessonOrder, lessonID, sequential, status))
+		if !inserted {
+			return nil, errLessonProgressInsertRace
+		}
+		return progress, nil
 	}
 
 	// Trinh phat gui VI TRI phat hien tai (currentTime), khong phai so giay cong don.
@@ -486,7 +551,7 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		watchedSeconds = &clamped
 	}
 
-	updated, err := s.enrollmentRepo.UpdateLessonProgressFields(ctx, userID, lessonID, updates, watchedSeconds)
+	updated, err := repo.UpdateLessonProgressFields(ctx, userID, lessonID, updates, watchedSeconds)
 	if err != nil {
 		return nil, err
 	}
@@ -496,7 +561,7 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		return nil, errors.New("lesson progress not found")
 	}
 
-	return s.finishLessonProgressStateUpdate(ctx, enrollment, updated, nextLessonUnlocked(lessonOrder, lessonID, sequential, updated.Status))
+	return updated, nil
 }
 
 // resolveServerVideoDuration (B-1, review vòng 2): nguồn sự thật thời lượng LÀ SERVER — ưu tiên
