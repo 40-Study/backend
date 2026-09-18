@@ -426,7 +426,9 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Schedule: service.NewScheduleService(repos.Schedule, resources.Redis, resources.Queue),
 
 		// ===== Quiz (Redis cache) =====
-		Quiz: service.NewQuizService(repos.Quiz, resources.Redis, repos.Course, repos.Section, repos.Lesson, repos.Livestream),
+		// enrollmentRepo (SEC-1, vá lộ nội dung quiz): cần cho checkLessonQuizAccess dùng chung
+		// gatherLessonLockInput với LessonContentService — xem quiz_service.go.
+		Quiz: service.NewQuizService(repos.Quiz, resources.Redis, repos.Course, repos.Section, repos.Lesson, repos.Livestream, repos.Enrollment),
 
 		// ===== Grade (Redis cache) =====
 		Grade: service.NewGradeService(repos.Grade, repos.Class, resources.Redis),

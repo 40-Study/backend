@@ -23,6 +23,25 @@ func NewQuizHandler(service service.QuizServiceInterface, permChecker *middlewar
 	return &QuizHandler{service: service, permChecker: permChecker}
 }
 
+// respondLessonLockError (SEC-1, vá lộ nội dung quiz): ánh xạ ErrLessonLocked/ErrLessonNotInCourse
+// (dùng chung với LessonContentService, xem lesson_lock.go) sang ĐÚNG shape response mà
+// LessonContentHandler.GetContent đã dùng cho nội dung bài học — để web xử lý "quiz của bài học"
+// và "nội dung bài học" theo cùng một cơ chế. handled=true nghĩa là caller RETURN NGAY resp (đã
+// ghi response); handled=false nghĩa là svcErr không phải 1 trong 2 sentinel, caller tự xử lý tiếp.
+func respondLessonLockError(c *fiber.Ctx, svcErr error) (resp error, handled bool) {
+	if svcErr == service.ErrLessonLocked {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"message": "LESSON_LOCKED",
+		}), true
+	}
+	if svcErr == service.ErrLessonNotInCourse {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"message": "Lesson does not belong to this course",
+		}), true
+	}
+	return nil, false
+}
+
 // ============================================================================
 // QUIZ CRUD
 // ============================================================================
@@ -82,7 +101,18 @@ func (h *QuizHandler) GetAllQuizzes(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 
-	quizzes, err := h.service.GetAllQuizzes(c.Context(), lessonID, courseID, sessionID, page, pageSize)
+	// SEC-1 (vá lộ nội dung quiz): userID/isAdmin để service loại quiz của bài đang khoá đối với
+	// CHÍNH người gọi ra khỏi danh sách khi lọc theo lesson_id/course_id — xem
+	// QuizService.GetAllQuizzes.
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	quizzes, err := h.service.GetAllQuizzes(c.Context(), lessonID, courseID, sessionID, userID, isAdmin, page, pageSize)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve quizzes",
@@ -116,9 +146,20 @@ func (h *QuizHandler) GetQuizzesByLesson(c *fiber.Ctx) error {
 		})
 	}
 
+	// SEC-1 (vá lộ nội dung quiz): xem chú thích tại GetAllQuizzes — day chinh la duong web
+	// THAT SU goi (services/quiz.service.ts getByLesson), nen day cung la duong khai thac SEC-1
+	// that su tren san pham, khong chi ly thuyet qua GET /quizzes?lesson_id=.
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
 	// pageSize 50 = tran tren service cho phep (>50 bi ep ve 10); mot bai hoc
 	// thuc te chi co 1-3 quiz nen khong can phan trang o day.
-	list, err := h.service.GetAllQuizzes(c.Context(), &lessonID, nil, nil, 1, 50)
+	list, err := h.service.GetAllQuizzes(c.Context(), &lessonID, nil, nil, userID, isAdmin, 1, 50)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve quizzes",
@@ -169,6 +210,9 @@ func (h *QuizHandler) GetQuizByID(c *fiber.Ctx) error {
 
 	quiz, err := h.service.GetQuizByID(c.Context(), id, userID, isAdmin)
 	if err != nil {
+		if resp, handled := respondLessonLockError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Quiz not found",
 			"error":   err.Error(),
@@ -325,6 +369,9 @@ func (h *QuizHandler) GetQuestionsByQuiz(c *fiber.Ctx) error {
 
 	questions, err := h.service.GetQuestionsByQuiz(c.Context(), quizID, userID, isAdmin)
 	if err != nil {
+		if resp, handled := respondLessonLockError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve questions",
 			"error":   err.Error(),
@@ -523,8 +570,12 @@ func (h *QuizHandler) StartQuiz(c *fiber.Ctx) error {
 		}
 	}
 
-	result, err := h.service.StartQuiz(c.Context(), id, userID, req)
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	result, err := h.service.StartQuiz(c.Context(), id, userID, isAdmin, req)
 	if err != nil {
+		if resp, handled := respondLessonLockError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to start quiz",
 			"error":   err.Error(),
