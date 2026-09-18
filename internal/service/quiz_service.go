@@ -17,7 +17,10 @@ import (
 
 type QuizServiceInterface interface {
 	CreateQuiz(ctx context.Context, req dto.CreateQuizDTO) (*dto.QuizResponseDTO, error)
-	GetAllQuizzes(ctx context.Context, lessonID, courseID, sessionID *uuid.UUID, page, pageSize int) (*dto.QuizListDTO, error)
+	// GetAllQuizzes (SEC-1, vá lộ nội dung quiz): thêm userID/isAdmin — khi lọc ra quiz gắn với
+	// một bài học (LessonID != nil), quiz của bài đang khoá đối với CHÍNH người gọi (chưa enroll,
+	// hoặc sequential mà bài trước chưa xong) không được liệt kê, xem checkLessonQuizAccess.
+	GetAllQuizzes(ctx context.Context, lessonID, courseID, sessionID *uuid.UUID, userID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.QuizListDTO, error)
 	// GetQuizByID (B-3, review vòng 2): userID/isAdmin quyết định is_correct/explanation có bị
 	// giấu hay không — xem canViewQuizAnswerKey.
 	GetQuizByID(ctx context.Context, id, userID uuid.UUID, isAdmin bool) (*dto.QuizDetailDTO, error)
@@ -37,7 +40,7 @@ type QuizServiceInterface interface {
 	// Attempts
 	// StartQuiz (Phase 1 §6): req.Mode "official" (mặc định) hoặc "practice" — practice không
 	// tính vào quiz_max_attempts (xem CountAttemptsByUserAndQuiz, chỉ đếm attempt "official").
-	StartQuiz(ctx context.Context, quizID, userID uuid.UUID, req dto.StartQuizDTO) (*dto.StartQuizResponseDTO, error)
+	StartQuiz(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.StartQuizDTO) (*dto.StartQuizResponseDTO, error)
 	SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, req dto.SubmitQuizDTO) (*dto.QuizAttemptResponseDTO, error)
 	GetMyAttempts(ctx context.Context, quizID, userID uuid.UUID) ([]dto.QuizAttemptResponseDTO, error)
 	GetAttemptByID(ctx context.Context, attemptID, userID uuid.UUID) (*dto.QuizAttemptDetailDTO, error)
@@ -58,6 +61,10 @@ type QuizService struct {
 	sectionRepo    repository.SectionRepositoryInterface
 	lessonRepo     repository.LessonRepositoryInterface
 	livestreamRepo repository.LivestreamRepositoryInterface
+	// enrollmentRepo (SEC-1, vá lộ nội dung quiz): dùng lại ĐÚNG helper khoá bài học mà
+	// LessonContentService đang dùng (gatherLessonLockInput, lesson_lock.go) — xem
+	// checkLessonQuizAccess.
+	enrollmentRepo repository.EnrollmentRepositoryInterface
 }
 
 func NewQuizService(
@@ -67,6 +74,7 @@ func NewQuizService(
 	sectionRepo repository.SectionRepositoryInterface,
 	lessonRepo repository.LessonRepositoryInterface,
 	livestreamRepo repository.LivestreamRepositoryInterface,
+	enrollmentRepo repository.EnrollmentRepositoryInterface,
 ) *QuizService {
 	return &QuizService{
 		repo:           repo,
@@ -75,6 +83,7 @@ func NewQuizService(
 		sectionRepo:    sectionRepo,
 		lessonRepo:     lessonRepo,
 		livestreamRepo: livestreamRepo,
+		enrollmentRepo: enrollmentRepo,
 	}
 }
 
@@ -128,6 +137,60 @@ func (s *QuizService) canViewQuizAnswerKey(ctx context.Context, quiz *model.Quiz
 		return false, err
 	}
 	return course != nil && course.InstructorID == userID, nil
+}
+
+// checkLessonQuizAccess (SEC-1, vá lộ nội dung quiz): quiz gắn LessonID mà người gọi KHÔNG phải
+// chủ khoá học/giảng viên/admin (canView=false, xem canViewQuizAnswerKey) phải qua ĐÚNG luật khoá
+// bài học mà LessonContentService.GetContentsByLessonID đang dùng (ResolveLessonLock +
+// gatherLessonLockInput, lesson_lock.go) — KHÔNG viết lại luật quyền lần thứ hai. Trước bản vá
+// này, GetQuizByID/GetQuestionsByQuiz chỉ ẩn is_correct/explanation qua canViewQuizAnswerKey,
+// không hề kiểm enroll/lock — học viên chưa enroll (hoặc bài trước chưa hoàn thành ở khoá
+// sequential) vẫn đọc được toàn bộ tiêu đề + text câu hỏi + phương án của bài đang khoá.
+//
+// canView=true (đã xác định là chủ khoá học/giảng viên/admin ở tầng gọi) bỏ qua hoàn toàn, khớp
+// đúng hành vi hiện tại của canViewQuizAnswerKey (không bao giờ bị khoá) — không truy vấn
+// enrollment/lesson-order thêm cho nhóm này.
+func (s *QuizService) checkLessonQuizAccess(ctx context.Context, lessonID, userID uuid.UUID, canView bool) error {
+	if canView {
+		return nil
+	}
+
+	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
+	if err != nil {
+		return err
+	}
+	if lesson == nil {
+		return errors.New("lesson not found")
+	}
+	// Luật 1 (contract Phase 1 §2, giống ResolveLessonLock): bài preview/miễn phí không bao giờ
+	// bị khoá.
+	if lesson.IsPreview {
+		return nil
+	}
+
+	courseID, err := s.enrollmentRepo.GetCourseIDByLessonID(ctx, lessonID)
+	if err != nil {
+		return err
+	}
+	course, err := s.courseRepo.GetByID(ctx, courseID)
+	if err != nil {
+		return err
+	}
+	sequential := course != nil && course.Sequential
+
+	// bypassLock=false: canView=true đã return sớm ở trên, nên tới đây chắc chắn người gọi không
+	// phải chủ khoá học/admin.
+	lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, courseID, sequential, false)
+	if err != nil {
+		return err
+	}
+	if err := EnsureLessonInCourse(lessonID, lockInput.LessonOrder); err != nil {
+		return err
+	}
+	if locked, _, _ := ResolveLessonLock(lessonID, lockInput); locked {
+		return ErrLessonLocked
+	}
+	return nil
 }
 
 // stripAnswerKey (B-3, review vòng 2): xoá is_correct/explanation khỏi MỘT bản sao của
@@ -219,7 +282,7 @@ func (s *QuizService) CreateQuiz(ctx context.Context, req dto.CreateQuizDTO) (*d
 	return s.mapQuizToDTO(quiz, 0), nil
 }
 
-func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, sessionID *uuid.UUID, page, pageSize int) (*dto.QuizListDTO, error) {
+func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, sessionID *uuid.UUID, userID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.QuizListDTO, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -232,9 +295,28 @@ func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, ses
 		return nil, err
 	}
 
-	data := make([]dto.QuizResponseDTO, len(quizzes))
-	for i, q := range quizzes {
-		data[i] = *s.mapQuizToDTO(&q, 0)
+	// SEC-1 (vá lộ nội dung quiz): mỗi quiz gắn LessonID phải qua đúng luật khoá bài học
+	// (checkLessonQuizAccess) như GetQuizByID/GetQuestionsByQuiz — quiz của bài đang khoá đối với
+	// CHÍNH người gọi bị LOẠI KHỎI danh sách (không phải lỗi cả request), khớp yêu cầu "người
+	// không có quyền xem khoá đó thì không liệt kê quiz của nó". `total` vẫn là số đếm THÔ từ
+	// repo (không trừ phần bị lọc) — chấp nhận được vì GetQuizzesByLesson (đường web thật sự
+	// dùng) chỉ đọc `data`, không đọc `total`; đây là giới hạn đã biết, không phải bug ẩn.
+	data := make([]dto.QuizResponseDTO, 0, len(quizzes))
+	for i := range quizzes {
+		q := &quizzes[i]
+		if q.LessonID != nil {
+			canView, err := s.canViewQuizAnswerKey(ctx, q, userID, isAdmin)
+			if err != nil {
+				return nil, err
+			}
+			if err := s.checkLessonQuizAccess(ctx, *q.LessonID, userID, canView); err != nil {
+				if err == ErrLessonLocked || err == ErrLessonNotInCourse {
+					continue
+				}
+				return nil, err
+			}
+		}
+		data = append(data, *s.mapQuizToDTO(q, 0))
 	}
 
 	return &dto.QuizListDTO{Data: data, Total: total, Page: page, PageSize: pageSize}, nil
@@ -302,6 +384,16 @@ func (s *QuizService) GetQuizByID(ctx context.Context, id, userID uuid.UUID, isA
 		canView, err = s.canViewQuizAnswerKey(ctx, quiz, userID, isAdmin)
 		if err != nil {
 			return nil, err
+		}
+		// SEC-1 (vá lộ nội dung quiz): trước bản vá này, canView=false chỉ dẫn tới STRIP đáp án
+		// đúng bên dưới — toàn bộ tiêu đề/mô tả/text câu hỏi/phương án vẫn trả về 200 cho người
+		// chưa enroll (hoặc bài trước chưa xong ở khoá sequential). checkLessonQuizAccess trả
+		// ErrLessonLocked cho trường hợp đó — handler ánh xạ sang 403 {message:"LESSON_LOCKED"},
+		// giống hệt LessonContentHandler.GetContent.
+		if quiz.LessonID != nil {
+			if err := s.checkLessonQuizAccess(ctx, *quiz.LessonID, userID, canView); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if !canView {
@@ -502,6 +594,13 @@ func (s *QuizService) GetQuestionsByQuiz(ctx context.Context, quizID, userID uui
 	if err != nil {
 		return nil, err
 	}
+	// SEC-1 (vá lộ nội dung quiz): xem chú thích tại GetQuizByID — trước bản vá này hàm này CHỈ
+	// strip is_correct/explanation, không hề kiểm bài có đang khoá với userID hay không.
+	if quiz.LessonID != nil {
+		if err := s.checkLessonQuizAccess(ctx, *quiz.LessonID, userID, canView); err != nil {
+			return nil, err
+		}
+	}
 
 	questions, err := s.repo.GetQuestionsByQuizID(ctx, quizID)
 	if err != nil {
@@ -624,10 +723,23 @@ func (s *QuizService) BulkCreateQuestions(ctx context.Context, quizID uuid.UUID,
 // QUIZ ATTEMPTS
 // ============================================================================
 
-func (s *QuizService) StartQuiz(ctx context.Context, quizID, userID uuid.UUID, req dto.StartQuizDTO) (*dto.StartQuizResponseDTO, error) {
+func (s *QuizService) StartQuiz(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.StartQuizDTO) (*dto.StartQuizResponseDTO, error) {
 	quiz, err := s.repo.GetQuizWithQuestions(ctx, quizID)
 	if err != nil || quiz == nil {
 		return nil, errors.New("quiz not found")
+	}
+
+	// SEC-1: /start trả về toàn bộ text câu hỏi + phương án, nên phải qua CÙNG cổng khoá bài học
+	// với GetQuizByID/GetQuestionsByQuiz — nếu không, đây là lối vòng qua bản vá của hai endpoint
+	// đọc kia. Chặn trước CreateAttempt để không sinh attempt rác cho bài đang khoá.
+	if quiz.LessonID != nil {
+		canView, err := s.canViewQuizAnswerKey(ctx, quiz, userID, isAdmin)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.checkLessonQuizAccess(ctx, *quiz.LessonID, userID, canView); err != nil {
+			return nil, err
+		}
 	}
 
 	mode := req.Mode
