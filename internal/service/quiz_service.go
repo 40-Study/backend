@@ -15,6 +15,13 @@ import (
 	"study.com/v1/internal/repository"
 )
 
+// ErrQuizAttemptAlreadySubmitted (R8, review 260919): attempt đã completed_at != nil khi
+// SubmitQuiz cố ghi kết quả — do double-click, retry sau timeout, hoặc client gửi lại request
+// cũ. Handler ánh xạ sang 409 Conflict (xem quiz_handler.go), khác 400 chung chung của các lỗi
+// validate khác — khớp quy ước sentinel error của package này (auth_service.go, order_service.go,
+// payment_service.go).
+var ErrQuizAttemptAlreadySubmitted = errors.New("quiz attempt already submitted")
+
 type QuizServiceInterface interface {
 	CreateQuiz(ctx context.Context, req dto.CreateQuizDTO) (*dto.QuizResponseDTO, error)
 	// GetAllQuizzes (SEC-1, vá lộ nội dung quiz): thêm userID/isAdmin — khi lọc ra quiz gắn với
@@ -193,6 +200,85 @@ func (s *QuizService) checkLessonQuizAccess(ctx context.Context, lessonID, userI
 	return nil
 }
 
+// checkCourseQuizAccess (R4, review 260919 — "Gate quiz #65 chỉ áp cho quiz có lesson_id"): quiz
+// gắn THẲNG course_id (không qua lesson) — không có khái niệm "bài trước" nên không áp luật
+// sequential/lesson-order như checkLessonQuizAccess, chỉ cần đã enroll khoá học chứa quiz.
+// canView=true (chủ khoá học/giảng viên/admin, xem canViewQuizAnswerKey) bỏ qua hoàn toàn, khớp
+// đúng các gate quiz khác trong file này. Trả ErrLessonLocked (không phải lỗi mới) để handler
+// dùng NGUYÊN respondLessonLockError hiện có — 403 {message:"LESSON_LOCKED"}, cùng format với
+// gate lesson.
+func (s *QuizService) checkCourseQuizAccess(ctx context.Context, courseID, userID uuid.UUID, canView bool) error {
+	if canView {
+		return nil
+	}
+	enrollment, err := s.enrollmentRepo.GetByUserAndCourse(ctx, userID, courseID)
+	if err != nil {
+		return err
+	}
+	if enrollment == nil {
+		return ErrLessonLocked
+	}
+	return nil
+}
+
+// checkSessionQuizAccess (R4, review 260919): quiz gắn THẲNG session_id (quiz live trong buổi
+// học trực tuyến) — quyền xem là "người tham dự (host/participant) buổi live NÀY, hoặc đã enroll
+// khoá học chứa buổi live", đúng yêu cầu review R4. KHÔNG tái dùng
+// LivestreamService.EnsureSessionMember: hàm đó còn xét quan hệ LỚP qua classRepo/participantRepo
+// cho chat/bảng trắng (phạm vi rộng hơn nhu cầu ở đây) và QuizService không giữ 2 repo đó.
+// canView=true bỏ qua hoàn toàn, cùng lý do với hai gate trên. Trả ErrLessonLocked — cùng format
+// 403 với gate lesson/course.
+func (s *QuizService) checkSessionQuizAccess(ctx context.Context, sessionID, userID uuid.UUID, canView bool) error {
+	if canView {
+		return nil
+	}
+	session, err := s.livestreamRepo.GetByID(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session == nil {
+		return errors.New("session not found")
+	}
+	if session.HostID == userID {
+		return nil
+	}
+	for _, p := range session.Participants {
+		if p.UserID == userID {
+			return nil
+		}
+	}
+	if session.CourseID != nil {
+		enrollment, err := s.enrollmentRepo.GetByUserAndCourse(ctx, userID, *session.CourseID)
+		if err != nil {
+			return err
+		}
+		if enrollment != nil {
+			return nil
+		}
+	}
+	return ErrLessonLocked
+}
+
+// checkQuizAccess (R4, review 260919): gate DUY NHẤT cho MỌI quiz bất kể gắn vào lesson/course/
+// session — tránh viết lặp lại nhánh if ở GetQuizByID/GetQuestionsByQuiz/StartQuiz/
+// GetAllQuizzes. Trước bản vá R4, cả 4 nơi trên CHỈ kiểm tra khi quiz.LessonID != nil, để lộ
+// toàn bộ quiz gắn course_id/session_id cho người chưa enroll (xem review 260919, mục R4).
+// canView=true (chủ khoá học/giảng viên/admin) bỏ qua hoàn toàn ở TẤT CẢ nhánh — giữ đúng hành
+// vi hiện có. Quiz không gắn lesson/course/session nào (dữ liệu mồ côi) mặc định KHÔNG khoá —
+// giữ đúng hành vi trước bản vá cho trường hợp hiếm này (không có gate nào áp được).
+func (s *QuizService) checkQuizAccess(ctx context.Context, quiz *model.Quiz, userID uuid.UUID, canView bool) error {
+	switch {
+	case quiz.LessonID != nil:
+		return s.checkLessonQuizAccess(ctx, *quiz.LessonID, userID, canView)
+	case quiz.CourseID != nil:
+		return s.checkCourseQuizAccess(ctx, *quiz.CourseID, userID, canView)
+	case quiz.SessionID != nil:
+		return s.checkSessionQuizAccess(ctx, *quiz.SessionID, userID, canView)
+	default:
+		return nil
+	}
+}
+
 // stripAnswerKey (B-3, review vòng 2): xoá is_correct/explanation khỏi MỘT bản sao của
 // QuestionResponseDTO trước khi trả cho người xem không đủ quyền — gọi SAU khi map từ model,
 // không sửa dữ liệu cache (xem GetQuizByID: cache lưu bản ĐẦY ĐỦ, strip áp dụng trên response
@@ -295,26 +381,26 @@ func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, ses
 		return nil, err
 	}
 
-	// SEC-1 (vá lộ nội dung quiz): mỗi quiz gắn LessonID phải qua đúng luật khoá bài học
-	// (checkLessonQuizAccess) như GetQuizByID/GetQuestionsByQuiz — quiz của bài đang khoá đối với
-	// CHÍNH người gọi bị LOẠI KHỎI danh sách (không phải lỗi cả request), khớp yêu cầu "người
-	// không có quyền xem khoá đó thì không liệt kê quiz của nó". `total` vẫn là số đếm THÔ từ
-	// repo (không trừ phần bị lọc) — chấp nhận được vì GetQuizzesByLesson (đường web thật sự
-	// dùng) chỉ đọc `data`, không đọc `total`; đây là giới hạn đã biết, không phải bug ẩn.
+	// SEC-1 (vá lộ nội dung quiz) + R4 (review 260919): MỌI quiz — gắn lesson_id, course_id, hay
+	// session_id — phải qua đúng luật khoá tương ứng (checkQuizAccess) như
+	// GetQuizByID/GetQuestionsByQuiz/StartQuiz — quiz đang khoá đối với CHÍNH người gọi bị LOẠI
+	// KHỎI danh sách (không phải lỗi cả request), khớp yêu cầu "người không có quyền xem khoá đó
+	// thì không liệt kê quiz của nó". Trước bản vá R4, nhánh này CHỈ chạy khi q.LessonID != nil —
+	// quiz gắn course_id/session_id bỏ qua hoàn toàn, lộ cho người chưa enroll. `total` vẫn là số
+	// đếm THÔ từ repo (không trừ phần bị lọc) — chấp nhận được vì GetQuizzesByLesson (đường web
+	// thật sự dùng) chỉ đọc `data`, không đọc `total`; đây là giới hạn đã biết, không phải bug ẩn.
 	data := make([]dto.QuizResponseDTO, 0, len(quizzes))
 	for i := range quizzes {
 		q := &quizzes[i]
-		if q.LessonID != nil {
-			canView, err := s.canViewQuizAnswerKey(ctx, q, userID, isAdmin)
-			if err != nil {
-				return nil, err
+		canView, err := s.canViewQuizAnswerKey(ctx, q, userID, isAdmin)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.checkQuizAccess(ctx, q, userID, canView); err != nil {
+			if err == ErrLessonLocked || err == ErrLessonNotInCourse {
+				continue
 			}
-			if err := s.checkLessonQuizAccess(ctx, *q.LessonID, userID, canView); err != nil {
-				if err == ErrLessonLocked || err == ErrLessonNotInCourse {
-					continue
-				}
-				return nil, err
-			}
+			return nil, err
 		}
 		data = append(data, *s.mapQuizToDTO(q, 0))
 	}
@@ -385,15 +471,15 @@ func (s *QuizService) GetQuizByID(ctx context.Context, id, userID uuid.UUID, isA
 		if err != nil {
 			return nil, err
 		}
-		// SEC-1 (vá lộ nội dung quiz): trước bản vá này, canView=false chỉ dẫn tới STRIP đáp án
-		// đúng bên dưới — toàn bộ tiêu đề/mô tả/text câu hỏi/phương án vẫn trả về 200 cho người
-		// chưa enroll (hoặc bài trước chưa xong ở khoá sequential). checkLessonQuizAccess trả
-		// ErrLessonLocked cho trường hợp đó — handler ánh xạ sang 403 {message:"LESSON_LOCKED"},
-		// giống hệt LessonContentHandler.GetContent.
-		if quiz.LessonID != nil {
-			if err := s.checkLessonQuizAccess(ctx, *quiz.LessonID, userID, canView); err != nil {
-				return nil, err
-			}
+		// SEC-1 (vá lộ nội dung quiz) + R4 (review 260919): trước bản vá SEC-1, canView=false chỉ
+		// dẫn tới STRIP đáp án đúng bên dưới — toàn bộ tiêu đề/mô tả/text câu hỏi/phương án vẫn
+		// trả về 200 cho người chưa enroll (hoặc bài trước chưa xong ở khoá sequential).
+		// checkQuizAccess trả ErrLessonLocked cho trường hợp đó (bất kể quiz gắn lesson/course/
+		// session) — handler ánh xạ sang 403 {message:"LESSON_LOCKED"}, giống hệt
+		// LessonContentHandler.GetContent. Trước bản vá R4, gate này CHỈ chạy khi
+		// quiz.LessonID != nil.
+		if err := s.checkQuizAccess(ctx, quiz, userID, canView); err != nil {
+			return nil, err
 		}
 	}
 	if !canView {
@@ -594,12 +680,11 @@ func (s *QuizService) GetQuestionsByQuiz(ctx context.Context, quizID, userID uui
 	if err != nil {
 		return nil, err
 	}
-	// SEC-1 (vá lộ nội dung quiz): xem chú thích tại GetQuizByID — trước bản vá này hàm này CHỈ
-	// strip is_correct/explanation, không hề kiểm bài có đang khoá với userID hay không.
-	if quiz.LessonID != nil {
-		if err := s.checkLessonQuizAccess(ctx, *quiz.LessonID, userID, canView); err != nil {
-			return nil, err
-		}
+	// SEC-1 (vá lộ nội dung quiz) + R4 (review 260919): xem chú thích tại GetQuizByID — trước
+	// bản vá SEC-1, hàm này CHỈ strip is_correct/explanation, không hề kiểm bài có đang khoá với
+	// userID hay không; trước bản vá R4, gate CHỈ chạy khi quiz.LessonID != nil.
+	if err := s.checkQuizAccess(ctx, quiz, userID, canView); err != nil {
+		return nil, err
 	}
 
 	questions, err := s.repo.GetQuestionsByQuizID(ctx, quizID)
@@ -729,17 +814,17 @@ func (s *QuizService) StartQuiz(ctx context.Context, quizID, userID uuid.UUID, i
 		return nil, errors.New("quiz not found")
 	}
 
-	// SEC-1: /start trả về toàn bộ text câu hỏi + phương án, nên phải qua CÙNG cổng khoá bài học
-	// với GetQuizByID/GetQuestionsByQuiz — nếu không, đây là lối vòng qua bản vá của hai endpoint
-	// đọc kia. Chặn trước CreateAttempt để không sinh attempt rác cho bài đang khoá.
-	if quiz.LessonID != nil {
-		canView, err := s.canViewQuizAnswerKey(ctx, quiz, userID, isAdmin)
-		if err != nil {
-			return nil, err
-		}
-		if err := s.checkLessonQuizAccess(ctx, *quiz.LessonID, userID, canView); err != nil {
-			return nil, err
-		}
+	// SEC-1 + R4 (review 260919): /start trả về toàn bộ text câu hỏi + phương án, nên phải qua
+	// CÙNG cổng khoá với GetQuizByID/GetQuestionsByQuiz — nếu không, đây là lối vòng qua bản vá
+	// của hai endpoint đọc kia. Chặn trước CreateAttempt để không sinh attempt rác cho quiz đang
+	// khoá. Trước bản vá R4, gate CHỈ chạy khi quiz.LessonID != nil — quiz gắn course_id/
+	// session_id bỏ qua hoàn toàn, người chưa enroll vẫn /start được và nhận toàn bộ câu hỏi.
+	canView, err := s.canViewQuizAnswerKey(ctx, quiz, userID, isAdmin)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.checkQuizAccess(ctx, quiz, userID, canView); err != nil {
+		return nil, err
 	}
 
 	mode := req.Mode
@@ -827,7 +912,7 @@ func (s *QuizService) SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, 
 			return nil, errors.New("attempt not found for this user/quiz")
 		}
 		if attempt.CompletedAt != nil {
-			return nil, errors.New("attempt already submitted")
+			return nil, ErrQuizAttemptAlreadySubmitted
 		}
 	} else {
 		// Client cũ (chưa gửi attempt_id): giữ hành vi cũ — chọn attempt DANG DỞ mới nhất
@@ -848,29 +933,40 @@ func (s *QuizService) SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, 
 		return nil, errors.New("quiz not found")
 	}
 
-	// Grade answers
+	// Grade answers — R1 (review 260919, CRITICAL): mẫu số (totalPoints) PHẢI là tổng điểm CỦA
+	// TOÀN BỘ câu hỏi thuộc quiz (quiz.Questions), KHÔNG PHẢI chỉ những câu client gửi trong
+	// req.Answers. Trước bản vá này, một quiz 10 câu mà học viên chỉ trả lời (hoặc bỏ trống rồi
+	// hết giờ tự nộp) đúng 1 câu sẽ có totalPoints = điểm của đúng 1 câu đó => percentage ra
+	// 100% nếu câu đó đúng, bất kể 9 câu còn lại bỏ trống. Lặp qua quiz.Questions (không phải
+	// req.Answers) còn tự nhiên "dedupe": client gửi trùng question_id nhiều lần cho CÙNG một
+	// câu không còn cộng dồn điểm nhiều lần (map ghi đè — chỉ bản ghi cuối được dùng để chấm).
+	answersByQuestion := make(map[uuid.UUID]dto.SubmitAnswerDTO, len(req.Answers))
+	for _, ans := range req.Answers {
+		questionID, parseErr := uuid.Parse(ans.QuestionID)
+		if parseErr != nil {
+			continue // question_id sai định dạng — bỏ qua, giữ đúng hành vi cũ (không khớp thì
+			// cũng bị continue).
+		}
+		answersByQuestion[questionID] = ans
+	}
+
 	totalPoints := decimal.Zero
 	earnedPoints := decimal.Zero
-
 	var attemptAnswers []model.QuizAttemptAnswer
-	for _, ans := range req.Answers {
-		questionID, _ := uuid.Parse(ans.QuestionID)
 
-		// Find the question
-		var question *model.Question
-		for i := range quiz.Questions {
-			if quiz.Questions[i].ID == questionID {
-				question = &quiz.Questions[i]
-				break
-			}
-		}
-		if question == nil {
+	for i := range quiz.Questions {
+		question := &quiz.Questions[i]
+		// Mẫu số luôn cộng dồn CHO MỌI câu hỏi của quiz, kể cả câu không có trong req.Answers —
+		// đây chính là chỗ sửa của R1.
+		totalPoints = totalPoints.Add(question.Points)
+
+		ans, answered := answersByQuestion[question.ID]
+		if !answered {
+			// Câu không trả lời = 0 điểm, tính là sai (không cộng vào earnedPoints) — không tạo
+			// attempt_answer vì không có lựa chọn nào được gửi để lưu.
 			continue
 		}
 
-		totalPoints = totalPoints.Add(question.Points)
-
-		// Check correctness
 		correct := s.checkAnswer(question, ans)
 		earned := decimal.Zero
 		if correct {
@@ -881,7 +977,7 @@ func (s *QuizService) SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, 
 		selectedIDs := pq.StringArray(ans.SelectedAnswerIDs)
 		aa := model.QuizAttemptAnswer{
 			AttemptID:         attempt.ID,
-			QuestionID:        questionID,
+			QuestionID:        question.ID,
 			SelectedAnswerIDs: selectedIDs,
 			IsCorrect:         &correct,
 			PointsEarned:      earned,
@@ -890,10 +986,6 @@ func (s *QuizService) SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, 
 			aa.TextAnswer = &ans.TextAnswer
 		}
 		attemptAnswers = append(attemptAnswers, aa)
-	}
-
-	if err := s.repo.CreateAttemptAnswers(ctx, attemptAnswers); err != nil {
-		return nil, err
 	}
 
 	// Calculate result
@@ -912,8 +1004,20 @@ func (s *QuizService) SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, 
 	attempt.TimeSpentSecs = &timeSpent
 	attempt.CompletedAt = &now
 
-	if err := s.repo.UpdateAttempt(ctx, attempt); err != nil {
+	// R8 (review 260919, IMPORTANT): trước bản vá này, UpdateAttempt (= Save, không điều kiện)
+	// chạy sau CreateAttemptAnswers, KHÔNG transaction và KHÔNG kiểm completed_at IS NULL — hai
+	// request nộp cùng lúc (double-click, retry sau timeout) đều đọc thấy CompletedAt == nil ở
+	// bước tìm attempt phía trên (TOCTOU: giữa lúc đọc đó và lúc ghi ở đây, request kia có thể
+	// đã nộp xong), nên cả 2 đều insert answers + update attempt => answers bị ghi trùng cho
+	// cùng một attempt. CompleteAttemptIfPending gộp UPDATE có điều kiện completed_at IS NULL và
+	// CreateAttemptAnswers vào CÙNG MỘT transaction — 0 dòng bị ảnh hưởng nghĩa là request khác
+	// đã nộp xong trước; trả lỗi rõ ràng thay vì âm thầm ghi trùng.
+	updated, err := s.repo.CompleteAttemptIfPending(ctx, attempt, attemptAnswers)
+	if err != nil {
 		return nil, err
+	}
+	if !updated {
+		return nil, ErrQuizAttemptAlreadySubmitted
 	}
 
 	return s.mapAttemptToDTO(attempt), nil

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"log"
 
 	"github.com/gofiber/fiber/v2"
@@ -621,7 +622,14 @@ func (h *QuizHandler) SubmitQuiz(c *fiber.Ctx) error {
 
 	result, err := h.service.SubmitQuiz(c.Context(), id, userID, req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+		// R8 (review 260919): nộp trùng (double-click, retry sau timeout, hoặc request khác đã
+		// nộp attempt này trước) trả 409 Conflict — khác 400 chung chung của các lỗi validate
+		// khác, để client phân biệt được "dữ liệu sai" với "đã nộp rồi".
+		status := fiber.StatusBadRequest
+		if errors.Is(err, service.ErrQuizAttemptAlreadySubmitted) {
+			status = fiber.StatusConflict
+		}
+		return c.Status(status).JSON(fiber.Map{
 			"message": "Failed to submit quiz",
 			"error":   err.Error(),
 		})
