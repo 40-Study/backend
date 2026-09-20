@@ -242,13 +242,17 @@ func (s *LessonContentService) DeleteContent(ctx context.Context, contentID, act
 	}
 
 	// Delete video upload and all associated files (original, HLS, thumbnail)
+	// R6 (code-reviewer-260919-1557): actorUserID (nguoi dang thuc hien xoa content, da qua
+	// requireContentLessonOwnerOrAdmin o tren) duoc truyen xuong lam ownerUserID — DeleteUpload
+	// tu quyet dinh bo qua neu upload_id trich tu VideoURL khong thuoc ve actorUserID, thay vi
+	// xoa mu quang video cua nguoi khac chi vi video_url tro sang do.
 	if s.videoUploadService != nil && content.VideoURL != nil && *content.VideoURL != "" {
 		// Try to extract upload_id from HLS URL pattern: /api/hls/{uploadId}/
 		hlsPattern := regexp.MustCompile(`/hls/([a-f0-9-]{36})/`)
 		if matches := hlsPattern.FindStringSubmatch(*content.VideoURL); len(matches) > 1 {
 			if uploadID, err := uuid.Parse(matches[1]); err == nil {
 				// Delete video upload (this deletes original video, HLS folder, thumbnail from MinIO)
-				_ = s.videoUploadService.DeleteUpload(ctx, uploadID)
+				_ = s.videoUploadService.DeleteUpload(ctx, uploadID, actorUserID)
 			}
 		}
 	}
