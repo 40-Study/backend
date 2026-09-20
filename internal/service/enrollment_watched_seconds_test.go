@@ -644,7 +644,14 @@ func TestUpdateLessonProgress_GuiStatusThiCapNhatStatus(t *testing.T) {
 		enrollment:     &enrollment,
 		courseID:       uuid.New(),
 	}
-	svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{}, &fakeLessonRepoWatched{}, nil)
+	// R2 (code-reviewer-260919-1557): phan (1) kiem tra dung truong hop "CO video nhung server
+	// chua ro duration" (luat 2c(a) — PHAI tu choi) — content Type="video" voi Duration=0, KHAC
+	// voi content list RONG (nghia la khong co video nao, luat 2c(b) — PHAI chap nhan, xem
+	// TestUpdateLessonProgress_BaiChiCoExercise_ChapNhanCompletedTuClient). Truoc ban va R2,
+	// hai truong hop nay dung chung mot dieu kien nen fixture RONG cu van "tinh co" dung; sau
+	// R2 chung phai duoc phan biet ro trong chinh fixture cua test.
+	svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{},
+		&fakeLessonRepoWatched{contents: []model.LessonContent{{Type: "video", Duration: 0}}}, nil)
 
 	// (1) Client tu gui completed, khong co can cu (played_ranges/duration) => phai bi bo qua.
 	status := "completed"
@@ -1003,7 +1010,12 @@ func TestUpdateLessonProgress_StatusKhongDuocHaCap(t *testing.T) {
 				enrollment:     &enrollment,
 				courseID:       uuid.New(),
 			}
-			svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{}, &fakeLessonRepoWatched{}, nil)
+			// R2 (code-reviewer-260919-1557): content Type="video" Duration=0 — bai NAY CO
+			// video nhung server chua ro duration (luat 2c(a), PHAI van tu choi client tu gui
+			// completed). Test danh rieng cho bai KHONG co video nao la
+			// TestUpdateLessonProgress_BaiChiCoExercise_ChapNhanCompletedTuClient.
+			svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{},
+				&fakeLessonRepoWatched{contents: []model.LessonContent{{Type: "video", Duration: 0}}}, nil)
 
 			gui := tc.gui
 			res, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
