@@ -11,12 +11,27 @@ import (
 	"study.com/v1/internal/utils"
 )
 
+// ErrDiscussionLessonNotFound (R7, code-reviewer-260919-1557): lesson_id gui len (tao bai hoi
+// dap theo bai, hoac doc /lessons/:lessonId/discussions) khong ton tai/khong thuoc khoa nao —
+// truoc day FK sai roi thang xuong Postgres, tra ve 500 tho qua err.Error(). Handler anh xa
+// sang 404.
+var ErrDiscussionLessonNotFound = errors.New("lesson not found")
+
+// ErrDiscussionNotEnrolled (R7): user chua enroll khoa hoc chua bai hoc nay — truoc day
+// doc/ghi hoi dap theo bai KHONG kiem enroll gi ca, bat ky ai da dang nhap deu doc duoc Q&A
+// cua bat ky bai tra phi nao (kha viec ghi con te hon: tao duoc bai hoi dap gan vao bai chua tung
+// hoc). Handler anh xa sang 403, dung mau voi ErrNoteNotEnrolled (note_service.go).
+var ErrDiscussionNotEnrolled = errors.New("not enrolled in the course containing this lesson")
+
 type DiscussionServiceInterface interface {
 	CreatePost(ctx context.Context, userID uuid.UUID, req dto.CreateForumPostDTO) (*dto.ForumPostResponseDTO, error)
 	GetPostBySlug(ctx context.Context, slug string, userID *uuid.UUID) (*dto.ForumPostDetailResponseDTO, error)
 	ListPosts(ctx context.Context, category string, page, pageSize int, userID *uuid.UUID) (*dto.ForumPostListResponseDTO, error)
 	// ListPostsByLesson (Phase 1 §5): hoi dap gan voi MOT bai hoc cu the — GET
 	// /lessons/:lessonId/discussions, tra CUNG SHAPE voi ListPosts.
+	//
+	// R7: userID BAT BUOC phai co gia tri (route da qua AuthMiddleware) va PHAI la nguoi da
+	// enroll khoa hoc chua lessonID — xem ErrDiscussionNotEnrolled/ErrDiscussionLessonNotFound.
 	ListPostsByLesson(ctx context.Context, lessonID uuid.UUID, page, pageSize int, userID *uuid.UUID) (*dto.ForumPostListResponseDTO, error)
 	AddComment(ctx context.Context, postSlug string, userID uuid.UUID, req dto.CreateForumCommentDTO) (*dto.ForumCommentResponseDTO, error)
 	VoteDiscussion(ctx context.Context, discussionID, userID uuid.UUID, voteType string) error
@@ -25,14 +40,50 @@ type DiscussionServiceInterface interface {
 }
 
 type DiscussionService struct {
-	repo repository.DiscussionRepositoryInterface
+	repo           repository.DiscussionRepositoryInterface
+	enrollmentRepo repository.EnrollmentRepositoryInterface
 }
 
-func NewDiscussionService(repo repository.DiscussionRepositoryInterface) *DiscussionService {
-	return &DiscussionService{repo: repo}
+func NewDiscussionService(repo repository.DiscussionRepositoryInterface, enrollmentRepo repository.EnrollmentRepositoryInterface) *DiscussionService {
+	return &DiscussionService{repo: repo, enrollmentRepo: enrollmentRepo}
+}
+
+// requireEnrolledInLessonCourse (R7): dung CHUNG mot ham cho ca doc (ListPostsByLesson) va ghi
+// (CreatePost khi co lesson_id) — GetCourseIDByLessonID tra loi "lesson not found in any course"
+// khi lessonID khong ton tai HOAC section chua no da bi xoa mem (cung logic voi
+// NoteService.CreateNote), nen mot lan goi nay dong thoi tra loi ca "lesson_id co ton tai/thuoc
+// khoa nao khong" lan "user co enroll khoa do khong" — khong can hai buoc rieng.
+func (s *DiscussionService) requireEnrolledInLessonCourse(ctx context.Context, userID, lessonID uuid.UUID) error {
+	courseID, err := s.enrollmentRepo.GetCourseIDByLessonID(ctx, lessonID)
+	if err != nil {
+		return ErrDiscussionLessonNotFound
+	}
+	enrollment, err := s.enrollmentRepo.GetByUserAndCourse(ctx, userID, courseID)
+	if err != nil {
+		return err
+	}
+	if enrollment == nil {
+		return ErrDiscussionNotEnrolled
+	}
+	return nil
 }
 
 func (s *DiscussionService) CreatePost(ctx context.Context, userID uuid.UUID, req dto.CreateForumPostDTO) (*dto.ForumPostResponseDTO, error) {
+	// R7: kiem TRUOC khi sinh slug/tao ban ghi — mot bai hoi dap gan vao lesson_id khong ton tai
+	// truoc day roi thang xuong FK constraint cua Postgres, tra ve 500 tho qua err.Error(); mot
+	// bai gan vao bai hoc CUA KHOA MA USER CHUA ENROLL truoc day tao duoc binh thuong.
+	var lessonID *uuid.UUID
+	if req.LessonID != nil && *req.LessonID != "" {
+		parsed, err := uuid.Parse(*req.LessonID)
+		if err != nil {
+			return nil, errors.New("invalid lesson_id")
+		}
+		if err := s.requireEnrolledInLessonCourse(ctx, userID, parsed); err != nil {
+			return nil, err
+		}
+		lessonID = &parsed
+	}
+
 	slug, err := utils.GenerateUniqueSlug(req.Title, func(candidate string) (bool, error) {
 		return s.repo.SlugExists(ctx, candidate)
 	})
@@ -46,13 +97,7 @@ func (s *DiscussionService) CreatePost(ctx context.Context, userID uuid.UUID, re
 		Content:  req.Content,
 		Category: &req.Category,
 		Slug:     &slug,
-	}
-	if req.LessonID != nil && *req.LessonID != "" {
-		lessonID, err := uuid.Parse(*req.LessonID)
-		if err != nil {
-			return nil, errors.New("invalid lesson_id")
-		}
-		post.LessonID = &lessonID
+		LessonID: lessonID,
 	}
 
 	if err := s.repo.CreatePost(ctx, post); err != nil {
@@ -146,6 +191,18 @@ func (s *DiscussionService) ListPosts(ctx context.Context, category string, page
 }
 
 func (s *DiscussionService) ListPostsByLesson(ctx context.Context, lessonID uuid.UUID, page, pageSize int, userID *uuid.UUID) (*dto.ForumPostListResponseDTO, error) {
+	// R7: route nay da qua AuthMiddleware (router/discussion_router.go) nen userID luon co gia
+	// tri o request that — kiem tuong minh o day de service TU BAO VE minh, khong phu thuoc vao
+	// dung mot middleware dung o dung route (mot test/route khac goi thang service se khong con
+	// vo tinh bo qua kiem tra). Truoc ban va nay: bat ky ai da dang nhap deu doc duoc Q&A cua
+	// bat ky bai tra phi nao, khong can enroll.
+	if userID == nil {
+		return nil, ErrDiscussionNotEnrolled
+	}
+	if err := s.requireEnrolledInLessonCourse(ctx, *userID, lessonID); err != nil {
+		return nil, err
+	}
+
 	if page < 1 {
 		page = 1
 	}

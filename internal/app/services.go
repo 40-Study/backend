@@ -412,7 +412,9 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Wallet: service.NewWalletService(repos.Wallet, repos.TeacherProfile),
 
 		// ===== Discussion Forum =====
-		Discussion: service.NewDiscussionService(repos.Discussion),
+		// R7 (code-reviewer-260919-1557): repos.Enrollment them vao de kiem enroll/lesson_id
+		// truoc khi doc/ghi hoi dap theo bai — xem DiscussionService.requireEnrolledInLessonCourse.
+		Discussion: service.NewDiscussionService(repos.Discussion, repos.Enrollment),
 		// ===== Note (Phase 1 §3) =====
 		Note: service.NewNoteService(repos.Note, repos.Enrollment),
 
