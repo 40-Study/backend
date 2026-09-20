@@ -100,3 +100,17 @@ func TestGetOwnedUpload_KhongTonTai_KhongPhaiLoiQuyen(t *testing.T) {
 		t.Fatalf("upload khong ton tai phai la loi not-found, khong phai 403: %v", err)
 	}
 }
+
+// TestVideoUploadDeleteUpload_KhongPhaiChu_BoQuaKhongXoa (R6, code-reviewer-260919-1557):
+// DeleteUpload truoc ban va nay KHONG nhan userID nao ca — bat ky ai biet upload_id (vi du qua
+// content.VideoURL bi client tu dat) deu xoa duoc file/DB row cua nguoi khac. svc duoc dung voi
+// storage=nil (giong moi test khac trong file nay): neu kiem chu so huu bi bo qua, DeleteUpload
+// se di tiep toi s.storage.DeleteObject tren storage=nil va PANIC — tuc la neu ai do go bo dieu
+// kien ownerUserID, test nay se do bang panic (khong the xanh gia), khong chi bang assertion.
+func TestVideoUploadDeleteUpload_KhongPhaiChu_BoQuaKhongXoa(t *testing.T) {
+	owner, stranger := uuid.New(), uuid.New()
+	svc, uploadID := newOwnerTestService(owner)
+	if err := svc.DeleteUpload(context.Background(), uploadID, stranger); err != nil {
+		t.Fatalf("nguoi la goi DeleteUpload phai duoc bo qua em lang (khong loi), nhan: %v", err)
+	}
+}
