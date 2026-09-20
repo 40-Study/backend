@@ -292,8 +292,14 @@ func (r *EnrollmentRepository) GetLessonIDsByCourseID(ctx context.Context, cours
 	err := r.db.WithContext(ctx).
 		Model(&model.Lesson{}).
 		Select("lessons.id").
+		// R3 (code-reviewer-260919-1557): Lesson khong co cot deleted_at (soft-delete cua GORM
+		// chi tu them dieu kien cho MODEL CHINH cua query, khong tu lan sang bang JOIN), va
+		// SectionRepository.Delete la xoa MEM — chuong da xoa van con dong trong `sections` voi
+		// deleted_at != NULL. Khong loc thi bai cua chuong da xoa van nam trong LessonOrder, khoa
+		// bai dau chuong ke tiep boi previous_incomplete vinh vien (hoc vien khong the hoan
+		// thanh mot bai thuoc chuong da xoa vi GetCourseIDByLessonID da loc deleted_at rieng).
 		Joins("JOIN sections ON sections.id = lessons.section_id").
-		Where("sections.course_id = ?", courseID).
+		Where("sections.course_id = ? AND sections.deleted_at IS NULL", courseID).
 		Order("sections.display_order ASC, lessons.display_order ASC").
 		Pluck("lessons.id", &ids).Error
 	return ids, err
@@ -315,8 +321,9 @@ func (r *EnrollmentRepository) GetLessonOrderInfoByCourseID(ctx context.Context,
 	err := r.db.WithContext(ctx).
 		Model(&model.Lesson{}).
 		Select("lessons.id AS id, lessons.is_preview AS is_preview").
+		// R3: xem chu thich o GetLessonIDsByCourseID — cung mot ly do, phai loc dong y het.
 		Joins("JOIN sections ON sections.id = lessons.section_id").
-		Where("sections.course_id = ?", courseID).
+		Where("sections.course_id = ? AND sections.deleted_at IS NULL", courseID).
 		Order("sections.display_order ASC, lessons.display_order ASC").
 		Scan(&rows).Error
 	return rows, err
@@ -514,8 +521,10 @@ func (r *EnrollmentRepository) CountTotalMandatory(ctx context.Context, courseID
 	var count int64
 	err := r.db.WithContext(ctx).
 		Model(&model.Lesson{}).
+		// R3: xem chu thich o GetLessonIDsByCourseID — khong loc thi bai cua chuong da xoa van
+		// bi dem vao mau so, progress_percentage khong bao gio dat 100%.
 		Joins("JOIN sections ON sections.id = lessons.section_id").
-		Where("sections.course_id = ? AND lessons.is_mandatory = true", courseID).
+		Where("sections.course_id = ? AND sections.deleted_at IS NULL AND lessons.is_mandatory = true", courseID).
 		Count(&count).Error
 	return count, err
 }
