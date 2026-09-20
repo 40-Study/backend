@@ -92,6 +92,10 @@ func (f *fakeEnrollmentRepoWatched) SumWatchedSecondsByEnrollmentIDs(ctx context
 	return f.watched, nil
 }
 
+func (f *fakeEnrollmentRepoWatched) GetPendingAssignmentsByCourseIDs(ctx context.Context, userID uuid.UUID, courseIDs []uuid.UUID) (map[uuid.UUID][]repository.PendingAssignmentInfo, error) {
+	return map[uuid.UUID][]repository.PendingAssignmentInfo{}, nil
+}
+
 func (f *fakeEnrollmentRepoWatched) GetCourseIDByLessonID(ctx context.Context, lessonID uuid.UUID) (uuid.UUID, error) {
 	return f.courseID, nil
 }
