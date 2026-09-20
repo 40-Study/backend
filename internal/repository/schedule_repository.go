@@ -302,7 +302,7 @@ func (r *ScheduleRepository) GetStudentClassIDs(ctx context.Context, studentID u
 	var ids []uuid.UUID
 	err := r.db.WithContext(ctx).
 		Table("student_classes").
-		Where("student_id = ? AND deleted_at IS NULL", studentID).
+		Where("student_id = ?", studentID).
 		Pluck("class_id", &ids).Error
 	return ids, err
 }
@@ -311,7 +311,7 @@ func (r *ScheduleRepository) GetTeacherClassIDs(ctx context.Context, teacherID u
 	var ids []uuid.UUID
 	err := r.db.WithContext(ctx).
 		Table("teacher_classes").
-		Where("teacher_id = ? AND deleted_at IS NULL", teacherID).
+		Where("teacher_id = ?", teacherID).
 		Pluck("class_id", &ids).Error
 	return ids, err
 }

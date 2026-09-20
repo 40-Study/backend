@@ -19,7 +19,7 @@ type Quiz struct {
 	Description    *string         `gorm:"type:text" json:"description,omitempty"`
 	TimeLimitMins  *int            `gorm:"column:time_limit_minutes" json:"time_limit_minutes,omitempty"`
 	PassPercentage decimal.Decimal `gorm:"type:decimal(5,2);default:70.00" json:"pass_percentage"`
-	MaxAttempts    *int            `gorm:"default:3" json:"max_attempts,omitempty"`
+	MaxAttempts    *int            `gorm:"default:5" json:"max_attempts,omitempty"`
 
 	// Quiz trigger type
 	// 'manual' = giáo viên trigger thủ công trong live

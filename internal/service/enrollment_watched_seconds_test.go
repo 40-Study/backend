@@ -192,7 +192,7 @@ func (f *fakeEnrollmentRepoWatched) CountTotalMandatory(ctx context.Context, cou
 	return 0, nil
 }
 
-func (f *fakeEnrollmentRepoWatched) UpdateEnrollmentProgress(ctx context.Context, enrollmentID uuid.UUID, progress decimal.Decimal) error {
+func (f *fakeEnrollmentRepoWatched) UpdateEnrollmentProgress(ctx context.Context, enrollmentID uuid.UUID, progress decimal.Decimal, completedLessons, totalLessons int, lastAccessedAt time.Time) error {
 	return nil
 }
 

@@ -215,12 +215,20 @@ func (s *EnrollmentService) GetMyEnrollments(ctx context.Context, userID uuid.UU
 	}
 
 	enrollmentIDs := make([]uuid.UUID, len(enrollments))
+	courseIDs := make([]uuid.UUID, len(enrollments))
 	for i := range enrollments {
 		enrollmentIDs[i] = enrollments[i].ID
+		courseIDs[i] = enrollments[i].CourseID
 	}
 	// Khong nuot loi: neu khong cong don duoc thoi gian xem thi tra loi that, vi web dung
 	// truong nay de hien thi chi so "thoi gian hoc" cho nguoi dung.
 	watchedByEnrollment, err := s.enrollmentRepo.SumWatchedSecondsByEnrollmentIDs(ctx, enrollmentIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Pending assignments: mot cau query cho TAT CA khoa (chan N+1).
+	pendingByCourse, err := s.enrollmentRepo.GetPendingAssignmentsByCourseIDs(ctx, userID, courseIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -237,6 +245,8 @@ func (s *EnrollmentService) GetMyEnrollments(ctx context.Context, userID uuid.UU
 		if enrollments[i].Course.Category != nil {
 			d.CourseCategory = enrollments[i].Course.Category.Name
 		}
+		// Pending assignments cho khoa nay.
+		d.PendingAssignments = toPendingAssignmentDTOs(pendingByCourse[enrollments[i].CourseID])
 		result[i] = *d
 	}
 
@@ -769,10 +779,11 @@ func (s *EnrollmentService) finishLessonProgressStateUpdate(
 	if err := s.recalculateProgress(ctx, enrollment); err != nil {
 		return nil, err
 	}
-	return toLessonProgressStateDTO(progress, nextUnlocked), nil
+	courseCompleted := enrollment.ProgressPercent.Equal(decimal.NewFromInt(100))
+	return toLessonProgressStateDTO(progress, nextUnlocked, courseCompleted), nil
 }
 
-func toLessonProgressStateDTO(p *model.LessonProgress, nextUnlocked bool) *dto.LessonProgressStateDTO {
+func toLessonProgressStateDTO(p *model.LessonProgress, nextUnlocked bool, courseCompleted bool) *dto.LessonProgressStateDTO {
 	watchedPct, _ := p.WatchedPct.Float64()
 	out := &dto.LessonProgressStateDTO{
 		LessonID:            p.LessonID,
@@ -781,6 +792,7 @@ func toLessonProgressStateDTO(p *model.LessonProgress, nextUnlocked bool) *dto.L
 		WatchedPct:          watchedPct,
 		LastPositionSeconds: p.LastPositionSeconds,
 		NextLessonUnlocked:  nextUnlocked,
+		CourseCompleted:     courseCompleted,
 	}
 	if p.CompletedAt != nil {
 		// .UTC() BAT BUOC: Format voi layout "...15:04:05Z" chi la mot CHU CAI 'Z' theo dung nghia
@@ -808,14 +820,17 @@ func (s *EnrollmentService) recalculateProgress(ctx context.Context, enrollment 
 		progressPercent = decimal.NewFromInt(completed).Mul(decimal.NewFromInt(100)).Div(decimal.NewFromInt(total))
 	}
 
+	now := time.Now()
 	enrollment.ProgressPercent = progressPercent
-	if err := s.enrollmentRepo.UpdateEnrollmentProgress(ctx, enrollment.ID, progressPercent); err != nil {
+	enrollment.CompletedLessons = int(completed)
+	enrollment.TotalLessons = int(total)
+	enrollment.LastAccessedAt = &now
+	if err := s.enrollmentRepo.UpdateEnrollmentProgress(ctx, enrollment.ID, progressPercent, int(completed), int(total), now); err != nil {
 		return err
 	}
 
 	// Auto-complete enrollment when 100%
 	if progressPercent.Equal(decimal.NewFromInt(100)) {
-		now := time.Now()
 		enrollment.CompletedAt = &now
 		if err := s.enrollmentRepo.Update(ctx, enrollment); err != nil {
 			return err
@@ -823,6 +838,27 @@ func (s *EnrollmentService) recalculateProgress(ctx context.Context, enrollment 
 	}
 
 	return nil
+}
+
+// toPendingAssignmentDTOs chuyen doi tu repository type sang DTO.
+func toPendingAssignmentDTOs(infos []repository.PendingAssignmentInfo) []dto.PendingAssignmentDTO {
+	if len(infos) == 0 {
+		return []dto.PendingAssignmentDTO{}
+	}
+	result := make([]dto.PendingAssignmentDTO, len(infos))
+	for i, info := range infos {
+		result[i] = dto.PendingAssignmentDTO{
+			ID:         info.ID,
+			Title:      info.Title,
+			CourseName: info.CourseName,
+			LessonID:   info.LessonID,
+		}
+		if info.EndTime != nil {
+			formatted := info.EndTime.UTC().Format(time.RFC3339)
+			result[i].DueDate = &formatted
+		}
+	}
+	return result
 }
 
 // setWatchedSeconds gan WatchedSeconds cho mot DTO ghi danh.
@@ -852,11 +888,13 @@ func sumWatchedSeconds(progresses []model.LessonProgress) int {
 
 func (s *EnrollmentService) toEnrollmentResponseDTO(enrollment *model.Enrollment) *dto.EnrollmentResponseDTO {
 	resp := &dto.EnrollmentResponseDTO{
-		ID:              enrollment.ID,
-		UserID:          enrollment.UserID,
-		CourseID:        enrollment.CourseID,
-		EnrolledAt:      enrollment.EnrolledAt.Format("2006-01-02T15:04:05Z"),
-		ProgressPercent: enrollment.ProgressPercent,
+		ID:               enrollment.ID,
+		UserID:           enrollment.UserID,
+		CourseID:         enrollment.CourseID,
+		EnrolledAt:       enrollment.EnrolledAt.Format("2006-01-02T15:04:05Z"),
+		ProgressPercent:  enrollment.ProgressPercent,
+		CompletedLessons: enrollment.CompletedLessons,
+		TotalLessons:     enrollment.TotalLessons,
 	}
 	if enrollment.CompletedAt != nil {
 		formatted := enrollment.CompletedAt.Format("2006-01-02T15:04:05Z")

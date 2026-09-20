@@ -7,6 +7,15 @@ import (
 
 // Enrollment DTOs
 
+// PendingAssignmentDTO: bai tap chua hoan thanh (chua co submission accepted).
+type PendingAssignmentDTO struct {
+	ID         uuid.UUID  `json:"id"`
+	Title      string     `json:"title"`
+	DueDate    *string    `json:"due_date,omitempty"`
+	CourseName string     `json:"course_name"`
+	LessonID   *uuid.UUID `json:"lesson_id,omitempty"`
+}
+
 type EnrollmentResponseDTO struct {
 	ID              uuid.UUID       `json:"id"`
 	UserID          uuid.UUID       `json:"user_id"`
@@ -24,7 +33,10 @@ type EnrollmentResponseDTO struct {
 	// lesson_progress.video_watched_seconds (du lieu that do trinh phat video ghi len qua
 	// PUT /lessons/:lessonId/progress). Truoc day web hardcode "1h 45m" o trang
 	// "Khoa hoc cua toi" vi khong co truong nay.
-	WatchedSeconds int `json:"watched_seconds"`
+	WatchedSeconds     int                    `json:"watched_seconds"`
+	CompletedLessons   int                    `json:"completed_lessons"`
+	TotalLessons       int                    `json:"total_lessons"`
+	PendingAssignments []PendingAssignmentDTO `json:"pending_assignments"`
 }
 
 type EnrollmentDetailDTO struct {
@@ -139,8 +151,11 @@ type LessonProgressStateDTO struct {
 	LastPositionSeconds int      `json:"last_position_seconds"`
 	// completed_at: KHONG omitempty — contract ghi ro `"completed_at": "...|null"`, va web khai
 	// `completed_at: string | null`. Thieu truong (omitempty) khac voi null o phia client.
-	CompletedAt        *string   `json:"completed_at"`
-	NextLessonUnlocked bool      `json:"next_lesson_unlocked"`
+	CompletedAt        *string `json:"completed_at"`
+	NextLessonUnlocked bool    `json:"next_lesson_unlocked"`
+	// CourseCompleted: true khi day la bai cuoi va khoa hoc dat 100% sau khi complete bai nay.
+	// FE dung de hien man hinh chuc mung hoan thanh khoa hoc.
+	CourseCompleted bool `json:"course_completed"`
 }
 
 type LessonProgressResponseDTO struct {

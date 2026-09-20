@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -84,10 +85,14 @@ type EnrollmentRepositoryInterface interface {
 	WithLessonProgressLock(ctx context.Context, userID, lessonID uuid.UUID, fn func(repo EnrollmentRepositoryInterface, locked *model.LessonProgress) error) error
 	CountCompletedMandatory(ctx context.Context, enrollmentID uuid.UUID) (int64, error)
 	CountTotalMandatory(ctx context.Context, courseID uuid.UUID) (int64, error)
-	UpdateEnrollmentProgress(ctx context.Context, enrollmentID uuid.UUID, progress decimal.Decimal) error
+	UpdateEnrollmentProgress(ctx context.Context, enrollmentID uuid.UUID, progress decimal.Decimal, completedLessons, totalLessons int, lastAccessedAt time.Time) error
 	// SumWatchedSecondsByEnrollmentIDs cong don video_watched_seconds theo tung enrollment
 	// bang DUNG MOT cau GROUP BY (tranh N+1 khi liet ke danh sach ghi danh).
 	SumWatchedSecondsByEnrollmentIDs(ctx context.Context, enrollmentIDs []uuid.UUID) (map[uuid.UUID]int, error)
+	// GetPendingAssignmentsByCourseIDs tra ve cac assignment chua hoan thanh (chua co submission
+	// accepted) cho MOT nguoi dung trong NHIEU khoa, nhom theo course_id. Tranh N+1 khi liet ke
+	// danh sach ghi danh.
+	GetPendingAssignmentsByCourseIDs(ctx context.Context, userID uuid.UUID, courseIDs []uuid.UUID) (map[uuid.UUID][]PendingAssignmentInfo, error)
 }
 
 type EnrollmentRepository struct {
@@ -306,6 +311,16 @@ type LessonOrderInfo struct {
 	IsPreview bool
 }
 
+// PendingAssignmentInfo: bai tap chua hoan thanh cua nguoi dung trong mot khoa.
+type PendingAssignmentInfo struct {
+	ID         uuid.UUID
+	CourseID   uuid.UUID
+	Title      string
+	EndTime    *time.Time
+	CourseName string
+	LessonID   *uuid.UUID
+}
+
 // GetLessonOrderInfoByCourseID (Phase 1 §2): xem comment tai interface. Cung JOIN nhu
 // GetLessonIDsByCourseID nhung lay them is_preview trong MOT truy van, thay vi query rieng
 // cho tung bai — logic khoa tuan tu can nhin thay CA chuoi bai (id + is_preview) cung luc de
@@ -520,9 +535,81 @@ func (r *EnrollmentRepository) CountTotalMandatory(ctx context.Context, courseID
 	return count, err
 }
 
-func (r *EnrollmentRepository) UpdateEnrollmentProgress(ctx context.Context, enrollmentID uuid.UUID, progress decimal.Decimal) error {
+func (r *EnrollmentRepository) UpdateEnrollmentProgress(ctx context.Context, enrollmentID uuid.UUID, progress decimal.Decimal, completedLessons, totalLessons int, lastAccessedAt time.Time) error {
 	return r.db.WithContext(ctx).
 		Model(&model.Enrollment{}).
 		Where("id = ?", enrollmentID).
-		Update("progress_percentage", progress).Error
+		Updates(map[string]interface{}{
+			"progress_percentage": progress,
+			"completed_lessons":   completedLessons,
+			"total_lessons":       totalLessons,
+			"last_accessed_at":    &lastAccessedAt,
+		}).Error
+}
+
+// GetPendingAssignmentsByCourseIDs tra ve cac bai tap chua hoan thanh cho mot nguoi dung
+// trong nhieu khoa, nhom theo course_id. Assignment duoc coi la "pending" khi:
+// - is_published = true
+// - Nguoi dung CHUA co submission nao verdict = 'accepted'
+//
+// Path: Assignment -> Class (class.course_id) HOAC Assignment -> Session (session.course_id
+// hoac session.class_id -> class.course_id).
+func (r *EnrollmentRepository) GetPendingAssignmentsByCourseIDs(ctx context.Context, userID uuid.UUID, courseIDs []uuid.UUID) (map[uuid.UUID][]PendingAssignmentInfo, error) {
+	result := make(map[uuid.UUID][]PendingAssignmentInfo)
+	if len(courseIDs) == 0 {
+		return result, nil
+	}
+
+	// Query: tim tat ca assignment published ma user chua co accepted submission,
+	// thuoc ve cac course trong danh sach (qua class hoac session).
+	var rows []struct {
+		ID         uuid.UUID  `gorm:"column:id"`
+		CourseID   uuid.UUID  `gorm:"column:course_id"`
+		Title      string     `gorm:"column:title"`
+		EndTime    *time.Time `gorm:"column:end_time"`
+		CourseName string     `gorm:"column:course_name"`
+		LessonID   *uuid.UUID `gorm:"column:lesson_id"`
+	}
+
+	// ponytail: COALESCE 3 nguon course_id (class truc tiep, session truc tiep, session->class)
+	// trong mot subquery de tranh 3 LEFT JOIN rieng biet.
+	// lesson_id: session.lesson_content_id -> lesson_contents.lesson_id
+	err := r.db.WithContext(ctx).
+		Table("assignments a").
+		Select(`a.id, a.title, a.end_time,
+			COALESCE(c.course_id, s.course_id, sc.course_id) AS course_id,
+			co.title AS course_name,
+			lc.lesson_id AS lesson_id`).
+		Joins("LEFT JOIN classes c ON a.class_id = c.id").
+		Joins("LEFT JOIN livestream_sessions s ON a.session_id = s.id").
+		Joins("LEFT JOIN classes sc ON s.class_id = sc.id").
+		Joins("LEFT JOIN courses co ON co.id = COALESCE(c.course_id, s.course_id, sc.course_id)").
+		Joins("LEFT JOIN lesson_contents lc ON lc.id = s.lesson_content_id").
+		Where("a.is_published = ?", true).
+		Where("COALESCE(c.course_id, s.course_id, sc.course_id) IN ?", courseIDs).
+		Where(`NOT EXISTS (
+			SELECT 1 FROM submissions sub
+			WHERE sub.assignment_id = a.id
+			  AND sub.user_id = ?
+			  AND sub.verdict = 'accepted'
+		)`, userID).
+		Order("a.end_time ASC NULLS LAST").
+		Scan(&rows).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		result[row.CourseID] = append(result[row.CourseID], PendingAssignmentInfo{
+			ID:         row.ID,
+			CourseID:   row.CourseID,
+			Title:      row.Title,
+			EndTime:    row.EndTime,
+			CourseName: row.CourseName,
+			LessonID:   row.LessonID,
+		})
+	}
+
+	return result, nil
 }
