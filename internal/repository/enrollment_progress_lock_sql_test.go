@@ -30,6 +30,13 @@ func dryRunEnrollmentRepo(t *testing.T) (*EnrollmentRepository, *string) {
 	if err := db.Callback().Query().After("gorm:query").Register("test:capture_query", capture); err != nil {
 		t.Fatal(err)
 	}
+	// R3 (code-reviewer-260919-1557): .Scan(&dest) (dung boi GetLessonOrderInfoByCourseID) DI
+	// QUA db.Rows() -> callbacks.Row(), KHONG qua callbacks.Query() nhu Find/Pluck/Count —
+	// thieu dong nay thi *captured van la chuoi RONG cho moi truy van dung Scan(), va test se
+	// bao "SQL thieu loc..." du cau SQL that su (in ra qua GORM logger luc DryRun) da dung.
+	if err := db.Callback().Row().After("gorm:row").Register("test:capture_row", capture); err != nil {
+		t.Fatal(err)
+	}
 	return &EnrollmentRepository{db: db.Session(&gorm.Session{DryRun: true})}, &captured
 }
 
