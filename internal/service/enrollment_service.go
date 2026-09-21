@@ -352,7 +352,7 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 		return nil, err
 	}
 
-	serverDuration, err := s.resolveServerVideoDuration(ctx, lessonID)
+	serverDuration, hasVideo, err := s.resolveServerVideoDuration(ctx, lessonID)
 	if err != nil {
 		return nil, err
 	}
@@ -363,7 +363,7 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 	var saved *model.LessonProgress
 	write := func() error {
 		return s.enrollmentRepo.WithLessonProgressLock(ctx, userID, lessonID, func(repo repository.EnrollmentRepositoryInterface, progress *model.LessonProgress) error {
-			p, err := s.writeLessonProgressLocked(ctx, repo, progress, userID, lessonID, enrollment, req, serverDuration, minVideoPct, now)
+			p, err := s.writeLessonProgressLocked(ctx, repo, progress, userID, lessonID, enrollment, req, serverDuration, minVideoPct, hasVideo, now)
 			if err != nil {
 				return err
 			}
@@ -398,6 +398,7 @@ func (s *EnrollmentService) writeLessonProgressLocked(
 	enrollment *model.Enrollment,
 	req dto.UpdateLessonProgressDTO,
 	serverDuration, minVideoPct int,
+	hasVideo bool,
 	now time.Time,
 ) (*model.LessonProgress, error) {
 	// ——— Hop nhat khoang da phat (chong tua) ———
@@ -471,7 +472,10 @@ func (s *EnrollmentService) writeLessonProgressLocked(
 
 		// C-2 (review vòng 2, BLOCKER): !usingFallbackDuration là điều kiện "mẫu số đáng tin" —
 		// xem resolveLessonStatus. Vẫn ghi watched_pct/played_ranges như cũ, chỉ KHÔNG cấp completed.
-		status := resolveLessonStatus("not_started", req.Status, progress.WatchedPct, minVideoPct, !usingFallbackDuration)
+		// R2 (code-reviewer-260919-1557): hasVideo tách bài "có video nhưng chưa biết duration"
+		// (giữ nguyên chặn) khỏi bài "không có video nào" (server không có cách nào tự chốt, phải
+		// tin status client gửi).
+		status := resolveLessonStatus("not_started", req.Status, progress.WatchedPct, minVideoPct, !usingFallbackDuration, hasVideo)
 		progress.Status = status
 		if status == "completed" {
 			progress.CompletedAt = &now
@@ -520,7 +524,7 @@ func (s *EnrollmentService) writeLessonProgressLocked(
 	}
 	// C-2 (review vòng 2, BLOCKER): xem chú thích ở nhánh INSERT phía trên — cùng một điều kiện,
 	// hai nhánh ghi phải luật giống nhau.
-	status := resolveLessonStatus(progress.Status, req.Status, watchedPct, minVideoPct, !usingFallbackDuration)
+	status := resolveLessonStatus(progress.Status, req.Status, watchedPct, minVideoPct, !usingFallbackDuration, hasVideo)
 	if status != progress.Status {
 		updates["status"] = status
 		if status == "completed" && progress.CompletedAt == nil {
@@ -580,14 +584,24 @@ func (s *EnrollmentService) writeLessonProgressLocked(
 // nhưng không repository/service nào khác đọc/ghi; tra theo đúng quyết định review dù trong thực
 // tế gần như luôn trả 0). Trả 0 khi CẢ HAI đều không có duration dương (bài chưa gắn content
 // video nào) — lúc đó caller (UpdateLessonProgress) mới được rơi về duration_seconds CLIENT khai.
-func (s *EnrollmentService) resolveServerVideoDuration(ctx context.Context, lessonID uuid.UUID) (int, error) {
+// hasVideo tra ve true khi bai co it nhat mot content Type=="video" — bat ke content do da
+// biet duration hay chua. Dung de phan biet hai truong hop trustedDuration=false rat khac nhau
+// (R2, review report code-reviewer-260919-1557): (a) bai CO video nhung server chua biet duration
+// (con duong C-2/luat 2b o tren, KHONG duoc dong lai — do la ban va chong gian lan), va (b) bai
+// KHONG co video nao (chi exercise/livestream) — server se KHONG BAO GIO tu tinh duoc watched_pct
+// cho truong hop nay nen phai tin status client gui len, neu khong khoa tuan tu se ket vinh vien
+// o bai (a) hoac (b) tuy loai content.
+func (s *EnrollmentService) resolveServerVideoDuration(ctx context.Context, lessonID uuid.UUID) (duration int, hasVideo bool, err error) {
 	contents, err := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	for _, c := range contents {
-		if c.Type == "video" && c.Duration > 0 {
-			return c.Duration, nil
+		if c.Type == "video" {
+			hasVideo = true
+			if c.Duration > 0 {
+				return c.Duration, true, nil
+			}
 		}
 	}
 
@@ -605,14 +619,18 @@ func (s *EnrollmentService) resolveServerVideoDuration(ctx context.Context, less
 	// Tự chữa ở ĐÂY thay vì lúc tạo: đây là thời điểm ĐỌC duration (lúc ghi tiến độ), lúc đó
 	// video đã xử lý xong nên không còn race — và nó chữa được cả những bài đã tạo từ trước.
 	if healed := s.healDurationFromVideoUpload(ctx, contents); healed > 0 {
-		return healed, nil
+		return healed, hasVideo, nil
 	}
 
 	legacy, err := s.lessonRepo.GetLegacyVideoDurationByLessonID(ctx, lessonID)
 	if err != nil {
-		return 0, err
+		return 0, hasVideo, err
 	}
-	return legacy, nil
+	if legacy > 0 {
+		// Bang legacy chi ton tai video duration khi thuc su co video — coi nhu hasVideo.
+		hasVideo = true
+	}
+	return legacy, hasVideo, nil
 }
 
 // healDurationFromVideoUpload chữa lesson_contents.duration = 0 bằng thời lượng thật của video
@@ -698,7 +716,17 @@ const defaultMinVideoPct = 90
 // server-truth thì KHÔNG cho watched_pct tự chốt completed; played_ranges/watched_pct vẫn được
 // ghi như thường nên không mất dữ liệu, chỉ khoản "cấp completed" bị giữ lại cho tới khi biết
 // duration thật của video. KHONG phai phép đảo luật 1: current=="completed" vẫn giữ nguyên.
-func resolveLessonStatus(current string, requested *string, watchedPct decimal.Decimal, minVideoPct int, trustedDuration bool) string {
+//
+// LUAT 2c (R2, code-reviewer-260919-1557): trustedDuration=false GOM HAI truong hop rat khac
+// nhau — (a) bai CO content video that nhung server chua biet duration (vi chua co ai dien/chua
+// xu ly xong) — day la duong luat 2b o tren, PHAI giu nguyen chan de khong mo lo hong gian lan
+// duration; va (b) bai KHONG co content video nao (chi exercise/livestream, xem
+// resolveServerVideoDuration) — server se KHONG BAO GIO tu tinh duoc watched_pct cho truong hop
+// nay (khong co video nghia la khong co "watched_pct" nao co y nghia), nen client "completed" la
+// nguon su that DUY NHAT. Neu khong tach hai truong hop, khoa hoc bat sequential se ket vinh vien
+// o bat ky bai nao chi co exercise/livestream (R2). hasVideo phan biet hai truong hop: false =>
+// (b) => chap nhan completed do client gui; true => (a) => giu nguyen luat 3 (tu choi).
+func resolveLessonStatus(current string, requested *string, watchedPct decimal.Decimal, minVideoPct int, trustedDuration bool, hasVideo bool) string {
 	reachedThreshold := trustedDuration && minVideoPct > 0 && watchedPct.GreaterThanOrEqual(decimal.NewFromInt(int64(minVideoPct)))
 
 	next := current
@@ -710,7 +738,12 @@ func resolveLessonStatus(current string, requested *string, watchedPct decimal.D
 		return next
 	}
 	if *requested == "completed" {
-		// Chi nhan khi server cung da ket luan dat nguong. Xem luat 3.
+		if !hasVideo {
+			// Luat 2c(b): khong co video nao de server tu cham — tin client.
+			return "completed"
+		}
+		// Luat 2c(a)/luat 3: co video nhung server chua biet duration — chi nhan khi server
+		// cung da ket luan dat nguong (reachedThreshold, gop vao next o tren).
 		return next
 	}
 	if lessonProgressStatusRank[*requested] >= lessonProgressStatusRank[next] {

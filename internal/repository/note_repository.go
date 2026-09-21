@@ -53,11 +53,17 @@ func (r *NoteRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User
 
 // orderBySort dịch "newest"/"oldest" (contract §3) sang mệnh đề ORDER BY — mặc định "newest"
 // cho bất kỳ giá trị nào khác "oldest" (kể cả rỗng), đúng ý contract "mặc định newest".
+//
+// R5 (code-reviewer-260919-1557): cột PHẢI có tiền tố bảng "user_notes." — ListByCourse khi có
+// sectionID sẽ JOIN "lessons" (cũng có cột created_at), và Postgres từ chối cả câu SELECT với
+// lỗi "column reference \"created_at\" is ambiguous" nếu ORDER BY không nói rõ created_at của
+// bảng nào (500 cho toàn bộ request, không phải sắp xếp sai). Kèm tiebreaker "id" (R13, cùng báo
+// cáo review) để hai ghi chú tạo cùng một mili-giây không đổi chỗ giữa các lần gọi.
 func orderBySort(sort string) string {
 	if sort == "oldest" {
-		return "created_at ASC"
+		return "user_notes.created_at ASC, user_notes.id ASC"
 	}
-	return "created_at DESC"
+	return "user_notes.created_at DESC, user_notes.id DESC"
 }
 
 func (r *NoteRepository) ListByLesson(ctx context.Context, userID, lessonID uuid.UUID, sort string) ([]model.UserNote, error) {

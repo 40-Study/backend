@@ -46,7 +46,11 @@ type VideoUploadServiceInterface interface {
 	ReprocessVideo(ctx context.Context, uploadID, userID uuid.UUID) error // Re-enqueue video for processing
 
 	// Delete
-	DeleteUpload(ctx context.Context, uploadID uuid.UUID) error // Xóa upload và tất cả files liên quan (original, HLS, thumbnail)
+	// R6 (code-reviewer-260919-1557): ownerUserID la nguoi GOI thao tac xoa (actor cua
+	// DeleteContent, khong phai nguoi tao upload) — DeleteUpload CHI thuc su xoa file/DB row khi
+	// upload do CHINH ownerUserID so huu; nguoc lai bo qua (khong loi) de khong lam hong luong
+	// xoa content. Xem chu thich tai implementation.
+	DeleteUpload(ctx context.Context, uploadID, ownerUserID uuid.UUID) error // Xóa upload và tất cả files liên quan (original, HLS, thumbnail) — chỉ khi ownerUserID sở hữu upload đó
 }
 
 type VideoUploadService struct {
@@ -801,14 +805,29 @@ func (s *VideoUploadService) ReprocessVideo(ctx context.Context, uploadID, userI
 	return s.enqueueProcessingTask(ctx, upload, "")
 }
 
-// DeleteUpload xóa upload và tất cả files liên quan trong MinIO
-func (s *VideoUploadService) DeleteUpload(ctx context.Context, uploadID uuid.UUID) error {
+// DeleteUpload xóa upload và tất cả files liên quan trong MinIO.
+//
+// R6 (code-reviewer-260919-1557): trước bản vá này hàm KHÔNG nhận userID nào cả — người gọi DUY
+// NHẤT (LessonContentService.DeleteContent) chỉ kiểm quyền sở hữu BÀI HỌC, rồi lấy upload_id từ
+// content.VideoURL (regex khớp cả URL do CHÍNH client tự đặt qua CreateContent/UpdateContent) và
+// xoá thẳng. Giáo viên A tạo content với video_url trỏ vào upload_id của giáo viên B rồi xoá
+// content là xoá được video/HLS/thumbnail/dòng DB của B. ownerUserID là actor thực sự gọi thao
+// tác xoá — CHỈ xoá khi actor đó chính là chủ upload; khác chủ thì bỏ qua (không lỗi), để luồng
+// xoá content (điều actor CHẮC CHẮN có quyền, vì đã qua requireContentLessonOwnerOrAdmin) không
+// bị chặn bởi một upload_id không thuộc về họ.
+func (s *VideoUploadService) DeleteUpload(ctx context.Context, uploadID, ownerUserID uuid.UUID) error {
 	upload, err := s.uploadRepo.GetUploadByID(ctx, uploadID)
 	if err != nil {
 		return fmt.Errorf("failed to find upload: %w", err)
 	}
 	if upload == nil {
 		return nil // Already deleted or never existed
+	}
+	if upload.UserID != ownerUserID {
+		// Khong phai chu so huu that su cua upload nay — bo qua, KHONG xoa file/DB row cua
+		// nguoi khac. Tra nil (khong loi) vi DeleteContent van phai xoa duoc content cua chinh
+		// actor du video_url tro sai cho.
+		return nil
 	}
 
 	bucket := upload.Bucket

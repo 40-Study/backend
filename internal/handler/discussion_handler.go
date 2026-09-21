@@ -1,11 +1,28 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/service"
+	"study.com/v1/internal/utils"
 )
+
+// mapDiscussionLessonErr (R7, code-reviewer-260919-1557): dung CHUNG cho CreatePost va
+// ListByLesson — cung mot cap loi (lesson khong ton tai / user chua enroll) nen phai anh xa
+// giong nhau o ca hai endpoint, dung mau voi note_handler.go.
+func mapDiscussionLessonErr(c *fiber.Ctx, err error) error {
+	switch {
+	case errors.Is(err, service.ErrDiscussionLessonNotFound):
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "lesson not found"})
+	case errors.Is(err, service.ErrDiscussionNotEnrolled):
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "not enrolled in the course containing this lesson"})
+	default:
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+}
 
 type DiscussionHandler struct {
 	svc service.DiscussionServiceInterface
@@ -27,8 +44,21 @@ func (h *DiscussionHandler) CreatePost(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
+	// R7 (code-reviewer-260919-1557): truoc ban va nay handler CHI BodyParser, khong bao gio
+	// goi ValidateStruct — moi tag validate tren CreateForumPostDTO (required/min/oneof/uuid) la
+	// tag CHET. Cung mau voi category_handler.go/cart_handler.go.
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errs,
+		})
+	}
+
 	post, err := h.svc.CreatePost(c.Context(), userID, req)
 	if err != nil {
+		if errors.Is(err, service.ErrDiscussionLessonNotFound) || errors.Is(err, service.ErrDiscussionNotEnrolled) {
+			return mapDiscussionLessonErr(c, err)
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
@@ -77,7 +107,7 @@ func (h *DiscussionHandler) ListByLesson(c *fiber.Ctx) error {
 
 	result, err := h.svc.ListPostsByLesson(c.Context(), lessonID, page, limit, userID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return mapDiscussionLessonErr(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Discussions retrieved successfully", "data": result})

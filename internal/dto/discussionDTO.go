@@ -10,7 +10,11 @@ import (
 type CreateForumPostDTO struct {
 	Title    string `json:"title" validate:"required,min=3,max=255"`
 	Content  string `json:"content" validate:"required"`
-	Category string `json:"category" validate:"required,oneof=programming design learning-tips project"`
+	// R7 (code-reviewer-260919-1557): "qna" them vao danh sach — day la category MA WEB DA GUI
+	// SAN cho hoi dap theo bai hoc (web/src/components/player/lesson-qna.tsx). Truoc ban va nay
+	// validator KHONG duoc goi (xem handler.CreatePost) nen gia tri nay "chay duoc" nhu mot lo
+	// hong; bat validator len ma khong them "qna" vao day se vo contract dang chay that cua web.
+	Category string `json:"category" validate:"required,oneof=programming design learning-tips project qna"`
 	// LessonID (Phase 1 §5): optional — co mat thi bai dang duoc tao la MOT cau hoi gan voi
 	// bai hoc cu the (hien o panel "Hoi dap" cua bai), khong phai bai dang dien dan chung.
 	LessonID *string `json:"lesson_id" validate:"omitempty,uuid"`

@@ -11,10 +11,10 @@ func TestOrderBySort_MoiGiaTri(t *testing.T) {
 		sort string
 		want string
 	}{
-		{"oldest", "created_at ASC"},
-		{"newest", "created_at DESC"},
-		{"", "created_at DESC"},
-		{"gia-tri-rac", "created_at DESC"},
+		{"oldest", "user_notes.created_at ASC, user_notes.id ASC"},
+		{"newest", "user_notes.created_at DESC, user_notes.id DESC"},
+		{"", "user_notes.created_at DESC, user_notes.id DESC"},
+		{"gia-tri-rac", "user_notes.created_at DESC, user_notes.id DESC"},
 	}
 
 	for _, c := range cases {

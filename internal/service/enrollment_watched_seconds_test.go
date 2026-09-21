@@ -648,7 +648,14 @@ func TestUpdateLessonProgress_GuiStatusThiCapNhatStatus(t *testing.T) {
 		enrollment:     &enrollment,
 		courseID:       uuid.New(),
 	}
-	svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{}, &fakeLessonRepoWatched{}, nil)
+	// R2 (code-reviewer-260919-1557): phan (1) kiem tra dung truong hop "CO video nhung server
+	// chua ro duration" (luat 2c(a) — PHAI tu choi) — content Type="video" voi Duration=0, KHAC
+	// voi content list RONG (nghia la khong co video nao, luat 2c(b) — PHAI chap nhan, xem
+	// TestUpdateLessonProgress_BaiChiCoExercise_ChapNhanCompletedTuClient). Truoc ban va R2,
+	// hai truong hop nay dung chung mot dieu kien nen fixture RONG cu van "tinh co" dung; sau
+	// R2 chung phai duoc phan biet ro trong chinh fixture cua test.
+	svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{},
+		&fakeLessonRepoWatched{contents: []model.LessonContent{{Type: "video", Duration: 0}}}, nil)
 
 	// (1) Client tu gui completed, khong co can cu (played_ranges/duration) => phai bi bo qua.
 	status := "completed"
@@ -760,6 +767,51 @@ func TestUpdateLessonProgress_FallbackDuration_KhongTuChotCompleted(t *testing.T
 	}
 	if existing.Status == "completed" {
 		t.Error("ban ghi bi chot completed — day chinh la lo hong C-2 ma ban va nay dong lai")
+	}
+}
+
+// TestUpdateLessonProgress_BaiChiCoExercise_ChapNhanCompletedTuClient (R2,
+// code-reviewer-260919-1557): bai chi co content Type="exercise" (khong co video nao) —
+// resolveServerVideoDuration tra hasVideo=false. Truoc ban va nay, trustedDuration=false (khong
+// co server duration nao, dung y) khien resolveLessonStatus tu choi status="completed" client
+// gui len giong het truong hop "co video nhung chua ro duration" (C-2) — bai nay se KHONG BAO
+// GIO hoan thanh duoc, khoa hoc bat sequential ket vinh vien ngay tai day. Test nay khang dinh
+// client gui status="completed" cho mot bai nhu vay PHAI duoc chap nhan.
+func TestUpdateLessonProgress_BaiChiCoExercise_ChapNhanCompletedTuClient(t *testing.T) {
+	enrollmentID := uuid.New()
+	enrollment := newEnrollmentWithID(enrollmentID)
+	existing := &model.LessonProgress{
+		EnrollmentID: enrollmentID,
+		Status:       "in_progress",
+	}
+	repo := &fakeEnrollmentRepoWatched{
+		lessonProgress: existing,
+		enrollment:     &enrollment,
+		courseID:       uuid.New(),
+	}
+	// contents chi co "exercise" — khong co "video" nao => hasVideo=false.
+	lessonRepo := &fakeLessonRepoWatched{
+		contents: []model.LessonContent{{Type: "exercise"}},
+	}
+	svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{}, lessonRepo, nil)
+
+	status := "completed"
+	res, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
+		dto.UpdateLessonProgressDTO{Status: &status}, false)
+	if err != nil {
+		t.Fatalf("khong mong doi loi: %v", err)
+	}
+	if res.Status != "completed" {
+		t.Fatalf("status tra ve = %q, mong doi \"completed\" — bai khong co video phai tin status client gui (R2)", res.Status)
+	}
+	if got, _ := repo.updateUpdates["status"].(string); got != "completed" {
+		t.Errorf("cot status trong map UPDATE = %q, mong doi \"completed\"", got)
+	}
+	if _, ok := repo.updateUpdates["completed_at"]; !ok {
+		t.Error("map UPDATE thieu completed_at khi status chuyen sang completed")
+	}
+	if existing.Status != "completed" {
+		t.Errorf("ban ghi gia lap (DB) status = %q, mong doi \"completed\"", existing.Status)
 	}
 }
 
@@ -962,7 +1014,12 @@ func TestUpdateLessonProgress_StatusKhongDuocHaCap(t *testing.T) {
 				enrollment:     &enrollment,
 				courseID:       uuid.New(),
 			}
-			svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{}, &fakeLessonRepoWatched{}, nil)
+			// R2 (code-reviewer-260919-1557): content Type="video" Duration=0 — bai NAY CO
+			// video nhung server chua ro duration (luat 2c(a), PHAI van tu choi client tu gui
+			// completed). Test danh rieng cho bai KHONG co video nao la
+			// TestUpdateLessonProgress_BaiChiCoExercise_ChapNhanCompletedTuClient.
+			svc := NewEnrollmentService(repo, &fakeCourseRepoWatched{},
+				&fakeLessonRepoWatched{contents: []model.LessonContent{{Type: "video", Duration: 0}}}, nil)
 
 			gui := tc.gui
 			res, err := svc.UpdateLessonProgress(context.Background(), uuid.New(), uuid.New(),
