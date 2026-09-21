@@ -41,6 +41,15 @@ type QuizRepositoryInterface interface {
 	GetAttemptsByUserAndQuiz(ctx context.Context, userID, quizID uuid.UUID) ([]model.QuizAttempt, error)
 	GetAttemptsByQuiz(ctx context.Context, quizID uuid.UUID) ([]model.QuizAttempt, error)
 	CountAttemptsByUserAndQuiz(ctx context.Context, userID, quizID uuid.UUID) (int64, error)
+	// CompleteAttemptIfPending (R8, review 260919 — nộp quiz hai lần ghi trùng answers): cập
+	// nhật kết quả chấm điểm của attempt (score/total_points/percentage/is_passed/
+	// time_spent_seconds/completed_at, đọc từ CÁC field tương ứng của `attempt`) VÀ chèn
+	// `answers` vào CÙNG một transaction, với điều kiện `completed_at IS NULL` ngay trên câu
+	// UPDATE — đây là chốt chặn race (so với đọc rồi update riêng lẻ), Postgres tự đảm bảo tính
+	// nguyên tử của UPDATE ... WHERE dù có 2 request chạy đồng thời. updated=false nghĩa là 0
+	// dòng bị ảnh hưởng (attempt đã completed_at != nil từ trước, do request khác nộp trước) —
+	// answers KHÔNG được insert trong trường hợp này; caller phải coi đây là lỗi "đã nộp".
+	CompleteAttemptIfPending(ctx context.Context, attempt *model.QuizAttempt, answers []model.QuizAttemptAnswer) (updated bool, err error)
 
 	// QuizAttemptAnswer
 	CreateAttemptAnswers(ctx context.Context, answers []model.QuizAttemptAnswer) error
@@ -270,6 +279,41 @@ func (r *QuizRepository) GetAttemptWithAnswers(ctx context.Context, id uuid.UUID
 
 func (r *QuizRepository) UpdateAttempt(ctx context.Context, attempt *model.QuizAttempt) error {
 	return r.db.WithContext(ctx).Save(attempt).Error
+}
+
+// CompleteAttemptIfPending: xem chú thích tại interface. Dùng map cho Updates (không dùng
+// struct/Save) vì các field như IsPassed=false hay TimeSpentSecs=0 là giá trị hợp lệ — Updates
+// bằng struct sẽ bỏ qua zero-value, giống lý do UpdateLessonProgressFields (enrollment_repository.go)
+// dùng map. "time_spent_seconds" khớp tên cột thật (model.QuizAttempt.TimeSpentSecs có
+// gorm:"column:time_spent_seconds"), không phải tên field Go.
+func (r *QuizRepository) CompleteAttemptIfPending(ctx context.Context, attempt *model.QuizAttempt, answers []model.QuizAttemptAnswer) (updated bool, err error) {
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.QuizAttempt{}).
+			Where("id = ? AND completed_at IS NULL", attempt.ID).
+			Updates(map[string]interface{}{
+				"score":              attempt.Score,
+				"total_points":       attempt.TotalPoints,
+				"percentage":         attempt.Percentage,
+				"is_passed":          attempt.IsPassed,
+				"time_spent_seconds": attempt.TimeSpentSecs,
+				"completed_at":       attempt.CompletedAt,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			updated = false
+			return nil
+		}
+		updated = true
+		if len(answers) > 0 {
+			if err := tx.Create(&answers).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return updated, err
 }
 
 func (r *QuizRepository) GetAttemptsByUserAndQuiz(ctx context.Context, userID, quizID uuid.UUID) ([]model.QuizAttempt, error) {

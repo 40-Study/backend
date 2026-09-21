@@ -365,9 +365,13 @@ func TestGetAllQuizzes_LocQuizCuaBaiKhoa(t *testing.T) {
 	lockedQuiz := *quizVoiMotCauHoi(lockedLessonID)
 	lockedQuiz.Title = "Quiz cua bai khoa"
 
-	// openQuiz: khong gan LessonID (gan CourseID) — checkLessonQuizAccess hoan toan bo qua
-	// (chi ap dung cho quiz co LessonID), nen luon xuat hien trong danh sach.
-	openQuiz := model.Quiz{Title: "Quiz mo", CourseID: &courseID}
+	// openQuiz: khong gan lesson/course/session nao (quiz mo coi) — checkQuizAccess (R4, review
+	// 260919) khong ap gate nao cho truong hop nay (xem nhanh `default` cua checkQuizAccess),
+	// nen luon xuat hien trong danh sach. Truoc ban va R4, test nay dung openQuiz gan CourseID
+	// de mo ta dung hanh vi loi luc do (quiz gan course_id luon lot qua bat ke enrollment) — nay
+	// dieu do da duoc sua (xem TestGetAllQuizzes_LocQuizGanCourseID_ChuaEnroll), nen o day chi
+	// con giu vai tro "quiz khong bi gate nao ap dung".
+	openQuiz := model.Quiz{Title: "Quiz mo"}
 	openQuiz.ID = uuid.New()
 
 	quizRepo := &fakeQuizRepoForAccessLock{
