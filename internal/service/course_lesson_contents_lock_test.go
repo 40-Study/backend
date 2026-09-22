@@ -216,7 +216,6 @@ func TestGetAllLessons_ChuaEnroll_BaiKhoa_KhongLoContents(t *testing.T) {
 			enrollment: nil,
 			order:      []repository.LessonOrderInfo{{ID: bai1}, {ID: bai2}},
 		},
-		nil,
 	)
 
 	got, err := svc.GetAllLessons(context.Background(), section.ID, uuid.New(), false)
@@ -255,7 +254,6 @@ func TestGetAllLessons_DaEnroll_MoThiCoContents_KhoaThiRong(t *testing.T) {
 				bai1: {Status: "completed"},
 			},
 		},
-		nil,
 	)
 	got, err := svc.GetAllLessons(context.Background(), section.ID, nguoiHoc, false)
 	if err != nil {
@@ -284,7 +282,6 @@ func TestGetAllLessons_DaEnroll_MoThiCoContents_KhoaThiRong(t *testing.T) {
 				bai1: {Status: "in_progress"},
 			},
 		},
-		nil,
 	)
 	got2, err := svcChuaXong.GetAllLessons(context.Background(), section.ID, nguoiHoc, false)
 	if err != nil {
@@ -310,7 +307,6 @@ func TestGetAllLessons_Admin_KhongBiKhoa(t *testing.T) {
 			enrollment: nil,
 			order:      []repository.LessonOrderInfo{{ID: bai1}, {ID: bai2}},
 		},
-		nil,
 	)
 
 	got, err := svc.GetAllLessons(context.Background(), section.ID, uuid.New(), true)

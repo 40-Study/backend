@@ -46,7 +46,6 @@ type LessonService struct {
 	sectionRepo    repository.SectionRepositoryInterface
 	courseRepo     repository.CourseRepositoryInterface
 	enrollmentRepo repository.EnrollmentRepositoryInterface
-	uploadService  UploadServiceInterface
 }
 
 func NewLessonService(
@@ -54,14 +53,12 @@ func NewLessonService(
 	sectionRepo repository.SectionRepositoryInterface,
 	courseRepo repository.CourseRepositoryInterface,
 	enrollmentRepo repository.EnrollmentRepositoryInterface,
-	uploadService UploadServiceInterface,
 ) *LessonService {
 	return &LessonService{
 		lessonRepo:     lessonRepo,
 		sectionRepo:    sectionRepo,
 		courseRepo:     courseRepo,
 		enrollmentRepo: enrollmentRepo,
-		uploadService:  uploadService,
 	}
 }
 
@@ -398,15 +395,12 @@ func (s *LessonService) DeleteLesson(ctx context.Context, lessonID, actorUserID 
 		return err
 	}
 
-	// Delete all content videos from MinIO before deleting lesson
-	if s.uploadService != nil {
-		contents, _ := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
-		for _, content := range contents {
-			if content.VideoURL != nil && *content.VideoURL != "" {
-				_ = s.uploadService.DeleteByURL(ctx, *content.VideoURL)
-			}
-		}
-	}
+	// Lo 1 (fullstack-verify-260922): KHONG xoa file theo content.VideoURL. URL do client tu dat qua
+	// CreateContent/UpdateContent va khong co bang so huu file, nen goi DeleteByURL o day cho phep giang
+	// vien tro video_url vao bat ky object nao trong bucket (anh khoa hoc, video goc cua nguoi khac) roi
+	// xoa content de xoa file do: chinh lo C-14 ma DELETE /api/upload da khoa bang SYSTEM_SETTINGS_MANAGE.
+	// Video qua luong upload duoc don qua DeleteUpload (co kiem chu so huu); file legacy tro thang MinIO
+	// chap nhan de mo coi.
 
 	return s.lessonRepo.Delete(ctx, lessonID)
 }

@@ -8,7 +8,7 @@ import (
 	"study.com/v1/internal/middleware"
 )
 
-func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.AuthHandler, oauthHandler *handler.OAuthHandler, redis *redis.Client) {
+func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.AuthHandler, oauthHandler *handler.OAuthHandler, redis *redis.Client, permChecker *middleware.PermissionChecker) {
 	auth := api.Group("/auth")
 
 	// Rate limiters for security-sensitive endpoints
@@ -42,6 +42,10 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 
 	// Role management
 	auth.Get("/my-roles", authHandler.GetMyRoles)
+	// Quyen cua chinh nguoi goi (web can de hien thi/an chuc nang); khong can permission quan tri.
+	if permChecker != nil {
+		auth.Get("/me/permissions", permChecker.MyPermissions)
+	}
 	auth.Post("/switch-role", authHandler.SwitchRole)
 	// select-org đổi tổ chức đang hoạt động (giữ nguyên role), cấp lại token mang active_org mới.
 	//

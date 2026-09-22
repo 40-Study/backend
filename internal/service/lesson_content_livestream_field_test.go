@@ -37,7 +37,7 @@ func TestGetContentByID_TraDungLivestreamSessionID(t *testing.T) {
 			LivestreamSessionID: &sessionID,
 		},
 	}
-	s := NewLessonContentService(fake, nil, nil, nil, nil, nil)
+	s := NewLessonContentService(fake, nil, nil, nil, nil)
 
 	resp, err := s.GetContentByID(context.Background(), contentID)
 	if err != nil {
@@ -58,7 +58,7 @@ func TestGetContentByID_ChuaCoPhien_TraNull(t *testing.T) {
 	fake := &fakeLessonRepoForContentRead{
 		content: &model.LessonContent{ID: contentID, Type: "video"},
 	}
-	s := NewLessonContentService(fake, nil, nil, nil, nil, nil)
+	s := NewLessonContentService(fake, nil, nil, nil, nil)
 
 	resp, err := s.GetContentByID(context.Background(), contentID)
 	if err != nil {
