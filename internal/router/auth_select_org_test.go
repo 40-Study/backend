@@ -81,7 +81,7 @@ func routeExists(app *fiber.App, method, path string) bool {
 func TestAuthRoutes_SelectOrgRegistered(t *testing.T) {
 	app := fiber.New()
 	api := app.Group("/api")
-	SetupAuthRoutes(api, &config.Config{}, handler.NewAuthHandler(&fakeAuthServiceForRouteTest{}), nil, nil)
+	SetupAuthRoutes(api, &config.Config{}, handler.NewAuthHandler(&fakeAuthServiceForRouteTest{}), nil, nil, nil)
 
 	// Self-test cua phep kiem: routeExists PHAI tra false cho mot path chac chan khong ton tai.
 	// Khong co dong nay thi mot helper luon-tra-true se cho ra green vo nghia.
@@ -99,7 +99,7 @@ func TestAuthRoutes_SelectOrgRegistered(t *testing.T) {
 func TestAuthRoutes_SelectRoleStillRegistered(t *testing.T) {
 	app := fiber.New()
 	api := app.Group("/api")
-	SetupAuthRoutes(api, &config.Config{}, handler.NewAuthHandler(&fakeAuthServiceForRouteTest{}), nil, nil)
+	SetupAuthRoutes(api, &config.Config{}, handler.NewAuthHandler(&fakeAuthServiceForRouteTest{}), nil, nil, nil)
 
 	if !routeExists(app, "POST", "/api/auth/select-role") {
 		t.Fatal("POST /api/auth/select-role KHONG duoc dang ky — route dang song bi go mat")

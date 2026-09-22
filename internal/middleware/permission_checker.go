@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"sort"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -261,4 +262,46 @@ func (pc *PermissionChecker) RequireOrgPermission(paramName, orgPermission strin
 
 		return c.Next()
 	}
+}
+
+// GrantedPermissions tra tap permission THUC TE ma server dang ap dung cho user (dung resolvePermissions
+// nhu RequirePermissions), da khu trung va sap xep de client so sanh on dinh.
+func (pc *PermissionChecker) GrantedPermissions(ctx context.Context, userID uuid.UUID, activeOrgID *uuid.UUID) ([]string, error) {
+	granted, err := pc.resolvePermissions(ctx, userID, activeOrgID)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(granted))
+	out := make([]string, 0, len(granted))
+	for _, p := range granted {
+		if _, dup := seen[p]; dup {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// MyPermissions — GET /api/auth/me/permissions, dat SAU AuthMiddleware.
+//
+// Loi 2 (fullstack-verify-260922): web nap quyen bang GET /system-roles/:id/permissions, route do
+// gate ROLES_MANAGE_SYSTEM nen STUDENT/TEACHER luon nhan 403 ngay ca voi role cua chinh ho; bootstrap
+// phien bat loi va xoa phien, nguoi dung bi day ve trang chon vai tro ngay sau khi dang nhap. Endpoint
+// nay chi tra quyen CUA NGUOI GOI (khong nhan id tu client) nen khong can permission quan tri.
+func (pc *PermissionChecker) MyPermissions(c *fiber.Ctx) error {
+	userID, ok := localsUUID(c, "user_id")
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"success": false, "message": "unauthorized"})
+	}
+	var activeOrgID *uuid.UUID
+	if orgID, ok := localsUUID(c, "active_org_id"); ok {
+		activeOrgID = &orgID
+	}
+	perms, err := pc.GrantedPermissions(c.Context(), userID, activeOrgID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false, "message": "failed to resolve permissions"})
+	}
+	return c.JSON(fiber.Map{"success": true, "message": "ok", "data": fiber.Map{"permissions": perms}})
 }

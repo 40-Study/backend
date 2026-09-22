@@ -83,7 +83,7 @@ func SetupAllRoutes(
 		})
 	})
 
-	SetupAuthRoutes(api, cfg, authHandler, oauthHandler, redis)
+	SetupAuthRoutes(api, cfg, authHandler, oauthHandler, redis, permChecker)
 	SetupOrgRoleRoutes(api, cfg, roleHandler, redis, permChecker)
 	SetupSystemRoleRoutes(api, cfg, systemRoleHandler, redis, permChecker)
 	SetupUserSystemRoleRoutes(api, cfg, userSystemRoleHandler, redis, permChecker)

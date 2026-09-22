@@ -90,7 +90,7 @@ func TestGetContentsByLessonID_BaiKhoa_TraErrLessonLocked(t *testing.T) {
 		order:      []repository.LessonOrderInfo{{ID: lessonID, IsPreview: false}},
 	}
 
-	s := NewLessonContentService(lessonRepo, nil, courseRepo, enrollmentRepo, nil, nil)
+	s := NewLessonContentService(lessonRepo, nil, courseRepo, enrollmentRepo, nil)
 
 	_, err := s.GetContentsByLessonID(context.Background(), lessonID, uuid.New(), false)
 
@@ -125,7 +125,7 @@ func TestGetContentsByLessonID_LessonKhongThuocKhoa_TraErrLessonNotInCourse(t *t
 		order: []repository.LessonOrderInfo{{ID: uuid.New(), IsPreview: false}},
 	}
 
-	s := NewLessonContentService(lessonRepo, nil, courseRepo, enrollmentRepo, nil, nil)
+	s := NewLessonContentService(lessonRepo, nil, courseRepo, enrollmentRepo, nil)
 
 	_, err := s.GetContentsByLessonID(context.Background(), lessonID, uuid.New(), false)
 
@@ -159,7 +159,7 @@ func TestGetContentsByLessonID_GiangVienSoHuu_KhongBiKhoa(t *testing.T) {
 		order:      []repository.LessonOrderInfo{{ID: lessonID, IsPreview: false}},
 	}
 
-	s := NewLessonContentService(lessonRepo, nil, courseRepo, enrollmentRepo, nil, nil)
+	s := NewLessonContentService(lessonRepo, nil, courseRepo, enrollmentRepo, nil)
 
 	result, err := s.GetContentsByLessonID(context.Background(), lessonID, instructorID, false)
 
@@ -190,7 +190,7 @@ func TestGetContentsByLessonID_Admin_KhongBiKhoa(t *testing.T) {
 		order:      []repository.LessonOrderInfo{{ID: lessonID, IsPreview: false}},
 	}
 
-	s := NewLessonContentService(lessonRepo, nil, courseRepo, enrollmentRepo, nil, nil)
+	s := NewLessonContentService(lessonRepo, nil, courseRepo, enrollmentRepo, nil)
 
 	result, err := s.GetContentsByLessonID(context.Background(), lessonID, uuid.New(), true)
 

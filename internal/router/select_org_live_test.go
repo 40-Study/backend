@@ -168,7 +168,7 @@ func newSelectOrgLiveEnv(t *testing.T, orgs ...ownedOrg) *selectOrgLiveEnv {
 	// oauthHandler = nil: chỉ tạo method value lúc đăng ký route, không gọi tới — an toàn.
 	app := fiber.New()
 	api := app.Group("/api")
-	SetupAuthRoutes(api, cfg, handler.NewAuthHandler(svc), nil, rdb)
+	SetupAuthRoutes(api, cfg, handler.NewAuthHandler(svc), nil, rdb, nil)
 
 	return &selectOrgLiveEnv{
 		app:      app,

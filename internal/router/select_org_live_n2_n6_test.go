@@ -79,7 +79,7 @@ func newN2N6TestEnv(t *testing.T, tokenActiveRole string, seededSystemRoles []mo
 
 	app := fiber.New()
 	api := app.Group("/api")
-	SetupAuthRoutes(api, cfg, handler.NewAuthHandler(svc), nil, rdb)
+	SetupAuthRoutes(api, cfg, handler.NewAuthHandler(svc), nil, rdb, nil)
 
 	return &n2n6TestEnv{app: app, rdb: rdb, mr: mr, userID: userID, deviceID: deviceID, token: accessToken}
 }
