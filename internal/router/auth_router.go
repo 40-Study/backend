@@ -28,6 +28,16 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	otpRateLimiter := middleware.OTPRateLimiter(redis, trustedProxies)
 	postAuthRateLimiter := middleware.WideAuthRateLimiter(redis, "rate:post-auth", 30, trustedProxies)
 
+	// accountLockout* (review vòng 3, PR #69 — phòng thủ chiều sâu): độc lập HOÀN TOÀN với
+	// IP/X-Forwarded-For, khoá theo EMAIL trong body — vẫn chặn được brute-force kể cả khi lớp
+	// rate-limit theo IP ở trên bị né hoàn toàn (client xoay X-Forwarded-For liên tục, chỉ có
+	// thể xảy ra nếu cổng backend từng lộ trực tiếp không qua nginx — xem
+	// middleware/account_lockout.go và mục "Vận hành" trong PR body). Mỗi route dùng KeyPrefix
+	// riêng để không chia sẻ bộ đếm giữa các bề mặt khác nhau (dò mật khẩu vs dò OTP).
+	accountLockoutLogin := middleware.AccountFailureLockout(redis, middleware.AccountLockoutConfig{KeyPrefix: "lockout:login"})
+	accountLockoutRegister := middleware.AccountFailureLockout(redis, middleware.AccountLockoutConfig{KeyPrefix: "lockout:register"})
+	accountLockoutResetPassword := middleware.AccountFailureLockout(redis, middleware.AccountLockoutConfig{KeyPrefix: "lockout:reset-password"})
+
 	// ===== OAuth routes (public, không cần auth) =====
 	// GET /auth/oauth/github          → redirect tới GitHub
 	// GET /auth/oauth/github/callback  → GitHub redirect về đây
@@ -40,8 +50,8 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 
 	// Public routes with rate limiting
 	auth.Post("/register/request", otpRateLimiter, authHandler.RequestRegister)
-	auth.Post("/register", authRateLimiter, authHandler.Register)
-	auth.Post("/login", authRateLimiter, authHandler.Login)
+	auth.Post("/register", authRateLimiter, accountLockoutRegister, authHandler.Register)
+	auth.Post("/login", authRateLimiter, accountLockoutLogin, authHandler.Login)
 	// M-03 (audit 260909): select-role trước đây không rate-limit dù chạm Redis/DB và cấp
 	// token — là bề mặt khai thác của C-01, nên PHẢI rate-limit. S-P1-2 (QA 260927, bổ sung):
 	// nhưng KHÔNG dùng chung bucket 5/phút/IP với /login — select-role chỉ chạy được sau khi đã
@@ -53,7 +63,7 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	auth.Post("/select-role", postAuthRateLimiter, authHandler.SelectRole)
 	auth.Get("/system-roles", authHandler.GetSystemRoleOptions)
 	auth.Post("/reset-password/request", otpRateLimiter, authHandler.RequestPasswordReset)
-	auth.Post("/reset-password", authRateLimiter, authHandler.ResetPassword)
+	auth.Post("/reset-password", authRateLimiter, accountLockoutResetPassword, authHandler.ResetPassword)
 	auth.Post("/refresh-token", postAuthRateLimiter, authHandler.RefreshToken)
 
 	// Protected routes

@@ -95,6 +95,27 @@ func ClientIPFromXFF(peerIP string, xffHeader string, trusted *TrustedProxySet) 
 // / EnableTrustedProxyCheck của chính Fiber, vì thuật toán bỏ-qua-nhiều-hop bên trên Fiber không
 // tự hỗ trợ) và X-Forwarded-For thô, dùng cho MỌI rate limiter theo IP (S-P1-2 + BLOCKER, QA
 // 260927) thay cho c.IP() mặc định.
+//
+// RÀNG BUỘC TRIỂN KHAI BẮT BUỘC (review vòng 3, PR #69): thuật toán này CHỈ an toàn khi TCP peer
+// mà backend nhìn thấy KHÔNG THỂ là chính kẻ tấn công — nghĩa là backend không được lộ trực tiếp
+// ra ngoài, chỉ nhận kết nối từ nginx (`nginx/nginx.conf`, đã đúng `$proxy_add_x_forwarded_for`).
+// Nếu cổng backend (PORT, mặc định 5000) lộ thẳng ra ngoài (bind sai địa chỉ, firewall hỏng,
+// tunnel debug quên tắt, ...), một client gọi thẳng có thể tự gửi `X-Forwarded-For` — Next.js
+// (nếu Next là hop TRUNG GIAN) chỉ tự đặt `??= socket.remoteAddress` KHI header CHƯA có, nên vẫn
+// giữ nguyên giá trị client tự khai nếu client gọi thẳng Next không qua nginx — client xoay XFF
+// mỗi request để né hoàn toàn giới hạn theo IP dù thuật toán duyệt-từ-phải ở trên là đúng.
+//
+//  1. HOST (config.go, mặc định "localhost" — xem `Run()` trong app.go dùng
+//     `fmt.Sprintf("%s:%s", Host, Port)` làm địa chỉ Listen) PHẢI giữ nguyên "localhost"/
+//     "127.0.0.1" ở production, hoặc backend PHẢI đứng sau firewall/mạng nội bộ không cho kết
+//     nối trực tiếp từ Internet vào PORT — chỉ nginx được phép gọi tới.
+//  2. TRUSTED_PROXIES PHẢI liệt kê IP/CIDR của nginx (hop đứng NGAY TRƯỚC backend); nếu có thêm
+//     một hop trung gian khác giữa nginx và backend (ví dụ Next.js tự gọi backend thay vì qua
+//     nginx) thì liệt kê CẢ hop đó.
+//  3. Giới hạn theo IP (AuthRateLimiter/WideAuthRateLimiter/OTPRateLimiter) là lớp phòng thủ
+//     CHÍNH nhưng không phải DUY NHẤT — `AccountFailureLockout` (account_lockout.go) khoá theo
+//     EMAIL, độc lập hoàn toàn với IP/XFF, vẫn chặn được brute-force ngay cả khi ràng buộc (1)/(2)
+//     ở trên bị vi phạm do lỗi vận hành.
 func ClientIP(c *fiber.Ctx, trusted *TrustedProxySet) string {
 	peer := c.Context().RemoteIP().String()
 	return ClientIPFromXFF(peer, c.Get(fiber.HeaderXForwardedFor), trusted)
