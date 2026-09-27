@@ -21,7 +21,6 @@
     "role": "TEACHER",
     "description": "Người sáng tạo nội dung và giảng dạy.",
     "permissions": [
-      "ORG_CREATE",
       "COURSES_CREATE",
       "COURSES_UPDATE_OWN",
       "COURSES_DELETE_OWN",
