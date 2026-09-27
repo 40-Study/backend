@@ -14,6 +14,9 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	// Rate limiters for security-sensitive endpoints
 	authRateLimiter := middleware.AuthRateLimiter(redis)
 	otpRateLimiter := middleware.OTPRateLimiter(redis)
+	// S-P1-2 (QA 260927): bucket riêng cho /refresh-token, rộng hơn — xem comment tại
+	// RefreshTokenRateLimiter (rate_limiter.go).
+	refreshRateLimiter := middleware.RefreshTokenRateLimiter(redis)
 
 	// ===== OAuth routes (public, không cần auth) =====
 	// GET /auth/oauth/github          → redirect tới GitHub
@@ -35,7 +38,7 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	auth.Get("/system-roles", authHandler.GetSystemRoleOptions)
 	auth.Post("/reset-password/request", otpRateLimiter, authHandler.RequestPasswordReset)
 	auth.Post("/reset-password", authRateLimiter, authHandler.ResetPassword)
-	auth.Post("/refresh-token", authRateLimiter, authHandler.RefreshToken)
+	auth.Post("/refresh-token", refreshRateLimiter, authHandler.RefreshToken)
 
 	// Protected routes
 	auth.Use(middleware.AuthMiddleware(cfg, redis))

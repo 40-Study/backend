@@ -108,6 +108,23 @@ func AuthRateLimiter(rdb *redis.Client) fiber.Handler {
 	})
 }
 
+// RefreshTokenRateLimiter (S-P1-2, QA 260927): trước đây /refresh-token dùng chung bucket
+// "rate:auth" (Max 5/phút/IP) với /login — refresh-token được web gọi TỰ ĐỘNG (interceptor 401,
+// nhiều tab/thiết bị cùng IP) nên dễ tự đụng trần rồi khoá luôn cả login thật của người khác sau
+// NAT/wifi chung. Bucket riêng, rộng hơn nhiều (30/phút/IP) — vẫn đủ chặn brute-force nhưng không
+// tự làm nghẽn luồng làm mới token hợp lệ. /login vẫn giữ AuthRateLimiter (5/phút/IP) không đổi.
+func RefreshTokenRateLimiter(rdb *redis.Client) fiber.Handler {
+	return RateLimiter(rdb, RateLimitConfig{
+		Max:       30,
+		Window:    time.Minute,
+		KeyPrefix: "rate:refresh",
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP()
+		},
+		Message: "Too many token refresh attempts. Please wait before trying again.",
+	})
+}
+
 // OTPRateLimiter - Rate limiting for OTP requests
 // 3 OTP requests per 5 minutes per email
 func OTPRateLimiter(rdb *redis.Client) fiber.Handler {
