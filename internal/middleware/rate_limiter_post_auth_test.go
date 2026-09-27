@@ -32,11 +32,14 @@ func newPostAuthRateLimitTestApp(t *testing.T) *fiber.App {
 
 	// Cung 1 instance postAuthRateLimiter cho ca 3 route — dung dung cach auth_router.go noi
 	// day: mot bien postAuthRateLimiter duoc gan cho ca select-role, select-org, refresh-token.
-	postAuthRateLimiter := WideAuthRateLimiter(rdb, "rate:post-auth", 30)
+	// trusted=nil: khong TRUSTED_PROXIES nao duoc cau hinh -> ClientIP() luon dung TCP peer, bo
+	// qua XFF hoan toan — dung hanh vi c.IP() mac dinh cu trong app.Test() (peer luon gia lap
+	// "0.0.0.0", xem client_ip_test.go cho ly do).
+	postAuthRateLimiter := WideAuthRateLimiter(rdb, "rate:post-auth", 30, nil)
 
 	app := fiber.New()
 	noop := func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) }
-	app.Post("/login", AuthRateLimiter(rdb), noop)
+	app.Post("/login", AuthRateLimiter(rdb, nil), noop)
 	app.Post("/select-role", postAuthRateLimiter, noop)
 	app.Post("/select-org", postAuthRateLimiter, noop)
 	app.Post("/refresh-token", postAuthRateLimiter, noop)

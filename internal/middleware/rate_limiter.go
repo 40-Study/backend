@@ -24,6 +24,11 @@ type RateLimitConfig struct {
 	Message string
 	// Skip rate limiting for certain conditions
 	Skip func(c *fiber.Ctx) bool
+	// TrustedProxies (review vòng 2, PR #69): dùng bởi KeyGenerator mặc định (khi không set
+	// riêng) để suy ra IP client qua ClientIP() thay vì c.IP() mặc định của Fiber — xem
+	// ClientIPFromXFF (client_ip.go) cho lý do đầy đủ. nil/rỗng -> không IP nào được coi là
+	// proxy đáng tin, mọi request dùng thẳng TCP peer, bỏ qua X-Forwarded-For hoàn toàn.
+	TrustedProxies *TrustedProxySet
 }
 
 // RateLimiter creates a rate limiting middleware using Redis
@@ -39,8 +44,9 @@ func RateLimiter(rdb *redis.Client, config RateLimitConfig) fiber.Handler {
 		config.KeyPrefix = "rate_limit"
 	}
 	if config.KeyGenerator == nil {
+		trusted := config.TrustedProxies
 		config.KeyGenerator = func(c *fiber.Ctx) string {
-			return c.IP()
+			return ClientIP(c, trusted)
 		}
 	}
 	if config.Message == "" {
@@ -100,13 +106,13 @@ func RateLimiter(rdb *redis.Client, config RateLimitConfig) fiber.Handler {
 // route nào chỉ chạy được SAU KHI đã có credential/pending-token/access-token hợp lệ từ một bước
 // trước đó (select-role, select-org, refresh-token) — xem WideAuthRateLimiter bên dưới, và
 // S-P1-2 (QA 260927) cho lý do đầy đủ.
-func AuthRateLimiter(rdb *redis.Client) fiber.Handler {
+func AuthRateLimiter(rdb *redis.Client, trusted *TrustedProxySet) fiber.Handler {
 	return RateLimiter(rdb, RateLimitConfig{
 		Max:       5,
 		Window:    time.Minute,
 		KeyPrefix: "rate:auth",
 		KeyGenerator: func(c *fiber.Ctx) string {
-			return c.IP()
+			return ClientIP(c, trusted)
 		},
 		Message: "Too many authentication attempts. Please wait before trying again.",
 	})
@@ -126,13 +132,13 @@ func AuthRateLimiter(rdb *redis.Client) fiber.Handler {
 // tự-chặn-chính-mình. /select-role/select-org không phải bề mặt dò mật khẩu (đã qua bước xác thực
 // mật khẩu ở /login, hoặc đã cầm access token thật) nên xứng đáng một ngưỡng rộng hơn nhiều,
 // tương tự lý do refresh-token đã tách trước đó.
-func WideAuthRateLimiter(rdb *redis.Client, keyPrefix string, max int) fiber.Handler {
+func WideAuthRateLimiter(rdb *redis.Client, keyPrefix string, max int, trusted *TrustedProxySet) fiber.Handler {
 	return RateLimiter(rdb, RateLimitConfig{
 		Max:       max,
 		Window:    time.Minute,
 		KeyPrefix: keyPrefix,
 		KeyGenerator: func(c *fiber.Ctx) string {
-			return c.IP()
+			return ClientIP(c, trusted)
 		},
 		Message: "Too many requests. Please wait before trying again.",
 	})
@@ -140,7 +146,7 @@ func WideAuthRateLimiter(rdb *redis.Client, keyPrefix string, max int) fiber.Han
 
 // OTPRateLimiter - Rate limiting for OTP requests
 // 3 OTP requests per 5 minutes per email
-func OTPRateLimiter(rdb *redis.Client) fiber.Handler {
+func OTPRateLimiter(rdb *redis.Client, trusted *TrustedProxySet) fiber.Handler {
 	return RateLimiter(rdb, RateLimitConfig{
 		Max:       3,
 		Window:    5 * time.Minute,
@@ -153,7 +159,7 @@ func OTPRateLimiter(rdb *redis.Client) fiber.Handler {
 			if err := c.BodyParser(&body); err == nil && body.Email != "" {
 				return body.Email
 			}
-			return c.IP()
+			return ClientIP(c, trusted)
 		},
 		Message: "Too many OTP requests. Please wait 5 minutes before requesting another code.",
 	})

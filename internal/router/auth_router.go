@@ -17,9 +17,16 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	// chỉ chạy được SAU KHI đã có credential/pending-token/access-token hợp lệ — select-role,
 	// select-org, refresh-token — xem lý do đầy đủ tại middleware.WideAuthRateLimiter (S-P1-2,
 	// QA 260927).
-	authRateLimiter := middleware.AuthRateLimiter(redis)
-	otpRateLimiter := middleware.OTPRateLimiter(redis)
-	postAuthRateLimiter := middleware.WideAuthRateLimiter(redis, "rate:post-auth", 30)
+	//
+	// trustedProxies (review vòng 2, PR #69 — MAJOR): key của mọi limiter theo IP giờ đi qua
+	// middleware.ClientIP(), KHÔNG dùng c.IP() mặc định của Fiber (Fiber mặc định lấy IP đầu
+	// tiên/bên trái nhất trong X-Forwarded-For — client tự khai được, giả mạo để né rate-limit).
+	// ClientIP() duyệt XFF từ PHẢI sang trái, bỏ qua các IP thuộc TRUSTED_PROXIES — xem
+	// client_ip.go cho thuật toán đầy đủ.
+	trustedProxies := middleware.NewTrustedProxySet(cfg.ResolvedTrustedProxies())
+	authRateLimiter := middleware.AuthRateLimiter(redis, trustedProxies)
+	otpRateLimiter := middleware.OTPRateLimiter(redis, trustedProxies)
+	postAuthRateLimiter := middleware.WideAuthRateLimiter(redis, "rate:post-auth", 30, trustedProxies)
 
 	// ===== OAuth routes (public, không cần auth) =====
 	// GET /auth/oauth/github          → redirect tới GitHub
