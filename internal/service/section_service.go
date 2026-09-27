@@ -218,7 +218,13 @@ func (s *SectionService) DeleteSection(ctx context.Context, courseID, sectionID,
 		return errors.New("section not found in this course")
 	}
 
-	return s.sectionRepo.Delete(ctx, sectionID)
+	if err := s.sectionRepo.Delete(ctx, sectionID); err != nil {
+		return err
+	}
+
+	// P2 QA 260927 teacher: xoá cả chương kéo theo xoá mọi bài trong đó (cascade) — ghi lại
+	// total_lessons/total_duration_minutes của course cho khớp.
+	return s.courseRepo.RecalculateLessonStats(ctx, courseID)
 }
 
 func (s *SectionService) ReorderSections(ctx context.Context, courseID uuid.UUID, req dto.ReorderDTO) error {

@@ -59,10 +59,15 @@ func (h *CourseHandler) CreateCourse(c *fiber.Ctx) error {
 	})
 }
 
+// GetAllCourses handles GET /courses — route CÔNG KHAI, không auth (course_router.go), nên
+// KHÔNG có cách phân biệt người gọi là ai. Vì vậy status LUÔN bị ép "published", bỏ qua bất kỳ
+// giá trị status nào client gửi lên — trước bản vá này (P1 QA 260927 teacher) client truyền
+// thẳng status rỗng/tuỳ ý và repository không lọc gì, nên khoá draft của MỌI giảng viên lộ ra
+// trang /courses công khai. Giáo viên xem khoá (kể cả draft) của chính mình dùng GetMyCourses.
 func (h *CourseHandler) GetAllCourses(c *fiber.Ctx) error {
 	params := dto.CourseFilterParams{
 		Level:    c.Query("level"),
-		Status:   c.Query("status"),
+		Status:   "published",
 		Keyword:  c.Query("keyword"),
 		Page:     c.QueryInt("page", 1),
 		PageSize: c.QueryInt("page_size", 20),
@@ -92,6 +97,41 @@ func (h *CourseHandler) GetAllCourses(c *fiber.Ctx) error {
 		if v, err := strconv.ParseFloat(maxStr, 64); err == nil {
 			params.MaxPrice = &v
 		}
+	}
+
+	courses, err := h.service.GetAllCourses(c.Context(), params)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to retrieve courses",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Courses retrieved successfully",
+		"data":    courses,
+	})
+}
+
+// GetMyCourses handles GET /courses/mine — route CÓ auth (course_router.go), trả khoá của
+// CHÍNH giáo viên đang đăng nhập (mọi status: draft/published/archived), khác GetAllCourses
+// (công khai, luôn ép published). P1 QA 260927 teacher: web trước đây gọi GET /courses?mine=true
+// nhưng handler cũ không đọc "mine" hay "instructor_id" từ query nên trả TOÀN BỘ khoá của MỌI
+// giảng viên — trang "Khóa học của tôi" trộn lẫn khoá người khác dù ghi (write) đã bị chặn đúng.
+func (h *CourseHandler) GetMyCourses(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	params := dto.CourseFilterParams{
+		InstructorID: &userID,
+		Status:       c.Query("status"),
+		Keyword:      c.Query("keyword"),
+		Page:         c.QueryInt("page", 1),
+		PageSize:     c.QueryInt("page_size", 20),
 	}
 
 	courses, err := h.service.GetAllCourses(c.Context(), params)
