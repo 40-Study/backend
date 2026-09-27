@@ -220,11 +220,19 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		livestreamSvc,
 	)
 
+	// P1 QA 260927 teacher: repos.Livestream/Class/Course them vao de AnalyticsService kiem
+	// duoc "actor co la host/GV lop/instructor khoa cua phien hay khong" truoc khi tra so lieu
+	// (xem AnalyticsService.ensureSessionAnalyticsAccess) — truoc ban va nay 3 endpoint analytics
+	// khong kiem gi ca, bat ky user dang nhap nao biet id la xem duoc so lieu cua lop/giao vien
+	// khac.
 	analyticsSvc := service.NewAnalyticsService(
 		repos.Analytics,
 		repos.Participant,
 		repos.Submission,
 		repos.Assignment,
+		repos.Livestream,
+		repos.Class,
+		repos.Course,
 	)
 
 	// P1 QA 260927 teacher: TeacherService.GetMyStudents nay doc truc tiep tu enrollments (qua
