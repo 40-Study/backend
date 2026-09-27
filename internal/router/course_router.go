@@ -28,6 +28,9 @@ func SetupCourseRoutes(
 		// Public routes
 		courses.Get("/", courseHandler.GetAllCourses)
 		courses.Get("/slug/:slug", courseHandler.GetCourseBySlug)
+		// "/mine" phải đăng ký TRƯỚC "/:id" — segment tĩnh cần thắng segment tham số cùng cấp
+		// (P1 QA 260927 teacher: xem GetMyCourses).
+		courses.Get("/mine", auth, courseHandler.GetMyCourses)
 		courses.Get("/:id", auth, courseHandler.GetCourseByID)
 
 		// Protected routes - require authentication

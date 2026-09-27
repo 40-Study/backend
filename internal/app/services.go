@@ -220,15 +220,26 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		livestreamSvc,
 	)
 
+	// P1 QA 260927 teacher: repos.Livestream/Class/Course them vao de AnalyticsService kiem
+	// duoc "actor co la host/GV lop/instructor khoa cua phien hay khong" truoc khi tra so lieu
+	// (xem AnalyticsService.ensureSessionAnalyticsAccess) — truoc ban va nay 3 endpoint analytics
+	// khong kiem gi ca, bat ky user dang nhap nao biet id la xem duoc so lieu cua lop/giao vien
+	// khac.
 	analyticsSvc := service.NewAnalyticsService(
 		repos.Analytics,
 		repos.Participant,
 		repos.Submission,
 		repos.Assignment,
+		repos.Livestream,
+		repos.Class,
+		repos.Course,
 	)
 
-	classSvc := service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student, repos.ParentStudent)
-	teacherSvc := service.NewTeacherService(repos.Teacher, classSvc)
+	// P1 QA 260927 teacher: TeacherService.GetMyStudents nay doc truc tiep tu enrollments (qua
+	// EnrollmentRepository) thay vi di qua ClassService — khong con can mot instance ClassService
+	// rieng chi de goi 1 method da xoa (GetTeacherStudents), Services.Class ben duoi da co instance
+	// rieng cua no.
+	teacherSvc := service.NewTeacherService(repos.Teacher, repos.Enrollment, repos.ParentStudent)
 
 	// ================= Auth (created early because OAuth depends on it) =================
 	authSvc := service.NewAuthService(

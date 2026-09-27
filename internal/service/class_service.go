@@ -28,7 +28,6 @@ type ClassServiceInterface interface {
 	RemoveStudentFromClass(ctx context.Context, classID, studentID, actorUserID uuid.UUID, isAdmin bool) error
 	GetStudentsByClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.StudentClassListResponseDTO, error)
 	GetMyClasses(ctx context.Context, teacherID uuid.UUID) ([]dto.ClassResponseDTO, error)
-	GetTeacherStudents(ctx context.Context, teacherID uuid.UUID, page, pageSize int) (*dto.TeacherStudentListResponseDTO, error)
 }
 
 // requireClassTeacherOrAdmin (H-11, audit 260909 vòng 2): UpdateClass/DeleteClass/
@@ -582,68 +581,10 @@ func (s *ClassService) GetClassesByCourseID(ctx context.Context, courseID uuid.U
 	return result, nil
 }
 
-func (s *ClassService) GetTeacherStudents(ctx context.Context, teacherID uuid.UUID, page, pageSize int) (*dto.TeacherStudentListResponseDTO, error) {
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
-
-	students, total, err := s.studentRepo.GetTeacherStudents(ctx, teacherID, page, pageSize)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]dto.TeacherStudentDTO, len(students))
-	for i, sc := range students {
-		var name string
-		if sc.Student.FullName != nil && *sc.Student.FullName != "" {
-			name = *sc.Student.FullName
-		} else {
-			name = sc.Student.UserName
-		}
-
-		var parentName *string
-		var parentPhone *string
-		parentRelation, err := s.parentStudentRepo.GetPrimaryParentByStudentID(ctx, sc.StudentID)
-		if err != nil {
-			return nil, err
-		}
-		if parentRelation != nil && parentRelation.Parent != nil {
-			parentName = parentRelation.Parent.FullName
-			parentPhone = parentRelation.Parent.Phone
-		}
-
-		result[i] = dto.TeacherStudentDTO{
-			ID:          sc.StudentID,
-			Name:        name,
-			Email:       sc.Student.Email,
-			Avatar:      sc.Student.AvatarURL,
-			ParentName:  parentName,
-			ParentPhone: parentPhone,
-			ClassID:     sc.ClassID,
-			ClassName:   sc.Class.Name,
-			CourseID:    sc.Class.CourseID,
-			Status:      sc.Status,
-			EnrolledAt:  sc.EnrolledAt,
-		}
-
-		if sc.Student.UserName != "" {
-			result[i].StudentID = &sc.Student.UserName
-		}
-		if sc.Class.CourseID != nil {
-			result[i].CourseName = &sc.Class.Course.Title
-		}
-	}
-
-	return &dto.TeacherStudentListResponseDTO{
-		Students: result,
-		Total:    total,
-		Page:     page,
-		PageSize: pageSize,
-	}, nil
-}
+// GetTeacherStudents (P1 QA 260927 teacher): chuyển sang TeacherService (dựa trên enrollment
+// khoá học, không chỉ lớp) — xem teacher_service.go. Method này đã bị xoá khỏi đây vì không còn
+// caller nào khác (grep xác nhận trước khi xoá) và bảng "Quản lý học viên" luôn trống với giáo
+// viên chưa tạo lớp, dù khoá của họ đã có hàng nghìn học viên mua qua enrollment.
 
 func (s *ClassService) toClassResponseDTO(ctx context.Context, class *model.Class) *dto.ClassResponseDTO {
 	teacherCount, _ := s.classRepo.GetTeacherCount(ctx, class.ID)

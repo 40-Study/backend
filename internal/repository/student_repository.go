@@ -6,12 +6,10 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"study.com/v1/internal/model"
-	"study.com/v1/internal/utils"
 )
 
 type StudentRepositoryInterface interface {
 	Exists(ctx context.Context, id uuid.UUID) (bool, error)
-	GetTeacherStudents(ctx context.Context, teacherID uuid.UUID, page, pageSize int) ([]model.StudentClass, int64, error)
 }
 
 type StudentRepository struct {
@@ -39,32 +37,7 @@ func (r *StudentRepository) Exists(ctx context.Context, id uuid.UUID) (bool, err
 	return count > 0, err
 }
 
-func (r *StudentRepository) GetTeacherStudents(ctx context.Context, teacherID uuid.UUID, page, pageSize int) ([]model.StudentClass, int64, error) {
-	var students []model.StudentClass
-	var total int64
-
-	baseQuery := r.db.WithContext(ctx).
-		Model(&model.StudentClass{}).
-		Joins("JOIN teacher_classes ON teacher_classes.class_id = student_classes.class_id").
-		Where("teacher_classes.teacher_id = ?", teacherID)
-
-	if err := baseQuery.Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-
-	query := r.db.WithContext(ctx).
-		Model(&model.StudentClass{}).
-		Joins("JOIN teacher_classes ON teacher_classes.class_id = student_classes.class_id").
-		Where("teacher_classes.teacher_id = ?", teacherID).
-		Preload("Student").
-		Preload("Class").
-		Preload("Class.Course")
-
-	if err := utils.ApplyPagination(query, page, pageSize).
-		Order("student_classes.enrolled_at DESC").
-		Find(&students).Error; err != nil {
-		return nil, 0, err
-	}
-
-	return students, total, nil
-}
+// GetTeacherStudents (P1 QA 260927 teacher): chuyển sang EnrollmentRepository.GetByInstructor
+// — xem enrollment_repository.go. Truy vấn cũ chỉ đếm học viên đã được xếp vào MỘT LỚP
+// (student_classes × teacher_classes), luôn trả rỗng cho giáo viên chưa tạo lớp nào dù khoá học
+// của họ đã bán được rất nhiều đơn (enrollment không đi qua lớp).
