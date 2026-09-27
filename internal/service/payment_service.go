@@ -61,6 +61,11 @@ type PaymentService struct {
 	enrollmentRepo     repository.EnrollmentRepositoryInterface
 	voucherService     VoucherServiceInterface
 	transactionService TransactionServiceInterface
+	// platformSettingRepo (tính năng đơn hàng+hoàn tiền+doanh thu, quyết định #2): đọc % phí nền
+	// tảng hiện hành để CHỐT vào đơn ngay lúc chuyển "completed" — xem chốt fee trong
+	// CheckAndProcessPayment. nil-safe (một số test dựng PaymentService không cần fee) — coi như
+	// phí 0% nếu không tiêm.
+	platformSettingRepo repository.PlatformSettingRepositoryInterface
 }
 
 // M3-09 (review vòng 3b, bổ sung vòng 4; Minor vòng 4b/5 xóa nốt paymentEventRepo): TRƯỚC ĐÂY
@@ -76,13 +81,15 @@ func NewPaymentService(
 	enrollmentRepo repository.EnrollmentRepositoryInterface,
 	voucherService VoucherServiceInterface,
 	transactionService TransactionServiceInterface,
+	platformSettingRepo repository.PlatformSettingRepositoryInterface,
 ) *PaymentService {
 	return &PaymentService{
-		orderRepo:          orderRepo,
-		orderHistoryRepo:   orderHistoryRepo,
-		enrollmentRepo:     enrollmentRepo,
-		voucherService:     voucherService,
-		transactionService: transactionService,
+		orderRepo:           orderRepo,
+		orderHistoryRepo:    orderHistoryRepo,
+		enrollmentRepo:      enrollmentRepo,
+		voucherService:      voucherService,
+		transactionService:  transactionService,
+		platformSettingRepo: platformSettingRepo,
 	}
 }
 
@@ -428,6 +435,20 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 			return err
 		}
 
+		// Chốt phí nền tảng (quyết định #2, 27/09/2026): % ĐANG cấu hình tại THỜI ĐIỂM đơn hoàn
+		// tất — ghi cứng vào đơn để đổi % sau đó KHÔNG ảnh hưởng đơn đã chốt (báo cáo doanh thu
+		// đọc lại field đã chốt trên orders, không đọc PlatformSetting hiện hành cho đơn cũ).
+		if s.platformSettingRepo != nil {
+			feePercent, feeErr := s.platformSettingRepo.GetPlatformFeePercent(ctx)
+			if feeErr != nil {
+				return feeErr
+			}
+			feeAmount := calculatePlatformFeeAmount(order.TotalAmount, feePercent)
+			if err := txRepo.SetPlatformFeeSnapshot(order.ID, feePercent, feeAmount); err != nil {
+				return err
+			}
+		}
+
 		// Create history
 		history := &model.OrderStatusHistory{
 			ID:         uuid.New(),
@@ -586,6 +607,14 @@ func (s *PaymentService) GetPaymentStatus(ctx context.Context, orderID, actorUse
 		PaidAt:  order.PaidAt,
 		Amount:  order.TotalAmount,
 	}, nil
+}
+
+// calculatePlatformFeeAmount (quyết định #2, 27/09/2026) — hàm THUẦN (không side-effect), tách
+// riêng để unit test không cần DB: số tiền phí nền tảng = totalAmount * percent / 100, làm tròn 2
+// chữ số thập phân (đơn vị đồng — cùng độ chính xác decimal(12,2) của total_amount, xem
+// model.Order.PlatformFeeAmount). percent=0 (mặc định trước khi cấu hình) luôn cho fee=0.
+func calculatePlatformFeeAmount(totalAmount, feePercent decimal.Decimal) decimal.Decimal {
+	return totalAmount.Mul(feePercent).Div(decimal.NewFromInt(100)).Round(2)
 }
 
 func (s *PaymentService) generatePaymentCode() string {

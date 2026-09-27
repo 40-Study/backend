@@ -270,3 +270,90 @@ func (r *OrderRepository) CalculateUserSpent(userID uuid.UUID) (decimal.Decimal,
 		Scan(&total).Error
 	return total, err
 }
+
+// SetPlatformFeeSnapshot — xem comment tại interface. UPDATE vô điều kiện theo id: caller (trong
+// PaymentService.CheckAndProcessPayment) LUÔN gọi hàm này TRONG transaction, NGAY SAU khi
+// UpdatePaymentInfo (UPDATE có điều kiện WHERE status IN pending/processing) đã thành công — tại
+// thời điểm này hàng đã "thuộc về" transaction hiện tại (đã ghi status='completed'), không còn
+// nguy cơ race với transaction khác.
+func (r *OrderRepository) SetPlatformFeeSnapshot(orderID uuid.UUID, feePercent, feeAmount decimal.Decimal) error {
+	return r.db.Model(&model.Order{}).
+		Where("id = ?", orderID).
+		Updates(map[string]interface{}{
+			"platform_fee_percent": feePercent,
+			"platform_fee_amount":  feeAmount,
+		}).Error
+}
+
+// buildRefundQuery (tính năng đơn hàng+hoàn tiền+doanh thu) — tách phần XÂY câu UPDATE ra khỏi
+// phần đọc .RowsAffected, cùng pattern buildUpdatePaymentInfoQuery/buildRestoreAndReactivateQuery,
+// để test DryRun (order_repository_test.go) gọi được ĐÚNG hàm sản xuất thật. Caller
+// (AdminOrderService.RefundOrder) LUÔN gọi hàm này SAU KHI đã khoá dòng bằng GetForUpdate TRONG
+// CÙNG transaction — điều kiện "WHERE status = 'completed'" ở đây là defense-in-depth (giữ cùng
+// "hình dạng" UPDATE có điều kiện với phần còn lại của codebase), KHÔNG phải cơ chế chống race
+// chính (cơ chế chính là row lock của GetForUpdate).
+func (r *OrderRepository) buildRefundQuery(orderID uuid.UUID, reason, refundMethod string, refundedAt time.Time, refundedBy uuid.UUID) *gorm.DB {
+	updates := map[string]interface{}{
+		"status":        "refunded",
+		"refund_reason": reason,
+		"refund_method": refundMethod,
+		"refunded_at":   refundedAt,
+		"refunded_by":   refundedBy,
+	}
+	return r.db.Model(&model.Order{}).
+		Where("id = ? AND status = ?", orderID, "completed").
+		Updates(updates)
+}
+
+// RefundOrder chuyển đơn sang "refunded" — applied=false nghĩa là đơn KHÔNG còn ở "completed"
+// tại thời điểm UPDATE thật thực thi (double-refund, hoặc trạng thái đã đổi) — caller (đã khoá
+// dòng qua GetForUpdate) coi đây là ErrOrderAlreadyRefunded.
+func (r *OrderRepository) RefundOrder(orderID uuid.UUID, reason, refundMethod string, refundedAt time.Time, refundedBy uuid.UUID) (applied bool, err error) {
+	result := r.buildRefundQuery(orderID, reason, refundMethod, refundedAt, refundedBy)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+// ListAdmin - GET /api/orders/admin: liệt kê TOÀN BỘ đơn (mọi user), lọc theo AdminOrderFilter.
+// Preload User để lấy user_email (contract admin list) + Items.Course để lấy course_title.
+func (r *OrderRepository) ListAdmin(filter AdminOrderFilter) ([]model.Order, int64, error) {
+	query := r.db.Model(&model.Order{})
+	if filter.Status != "" {
+		query = query.Where("status = ?", filter.Status)
+	}
+	if filter.UserID != nil {
+		query = query.Where("user_id = ?", *filter.UserID)
+	}
+	if filter.From != nil {
+		query = query.Where("created_at >= ?", *filter.From)
+	}
+	if filter.To != nil {
+		query = query.Where("created_at <= ?", *filter.To)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	page, limit := filter.Page, filter.Limit
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	offset := (page - 1) * limit
+
+	var orders []model.Order
+	if err := query.Preload("Items.Course").Preload("User").
+		Order("created_at DESC").
+		Offset(offset).Limit(limit).
+		Find(&orders).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return orders, total, nil
+}
