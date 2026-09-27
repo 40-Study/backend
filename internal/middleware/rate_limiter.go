@@ -95,7 +95,11 @@ func RateLimiter(rdb *redis.Client, config RateLimitConfig) fiber.Handler {
 }
 
 // AuthRateLimiter - Strict rate limiting for auth endpoints
-// 5 attempts per minute per IP for login/register
+// 5 attempts per minute per IP. CHỈ dành cho bề mặt đoán mật khẩu/OTP thật sự:
+// /login, /register, /reset-password (nhận + xác nhận OTP/mật khẩu mới). KHÔNG dùng cho bất kỳ
+// route nào chỉ chạy được SAU KHI đã có credential/pending-token/access-token hợp lệ từ một bước
+// trước đó (select-role, select-org, refresh-token) — xem WideAuthRateLimiter bên dưới, và
+// S-P1-2 (QA 260927) cho lý do đầy đủ.
 func AuthRateLimiter(rdb *redis.Client) fiber.Handler {
 	return RateLimiter(rdb, RateLimitConfig{
 		Max:       5,
@@ -108,20 +112,29 @@ func AuthRateLimiter(rdb *redis.Client) fiber.Handler {
 	})
 }
 
-// RefreshTokenRateLimiter (S-P1-2, QA 260927): trước đây /refresh-token dùng chung bucket
-// "rate:auth" (Max 5/phút/IP) với /login — refresh-token được web gọi TỰ ĐỘNG (interceptor 401,
-// nhiều tab/thiết bị cùng IP) nên dễ tự đụng trần rồi khoá luôn cả login thật của người khác sau
-// NAT/wifi chung. Bucket riêng, rộng hơn nhiều (30/phút/IP) — vẫn đủ chặn brute-force nhưng không
-// tự làm nghẽn luồng làm mới token hợp lệ. /login vẫn giữ AuthRateLimiter (5/phút/IP) không đổi.
-func RefreshTokenRateLimiter(rdb *redis.Client) fiber.Handler {
+// WideAuthRateLimiter (S-P1-2, QA 260927 — bổ sung theo phản hồi coordinator sau khi PR #69 mở):
+// limiter DÙNG CHUNG, cấu hình được keyPrefix/max, cho các endpoint auth chỉ chạy được SAU KHI
+// đã có credential/pending-token/access-token hợp lệ từ một bước trước đó — không phải bề mặt dò
+// mật khẩu/OTP như /login. Tổng quát hoá thay vì viết thêm một hàm gần giống AuthRateLimiter cho
+// mỗi route thuộc nhóm này (ban đầu chỉ có refresh-token; giờ thêm select-role/select-org).
+//
+// Lý do tách khỏi AuthRateLimiter: /select-role và /select-org (M-03/N5, audit 260909) TRƯỚC ĐÂY
+// dùng chung bucket "rate:auth" (5/phút/IP) với /login — nhưng MỘT lần đăng nhập trọn vẹn đã là
+// login + select-role (+ select-org nếu đổi tổ chức), tức tiêu 2-3 lượt trong CÙNG 1 bucket 5
+// lượt/phút. Một mạng dùng chung IP (trường học, văn phòng) vì vậy chỉ đăng nhập trọn được
+// khoảng 2 lần/phút thay vì 5 — RẤT dễ hiểu nhầm là bug đăng nhập trong khi thực ra là rate-limit
+// tự-chặn-chính-mình. /select-role/select-org không phải bề mặt dò mật khẩu (đã qua bước xác thực
+// mật khẩu ở /login, hoặc đã cầm access token thật) nên xứng đáng một ngưỡng rộng hơn nhiều,
+// tương tự lý do refresh-token đã tách trước đó.
+func WideAuthRateLimiter(rdb *redis.Client, keyPrefix string, max int) fiber.Handler {
 	return RateLimiter(rdb, RateLimitConfig{
-		Max:       30,
+		Max:       max,
 		Window:    time.Minute,
-		KeyPrefix: "rate:refresh",
+		KeyPrefix: keyPrefix,
 		KeyGenerator: func(c *fiber.Ctx) string {
 			return c.IP()
 		},
-		Message: "Too many token refresh attempts. Please wait before trying again.",
+		Message: "Too many requests. Please wait before trying again.",
 	})
 }
 

@@ -11,12 +11,15 @@ import (
 func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.AuthHandler, oauthHandler *handler.OAuthHandler, redis *redis.Client, permChecker *middleware.PermissionChecker) {
 	auth := api.Group("/auth")
 
-	// Rate limiters for security-sensitive endpoints
+	// Rate limiters for security-sensitive endpoints.
+	// authRateLimiter (5/phút/IP): CHỈ cho bề mặt đoán mật khẩu/OTP thật — /login, /register,
+	// /reset-password. postAuthRateLimiter (30/phút/IP, bucket "rate:post-auth"): cho mọi route
+	// chỉ chạy được SAU KHI đã có credential/pending-token/access-token hợp lệ — select-role,
+	// select-org, refresh-token — xem lý do đầy đủ tại middleware.WideAuthRateLimiter (S-P1-2,
+	// QA 260927).
 	authRateLimiter := middleware.AuthRateLimiter(redis)
 	otpRateLimiter := middleware.OTPRateLimiter(redis)
-	// S-P1-2 (QA 260927): bucket riêng cho /refresh-token, rộng hơn — xem comment tại
-	// RefreshTokenRateLimiter (rate_limiter.go).
-	refreshRateLimiter := middleware.RefreshTokenRateLimiter(redis)
+	postAuthRateLimiter := middleware.WideAuthRateLimiter(redis, "rate:post-auth", 30)
 
 	// ===== OAuth routes (public, không cần auth) =====
 	// GET /auth/oauth/github          → redirect tới GitHub
@@ -32,13 +35,19 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	auth.Post("/register/request", otpRateLimiter, authHandler.RequestRegister)
 	auth.Post("/register", authRateLimiter, authHandler.Register)
 	auth.Post("/login", authRateLimiter, authHandler.Login)
-	// M-03 (audit 260909): select-role/refresh-token trước đây không rate-limit dù chạm
-	// Redis/DB và cấp token — select-role còn là bề mặt khai thác của C-01.
-	auth.Post("/select-role", authRateLimiter, authHandler.SelectRole)
+	// M-03 (audit 260909): select-role trước đây không rate-limit dù chạm Redis/DB và cấp
+	// token — là bề mặt khai thác của C-01, nên PHẢI rate-limit. S-P1-2 (QA 260927, bổ sung):
+	// nhưng KHÔNG dùng chung bucket 5/phút/IP với /login — select-role chỉ chạy được sau khi đã
+	// qua bước xác thực mật khẩu (cầm session/pending token hợp lệ), không phải bề mặt dò mật
+	// khẩu, và một lần đăng nhập trọn vẹn luôn gọi CẢ HAI (login rồi select-role) nên dùng chung
+	// bucket chặt sẽ tự làm người dùng thật hết lượt đăng nhập trong 1 phút. Dùng
+	// postAuthRateLimiter (30/phút/IP) — vẫn chặn được lạm dụng, không tự nghẽn luồng đăng nhập
+	// thật.
+	auth.Post("/select-role", postAuthRateLimiter, authHandler.SelectRole)
 	auth.Get("/system-roles", authHandler.GetSystemRoleOptions)
 	auth.Post("/reset-password/request", otpRateLimiter, authHandler.RequestPasswordReset)
 	auth.Post("/reset-password", authRateLimiter, authHandler.ResetPassword)
-	auth.Post("/refresh-token", refreshRateLimiter, authHandler.RefreshToken)
+	auth.Post("/refresh-token", postAuthRateLimiter, authHandler.RefreshToken)
 
 	// Protected routes
 	auth.Use(middleware.AuthMiddleware(cfg, redis))
@@ -58,9 +67,12 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 	// AuthMiddleware: danh tính lấy từ access token, không phụ thuộc pending key.
 	//
 	// N5 (review vong 2, 260915): route nay cham Redis/DB va cap lai token giong het select-role
-	// (da co authRateLimiter o tren) nhung bi bo sot khi chuyen sang nhom protected — gan lai
-	// cung mot authRateLimiter (khoa theo IP, tai su dung duoc du dung sau AuthMiddleware).
-	auth.Post("/select-org", authRateLimiter, authHandler.SelectOrg)
+	// nhung bi bo sot rate-limit khi chuyen sang nhom protected. S-P1-2 (QA 260927, bổ sung):
+	// dùng postAuthRateLimiter (30/phút/IP, KHÔNG phải authRateLimiter 5/phút/IP) — route này
+	// đứng SAU AuthMiddleware nên bắt buộc phải có access token thật còn hiệu lực mới gọi tới
+	// được, càng không phải bề mặt dò mật khẩu; cùng lý do và cùng bucket với select-role/
+	// refresh-token ở trên, để đổi tổ chức nhiều lần trong phiên làm việc không tự đụng trần.
+	auth.Post("/select-org", postAuthRateLimiter, authHandler.SelectOrg)
 
 	// Profile management
 	auth.Get("/me/profiles", authHandler.GetMyProfiles)
