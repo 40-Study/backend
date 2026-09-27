@@ -65,6 +65,21 @@ func (h *CourseHandler) CreateCourse(c *fiber.Ctx) error {
 // thẳng status rỗng/tuỳ ý và repository không lọc gì, nên khoá draft của MỌI giảng viên lộ ra
 // trang /courses công khai. Giáo viên xem khoá (kể cả draft) của chính mình dùng GetMyCourses.
 func (h *CourseHandler) GetAllCourses(c *fiber.Ctx) error {
+	// Review đối kháng PR #70 (MAJOR): trước khi có route `/courses/mine` (mới), web gọi
+	// `GET /courses?mine=true` — tham số `mine` này route công khai KHÔNG BAO GIỜ đọc (route
+	// không có auth middleware nên không có user_id để lọc theo). Nếu chỉ âm thầm bỏ qua như
+	// trước, sau khi PR này ép status="published" thì "Khoá của tôi" phía giáo viên (nếu web
+	// merge sau, còn gọi route cũ) sẽ mất luôn khả năng thấy draft CỦA CHÍNH MÌNH mà không có
+	// bất kỳ thông báo nào (200 OK, danh sách rỗng/chỉ published) — mất dữ liệu im lặng. Trả lỗi
+	// rõ ràng thay vì âm thầm hạ cấp kết quả; client thật (web) đã đổi sang gọi `/courses/mine`
+	// (route có auth, lọc đúng instructor_id) trong PR web đi kèm.
+	if c.Query("mine") == "true" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "GET /courses?mine=true khong con duoc ho tro — goi GET /courses/mine (co xac thuc) thay the",
+			"error":   "deprecated_query_param",
+		})
+	}
+
 	params := dto.CourseFilterParams{
 		Level:    c.Query("level"),
 		Status:   "published",

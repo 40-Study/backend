@@ -51,6 +51,28 @@ func TestGetAllCourses_LuonEpStatusPublished(t *testing.T) {
 	}
 }
 
+// Review đối kháng PR #70 (MAJOR): "?mine=true" là tham số CŨ mà GetAllCourses chưa bao giờ
+// đọc — nếu chỉ âm thầm bỏ qua thì sau khi status bị ép "published", một client còn gọi cách cũ
+// này (web chưa kịp đổi sang /courses/mine) sẽ mất khả năng thấy draft CỦA CHÍNH MÌNH mà không
+// có bất kỳ cảnh báo nào (200, danh sách rỗng/chỉ published) — mất dữ liệu im lặng. Phải trả lỗi
+// rõ ràng thay vì im lặng hạ cấp kết quả.
+func TestGetAllCourses_MineTrue_TraLoiRoRangThayViImLangHaCap(t *testing.T) {
+	svc := &stubCourseServiceForList{}
+	h := NewCourseHandler(svc, nil)
+
+	app := fiber.New()
+	app.Get("/courses", h.GetAllCourses)
+
+	req := httptest.NewRequest("GET", "/courses?mine=true", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test loi: %v", err)
+	}
+	if resp.StatusCode == fiber.StatusOK {
+		t.Fatal("status = 200 voi ?mine=true — day la mat du lieu im lang (tra ve chi published thay vi bao loi ro rang), khong duoc phep")
+	}
+}
+
 func TestGetMyCourses_LocTheoInstructorDangDangNhap(t *testing.T) {
 	svc := &stubCourseServiceForList{}
 	h := NewCourseHandler(svc, nil)

@@ -374,7 +374,18 @@ func (s *LessonService) UpdateLesson(ctx context.Context, lessonID, actorUserID 
 	// P2 QA 260927 teacher: duration_minutes có thể vừa đổi — ghi lại total_duration_minutes
 	// của course. section đã được nạp ở checkLessonCourseOwnership nhưng không trả ra ngoài,
 	// nên nạp lại section ở đây để lấy CourseID (1 query rẻ, không đáng gộp lại chỉ vì việc này).
-	if section, sErr := s.sectionRepo.GetByID(ctx, lesson.SectionID); sErr == nil && section != nil {
+	//
+	// Review đối kháng PR #70 (MINOR): trước đây "sErr == nil && section != nil" NUỐT lỗi khi
+	// refetch section thất bại — UpdateLesson vẫn báo thành công dù total_duration_minutes có
+	// thể sai lệch, không nhất quán với DeleteLesson (cùng file, cùng tình huống) vốn trả lỗi
+	// ngay ("Errors Over Silent Fallbacks"). Nay trả lỗi giống DeleteLesson thay vì im lặng bỏ
+	// qua; section == nil (không lỗi nhưng không tìm thấy) vẫn bỏ qua recalculate như cũ — lesson
+	// vừa GetByID thành công ở trên nên trường hợp này gần như không xảy ra trên đường thật.
+	section, sErr := s.sectionRepo.GetByID(ctx, lesson.SectionID)
+	if sErr != nil {
+		return nil, sErr
+	}
+	if section != nil {
 		if err := s.courseRepo.RecalculateLessonStats(ctx, section.CourseID); err != nil {
 			return nil, err
 		}
