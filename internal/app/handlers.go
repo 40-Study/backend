@@ -15,6 +15,7 @@ type Handlers struct {
 	UserSystemRole       *handler.UserSystemRoleHandler
 	UserOrganizationRole *handler.UserOrganizationRoleHandler
 	Permission           *handler.PermissionHandler
+	UserAdmin            *handler.UserAdminHandler
 
 	// ===== Organization & Profile =====
 	Organization *handler.OrganizationHandler
@@ -133,6 +134,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		UserSystemRole:       handler.NewUserSystemRoleHandler(services.UserSystemRole),
 		UserOrganizationRole: handler.NewUserOrganizationRoleHandler(services.UserOrganizationRole, permChecker),
 		Permission:           handler.NewPermissionHandler(services.Permission),
+		UserAdmin:            handler.NewUserAdminHandler(services.UserAdmin),
 
 		// ===== Organization & Profile =====
 		Organization: handler.NewOrganizationHandler(services.Organization),

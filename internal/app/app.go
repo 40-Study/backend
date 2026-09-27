@@ -169,6 +169,7 @@ func New() (*App, error) {
 		handlers.UserSystemRole,
 		handlers.UserOrganizationRole,
 		handlers.Permission,
+		handlers.UserAdmin,
 
 		// ===== Organization & Profile =====
 		handlers.Organization,

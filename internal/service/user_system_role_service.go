@@ -174,22 +174,28 @@ func (s *UserSystemRoleService) RevokeSystemRoleFromUser(
 		return errors.New("system role not found")
 	}
 
-	// Tim assignment
-	assignment, err := s.userSystemRoleRepo.FindByUserAndSystemRole(ctx, userID, systemRoleID)
+	// Phase 1 quản lý người dùng (2026-09-28): thay find+UpdateStatus rời rạc bằng 1 transaction
+	// có khoá (RevokeActiveAssignment) — chặn gỡ vai trò cuối cùng của user, và nếu là
+	// SYSTEM_ADMIN thì chặn luôn gỡ SYSTEM_ADMIN active cuối cùng của hệ thống (đếm trong cùng
+	// transaction có khoá để tuần tự hoá 2 thao tác đồng thời — không còn kiểm-rồi-ghi rời rạc).
+	isSystemAdminRole := role.Name == "SYSTEM_ADMIN"
+	_, err = s.userSystemRoleRepo.RevokeActiveAssignment(ctx, userID, systemRoleID, revokedBy, isSystemAdminRole)
 	if err != nil {
+		if errors.Is(err, repository.ErrAssignmentNotFound) {
+			return errors.New("user does not have this system role")
+		}
+		if errors.Is(err, repository.ErrAssignmentAlreadyInactive) {
+			return errors.New("system role already inactive for this user")
+		}
+		if errors.Is(err, repository.ErrLastActiveRoleOfUser) {
+			return repository.ErrLastActiveRoleOfUser
+		}
+		if errors.Is(err, repository.ErrLastSystemAdmin) {
+			return repository.ErrLastSystemAdmin
+		}
 		return err
 	}
-	if assignment == nil {
-		return errors.New("user does not have this system role")
-	}
-
-	// Kiem tra da inactive chua
-	if assignment.Status == model.UserSystemRoleStatusInactive {
-		return errors.New("system role already inactive for this user")
-	}
-
-	// Revoke bang cach doi status
-	return s.userSystemRoleRepo.UpdateStatus(ctx, assignment.ID, model.UserSystemRoleStatusInactive, &revokedBy)
+	return nil
 }
 
 // GetUserSystemRoles lay system roles cua mot user

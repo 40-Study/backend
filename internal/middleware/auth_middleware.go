@@ -58,6 +58,18 @@ func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 
 		userVersion, _ := strconv.ParseInt(userVerStr, 10, 64)
 		if userVersion != claims.UserVersion {
+			// Phase 1 quản lý người dùng: user_version cũng bump khi đổi mật khẩu/đăng xuất
+			// nơi khác, nên KHÔNG thể suy ra "bị khoá" chỉ từ việc user_version lệch — kiểm
+			// thêm marker riêng (chỉ 1 lần GET Redis, trên nhánh lỗi hiếm gặp, KHÔNG phải mỗi
+			// request bình thường) để trả thông báo đúng lý do cho FE thay vì "All sessions
+			// revoked" chung chung cho mọi trường hợp.
+			if locked, _ := rdb.Exists(c.Context(), constants.KeyAccountLocked(claims.UserID.String())).Result(); locked > 0 {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+					"message": "Tài khoản đã bị khoá",
+					"code":    "ACCOUNT_LOCKED",
+					"error":   "Please login again",
+				})
+			}
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"message": "All sessions revoked",
 				"error":   "Please login again",

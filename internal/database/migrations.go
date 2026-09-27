@@ -211,6 +211,31 @@ func RunPostMigrations(db *gorm.DB) error {
 			name: "widen chk_orders_status to match model.OrderStatuses (B3-01/I-01/I-05)",
 			sql:  buildOrderStatusConstraintSQL(model.OrderStatuses),
 		},
+		{
+			// Phase 1 quản lý người dùng (2026-09-28): cột audit khoá/mở tài khoản trên
+			// users. AutoMigrate (postgres.go) đã tự thêm 3 cột này từ model.User (ADD
+			// COLUMN cho model đã tồn tại) — khối DO $$ ở đây là lớp phòng thủ tường minh,
+			// idempotent, cùng khuôn với các entry khác trong file này, đề phòng thứ tự
+			// AutoMigrate thay đổi trong tương lai.
+			name: "add locked_reason/locked_at/locked_by columns to users (phase-1 user mgmt)",
+			sql: `
+				DO $$
+				BEGIN
+					IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+					               WHERE table_name='users' AND column_name='locked_reason') THEN
+						ALTER TABLE users ADD COLUMN locked_reason TEXT;
+					END IF;
+					IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+					               WHERE table_name='users' AND column_name='locked_at') THEN
+						ALTER TABLE users ADD COLUMN locked_at TIMESTAMP;
+					END IF;
+					IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+					               WHERE table_name='users' AND column_name='locked_by') THEN
+						ALTER TABLE users ADD COLUMN locked_by UUID REFERENCES users(id);
+					END IF;
+				END $$;
+			`,
+		},
 	}
 
 	for _, stmt := range statements {

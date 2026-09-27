@@ -20,6 +20,7 @@ type Services struct {
 	UserSystemRole       *service.UserSystemRoleService
 	UserOrganizationRole *service.UserOrganizationRoleService
 	Permission           *service.PermissionService
+	UserAdmin            *service.UserAdminService
 
 	// ===== Organization & Profile =====
 	Organization *service.OrganizationService
@@ -317,6 +318,16 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 			repos.UserSystemRole,
 			repos.User,
 			repos.SystemRole,
+		),
+
+		// Phase 1 quản lý người dùng (2026-09-28) — tái dùng authSvc.RevokeAllSessions khi
+		// khoá tài khoản, không viết lại logic INCR/DEL Redis lần 2.
+		UserAdmin: service.NewUserAdminService(
+			repos.User,
+			repos.SystemRole,
+			repos.UserSystemRole,
+			authSvc,
+			resources.Redis,
 		),
 
 		UserOrganizationRole: service.NewUserOrganizationRoleService(

@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/repository"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
@@ -163,6 +165,12 @@ func (h *UserSystemRoleHandler) RevokeSystemRoleFromUser(c *fiber.Ctx) error {
 			status = fiber.StatusNotFound
 		}
 		if errMsg == "system role already inactive for this user" {
+			status = fiber.StatusBadRequest
+		}
+		// Phase 1 quản lý người dùng (2026-09-28): 2 bất biến mới — gỡ vai trò cuối cùng của
+		// user, hoặc gỡ SYSTEM_ADMIN active cuối cùng của hệ thống — đều là lỗi NGHIỆP VỤ (400),
+		// không phải "không tìm thấy" hay lỗi hạ tầng.
+		if errors.Is(err, repository.ErrLastActiveRoleOfUser) || errors.Is(err, repository.ErrLastSystemAdmin) {
 			status = fiber.StatusBadRequest
 		}
 		return c.Status(status).JSON(fiber.Map{

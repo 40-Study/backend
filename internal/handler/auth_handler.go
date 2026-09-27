@@ -147,6 +147,18 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 
 	response, err := h.authService.Login(c.Context(), req)
 	if err != nil {
+		// Phase 1 quản lý người dùng (2026-09-28): tách riêng case "tài khoản bị khoá" khỏi
+		// "sai email/mật khẩu" — trước đây cả 2 đều trả cùng message "Login failed" (chi tiết
+		// thật nằm ở field "error" mà interceptor phía FE không đọc tới), nên người dùng bị
+		// khoá thấy y hệt thông báo sai mật khẩu. "code" cho phép FE khớp chắc chắn, không cần
+		// so chuỗi message dễ vỡ khi dịch ngôn ngữ.
+		if errors.Is(err, service.ErrUserInactive) {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"message": "Tài khoản đã bị khoá",
+				"code":    "ACCOUNT_LOCKED",
+				"error":   err.Error(),
+			})
+		}
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"message": "Login failed",
 			"error":   err.Error(),

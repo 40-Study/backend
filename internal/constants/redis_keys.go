@@ -17,6 +17,11 @@ const (
 	PrefixLoginLocked   = "login_locked"
 	PrefixRegisterOTP   = "register:otp"
 	PrefixPasswordReset = "password_reset:otp"
+	// PrefixAccountLocked (Phase 1 quản lý người dùng): marker riêng cho lý do "tài khoản bị
+	// admin khoá" — user_version cũng bump khi đổi mật khẩu/đăng xuất nơi khác, nên
+	// AuthMiddleware không thể suy ra lý do CHỈ từ user_version lệch. Set/Del cùng lúc với
+	// is_active trong UserAdminService, không TTL (tồn tại tới khi mở khoá).
+	PrefixAccountLocked = "auth:account_locked"
     PrefixParentInviteRateLimit = "parent_invite:rate" // key lưu số lần gửi lời mời phụ huynh trong 24 giờ của mỗi học sinh, format: parent_invite:rate:{studentID}
 
 	// Schedule & Timetable
@@ -79,5 +84,9 @@ func KeyRegisterOTP(email string) string {
 
 func KeyPasswordReset(userID string) string {
 	return fmt.Sprintf("%s:%s", PrefixPasswordReset, userID)
+}
+
+func KeyAccountLocked(userID string) string {
+	return fmt.Sprintf("%s:%s", PrefixAccountLocked, userID)
 }
 
