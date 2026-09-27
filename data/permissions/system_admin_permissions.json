@@ -38,5 +38,9 @@
   {
     "name": "SYSTEM_SETTINGS_MANAGE",
     "description": "Cấu hình tham số hệ thống (Cổng thanh toán, Email server, Storage)"
+  },
+  {
+    "name": "REPORTS_MODERATE",
+    "description": "Kiểm duyệt report vi phạm: xem toàn bộ danh sách, đổi trạng thái, xoá report (A-P0-1, QA 260927)"
   }
 ]
