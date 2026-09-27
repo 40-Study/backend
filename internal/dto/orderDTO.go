@@ -178,9 +178,15 @@ type AdminOrderListResponse struct {
 }
 
 // RefundOrderRequest — POST /orders/admin/:id/refund.
+//
+// RefundMethod (quyết định chủ dự án #1, 27/09/2026): hoàn tiền = admin xác nhận ĐÃ chuyển
+// khoản thủ công NGOÀI hệ thống — "KHÔNG hoàn vào ví xu". Enum chỉ còn ĐÚNG 1 giá trị hợp lệ
+// (khác bản phác thảo ban đầu ở phase-02-orders-refund.md, vốn để "wallet_credit" là placeholder
+// TRƯỚC KHI có quyết định) — giữ field (thay vì xoá hẳn) để không phải đổi contract lần nữa nếu
+// sau này có quyết định khác, nhưng validate CHẶN wallet_credit ngay ở tầng request.
 type RefundOrderRequest struct {
 	Reason       string `json:"reason" validate:"required,max=500"`
-	RefundMethod string `json:"refund_method" validate:"required,oneof=manual_bank_transfer wallet_credit"`
+	RefundMethod string `json:"refund_method" validate:"required,oneof=manual_bank_transfer"`
 }
 
 // RefundOrderResponse — 200 của POST /orders/admin/:id/refund.
