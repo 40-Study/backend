@@ -2,16 +2,25 @@ package service
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/repository"
 )
 
+// P1 QA 260927 teacher: trước bản vá này 3 endpoint analytics chỉ có AuthMiddleware (bất kỳ ai
+// đã đăng nhập — kể cả học sinh, kể cả giáo viên khác) và KHÔNG kiểm actor có liên quan gì tới
+// buổi live/bài tập không, miễn biết (hoặc đoán) đúng sessionId/assignmentId là xem được số liệu
+// (số người xem, danh sách participant, tỉ lệ chấp nhận bài nộp). Dùng lại
+// ensureClassManage (class_access.go — NGUỒN SỰ THẬT DUY NHẤT cho câu hỏi "user này có quản lý
+// lớp này không") thay vì viết lại phép kiểm riêng.
+var ErrNotAnalyticsOwner = ErrNotClassTeacher
+
 type AnalyticsServiceInterface interface {
-	GetLivestreamAnalytics(ctx context.Context, sessionID uuid.UUID) (*dto.AnalyticsResponseDTO, error)
-	GetAssignmentAnalytics(ctx context.Context, assignmentID uuid.UUID) (*dto.AssignmentAnalyticsDTO, error)
-	GetParticipantAnalytics(ctx context.Context, sessionID uuid.UUID) (*dto.ParticipantAnalyticsDTO, error)
+	GetLivestreamAnalytics(ctx context.Context, sessionID, actorUserID uuid.UUID, isAdmin bool) (*dto.AnalyticsResponseDTO, error)
+	GetAssignmentAnalytics(ctx context.Context, assignmentID, actorUserID uuid.UUID, isAdmin bool) (*dto.AssignmentAnalyticsDTO, error)
+	GetParticipantAnalytics(ctx context.Context, sessionID, actorUserID uuid.UUID, isAdmin bool) (*dto.ParticipantAnalyticsDTO, error)
 }
 
 type AnalyticsService struct {
@@ -19,6 +28,9 @@ type AnalyticsService struct {
 	participantRepo repository.ParticipantRepositoryInterface
 	submissionRepo  repository.SubmissionRepositoryInterface
 	assignmentRepo  repository.AssignmentRepositoryInterface
+	livestreamRepo  repository.LivestreamRepositoryInterface
+	classRepo       repository.ClassRepositoryInterface
+	courseRepo      repository.CourseRepositoryInterface
 }
 
 func NewAnalyticsService(
@@ -26,16 +38,58 @@ func NewAnalyticsService(
 	participantRepo repository.ParticipantRepositoryInterface,
 	submissionRepo repository.SubmissionRepositoryInterface,
 	assignmentRepo repository.AssignmentRepositoryInterface,
+	livestreamRepo repository.LivestreamRepositoryInterface,
+	classRepo repository.ClassRepositoryInterface,
+	courseRepo repository.CourseRepositoryInterface,
 ) *AnalyticsService {
 	return &AnalyticsService{
 		analyticsRepo:   analyticsRepo,
 		participantRepo: participantRepo,
 		submissionRepo:  submissionRepo,
 		assignmentRepo:  assignmentRepo,
+		livestreamRepo:  livestreamRepo,
+		classRepo:       classRepo,
+		courseRepo:      courseRepo,
 	}
 }
 
-func (s *AnalyticsService) GetLivestreamAnalytics(ctx context.Context, sessionID uuid.UUID) (*dto.AnalyticsResponseDTO, error) {
+// ensureSessionAnalyticsAccess (P1 QA 260927 teacher): host của phiên luôn qua; còn lại đi qua
+// ensureClassManage bằng ClassID của phiên (session.ClassID NOT NULL theo model — nhánh
+// CourseID-only chỉ là phòng hờ, giống hệt resolveJoinRole ở livestream_service.go).
+func (s *AnalyticsService) ensureSessionAnalyticsAccess(ctx context.Context, sessionID, actorUserID uuid.UUID, isAdmin bool) error {
+	if isAdmin {
+		return nil
+	}
+	session, err := s.livestreamRepo.GetByID(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session == nil {
+		return errors.New("session not found")
+	}
+	if session.HostID == actorUserID {
+		return nil
+	}
+	if session.ClassID != uuid.Nil {
+		return ensureClassManage(ctx, s.classRepo, s.courseRepo, actorUserID, session.ClassID, isAdmin)
+	}
+	if session.CourseID != nil {
+		course, err := s.courseRepo.GetByID(ctx, *session.CourseID)
+		if err != nil {
+			return err
+		}
+		if course != nil && course.InstructorID == actorUserID {
+			return nil
+		}
+	}
+	return ErrNotAnalyticsOwner
+}
+
+func (s *AnalyticsService) GetLivestreamAnalytics(ctx context.Context, sessionID, actorUserID uuid.UUID, isAdmin bool) (*dto.AnalyticsResponseDTO, error) {
+	if err := s.ensureSessionAnalyticsAccess(ctx, sessionID, actorUserID, isAdmin); err != nil {
+		return nil, err
+	}
+
 	analytics, err := s.analyticsRepo.GetBySession(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -55,13 +109,30 @@ func (s *AnalyticsService) GetLivestreamAnalytics(ctx context.Context, sessionID
 	}, nil
 }
 
-func (s *AnalyticsService) GetAssignmentAnalytics(ctx context.Context, assignmentID uuid.UUID) (*dto.AssignmentAnalyticsDTO, error) {
-	assignment, err := s.assignmentRepo.GetByID(ctx, assignmentID)
+func (s *AnalyticsService) GetAssignmentAnalytics(ctx context.Context, assignmentID, actorUserID uuid.UUID, isAdmin bool) (*dto.AssignmentAnalyticsDTO, error) {
+	// GetByIDWithSession (thay vì GetByID trần): cần Session.ClassID khi bài tập là loại
+	// live_coding (ClassID trực tiếp trên Assignment là nil, chỉ SessionID có giá trị).
+	assignment, err := s.assignmentRepo.GetByIDWithSession(ctx, assignmentID)
 	if err != nil {
 		return nil, err
 	}
 	if assignment == nil {
 		return nil, nil
+	}
+
+	if !isAdmin {
+		classID := uuid.Nil
+		if assignment.ClassID != nil {
+			classID = *assignment.ClassID
+		} else if assignment.Session != nil {
+			classID = assignment.Session.ClassID
+		}
+		if classID == uuid.Nil {
+			return nil, ErrNotAnalyticsOwner
+		}
+		if err := ensureClassManage(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin); err != nil {
+			return nil, err
+		}
 	}
 
 	stats, err := s.analyticsRepo.GetSubmissionStats(ctx, assignmentID)
@@ -92,7 +163,11 @@ func (s *AnalyticsService) GetAssignmentAnalytics(ctx context.Context, assignmen
 	}, nil
 }
 
-func (s *AnalyticsService) GetParticipantAnalytics(ctx context.Context, sessionID uuid.UUID) (*dto.ParticipantAnalyticsDTO, error) {
+func (s *AnalyticsService) GetParticipantAnalytics(ctx context.Context, sessionID, actorUserID uuid.UUID, isAdmin bool) (*dto.ParticipantAnalyticsDTO, error) {
+	if err := s.ensureSessionAnalyticsAccess(ctx, sessionID, actorUserID, isAdmin); err != nil {
+		return nil, err
+	}
+
 	totalJoined, err := s.participantRepo.CountBySession(ctx, sessionID)
 	if err != nil {
 		return nil, err

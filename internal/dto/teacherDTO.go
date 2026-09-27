@@ -28,6 +28,9 @@ type TeacherListResponseDTO struct {
 	PageSize int                  `json:"page_size"`
 }
 
+// TeacherStudentDTO (P1 QA 260927 teacher): 1 học viên/1 lượt ghi danh khoá học của giáo viên.
+// ClassID/ClassName là con trỏ — chỉ có giá trị khi học viên đó CŨNG đã được xếp vào một lớp của
+// cùng khoá; nhiều giáo viên chưa tạo lớp nào nên phần lớn sẽ là nil (không bịa dữ liệu lớp).
 type TeacherStudentDTO struct {
 	ID          uuid.UUID  `json:"id"`
 	Name        string     `json:"name"`
@@ -36,8 +39,8 @@ type TeacherStudentDTO struct {
 	StudentID   *string    `json:"student_id,omitempty"`
 	ParentName  *string    `json:"parent_name,omitempty"`
 	ParentPhone *string    `json:"parent_phone,omitempty"`
-	ClassID     uuid.UUID  `json:"class_id"`
-	ClassName   string     `json:"class_name"`
+	ClassID     *uuid.UUID `json:"class_id,omitempty"`
+	ClassName   *string    `json:"class_name,omitempty"`
 	CourseID    *uuid.UUID `json:"course_id,omitempty"`
 	CourseName  *string    `json:"course_name,omitempty"`
 	Status      string     `json:"status"`

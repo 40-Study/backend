@@ -169,7 +169,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		Submission: handler.NewSubmissionHandler(services.Submission, permChecker),
 		Chat:       handler.NewChatHandler(services.Chat),
 		Whiteboard: handler.NewWhiteboardHandler(services.Whiteboard, services.Livekit),
-		Analytics:  handler.NewAnalyticsHandler(services.Analytics),
+		Analytics:  handler.NewAnalyticsHandler(services.Analytics, permChecker),
 
 		// ===== Order & Payment =====
 		Order:      handler.NewOrderHandler(services.Order, services.Payment, permChecker),

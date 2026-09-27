@@ -129,7 +129,8 @@ func requireLessonCourseOwnerOrAdmin(ctx context.Context, sectionRepo repository
 }
 
 func (s *LessonService) CreateLesson(ctx context.Context, sectionID, actorUserID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error) {
-	if _, err := s.checkSectionCourseOwnership(ctx, sectionID, actorUserID); err != nil {
+	section, err := s.checkSectionCourseOwnership(ctx, sectionID, actorUserID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -163,6 +164,12 @@ func (s *LessonService) CreateLesson(ctx context.Context, sectionID, actorUserID
 	}
 
 	if err := s.lessonRepo.Create(ctx, lesson); err != nil {
+		return nil, err
+	}
+
+	// P2 QA 260927 teacher: total_lessons/total_duration_minutes không tự cập nhật — ghi lại
+	// ngay sau khi thêm bài (xem RecalculateLessonStats).
+	if err := s.courseRepo.RecalculateLessonStats(ctx, section.CourseID); err != nil {
 		return nil, err
 	}
 
@@ -364,6 +371,26 @@ func (s *LessonService) UpdateLesson(ctx context.Context, lessonID, actorUserID 
 		contents = nil
 	}
 
+	// P2 QA 260927 teacher: duration_minutes có thể vừa đổi — ghi lại total_duration_minutes
+	// của course. section đã được nạp ở checkLessonCourseOwnership nhưng không trả ra ngoài,
+	// nên nạp lại section ở đây để lấy CourseID (1 query rẻ, không đáng gộp lại chỉ vì việc này).
+	//
+	// Review đối kháng PR #70 (MINOR): trước đây "sErr == nil && section != nil" NUỐT lỗi khi
+	// refetch section thất bại — UpdateLesson vẫn báo thành công dù total_duration_minutes có
+	// thể sai lệch, không nhất quán với DeleteLesson (cùng file, cùng tình huống) vốn trả lỗi
+	// ngay ("Errors Over Silent Fallbacks"). Nay trả lỗi giống DeleteLesson thay vì im lặng bỏ
+	// qua; section == nil (không lỗi nhưng không tìm thấy) vẫn bỏ qua recalculate như cũ — lesson
+	// vừa GetByID thành công ở trên nên trường hợp này gần như không xảy ra trên đường thật.
+	section, sErr := s.sectionRepo.GetByID(ctx, lesson.SectionID)
+	if sErr != nil {
+		return nil, sErr
+	}
+	if section != nil {
+		if err := s.courseRepo.RecalculateLessonStats(ctx, section.CourseID); err != nil {
+			return nil, err
+		}
+	}
+
 	return s.toLessonResponseDTO(lesson, contents), nil
 }
 
@@ -395,6 +422,14 @@ func (s *LessonService) DeleteLesson(ctx context.Context, lessonID, actorUserID 
 		return err
 	}
 
+	// P2 QA 260927 teacher: nạp CourseID TRƯỚC khi xoá lesson (sau khi xoá, lesson.SectionID vẫn
+	// còn trong biến Go nhưng section có thể đã trống bài — nạp trước để chắc chắn có CourseID
+	// dùng cho RecalculateLessonStats bên dưới, không phụ thuộc thứ tự xoá).
+	section, sErr := s.sectionRepo.GetByID(ctx, lesson.SectionID)
+	if sErr != nil {
+		return sErr
+	}
+
 	// Lo 1 (fullstack-verify-260922): KHONG xoa file theo content.VideoURL. URL do client tu dat qua
 	// CreateContent/UpdateContent va khong co bang so huu file, nen goi DeleteByURL o day cho phep giang
 	// vien tro video_url vao bat ky object nao trong bucket (anh khoa hoc, video goc cua nguoi khac) roi
@@ -402,7 +437,16 @@ func (s *LessonService) DeleteLesson(ctx context.Context, lessonID, actorUserID 
 	// Video qua luong upload duoc don qua DeleteUpload (co kiem chu so huu); file legacy tro thang MinIO
 	// chap nhan de mo coi.
 
-	return s.lessonRepo.Delete(ctx, lessonID)
+	if err := s.lessonRepo.Delete(ctx, lessonID); err != nil {
+		return err
+	}
+
+	if section != nil {
+		if err := s.courseRepo.RecalculateLessonStats(ctx, section.CourseID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *LessonService) ReorderLessons(ctx context.Context, sectionID uuid.UUID, req dto.ReorderDTO) error {
