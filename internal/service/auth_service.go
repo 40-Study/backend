@@ -380,7 +380,11 @@ func (s *AuthService) Login(
 	}
 
 	if !user.IsActive {
-		return nil, errors.New("account is inactive")
+		// Phase 1 quản lý người dùng (2026-09-28): tái dùng sentinel ErrUserInactive đã có
+		// (thay vì errors.New rời rạc) để Login và SwitchOrg (:871) cùng chung 1 lỗi handler
+		// có thể errors.Is() — auth_handler.go giờ trả message + code riêng cho case này thay
+		// vì hoà lẫn vào "Login failed" chung (không phân biệt được với sai mật khẩu ở FE).
+		return nil, ErrUserInactive
 	}
 
 	// ===== 3. Clear failed attempts on successful login =====
@@ -1238,6 +1242,13 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID uuid.UUID, req 
 	}
 
 	return nil
+}
+
+// RevokeAllSessions — export công khai của revokeAllSessions (Phase 1 quản lý người dùng,
+// 2026-09-28): UserAdminService tái dùng NGUYÊN logic INCR/DEL Redis này khi khoá tài khoản,
+// không viết lại lần 2 (đã ghi rõ trong contract phase-01-user-management.md).
+func (s *AuthService) RevokeAllSessions(ctx context.Context, userID uuid.UUID) error {
+	return s.revokeAllSessions(ctx, userID)
 }
 
 // revokeAllSessions invalidates all tokens and clears all device sessions for a user.

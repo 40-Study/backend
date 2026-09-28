@@ -152,11 +152,27 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 
 	response, err := h.authService.Login(c.Context(), req)
 	if err != nil {
+		// Phase 1 quản lý người dùng (2026-09-28): tách riêng case "tài khoản bị khoá" khỏi
+		// "sai email/mật khẩu" — trước đây cả 2 đều trả cùng message "Login failed" (chi tiết
+		// thật nằm ở field "error" mà interceptor phía FE không đọc tới), nên người dùng bị
+		// khoá thấy y hệt thông báo sai mật khẩu. "code" cho phép FE khớp chắc chắn, không cần
+		// so chuỗi message dễ vỡ khi dịch ngôn ngữ.
+		if errors.Is(err, service.ErrUserInactive) {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"message": "Tài khoản đã bị khoá",
+				"code":    "ACCOUNT_LOCKED",
+				"error":   err.Error(),
+			})
+		}
 		// Review vòng 4 (PR #69, sửa lỗ hổng review vòng 3): request đã qua BodyParser +
 		// ValidateStruct ở trên (cấu trúc hợp lệ: email đúng định dạng, password >= 8 ký tự,
 		// device_info đủ field) — lỗi ở ĐÂY nghĩa là service đã thực sự so sánh với mật khẩu
 		// thật (hoặc email không tồn tại) và từ chối, không phải request rác. Đặt cờ để
 		// middleware.AccountFailureLockout (account_lockout.go) đếm đúng 1 lần thất bại thật.
+		// THỨ TỰ BẮT BUỘC: cờ đặt SAU nhánh ErrUserInactive ở trên. ErrUserInactive chỉ xảy ra
+		// khi mật khẩu đã ĐÚNG (service check password trước, IsActive sau), nên đó không phải
+		// một lần đoán sai bí mật và không được tính vào bộ đếm brute-force. Test pin thứ tự này:
+		// TestLogin_TaiKhoanBiKhoaDungMatKhau_KhongTangBoDemLockout.
 		c.Locals(middleware.AuthCredentialRejectedLocalsKey, true)
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"message": "Login failed",

@@ -67,11 +67,16 @@ func (f *fakeAuthServiceForLockoutTest) ResetPassword(ctx context.Context, req d
 
 func newRealLoginLockoutTestApp(t *testing.T) *fiber.App {
 	t.Helper()
+	return newRealLoginLockoutTestAppWithService(t, &fakeAuthServiceForLockoutTest{})
+}
+
+func newRealLoginLockoutTestAppWithService(t *testing.T, authService service.AuthServiceInterface) *fiber.App {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 
-	h := NewAuthHandler(&fakeAuthServiceForLockoutTest{})
+	h := NewAuthHandler(authService)
 	lockout := middleware.AccountFailureLockout(rdb, middleware.AccountLockoutConfig{KeyPrefix: "t:reallogin", MaxFailures: 10})
 
 	app := fiber.New()

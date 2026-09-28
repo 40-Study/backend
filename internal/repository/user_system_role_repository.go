@@ -3,10 +3,18 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"study.com/v1/internal/model"
+)
+
+// Phase 1 quản lý người dùng (2026-09-28) — sentinel errors cho RevokeActiveAssignment.
+var (
+	ErrAssignmentNotFound        = errors.New("user does not have this system role")
+	ErrAssignmentAlreadyInactive = errors.New("system role already inactive for this user")
 )
 
 type UserSystemRoleRepositoryInterface interface {
@@ -37,6 +45,16 @@ type UserSystemRoleRepositoryInterface interface {
 	// Transaction
 	AssignRolesWithTx(ctx context.Context, toReactivate []*model.UserSystemRole, toCreate []model.UserSystemRole) error
 	GetDefaultSystemRoleID(ctx context.Context) (uuid.UUID, error)
+
+	// RevokeActiveAssignment (Phase 1 quản lý người dùng) — gỡ 1 vai trò với 2 bất biến:
+	// user luôn còn >=1 vai trò active, và (nếu là SYSTEM_ADMIN) hệ thống luôn còn >=1
+	// SYSTEM_ADMIN active khác. Toàn bộ chạy trong 1 transaction có khoá (FOR UPDATE) để
+	// tuần tự hoá với LockOrUnlockUser (user_repository.go) đang thao tác trên CÙNG bất biến.
+	RevokeActiveAssignment(
+		ctx context.Context,
+		userID, systemRoleID, revokedBy uuid.UUID,
+		isSystemAdminRole bool,
+	) (*model.UserSystemRole, error)
 }
 
 type UserSystemRoleRepository struct {
@@ -273,4 +291,84 @@ func (r *UserSystemRoleRepository) GetDefaultSystemRoleID(ctx context.Context) (
 		return uuid.Nil, err
 	}
 	return systemRole.ID, nil
+}
+
+// RevokeActiveAssignment xem UserSystemRoleRepositoryInterface.
+func (r *UserSystemRoleRepository) RevokeActiveAssignment(
+	ctx context.Context,
+	userID, systemRoleID, revokedBy uuid.UUID,
+	isSystemAdminRole bool,
+) (*model.UserSystemRole, error) {
+	var revoked model.UserSystemRole
+
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var assignment model.UserSystemRole
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND system_role_id = ?", userID, systemRoleID).
+			First(&assignment).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrAssignmentNotFound
+			}
+			return err
+		}
+		if assignment.Status == model.UserSystemRoleStatusInactive {
+			return ErrAssignmentAlreadyInactive
+		}
+
+		// Bất biến (a): user luôn còn >=1 vai trò active SAU KHI gỡ — khoá (FOR UPDATE, không
+		// kèm COUNT/aggregate) toàn bộ dòng active của CHÍNH user này để tuần tự hoá 2 lượt gỡ
+		// đồng thời trên 2 vai trò khác nhau của cùng 1 user.
+		var userActiveRows []model.UserSystemRole
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND status = ?", userID, model.UserSystemRoleStatusActive).
+			Find(&userActiveRows).Error; err != nil {
+			return err
+		}
+		if err := evaluateLastActiveRoleGuard(len(userActiveRows)); err != nil {
+			return err
+		}
+
+		// Bất biến (b): nếu là SYSTEM_ADMIN, hệ thống luôn còn >=1 SYSTEM_ADMIN active khác —
+		// khoá CÙNG tập dòng mà LockOrUnlockUser (user_repository.go) khoá, để 2 thao tác đồng
+		// thời (gỡ role vs khoá tài khoản) tự xếp hàng thay vì cùng đọc "còn 2" rồi cùng tiến.
+		if isSystemAdminRole {
+			var adminRows []model.UserSystemRole
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("system_role_id = ? AND status = ?", systemRoleID, model.UserSystemRoleStatusActive).
+				Find(&adminRows).Error; err != nil {
+				return err
+			}
+			adminUserIDs := make([]uuid.UUID, 0, len(adminRows))
+			for _, a := range adminRows {
+				adminUserIDs = append(adminUserIDs, a.UserID)
+			}
+			// BLOCKER đã sửa (review-260928-users-pr72-pr28.md finding #1): giữ vai trò
+			// SYSTEM_ADMIN active KHÔNG đồng nghĩa tài khoản đó is_active=true (có thể đã bị
+			// khoá bởi một thao tác khác trước đó) — phải đọc `users.is_active` THẬT qua
+			// fetchIsActiveByUserIDs (dùng chung với nhánh khoá tài khoản ở user_repository.go),
+			// không được gán cứng true cho mọi holder.
+			activeStatus, err := fetchIsActiveByUserIDs(tx, adminUserIDs)
+			if err != nil {
+				return err
+			}
+			if err := evaluateLastSystemAdminGuard(adminUserIDs, activeStatus, userID); err != nil {
+				return err
+			}
+		}
+
+		assignment.Status = model.UserSystemRoleStatusInactive
+		assignment.RevokedBy = &revokedBy
+		now := time.Now()
+		assignment.RevokedAt = &now
+		if err := tx.Save(&assignment).Error; err != nil {
+			return err
+		}
+		revoked = assignment
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return &revoked, nil
 }

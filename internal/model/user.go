@@ -1,6 +1,10 @@
 package model
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 type User struct {
 	BaseModel
@@ -19,6 +23,12 @@ type User struct {
 	LastLoginAt       *time.Time `gorm:"column:last_login_at" json:"last_login_at,omitempty"`
 	PasswordChangedAt *time.Time `gorm:"column:password_changed_at" json:"password_changed_at,omitempty"`
 	Timezone          *string    `gorm:"type:varchar(50);default:'Asia/Ho_Chi_Minh'" json:"timezone,omitempty"` // IANA timezone
+
+	// Phase 1 quản lý người dùng (2026-09-28): audit khoá/mở tài khoản — không derive được từ
+	// đâu khác (ai khoá, khi nào, lý do) nên không vi phạm "No Derived Fields".
+	LockedReason *string    `gorm:"type:text;column:locked_reason" json:"locked_reason,omitempty"`
+	LockedAt     *time.Time `gorm:"column:locked_at" json:"locked_at,omitempty"`
+	LockedBy     *uuid.UUID `gorm:"type:uuid;column:locked_by" json:"locked_by,omitempty"`
 
 	// Many-to-many relationship with roles
 	UserOrganizationRoles []UserOrganizationRole `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
