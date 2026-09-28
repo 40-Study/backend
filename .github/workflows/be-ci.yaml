@@ -57,11 +57,12 @@ jobs:
         run: go vet ./...
 
       # Tạo schema public (AutoMigrate + roles/permissions) cho các test tích hợp tự ROLLBACK.
-      # Test cần COMMIT dữ liệu tự tạo schema tạm riêng (pgtest.IsolatedSchema). .env rỗng vì
-      # LoadConfig bắt buộc đọc được file cấu hình; giá trị thật lấy từ env của job.
+      # Test cần COMMIT dữ liệu tự tạo schema tạm riêng (pgtest.IsolatedSchema). LoadConfig
+      # (viper.Unmarshal) chỉ thấy key có trong file cấu hình/default, không thấy biến chỉ nằm
+      # trong env — nên ghi env CI của job ra .env (giá trị chỉ dùng cho DB tạm của CI).
       - name: Migrate test database
         run: |
-          touch .env
+          env | grep -E '^(DB_[A-Z]+|JWT_SECRET|ENVIRONMENT)=' > .env
           go run ./cmd/seed -mode=base
 
       - name: Test
