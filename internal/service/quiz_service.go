@@ -102,8 +102,8 @@ func (s *QuizService) checkContestAccess(ctx context.Context, quizID, userID uui
 // không tạo ra. Handler ánh xạ sang 403 QUIZ_FORBIDDEN.
 var ErrQuizNotOwner = errors.New("only the quiz creator or an admin can modify this quiz")
 
-// checkQuizOwner: chỉ người tạo quiz (created_by) hoặc admin được sửa, xoá, nhân bản quiz và câu
-// hỏi của nó. Trước bản vá, mọi tài khoản đăng nhập đều sửa được quiz của người khác, và nhân bản
+// checkQuizOwner: chỉ người tạo quiz (created_by), giảng viên chủ khoá chứa quiz, hoặc admin được
+// sửa, xoá, nhân bản quiz và câu hỏi của nó. Trước bản vá, mọi tài khoản đăng nhập đều sửa được quiz của người khác, và nhân bản
 // quiz của giảng viên khác rồi làm bài trên bản sao là đọc được đáp án trước khi quiz gốc được gắn
 // vào cuộc thi. Quiz tạo trước khi có cột created_by (NULL) không có chủ xác định nên chỉ admin
 // được sửa — chủ dự án chốt, không để thành "vô chủ ai cũng sửa".
@@ -119,6 +119,15 @@ func (s *QuizService) checkQuizOwner(ctx context.Context, quizID, userID uuid.UU
 		return errors.New("quiz not found")
 	}
 	if quiz.CreatedBy != nil && *quiz.CreatedBy == userID {
+		return nil
+	}
+	// Re-review vòng 2, R2-C (chủ dự án chốt 29/09): giảng viên chủ khoá sửa được MỌI quiz thuộc
+	// khoá của mình (suy từ bài học hoặc khoá học), kể cả quiz do admin hay người khác tạo.
+	isInstructor, err := s.isQuizCourseInstructor(ctx, quiz, userID)
+	if err != nil {
+		return err
+	}
+	if isInstructor {
 		return nil
 	}
 	return ErrQuizNotOwner
@@ -178,22 +187,12 @@ func (s *QuizService) canViewQuizAnswerKey(ctx context.Context, quiz *model.Quiz
 
 	var courseID *uuid.UUID
 	switch {
-	case quiz.CourseID != nil:
-		courseID = quiz.CourseID
-	case quiz.LessonID != nil:
-		lesson, err := s.lessonRepo.GetByID(ctx, *quiz.LessonID)
+	case quiz.CourseID != nil || quiz.LessonID != nil:
+		id, err := s.quizCourseID(ctx, quiz)
 		if err != nil {
 			return false, err
 		}
-		if lesson != nil {
-			section, err := s.sectionRepo.GetByID(ctx, lesson.SectionID)
-			if err != nil {
-				return false, err
-			}
-			if section != nil {
-				courseID = &section.CourseID
-			}
-		}
+		courseID = id
 	case quiz.SessionID != nil:
 		session, err := s.livestreamRepo.GetByID(ctx, *quiz.SessionID)
 		if err != nil {
@@ -216,6 +215,67 @@ func (s *QuizService) canViewQuizAnswerKey(ctx context.Context, quiz *model.Quiz
 		return false, err
 	}
 	return course != nil && course.InstructorID == userID, nil
+}
+
+// quizCourseID: khoá học chứa quiz, suy từ course_id hoặc lesson → section → course (cùng thứ tự
+// canViewQuizAnswerKey vẫn dùng). nil = quiz không thuộc khoá nào (standalone, live) hoặc dữ liệu
+// hỏng.
+func (s *QuizService) quizCourseID(ctx context.Context, quiz *model.Quiz) (*uuid.UUID, error) {
+	if quiz.CourseID != nil {
+		return quiz.CourseID, nil
+	}
+	if quiz.LessonID == nil {
+		return nil, nil
+	}
+	lesson, err := s.lessonRepo.GetByID(ctx, *quiz.LessonID)
+	if err != nil || lesson == nil {
+		return nil, err
+	}
+	section, err := s.sectionRepo.GetByID(ctx, lesson.SectionID)
+	if err != nil || section == nil {
+		return nil, err
+	}
+	return &section.CourseID, nil
+}
+
+// isQuizCourseInstructor (re-review vòng 2, R2-C): userID là giảng viên của khoá chứa quiz.
+func (s *QuizService) isQuizCourseInstructor(ctx context.Context, quiz *model.Quiz, userID uuid.UUID) (bool, error) {
+	courseID, err := s.quizCourseID(ctx, quiz)
+	if err != nil || courseID == nil {
+		return false, err
+	}
+	course, err := s.courseRepo.GetByID(ctx, *courseID)
+	if err != nil {
+		return false, err
+	}
+	return course != nil && course.InstructorID == userID, nil
+}
+
+// isStandaloneQuiz: quiz không gắn bài học, khoá học hay buổi live — loại quiz dùng cho cuộc thi.
+func isStandaloneQuiz(quiz *model.Quiz) bool {
+	return quiz.LessonID == nil && quiz.CourseID == nil && quiz.SessionID == nil
+}
+
+// checkStandaloneQuizReader (re-review vòng 2, R2-A): quiz standalone chỉ người tạo hoặc admin được
+// đọc, làm bài, nộp và xem attempt. Trước bản vá, quiz standalone CHƯA gắn cuộc thi không có kiểm
+// quyền nào: người lạ start + submit rồi đọc attempt là thấy correct_answer_ids, và attempt của họ
+// khiến quiz không gắn được vào cuộc thi nữa (§3.3 yêu cầu chưa có attempt). Quiz ĐÃ gắn cuộc thi
+// vẫn do gate cuộc thi quyết định (gọi trước hàm này). Quiz bài học/khoá học/live giữ luật cũ.
+func (s *QuizService) checkStandaloneQuizReader(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) error {
+	if isAdmin {
+		return nil
+	}
+	quiz, err := s.repo.GetQuizByID(ctx, quizID)
+	if err != nil {
+		return err
+	}
+	if quiz == nil {
+		return errors.New("quiz not found")
+	}
+	if !isStandaloneQuiz(quiz) || (quiz.CreatedBy != nil && *quiz.CreatedBy == userID) {
+		return nil
+	}
+	return ErrQuizNotOwner
 }
 
 // checkLessonQuizAccess (SEC-1, vá lộ nội dung quiz): quiz gắn LessonID mà người gọi KHÔNG phải
@@ -336,8 +396,7 @@ func (s *QuizService) checkSessionQuizAccess(ctx context.Context, sessionID, use
 // GetAllQuizzes. Trước bản vá R4, cả 4 nơi trên CHỈ kiểm tra khi quiz.LessonID != nil, để lộ
 // toàn bộ quiz gắn course_id/session_id cho người chưa enroll (xem review 260919, mục R4).
 // canView=true (chủ khoá học/giảng viên/admin) bỏ qua hoàn toàn ở TẤT CẢ nhánh — giữ đúng hành
-// vi hiện có. Quiz không gắn lesson/course/session nào (dữ liệu mồ côi) mặc định KHÔNG khoá —
-// giữ đúng hành vi trước bản vá cho trường hợp hiếm này (không có gate nào áp được).
+// vi hiện có. Quiz không gắn lesson/course/session nào (standalone) chỉ người tạo/admin được đọc.
 func (s *QuizService) checkQuizAccess(ctx context.Context, quiz *model.Quiz, userID uuid.UUID, canView bool) error {
 	switch {
 	case quiz.LessonID != nil:
@@ -347,7 +406,13 @@ func (s *QuizService) checkQuizAccess(ctx context.Context, quiz *model.Quiz, use
 	case quiz.SessionID != nil:
 		return s.checkSessionQuizAccess(ctx, *quiz.SessionID, userID, canView)
 	default:
-		return nil
+		// Re-review vòng 2, R2-A: quiz standalone (loại dùng cho cuộc thi) chỉ người tạo và admin
+		// được đụng tới — canView đã đúng bằng "người tạo hoặc admin" với quiz không thuộc khoá nào.
+		// Trước đây nhánh này trả nil cho mọi người, xem checkStandaloneQuizReader.
+		if canView {
+			return nil
+		}
+		return ErrQuizNotOwner
 	}
 }
 
@@ -513,7 +578,8 @@ func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, ses
 			return nil, err
 		}
 		if err := s.checkQuizAccess(ctx, q, userID, canView); err != nil {
-			if err == ErrLessonLocked || err == ErrLessonNotInCourse {
+			// ErrQuizNotOwner: quiz standalone của người khác (R2-A) — loại khỏi danh sách.
+			if err == ErrLessonLocked || err == ErrLessonNotInCourse || err == ErrQuizNotOwner {
 				continue
 			}
 			return nil, err
@@ -1031,6 +1097,9 @@ func (s *QuizService) SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, 
 	if err := s.checkContestAccess(ctx, quizID, userID, isAdmin); err != nil {
 		return nil, err
 	}
+	if err := s.checkStandaloneQuizReader(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	// Find the in-progress attempt to submit.
 	all, err := s.repo.GetAttemptsByUserAndQuiz(ctx, userID, quizID)
 	if err != nil {
@@ -1229,6 +1298,9 @@ func (s *QuizService) GetMyAttempts(ctx context.Context, quizID, userID uuid.UUI
 	if err := s.checkContestAccess(ctx, quizID, userID, isAdmin); err != nil {
 		return nil, err
 	}
+	if err := s.checkStandaloneQuizReader(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	attempts, err := s.repo.GetAttemptsByUserAndQuiz(ctx, userID, quizID)
 	if err != nil {
 		return nil, err
@@ -1249,6 +1321,9 @@ func (s *QuizService) GetAttemptByID(ctx context.Context, attemptID, userID uuid
 	// Bài thi đã nộp sẽ có correct_answer_ids/explanation bên dưới — thí sinh chỉ được xem qua
 	// GET /contests/:id/my-result sau khi cuộc thi đóng (contract §4.3), không phải ở đây.
 	if err := s.checkContestAccess(ctx, attempt.QuizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
+	if err := s.checkStandaloneQuizReader(ctx, attempt.QuizID, userID, isAdmin); err != nil {
 		return nil, err
 	}
 	if attempt.UserID != userID {
@@ -1293,6 +1368,9 @@ func (s *QuizService) GetQuizResults(ctx context.Context, quizID, userID uuid.UU
 	if err := s.checkContestAccess(ctx, quizID, userID, isAdmin); err != nil {
 		return nil, err
 	}
+	if err := s.checkStandaloneQuizReader(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	quiz, err := s.repo.GetQuizByID(ctx, quizID)
 	if err != nil || quiz == nil {
 		return nil, errors.New("quiz not found")
@@ -1318,6 +1396,9 @@ func (s *QuizService) GetQuizResults(ctx context.Context, quizID, userID uuid.UU
 
 func (s *QuizService) GetQuizStatistics(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) (*dto.QuizStatisticsDTO, error) {
 	if err := s.checkContestAccess(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
+	if err := s.checkStandaloneQuizReader(ctx, quizID, userID, isAdmin); err != nil {
 		return nil, err
 	}
 	quiz, err := s.repo.GetQuizByID(ctx, quizID)
@@ -1357,6 +1438,9 @@ func (s *QuizService) SaveAnswer(ctx context.Context, attemptID, userID uuid.UUI
 		return errors.New("attempt not found")
 	}
 	if err := s.checkContestAccess(ctx, attempt.QuizID, userID, isAdmin); err != nil {
+		return err
+	}
+	if err := s.checkStandaloneQuizReader(ctx, attempt.QuizID, userID, isAdmin); err != nil {
 		return err
 	}
 	// Save in-progress answer to Redis for auto-save

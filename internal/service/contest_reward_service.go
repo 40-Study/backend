@@ -68,7 +68,7 @@ func (s *ContestRewardService) IssueAwardTx(ctx context.Context, tx *gorm.DB, g 
 		}
 		uv, err := s.vouchers.GrantVoucherTx(ctx, tx, g.UserID, *g.VoucherID, model.UserVoucherSourceContestReward, notes)
 		if err != nil {
-			return nil, err
+			return nil, enrichVoucherGrantError(ctx, tx, err, g)
 		}
 		issued.UserVoucherID = &uv.ID
 	}
@@ -109,6 +109,23 @@ func (s *ContestRewardService) NotifyContestResults(ctx context.Context, notices
 		sent++
 	}
 	return sent, errors.Join(errs...)
+}
+
+// enrichVoucherGrantError điền hạng và tên người thắng vào *VoucherGrantError để admin biết phải sửa
+// giải nào trước khi chốt lại (re-review vòng 2). Lỗi khác trả nguyên. Không đọc được tên thì vẫn
+// trả lỗi gốc kèm hạng: tên chỉ để hiển thị, không được che lỗi voucher.
+func enrichVoucherGrantError(ctx context.Context, tx *gorm.DB, err error, g ContestAwardGrant) error {
+	var ge *VoucherGrantError
+	if !errors.As(err, &ge) {
+		return err
+	}
+	ge.Rank = g.Rank
+	var name string
+	if qerr := tx.WithContext(ctx).Table("users").Select("COALESCE(NULLIF(full_name, ''), user_name)").
+		Where("id = ?", g.UserID).Scan(&name).Error; qerr == nil {
+		ge.UserName = name
+	}
+	return ge
 }
 
 // rewardNoticeContent: nội dung thông báo theo phần thưởng thực nhận.

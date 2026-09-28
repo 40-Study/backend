@@ -188,12 +188,20 @@ func TestQuizRoutes_QuizGanCuocThi_HocVien403_Chu200_Sua409(t *testing.T) {
 	}
 
 	// Review PR #80, F2: quiz CHƯA gắn cuộc thi vẫn chỉ chủ quiz/admin được sửa và nhân bản.
+	// Re-review vòng 2, R2-A: và cũng chỉ họ được đọc, làm bài, nộp, xem kết quả (403 QUIZ_FORBIDDEN).
 	free := model.Quiz{Title: "Quiz tự do", TriggerType: "manual", CreatedBy: &owner}
 	if err := db.Create(&free).Error; err != nil {
 		t.Fatalf("tạo quiz: %v", err)
 	}
 	fq := "/quizzes/" + free.ID.String()
 	for _, r := range []struct{ method, path, body string }{
+		{"GET", fq, ""},
+		{"GET", fq + "/questions", ""},
+		{"POST", fq + "/start", `{"mode":"practice"}`},
+		{"POST", fq + "/submit", `{"answers":[]}`},
+		{"GET", fq + "/attempts", ""},
+		{"GET", fq + "/results", ""},
+		{"GET", fq + "/statistics", ""},
 		{"PUT", fq, `{"title":"Bị sửa"}`},
 		{"POST", fq + "/duplicate", ""},
 		{"POST", fq + "/questions", `{"question_text":"Mới","question_type":"essay"}`},
