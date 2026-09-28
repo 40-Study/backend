@@ -14,5 +14,9 @@
   {
     "name": "LESSONS_MANAGE",
     "description": "Thêm, sửa, xóa chi tiết các bài giảng (Video, Tài liệu, Quiz) trong khóa học"
+  },
+  {
+    "name": "CONTESTS_MANAGE_OWN",
+    "description": "Tạo, sửa, gửi duyệt cuộc thi do mình tạo"
   }
 ]

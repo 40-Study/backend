@@ -173,7 +173,7 @@ func SetupAllRoutes(
 	SetupMessageRoutes(api, cfg, messageHandler, redis)
 
 	// Contest routes
-	SetupContestRoutes(api, cfg, contestHandler, redis)
+	SetupContestRoutes(api, cfg, contestHandler, redis, permChecker)
 
 	// Personal Event routes
 	SetupPersonalEventRoutes(api, cfg, personalEventHandler, redis)

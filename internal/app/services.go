@@ -311,7 +311,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 	oauthSvc.SetParentInvitationService(parentInvitationSvc)
 
 	// ================= Return Services =================
-	return &Services{
+	s := &Services{
 		// ===== Auth =====
 		Auth:  authSvc,
 		OAuth: oauthSvc,
@@ -527,17 +527,25 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 			notifier,
 		),
 
-		// ===== Contest =====
-		Contest: service.NewContestService(
-			repos.Contest,
-			repos.ContestProblem,
-			repos.ContestParticipant,
-			repos.ContestSubmission,
-		),
-
 		// ===== Personal Event =====
 		PersonalEvent: service.NewPersonalEventService(repos.PersonalEvent, resources.Queue),
 	}
+	wireContest(s, repos)
+	return s
+}
+
+// wireContest — MVP "Cuộc thi" (contract §6): ContestService dùng QuizService làm engine chấm bài
+// và ContestRewardService (voucher + thông báo) làm issuer; ngược lại QuizService gọi
+// ContestService (gate) để khoá quiz đã gắn cuộc thi. Gate KHÔNG được để nil sau khi B1 merge —
+// quiz gắn cuộc thi sẽ lộ đáp án qua /api/quizzes (test wiring ở services_contest_test.go).
+func wireContest(s *Services, repos *Repositories) {
+	s.Contest = service.NewContestService(
+		repos.Contest,
+		s.Quiz,
+		service.NewContestRewardService(s.Voucher, s.Notification),
+		repos.Enrollment,
+	)
+	s.Quiz.SetContestGate(s.Contest)
 }
 
 // initTransactionService creates the transaction gRPC service

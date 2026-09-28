@@ -48,6 +48,11 @@ func (s *Seeder) SeedDemoData() error {
 		return fmt.Errorf("demo quiz: %w", err)
 	}
 
+	// MVP "Cuộc thi" (contract §1.7): 1 cuộc thi đang diễn ra + 1 cuộc thi đã chốt.
+	if err := s.SeedDemoContests(users); err != nil {
+		return fmt.Errorf("demo contests: %w", err)
+	}
+
 	// parent P0-2 (QA 260927): liên kết cha-con active để test luồng phụ huynh (xem SeedDemoFamilyLinks).
 	if err := s.SeedDemoFamilyLinks(users); err != nil {
 		return fmt.Errorf("demo family links: %w", err)
