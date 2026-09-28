@@ -43,6 +43,36 @@ func respondLessonLockError(c *fiber.Ctx, svcErr error) (resp error, handled boo
 	return nil, false
 }
 
+// respondQuizGateError (contract "Cuộc thi" §2.4, §3.2): gom mọi lỗi "không được đụng vào quiz
+// này" — khoá cuộc thi (403 QUIZ_LOCKED_BY_CONTEST / 409 CONTEST_QUIZ_LOCKED) rồi tới khoá bài học
+// (respondLessonLockError). Mọi route quiz gọi hàm này TRƯỚC nhánh lỗi chung, để khoá cuộc thi không
+// bị nuốt thành 400/404/500 và web phân biệt được "quiz đang dùng cho cuộc thi".
+func respondQuizGateError(c *fiber.Ctx, svcErr error) (resp error, handled bool) {
+	switch {
+	case errors.Is(svcErr, service.ErrQuizLockedByContest):
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"message": "Quiz đang được dùng cho một cuộc thi",
+			"code":    "QUIZ_LOCKED_BY_CONTEST",
+		}), true
+	case errors.Is(svcErr, service.ErrQuizEditLockedByContest):
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"message": "Không thể sửa quiz khi cuộc thi đang chờ duyệt, đã công bố hoặc đã huỷ",
+			"code":    "CONTEST_QUIZ_LOCKED",
+		}), true
+	}
+	return respondLessonLockError(c, svcErr)
+}
+
+// actor lấy user_id + quyền admin của người gọi; ok=false thì đã ghi 401.
+func (h *QuizHandler) actor(c *fiber.Ctx) (userID uuid.UUID, isAdmin bool, ok bool) {
+	userID, ok = c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		_ = c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+		return uuid.Nil, false, false
+	}
+	return userID, isAdminActor(c, h.permChecker, userID), true
+}
+
 // ============================================================================
 // QUIZ CRUD
 // ============================================================================
@@ -63,7 +93,11 @@ func (h *QuizHandler) CreateQuiz(c *fiber.Ctx) error {
 		})
 	}
 
-	quiz, err := h.service.CreateQuiz(c.Context(), req)
+	userID, _, ok := h.actor(c)
+	if !ok {
+		return nil
+	}
+	quiz, err := h.service.CreateQuiz(c.Context(), userID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create quiz",
@@ -211,7 +245,7 @@ func (h *QuizHandler) GetQuizByID(c *fiber.Ctx) error {
 
 	quiz, err := h.service.GetQuizByID(c.Context(), id, userID, isAdmin)
 	if err != nil {
-		if resp, handled := respondLessonLockError(c, err); handled {
+		if resp, handled := respondQuizGateError(c, err); handled {
 			return resp
 		}
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -250,8 +284,15 @@ func (h *QuizHandler) UpdateQuiz(c *fiber.Ctx) error {
 		})
 	}
 
-	quiz, err := h.service.UpdateQuiz(c.Context(), id, req)
+	userID, isAdmin, ok := h.actor(c)
+	if !ok {
+		return nil
+	}
+	quiz, err := h.service.UpdateQuiz(c.Context(), id, userID, isAdmin, req)
 	if err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update quiz",
 			"error":   err.Error(),
@@ -273,7 +314,14 @@ func (h *QuizHandler) DeleteQuiz(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteQuiz(c.Context(), id); err != nil {
+	userID, isAdmin, ok := h.actor(c)
+	if !ok {
+		return nil
+	}
+	if err := h.service.DeleteQuiz(c.Context(), id, userID, isAdmin); err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete quiz",
 			"error":   err.Error(),
@@ -294,8 +342,15 @@ func (h *QuizHandler) DuplicateQuiz(c *fiber.Ctx) error {
 		})
 	}
 
-	quiz, err := h.service.DuplicateQuiz(c.Context(), id)
+	userID, isAdmin, ok := h.actor(c)
+	if !ok {
+		return nil
+	}
+	quiz, err := h.service.DuplicateQuiz(c.Context(), id, userID, isAdmin)
 	if err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to duplicate quiz",
 			"error":   err.Error(),
@@ -336,8 +391,15 @@ func (h *QuizHandler) CreateQuestion(c *fiber.Ctx) error {
 		})
 	}
 
-	question, err := h.service.CreateQuestion(c.Context(), quizID, req)
+	userID, isAdmin, ok := h.actor(c)
+	if !ok {
+		return nil
+	}
+	question, err := h.service.CreateQuestion(c.Context(), quizID, userID, isAdmin, req)
 	if err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create question",
 			"error":   err.Error(),
@@ -370,7 +432,7 @@ func (h *QuizHandler) GetQuestionsByQuiz(c *fiber.Ctx) error {
 
 	questions, err := h.service.GetQuestionsByQuiz(c.Context(), quizID, userID, isAdmin)
 	if err != nil {
-		if resp, handled := respondLessonLockError(c, err); handled {
+		if resp, handled := respondQuizGateError(c, err); handled {
 			return resp
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -417,8 +479,15 @@ func (h *QuizHandler) UpdateQuestion(c *fiber.Ctx) error {
 		})
 	}
 
-	question, err := h.service.UpdateQuestion(c.Context(), quizID, id, req)
+	userID, isAdmin, ok := h.actor(c)
+	if !ok {
+		return nil
+	}
+	question, err := h.service.UpdateQuestion(c.Context(), quizID, id, userID, isAdmin, req)
 	if err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update question",
 			"error":   err.Error(),
@@ -448,7 +517,14 @@ func (h *QuizHandler) DeleteQuestion(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteQuestion(c.Context(), quizID, id); err != nil {
+	userID, isAdmin, ok := h.actor(c)
+	if !ok {
+		return nil
+	}
+	if err := h.service.DeleteQuestion(c.Context(), quizID, id, userID, isAdmin); err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete question",
 			"error":   err.Error(),
@@ -484,7 +560,14 @@ func (h *QuizHandler) ReorderQuestions(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.ReorderQuestions(c.Context(), quizID, req); err != nil {
+	userID, isAdmin, ok := h.actor(c)
+	if !ok {
+		return nil
+	}
+	if err := h.service.ReorderQuestions(c.Context(), quizID, userID, isAdmin, req); err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to reorder questions",
 			"error":   err.Error(),
@@ -520,8 +603,15 @@ func (h *QuizHandler) BulkCreateQuestions(c *fiber.Ctx) error {
 		})
 	}
 
-	questions, err := h.service.BulkCreateQuestions(c.Context(), quizID, req)
+	userID, isAdmin, ok := h.actor(c)
+	if !ok {
+		return nil
+	}
+	questions, err := h.service.BulkCreateQuestions(c.Context(), quizID, userID, isAdmin, req)
 	if err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create questions",
 			"error":   err.Error(),
@@ -574,7 +664,7 @@ func (h *QuizHandler) StartQuiz(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 	result, err := h.service.StartQuiz(c.Context(), id, userID, isAdmin, req)
 	if err != nil {
-		if resp, handled := respondLessonLockError(c, err); handled {
+		if resp, handled := respondQuizGateError(c, err); handled {
 			return resp
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -620,8 +710,12 @@ func (h *QuizHandler) SubmitQuiz(c *fiber.Ctx) error {
 		})
 	}
 
-	result, err := h.service.SubmitQuiz(c.Context(), id, userID, req)
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	result, err := h.service.SubmitQuiz(c.Context(), id, userID, isAdmin, req)
 	if err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		// R8 (review 260919): nộp trùng (double-click, retry sau timeout, hoặc request khác đã
 		// nộp attempt này trước) trả 409 Conflict — khác 400 chung chung của các lỗi validate
 		// khác, để client phân biệt được "dữ liệu sai" với "đã nộp rồi".
@@ -657,8 +751,12 @@ func (h *QuizHandler) GetMyAttempts(c *fiber.Ctx) error {
 		})
 	}
 
-	attempts, err := h.service.GetMyAttempts(c.Context(), id, userID)
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	attempts, err := h.service.GetMyAttempts(c.Context(), id, userID, isAdmin)
 	if err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve attempts",
 			"error":   err.Error(),
@@ -695,8 +793,12 @@ func (h *QuizHandler) GetAttemptByID(c *fiber.Ctx) error {
 		})
 	}
 
-	attempt, err := h.service.GetAttemptByID(c.Context(), attemptID, userID)
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	attempt, err := h.service.GetAttemptByID(c.Context(), attemptID, userID, isAdmin)
 	if err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Attempt not found",
 			"error":   err.Error(),
@@ -718,8 +820,15 @@ func (h *QuizHandler) GetQuizResults(c *fiber.Ctx) error {
 		})
 	}
 
-	results, err := h.service.GetQuizResults(c.Context(), id)
+	userID, isAdmin, ok := h.actor(c)
+	if !ok {
+		return nil
+	}
+	results, err := h.service.GetQuizResults(c.Context(), id, userID, isAdmin)
 	if err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve quiz results",
 			"error":   err.Error(),
@@ -741,8 +850,15 @@ func (h *QuizHandler) GetQuizStatistics(c *fiber.Ctx) error {
 		})
 	}
 
-	stats, err := h.service.GetQuizStatistics(c.Context(), id)
+	userID, isAdmin, ok := h.actor(c)
+	if !ok {
+		return nil
+	}
+	stats, err := h.service.GetQuizStatistics(c.Context(), id, userID, isAdmin)
 	if err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve quiz statistics",
 			"error":   err.Error(),
@@ -786,7 +902,11 @@ func (h *QuizHandler) SaveAnswer(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.SaveAnswer(c.Context(), attemptID, userID, req); err != nil {
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	if err := h.service.SaveAnswer(c.Context(), attemptID, userID, isAdmin, req); err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to save answer",
 			"error":   err.Error(),
@@ -814,8 +934,12 @@ func (h *QuizHandler) GetAttemptProgress(c *fiber.Ctx) error {
 		})
 	}
 
-	progress, err := h.service.GetAttemptProgress(c.Context(), attemptID, userID)
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	progress, err := h.service.GetAttemptProgress(c.Context(), attemptID, userID, isAdmin)
 	if err != nil {
+		if resp, handled := respondQuizGateError(c, err); handled {
+			return resp
+		}
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Attempt not found",
 			"error":   err.Error(),

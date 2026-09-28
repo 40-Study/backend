@@ -131,7 +131,7 @@ func TestSubmitQuiz_CauKhongTraLoi_TinhTrenTatCaCauHoi(t *testing.T) {
 		},
 	}
 
-	result, err := s.SubmitQuiz(context.Background(), quiz.ID, userID, req)
+	result, err := s.SubmitQuiz(context.Background(), quiz.ID, userID, false, req)
 	if err != nil {
 		t.Fatalf("err = %v, muon nil", err)
 	}
@@ -178,7 +178,7 @@ func TestSubmitQuiz_TraLoiTrungQuestionID_KhongCongDonDiem(t *testing.T) {
 		},
 	}
 
-	result, err := s.SubmitQuiz(context.Background(), quiz.ID, userID, req)
+	result, err := s.SubmitQuiz(context.Background(), quiz.ID, userID, false, req)
 	if err != nil {
 		t.Fatalf("err = %v, muon nil", err)
 	}
@@ -220,7 +220,7 @@ func TestSubmitQuiz_NopHaiLan_LanHaiBiTuChoi(t *testing.T) {
 		},
 	}
 
-	result1, err1 := s.SubmitQuiz(context.Background(), quiz.ID, userID, req)
+	result1, err1 := s.SubmitQuiz(context.Background(), quiz.ID, userID, false, req)
 	if err1 != nil {
 		t.Fatalf("lan 1: err = %v, muon nil (lan dau phai thanh cong)", err1)
 	}
@@ -228,7 +228,7 @@ func TestSubmitQuiz_NopHaiLan_LanHaiBiTuChoi(t *testing.T) {
 		t.Fatal("lan 1: result = nil, muon co du lieu")
 	}
 
-	result2, err2 := s.SubmitQuiz(context.Background(), quiz.ID, userID, req)
+	result2, err2 := s.SubmitQuiz(context.Background(), quiz.ID, userID, false, req)
 	if !errors.Is(err2, ErrQuizAttemptAlreadySubmitted) {
 		t.Fatalf("lan 2: err = %v, muon ErrQuizAttemptAlreadySubmitted — day chinh la loi R8: nop 2 lan phai bi tu choi o lan 2", err2)
 	}

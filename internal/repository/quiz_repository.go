@@ -143,11 +143,12 @@ func (r *QuizRepository) DeleteQuiz(ctx context.Context, id uuid.UUID) error {
 }
 
 func (r *QuizRepository) GetQuizzesByCreator(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]model.Quiz, int64, error) {
-	// Quizzes don't have a direct creator field, filter by lesson/course ownership would be complex.
-	// For now return all quizzes with pagination.
+	// Contract "Cuộc thi" §6: lọc theo quizzes.created_by. Trước bản vá này hàm trả MỌI quiz của
+	// hệ thống (kể cả đáp án khi xem chi tiết) cho bất kỳ ai gọi GET /me/quizzes — IDOR. Quiz cũ có
+	// created_by NULL không thuộc về ai nên không hiện ở đây.
 	var quizzes []model.Quiz
 	var total int64
-	query := r.db.WithContext(ctx).Model(&model.Quiz{})
+	query := r.db.WithContext(ctx).Model(&model.Quiz{}).Where("created_by = ?", userID)
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -102,6 +103,9 @@ type VoucherServiceInterface interface {
 	SaveVoucher(ctx context.Context, userID uuid.UUID, req *dto.SaveVoucherRequest) (*model.UserVoucher, error)
 	UnsaveVoucher(ctx context.Context, userID uuid.UUID, voucherID uuid.UUID) error
 	GetUserSavedVouchers(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*model.UserVoucher, int64, error)
+	// GrantVoucherTx (contract "Cuộc thi" §6): phát voucher vào ví user TRÊN "tx" của caller — xem
+	// chú thích tại hàm.
+	GrantVoucherTx(ctx context.Context, tx *gorm.DB, userID, voucherID uuid.UUID, source, notes string) (*model.UserVoucher, error)
 
 	// Voucher Applicability
 	CreateVoucherApplicability(ctx context.Context, voucherID uuid.UUID, req *dto.CreateApplicabilityRequest) (*model.VoucherApplicability, error)
@@ -705,6 +709,46 @@ func (vs *VoucherService) SaveVoucher(ctx context.Context, userID uuid.UUID, req
 	}
 
 	return vs.vr.GetUserVoucherByUserAndVoucher(ctx, userID, voucher.ID)
+}
+
+// GrantVoucherTx (contract "Cuộc thi" §5, §6): ghi user_vouchers cho userID TRÊN "tx" được truyền
+// vào, để việc phát voucher nằm CHUNG transaction chốt kết quả — lỗi ở bất kỳ người đạt giải nào
+// làm rollback toàn bộ, không để lại voucher phát dở cho một nửa bảng xếp hạng.
+//
+// Voucher phải còn dùng được: tồn tại, chưa xoá mềm (scope DeletedAt của GORM tự loại), is_active,
+// end_date NULL hoặc còn ở tương lai. Ngược lại trả ErrVoucherUnavailableForGrant (409
+// CONTEST_VOUCHER_UNAVAILABLE). Khoá FOR SHARE dòng voucher để một thao tác tắt/xoá voucher chạy
+// song song phải chờ transaction này kết thúc, tránh vừa kiểm "đang bật" xong thì voucher bị tắt.
+// Không động tới used_count/usage_limit: đó là lượt DÙNG khi thanh toán, còn đây chỉ là đưa voucher
+// vào ví (giống SaveVoucher).
+func (vs *VoucherService) GrantVoucherTx(ctx context.Context, tx *gorm.DB, userID, voucherID uuid.UUID, source, notes string) (*model.UserVoucher, error) {
+	if tx == nil {
+		return nil, errors.New("GrantVoucherTx requires a transaction")
+	}
+	var voucher model.Voucher
+	err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "SHARE"}).
+		Where("id = ?", voucherID).Take(&voucher).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrVoucherUnavailableForGrant
+	}
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	if !voucher.IsActive || (voucher.EndDate != nil && !voucher.EndDate.After(now)) {
+		return nil, ErrVoucherUnavailableForGrant
+	}
+	userVoucher := &model.UserVoucher{
+		UserID:    userID,
+		VoucherID: voucherID,
+		Source:    source,
+		SavedAt:   now,
+		Notes:     notes,
+	}
+	if err := tx.WithContext(ctx).Create(userVoucher).Error; err != nil {
+		return nil, err
+	}
+	return userVoucher, nil
 }
 
 func (vs *VoucherService) UnsaveVoucher(ctx context.Context, userID uuid.UUID, voucherID uuid.UUID) error {
