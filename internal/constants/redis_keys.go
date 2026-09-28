@@ -90,3 +90,13 @@ func KeyAccountLocked(userID string) string {
 	return fmt.Sprintf("%s:%s", PrefixAccountLocked, userID)
 }
 
+// PrefixRoleChanged (Phase 3 duyệt giáo viên): lưu GIÁ TRỊ user_version tại thời điểm bump do
+// ĐỔI VAI TRÒ (admin duyệt hồ sơ giáo viên). Khi user_version hiện tại == giá trị này, lần bump
+// gần nhất là đổi vai trò (không phải đăng xuất mọi nơi/khoá tài khoản/đổi mật khẩu) nên
+// RefreshToken được phép cấp token mới thay vì bắt đăng nhập lại — quyết định #6.
+const PrefixRoleChanged = "auth:role_changed_version"
+
+func KeyRoleChanged(userID string) string {
+	return fmt.Sprintf("%s:%s", PrefixRoleChanged, userID)
+}
+

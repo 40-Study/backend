@@ -17,6 +17,12 @@ type TeacherProfileRepositoryInterface interface {
 	GetByUserID(ctx context.Context, userID uuid.UUID) (*model.TeacherProfile, error)
 	Update(ctx context.Context, profile *model.TeacherProfile) error
 	Delete(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	// HasActiveSystemRole (Phase 3) — cài đặt ở teacher_application_repository.go.
+	HasActiveSystemRole(ctx context.Context, userID uuid.UUID, roleName string) (bool, error)
+	// GetByUserIDIncludingDeleted + Restore (review PR #73, MAJOR #2): tạo lại hồ sơ sau khi
+	// xoá mềm phải khôi phục đúng dòng cũ (giữ resubmission_count), không tạo dòng mới.
+	GetByUserIDIncludingDeleted(ctx context.Context, userID uuid.UUID) (*model.TeacherProfile, error)
+	Restore(ctx context.Context, profile *model.TeacherProfile) error
 }
 
 type TeacherProfileRepository struct {
@@ -35,8 +41,11 @@ func (r *TeacherProfileRepository) GetAll(ctx context.Context, page, pageSize in
 	var profiles []model.TeacherProfile
 	var total int64
 
+	// GetAll chỉ phục vụ route CÔNG KHAI GET /teacher-profiles — review PR #73 (MAJOR #1): chỉ hồ
+	// sơ đã duyệt; đơn đang chờ/bị từ chối xem qua route admin.
 	query := r.db.WithContext(ctx).Model(&model.TeacherProfile{}).
-		Joins("JOIN users ON users.id = teacher_profiles.user_id")
+		Joins("JOIN users ON users.id = teacher_profiles.user_id").
+		Where("teacher_profiles.approval_status = ?", model.TeacherApprovalApproved)
 	query = utils.ApplySoftDeleteStatus(query, status)
 	query = utils.ApplyKeywordSearch(query, keyword, "users.user_name", "users.email", "teacher_profiles.specialization", "teacher_profiles.department")
 

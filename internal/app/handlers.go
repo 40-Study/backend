@@ -24,6 +24,7 @@ type Handlers struct {
 	// ===== Teacher =====
 	Teacher        *handler.TeacherHandler
 	TeacherProfile *handler.TeacherProfileHandler
+	Approval       *handler.ApprovalHandler // Phase 3 duyệt khoá học + duyệt giáo viên
 
 	// ===== Class =====
 	Class              *handler.ClassHandler
@@ -144,6 +145,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		// ===== Teacher =====
 		Teacher:        handler.NewTeacherHandler(services.Teacher),
 		TeacherProfile: handler.NewTeacherProfileHandler(services.TeacherProfile),
+		Approval:       handler.NewApprovalHandler(services.CourseReview, services.TeacherApplication),
 
 		// ===== Class =====
 		Class:              handler.NewClassHandler(services.Class, permChecker),

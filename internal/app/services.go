@@ -29,6 +29,9 @@ type Services struct {
 	// ===== Teacher =====
 	Teacher        service.TeacherServiceInterface
 	TeacherProfile *service.TeacherProfileService
+	// Phase 3 duyệt khoá học + duyệt giáo viên
+	CourseReview       *service.CourseReviewService
+	TeacherApplication *service.TeacherApplicationService
 
 	// ===== Class =====
 	Class              *service.ClassService
@@ -373,6 +376,9 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		// ===== Teacher =====
 		Teacher:        teacherSvc,
 		TeacherProfile: service.NewTeacherProfileService(repos.TeacherProfile),
+		// Phase 3: authSvc làm RoleChangeNotifier (bump user_version + marker đổi vai trò).
+		CourseReview:       service.NewCourseReviewService(repos.CourseReview),
+		TeacherApplication: service.NewTeacherApplicationService(repos.TeacherApplication, repos.TeacherProfile, authSvc),
 
 		// ===== Course Management =====
 		Category: service.NewCategoryService(repos.Category),

@@ -969,8 +969,19 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldRefreshToken string) 
 	}
 
 	currentUserVersion, _ := strconv.ParseInt(userVerStr, 10, 64)
+	roleChanged := false
 	if currentUserVersion != claims.UserVersion {
-		return nil, errors.New("all sessions revoked - please login again")
+		// Phase 3 (quyết định #6): lệch version vì admin vừa ĐỔI VAI TRÒ (duyệt hồ sơ giáo
+		// viên) thì vẫn cho refresh — xem auth_service_role_refresh.go. Mọi lý do bump khác
+		// (đăng xuất mọi nơi, khoá tài khoản, đổi mật khẩu) vẫn bị từ chối như cũ.
+		ok, err := s.isRoleChangeRefresh(ctx, claims.UserID, claims.UserVersion, currentUserVersion)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errors.New("all sessions revoked - please login again")
+		}
+		roleChanged = true
 	}
 
 	// ===== 3. Check if refresh token exists in Redis (Using HGET) =====
@@ -990,9 +1001,19 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldRefreshToken string) 
 	}
 
 	// ===== 5. Generate new tokens (with same userVersion) =====
-	newAccessToken, newRefreshToken, err := utils.GenerateTokens(s.cfg, claims.UserID, claims.DeviceID, claims.ActiveRole, claims.ActiveOrgID, currentUserVersion)
-	if err != nil {
-		return nil, err
+	var roleChangeResult *dto.RefreshTokenResponseDto
+	var newAccessToken, newRefreshToken string
+	if roleChanged {
+		roleChangeResult, err = s.refreshTokensAfterRoleChange(ctx, claims, currentUserVersion)
+		if err != nil {
+			return nil, err
+		}
+		newAccessToken, newRefreshToken = roleChangeResult.AccessToken, roleChangeResult.RefreshToken
+	} else {
+		newAccessToken, newRefreshToken, err = utils.GenerateTokens(s.cfg, claims.UserID, claims.DeviceID, claims.ActiveRole, claims.ActiveOrgID, currentUserVersion)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// ===== 6. Update refresh token in Redis (Using HSET) =====
@@ -1002,6 +1023,9 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldRefreshToken string) 
 	// Extend TTL for the user's session
 	s.redisClient.Expire(ctx, refreshTokenKey, s.cfg.JWTRefreshExpiration)
 
+	if roleChangeResult != nil {
+		return roleChangeResult, nil
+	}
 	return &dto.RefreshTokenResponseDto{
 		AccessToken:  newAccessToken,
 		RefreshToken: newRefreshToken,
@@ -1537,12 +1561,14 @@ func (s *AuthService) buildUnifiedRoles(ctx context.Context, userID uuid.UUID) (
 // hai role này chỉ được cấp qua route admin đã gate quyền
 // (POST /api/users/:user_id/system-roles, yêu cầu ROLES_MANAGE_SYSTEM).
 //
-// Luồng duyệt hồ sơ giáo viên (xác minh bằng cấp, hồ sơ...) trước khi cấp TEACHER là một
-// tính năng chưa tồn tại — ghi nhận là câu hỏi còn treo trong báo cáo, không làm ở đây.
+// Phase 3 (2026-09-28, quyết định #4 của chủ dự án): luồng duyệt hồ sơ giáo viên ĐÃ có. Người
+// đăng ký làm giáo viên giờ TỰ nhận TEACHER_APPLICANT (chỉ xem trạng thái + sửa hồ sơ, KHÔNG có
+// COURSES_CREATE); role TEACHER chỉ được cấp khi admin duyệt hồ sơ
+// (POST /api/admin/teacher-applications/:userId/approve) — TEACHER bị gỡ khỏi allowlist tự-cấp.
 var selfServiceSystemRoles = map[string]bool{
-	"STUDENT": true,
-	"PARENT":  true,
-	"TEACHER": true,
+	"STUDENT":           true,
+	"PARENT":            true,
+	"TEACHER_APPLICANT": true,
 }
 
 // isSelfServiceSystemRole trả về true nếu roleName nằm trong allowlist tự-cấp. Đây là

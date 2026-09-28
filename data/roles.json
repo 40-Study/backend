@@ -28,6 +28,14 @@
     ]
   },
   {
+    "role": "TEACHER_APPLICANT",
+    "description": "Ứng viên giảng viên: đã đăng ký làm giáo viên, chờ quản trị viên duyệt hồ sơ trước khi được tạo khoá học.",
+    "permissions": [
+      "APPLICATION_VIEW_STATUS",
+      "TEACHER_PROFILE_UPDATE"
+    ]
+  },
+  {
     "role": "STUDENT",
     "description": "Người học và tiêu thụ nội dung.",
     "permissions": [
