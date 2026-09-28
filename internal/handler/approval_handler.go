@@ -69,6 +69,11 @@ func courseReviewError(c *fiber.Ctx, err error, invalidStatusMsg string) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "You are not the instructor of this course"})
 	case errors.Is(err, repository.ErrCourseInvalidReviewStatus):
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": invalidStatusMsg, "code": "INVALID_COURSE_STATUS"})
+	case errors.Is(err, repository.ErrCourseEmptyContent):
+		// D2 (QA vòng 2): dữ liệu khoá chưa đủ để nộp — 422, không phải trạng thái sai.
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"message": "Course must have at least one lesson before submitting for review", "code": "COURSE_EMPTY",
+		})
 	}
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"message": "Failed to process course review", "error": err.Error()})
 }
@@ -88,6 +93,24 @@ func (h *ApprovalHandler) SubmitCourseForReview(c *fiber.Ctx) error {
 		return courseReviewError(c, err, "Course must be in draft or rejected status to submit")
 	}
 	return c.JSON(fiber.Map{"message": "Course submitted for review", "data": result})
+}
+
+// WithdrawCourseReview — POST /api/courses/:id/withdraw-review (giáo viên chủ khoá, Q5 QA vòng 2).
+// Chỉ khi khoá đang pending_review; thành công thì khoá về draft và sửa lại được.
+func (h *ApprovalHandler) WithdrawCourseReview(c *fiber.Ctx) error {
+	courseID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "Invalid course ID"})
+	}
+	actorID, ok := actorFromLocals(c)
+	if !ok {
+		return unauthorized(c)
+	}
+	result, err := h.courseReview.WithdrawReview(c.Context(), courseID, actorID)
+	if err != nil {
+		return courseReviewError(c, err, "Course is not pending review")
+	}
+	return c.JSON(fiber.Map{"message": "Course review request withdrawn", "data": result})
 }
 
 // ListCoursesForReview — GET /api/admin/courses?status=&keyword=&page=&page_size=

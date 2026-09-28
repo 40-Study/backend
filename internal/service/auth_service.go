@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -90,15 +91,6 @@ var (
 	// nay.
 	ErrUserInactive = errors.New("user account is inactive")
 )
-
-// formatTimePtr formats a *time.Time to *string (RFC3339), returns nil if input is nil.
-func formatTimePtr(t *time.Time) *string {
-	if t == nil {
-		return nil
-	}
-	s := t.Format(time.RFC3339)
-	return &s
-}
 
 func NewAuthService(
 	cfg *config.Config,
@@ -347,6 +339,29 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 	}, nil
 }
 
+// recordLastLogin ghi users.last_login_at = now ngay khi xác thực danh tính thành công
+// (QA vòng 2, G4 — N-03: cột có sẵn nhưng không chỗ nào ghi, trang admin luôn hiện "—").
+// Ghi ở bước xác thực chứ không ở bước chọn vai trò: user nhiều vai trò vẫn đã "đăng nhập"
+// dù chưa chọn vai trò. Lỗi ghi chỉ log cảnh báo, KHÔNG chặn đăng nhập — đây là số liệu hiển thị
+// cho admin, không đáng để khoá người dùng ngoài hệ thống khi DB chập chờn.
+func (s *AuthService) recordLastLogin(ctx context.Context, userID uuid.UUID) {
+	if err := s.userRepo.UpdateUserProfile(ctx, userID, map[string]interface{}{"last_login_at": time.Now()}); err != nil {
+		log.Printf("[WARN] Không ghi được last_login_at cho user %s: %v", userID, err)
+	}
+}
+
+// orgRoleDisplayName dựng display_name cho vai trò THEO TỔ CHỨC (dùng chung cho danh sách vai trò,
+// SelectRole và SwitchRole). QA vòng 2 (G6, A-P3-2): trước đây luôn nối "%s - %s", nên tổ chức tên
+// rỗng/khoảng trắng (tạo được trước khi G2 chặn) hiện thành "ORG_OWNER - " cụt. Tên tổ chức rỗng
+// thì chỉ trả tên vai trò; nhãn tiếng Việt của mã vai trò do web dịch (SSOT ở lib/role-labels.ts).
+func orgRoleDisplayName(roleName, orgName string) string {
+	orgName = strings.TrimSpace(orgName)
+	if orgName == "" {
+		return roleName
+	}
+	return roleName + " - " + orgName
+}
+
 type PendingLogin struct {
 	UserID       string              `json:"user_id"`
 	DeviceInfo   dto.DeviceInfoDTO   `json:"device_info"`
@@ -394,6 +409,7 @@ func (s *AuthService) Login(
 	if err != nil {
 		return nil, errors.New("invalid device_id format")
 	}
+	s.recordLastLogin(ctx, user.ID)
 
 	systemRoles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, user.ID, "active")
 	if err != nil {
@@ -597,7 +613,7 @@ func (s *AuthService) completeLogin(
 			DateOfBirth:       dob,
 			IsActive:          user.IsActive,
 			CreatedAt:         user.CreatedAt.Format(time.RFC3339),
-			PasswordChangedAt: formatTimePtr(user.PasswordChangedAt),
+			PasswordChangedAt: utils.FormatTimestampPtr(user.PasswordChangedAt),
 		},
 		ActiveRole: dto.UnifiedRoleDto{
 			ID:          activeRole.ID,
@@ -1084,7 +1100,7 @@ func (s *AuthService) GetMe(ctx context.Context, userID uuid.UUID) (*dto.UserRes
 		Bio:               user.Bio,
 		IsActive:          user.IsActive,
 		CreatedAt:         user.CreatedAt.Format(time.RFC3339),
-		PasswordChangedAt: formatTimePtr(user.PasswordChangedAt),
+		PasswordChangedAt: utils.FormatTimestampPtr(user.PasswordChangedAt),
 	}
 
 	// ===== 4. Cache response in Redis (if available) =====
@@ -1542,7 +1558,7 @@ func (s *AuthService) buildUnifiedRoles(ctx context.Context, userID uuid.UUID) (
 			RoleName:         or.Role.Name,
 			OrganizationID:   &orgID,
 			OrganizationName: &orgName,
-			DisplayName:      fmt.Sprintf("%s - %s", or.Role.Name, or.Organization.Name),
+			DisplayName:      orgRoleDisplayName(or.Role.Name, or.Organization.Name),
 		})
 	}
 
@@ -1685,7 +1701,7 @@ func (s *AuthService) SelectRole(ctx context.Context, req dto.SelectRoleRequestD
 			RoleName:         existing.Role.Name,
 			OrganizationID:   &orgIDStr,
 			OrganizationName: &orgName,
-			DisplayName:      fmt.Sprintf("%s - %s", existing.Role.Name, existing.Organization.Name),
+			DisplayName:      orgRoleDisplayName(existing.Role.Name, existing.Organization.Name),
 		}
 	} else {
 		return nil, errors.New("invalid role_type: must be 'system' or 'organization'")
@@ -1765,7 +1781,7 @@ func (s *AuthService) SwitchRole(ctx context.Context, userID uuid.UUID, deviceID
 			RoleName:         existing.Role.Name,
 			OrganizationID:   &orgIDStr,
 			OrganizationName: &orgName,
-			DisplayName:      fmt.Sprintf("%s - %s", existing.Role.Name, existing.Organization.Name),
+			DisplayName:      orgRoleDisplayName(existing.Role.Name, existing.Organization.Name),
 		}
 	} else {
 		return nil, errors.New("invalid role_type: must be 'system' or 'organization'")
@@ -1868,7 +1884,7 @@ func (s *AuthService) completeLoginUnified(
 			Bio:               user.Bio,
 			IsActive:          user.IsActive,
 			CreatedAt:         user.CreatedAt.Format(time.RFC3339),
-			PasswordChangedAt: formatTimePtr(user.PasswordChangedAt),
+			PasswordChangedAt: utils.FormatTimestampPtr(user.PasswordChangedAt),
 		},
 		ActiveRole: activeRole,
 		CurrentDevice: &dto.DeviceSessionDto{
@@ -2043,6 +2059,7 @@ func (s *AuthService) LoginWithOAuth(ctx context.Context, user *model.User, devi
 	if !user.IsActive {
 		return nil, errors.New("account is deactivated")
 	}
+	s.recordLastLogin(ctx, user.ID)
 
 	unifiedRoles, err := s.buildUnifiedRoles(ctx, user.ID)
 	if err != nil {

@@ -1,10 +1,13 @@
 package handler
 
 import (
+	"strings"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/service"
+	"study.com/v1/internal/utils"
 )
 
 type OrganizationHandlerInterface interface {
@@ -29,6 +32,18 @@ func (h *OrganizationHandler) CreateOrganization(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid request body",
 			"error":   err.Error(),
+		})
+	}
+
+	// QA vòng 2 (G2, N-01): trước đây handler không gọi ValidateStruct và DTO dùng tag `binding:`
+	// (của Gin, validator không đọc) nên tạo được tổ chức tên rỗng/"   ". Trim TRƯỚC khi validate:
+	// "   " có 3 ký tự, qua được min=2 nếu không trim.
+	req.Name = strings.TrimSpace(req.Name)
+	req.Description = strings.TrimSpace(req.Description)
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errs,
 		})
 	}
 
@@ -112,6 +127,22 @@ func (h *OrganizationHandler) UpdateOrganization(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid request body",
 			"error":   err.Error(),
+		})
+	}
+
+	// G2: như CreateOrganization — field con trỏ nên chỉ trim khi client có gửi.
+	if req.Name != nil {
+		trimmed := strings.TrimSpace(*req.Name)
+		req.Name = &trimmed
+	}
+	if req.Description != nil {
+		trimmed := strings.TrimSpace(*req.Description)
+		req.Description = &trimmed
+	}
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errs,
 		})
 	}
 

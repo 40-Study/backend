@@ -8,6 +8,7 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 type CartServiceInterface interface {
@@ -38,7 +39,9 @@ func (s *CartService) AddToCart(ctx context.Context, userID uuid.UUID, req dto.A
 	if err != nil {
 		return nil, apperr.NotFound("course not found")
 	}
-	if course == nil {
+	// D4 (re-review vòng 2 PR #79): khoá chưa xuất bản coi như không tồn tại — không cho vào giỏ
+	// (lộ tiêu đề/giá/giảng viên, và mở đường mua khoá nháp).
+	if course == nil || isPrivateCourseStatus(course.Status) {
 		return nil, apperr.NotFound("course not found")
 	}
 
@@ -124,7 +127,7 @@ func (s *CartService) toCartItemResponseDTO(item *model.CartItem, course *model.
 		ID:        item.ID,
 		CourseID:  item.CourseID,
 		UserID:    item.UserID,
-		CreatedAt: item.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt: utils.FormatTimestamp(item.CreatedAt),
 	}
 
 	if course != nil {

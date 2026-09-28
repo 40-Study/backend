@@ -170,8 +170,9 @@ func (s *ParentDashboardService) GetChildCourses(ctx context.Context, parentID, 
 
 	courses := make([]dto.ChildCourseDto, len(enrollments))
 	for i, e := range enrollments {
-		instructorName := ""
+		instructorName, instructorID := "", ""
 		if e.Course.InstructorID != uuid.Nil && e.Course.Instructor.ID != uuid.Nil {
+			instructorID = e.Course.InstructorID.String()
 			if e.Course.Instructor.FullName != nil {
 				instructorName = *e.Course.Instructor.FullName
 			} else {
@@ -187,6 +188,7 @@ func (s *ParentDashboardService) GetChildCourses(ctx context.Context, parentID, 
 			CourseName:      e.Course.Title,
 			CourseThumbnail: e.Course.ThumbnailURL,
 			InstructorName:  instructorName,
+			InstructorID:    instructorID,
 			ProgressPercent: progressFloat,
 			LastAccessedAt:  e.LastAccessedAt,
 			CompletedAt:     e.CompletedAt,

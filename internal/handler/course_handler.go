@@ -282,6 +282,9 @@ func (h *CourseHandler) UpdateCourse(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 	course, err := h.service.UpdateCourse(c.Context(), id, userID, isAdmin, req)
 	if err != nil {
+		if writeCourseLocked(c, err) {
+			return nil
+		}
 		if err == service.ErrNotCourseOwner {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 				"message": "You are not the instructor of this course",
@@ -324,6 +327,9 @@ func (h *CourseHandler) DeleteCourse(c *fiber.Ctx) error {
 
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 	if err := h.service.DeleteCourse(c.Context(), id, userID, isAdmin); err != nil {
+		if writeCourseLocked(c, err) {
+			return nil
+		}
 		if err == service.ErrNotCourseOwner {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 				"message": "You are not the instructor of this course",

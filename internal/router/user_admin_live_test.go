@@ -57,6 +57,19 @@ func (f *adminLiveUserRepo) FindUserByEmail(ctx context.Context, email string) (
 	return f.byEmail[email], nil
 }
 
+// UpdateUserProfile — Login thật ghi last_login_at sau khi xác thực (QA vòng 2, G4). Fake chỉ cần
+// nhận field đó và cập nhật user trong bộ nhớ như repo thật.
+func (f *adminLiveUserRepo) UpdateUserProfile(ctx context.Context, userID uuid.UUID, updates map[string]interface{}) error {
+	u := f.byID[userID]
+	if u == nil {
+		return nil
+	}
+	if t, ok := updates["last_login_at"].(time.Time); ok {
+		u.LastLoginAt = &t
+	}
+	return nil
+}
+
 func (f *adminLiveUserRepo) ActiveSystemRoleNamesByUserIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID][]string, error) {
 	result := make(map[uuid.UUID][]string, len(ids))
 	for _, id := range ids {

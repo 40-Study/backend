@@ -8,6 +8,7 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 // ErrNotRoleOrgMember (C-03 residual, audit 260909 vòng 2): route "/org-roles/:id" dùng :id
@@ -239,8 +240,8 @@ func toRoleResponseDTO(role *model.Role) *dto.RoleResponseDTO {
 		OrganizationID: role.OrganizationID,
 		Description:    desc,
 		Status:         role.Status,
-		CreatedAt:      role.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:      role.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:      utils.FormatTimestamp(role.CreatedAt),
+		UpdatedAt:      utils.FormatTimestamp(role.UpdatedAt),
 	}
 }
 
@@ -262,7 +263,7 @@ func toRoleDetailResponseDTO(role *model.Role) *dto.RoleDetailResponseDTO {
 		Description:    desc,
 		Status:         role.Status,
 		Permissions:    permDTOs,
-		CreatedAt:      role.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:      role.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:      utils.FormatTimestamp(role.CreatedAt),
+		UpdatedAt:      utils.FormatTimestamp(role.UpdatedAt),
 	}
 }

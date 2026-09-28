@@ -28,6 +28,8 @@ func SetupWithdrawalRoutes(
 	teacher := api.Group("/wallet/teacher/withdrawals")
 	teacher.Post("/", auth, h.CreateWithdrawal)
 	teacher.Get("/", auth, h.ListMyWithdrawals)
+	// Q2 (QA vòng 2): giảng viên tự huỷ yêu cầu còn pending của chính mình.
+	teacher.Post("/:id/cancel", auth, h.CancelMyWithdrawal)
 
 	admin := api.Group("/admin/withdrawals")
 	admin.Get("/", auth, manage, h.AdminListWithdrawals)

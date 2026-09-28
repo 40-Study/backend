@@ -58,6 +58,17 @@ type wdFakeService struct {
 	createdFor  uuid.UUID
 	approved    uuid.UUID
 	payoutErr   error // nếu khác nil: Approve/MarkCompleted trả lỗi này
+	cancelFor   uuid.UUID
+	cancelID    uuid.UUID
+	cancelErr   error
+}
+
+func (f *wdFakeService) Cancel(ctx context.Context, teacherID, id uuid.UUID) (*dto.WithdrawalStatusResponse, error) {
+	f.cancelFor, f.cancelID = teacherID, id
+	if f.cancelErr != nil {
+		return nil, f.cancelErr
+	}
+	return &dto.WithdrawalStatusResponse{ID: id, Status: "cancelled"}, nil
 }
 
 func (f *wdFakeService) Create(ctx context.Context, teacherID uuid.UUID, amount decimal.Decimal) (*dto.WithdrawalItem, error) {
@@ -223,5 +234,41 @@ func TestWithdrawalTeacherRoutes_UseTokenIdentity(t *testing.T) {
 	}
 	if code, _ := e.do(t, "GET", "/api/wallet/teacher/withdrawals?status=processing", e.teacherTok, ""); code != fiber.StatusBadRequest {
 		t.Fatalf("status ngoài enum = %d, muốn 400", code)
+	}
+}
+
+// Q2 (QA vòng 2): POST /wallet/teacher/withdrawals/:id/cancel — giảng viên lấy từ TOKEN, map lỗi
+// đúng contract: không phải của mình/không tồn tại -> 404, không còn pending -> 409, id sai -> 400.
+func TestWithdrawalTeacherCancel_Route(t *testing.T) {
+	e := newWithdrawalRouteEnv(t)
+	id := uuid.NewString()
+	code, body := e.do(t, "POST", "/api/wallet/teacher/withdrawals/"+id+"/cancel", e.teacherTok, `{"teacher_id":"`+uuid.NewString()+`"}`)
+	if code != fiber.StatusOK || e.svc.cancelFor != e.teacherID || e.svc.cancelID.String() != id {
+		t.Fatalf("cancel = %d %v, cancelFor=%s cancelID=%s", code, body, e.svc.cancelFor, e.svc.cancelID)
+	}
+	if data, _ := body["data"].(map[string]interface{}); data["status"] != "cancelled" {
+		t.Fatalf("data.status = %v", body)
+	}
+	if code, _ := e.do(t, "POST", "/api/wallet/teacher/withdrawals/khong-phai-uuid/cancel", e.teacherTok, ""); code != fiber.StatusBadRequest {
+		t.Fatalf("id sai = %d, muốn 400", code)
+	}
+	if code, _ := e.do(t, "POST", "/api/wallet/teacher/withdrawals/"+id+"/cancel", "", ""); code != fiber.StatusUnauthorized {
+		t.Fatalf("không token = %d, muốn 401", code)
+	}
+
+	e.svc.cancelErr = service.ErrWithdrawalNotFound
+	if code, body := e.do(t, "POST", "/api/wallet/teacher/withdrawals/"+id+"/cancel", e.teacherTok, ""); code != fiber.StatusNotFound || body["error"] != "withdrawal_not_found" {
+		t.Fatalf("không phải của mình = %d %v, muốn 404 withdrawal_not_found", code, body)
+	}
+	e.svc.cancelErr = &service.WithdrawalRuleError{Kind: service.ErrWithdrawalInvalidTransition, Data: map[string]interface{}{"current_status": "approved"}}
+	code, body = e.do(t, "POST", "/api/wallet/teacher/withdrawals/"+id+"/cancel", e.teacherTok, "")
+	if code != fiber.StatusConflict || body["error"] != "invalid_status_transition" {
+		t.Fatalf("đã duyệt = %d %v, muốn 409 invalid_status_transition", code, body)
+	}
+	if data, _ := body["data"].(map[string]interface{}); data["current_status"] != "approved" {
+		t.Fatalf("thiếu data.current_status: %v", body)
+	}
+	if code, _ := e.do(t, "GET", "/api/wallet/teacher/withdrawals?status=cancelled", e.teacherTok, ""); code != fiber.StatusOK {
+		t.Fatalf("lọc status=cancelled = %d, muốn 200", code)
 	}
 }

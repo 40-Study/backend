@@ -7,6 +7,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
@@ -231,7 +232,13 @@ func (h *UserSystemRoleHandler) GetUsersBySystemRole(c *fiber.Ctx) error {
 	}
 
 	// Lay query params
-	status := c.Query("status", "")
+	// QA vòng 2 (G3, N-02/A-P1-1): mặc định CHỈ lượt gán đang hiệu lực. Trước đây rỗng = trả cả
+	// bản ghi đã thu hồi (inactive), nên số "user theo vai trò" ở /admin và /admin/roles cộng cả
+	// lượt đã gỡ. Muốn xem cả lịch sử thì gửi status=all (hoặc status=inactive).
+	status := c.Query("status", model.UserSystemRoleStatusActive)
+	if status == "all" {
+		status = ""
+	}
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 

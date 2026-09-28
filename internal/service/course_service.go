@@ -15,6 +15,63 @@ import (
 // pattern "forbidden: not the owner" đã có sẵn ở discussion_service.go/review_service.go.
 var ErrNotCourseOwner = errors.New("forbidden: not the owner")
 
+// ErrCourseLockedForReview (Q5, QA vòng 2 — D3): khoá đang chờ duyệt thì KHÔNG ai được sửa thông
+// tin, chương, bài hay nội dung bài (kể cả admin): admin phải duyệt đúng nội dung giảng viên đã
+// gửi. Giảng viên muốn sửa thì "Rút yêu cầu duyệt" (POST /courses/:id/withdraw-review) để đưa khoá
+// về draft trước. Handler ánh xạ sang 409 COURSE_PENDING_REVIEW.
+var ErrCourseLockedForReview = errors.New("course is pending review, withdraw the review request before editing")
+
+// ensureCourseEditable — gọi SAU khi đã kiểm chủ sở hữu (người lạ nhận 403, không biết trạng
+// thái khoá của người khác), TRƯỚC mọi thao tác ghi trên khoá và nội dung của nó.
+func ensureCourseEditable(course *model.Course) error {
+	if course.Status == model.CourseStatusPendingReview {
+		return ErrCourseLockedForReview
+	}
+	return nil
+}
+
+// ErrCourseHidden — cùng thông điệp "course not found" mà các handler đọc khoá/chương/bài vốn đã
+// map sang 404: người không có quyền xem khoá chưa xuất bản nhận y hệt như khoá không tồn tại.
+var ErrCourseHidden = errors.New("course not found")
+
+// canViewCourse (D4, QA vòng 2): khoá nháp/chờ duyệt/bị từ chối chỉ chủ khoá, admin hệ thống và
+// người đã ghi danh xem được. Trước bản vá, mọi route đọc (GET /courses/:id, /courses/:id/sections,
+// /sections/:id...) chỉ cần đăng nhập, nên giảng viên khác đọc được khoá nháp và giáo trình của
+// nhau. Giữ "enrolled" vì khoá đã bán có thể bị đưa về nháp (archived -> draft) mà học viên cũ vẫn
+// phải vào học được; published/archived vẫn mở như trước.
+//
+// Liệt kê TƯỜNG MINH các trạng thái riêng tư (denylist) thay vì allowlist: cột status có CHECK
+// constraint theo model.CourseStatuses nên dữ liệu thật chỉ có 5 giá trị, và
+// TestCanViewCourse_EveryStatusClassified đỏ ngay khi có trạng thái mới chưa được xếp loại.
+func canViewCourse(course *model.Course, viewerID uuid.UUID, isAdmin, enrolled bool) bool {
+	if !isPrivateCourseStatus(course.Status) {
+		return true
+	}
+	return isAdmin || enrolled || (viewerID != uuid.Nil && course.InstructorID == viewerID)
+}
+
+// isPrivateCourseStatus — khoá chưa (hoặc chưa được) xuất bản: chỉ người trong cuộc được xem.
+func isPrivateCourseStatus(status string) bool {
+	switch status {
+	case model.CourseStatusDraft, model.CourseStatusPendingReview, model.CourseStatusRejected:
+		return true
+	}
+	return false
+}
+
+// isEnrolledInCourse — cùng nguồn enrollment mà gatherLessonLockInput dùng, cho các đường đọc
+// không cần cả LessonLockInput (vd GetSectionByID).
+func isEnrolledInCourse(ctx context.Context, enrollmentRepo repository.EnrollmentRepositoryInterface, userID, courseID uuid.UUID) (bool, error) {
+	if userID == uuid.Nil {
+		return false, nil
+	}
+	enrollment, err := enrollmentRepo.GetByUserAndCourse(ctx, userID, courseID)
+	if err != nil {
+		return false, err
+	}
+	return enrollment != nil, nil
+}
+
 type CourseServiceInterface interface {
 	CreateCourse(ctx context.Context, req dto.CreateCourseDTO) (*dto.CourseResponseDTO, error)
 	GetAllCourses(ctx context.Context, params dto.CourseFilterParams) (*dto.CourseListResponseDTO, error)
@@ -186,6 +243,9 @@ func (s *CourseService) GetCourseByID(ctx context.Context, id, userID uuid.UUID,
 	if err != nil {
 		return nil, err
 	}
+	if !canViewCourse(course, userID, isAdmin, lockInput.Enrolled) {
+		return nil, ErrCourseHidden
+	}
 
 	detail := &dto.CourseDetailDTO{
 		CourseResponseDTO: *s.toCourseResponseDTO(course),
@@ -289,6 +349,9 @@ func (s *CourseService) UpdateCourse(ctx context.Context, id, actorUserID uuid.U
 	// để kiểm duyệt/sửa khóa học vi phạm của giảng viên khác.
 	if course.InstructorID != actorUserID && !isAdmin {
 		return nil, ErrNotCourseOwner
+	}
+	if err := ensureCourseEditable(course); err != nil {
+		return nil, err
 	}
 
 	if req.CategoryID != nil {
@@ -403,6 +466,11 @@ func (s *CourseService) DeleteCourse(ctx context.Context, id, actorUserID uuid.U
 	// SYSTEM_ADMIN (vòng 2) mới được xóa.
 	if course.InstructorID != actorUserID && !isAdmin {
 		return ErrNotCourseOwner
+	}
+	// Q5 (chủ dự án chốt 28/09): khoá đang chờ duyệt cũng không xoá được — giảng viên "Rút yêu
+	// cầu duyệt" trước, tránh admin mở hàng chờ ra một khoá đã biến mất.
+	if err := ensureCourseEditable(course); err != nil {
+		return err
 	}
 	return s.courseRepo.Delete(ctx, id)
 }

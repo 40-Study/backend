@@ -59,6 +59,9 @@ func (h *LessonContentHandler) CreateContent(c *fiber.Ctx) error {
 
 	content, err := h.service.CreateContent(c.Context(), lessonID, userID, isAdmin, req)
 	if err != nil {
+		if writeCourseLocked(c, err) {
+			return nil
+		}
 		if status := lessonContentErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
 		}
@@ -103,6 +106,10 @@ func (h *LessonContentHandler) GetContent(c *fiber.Ctx) error {
 				"message": "Lesson does not belong to this course",
 			})
 		}
+		// D4 (review PR #79): khoá chưa xuất bản mà người gọi không được xem -> 404.
+		if err == service.ErrCourseHidden {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "Lesson not found"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve contents", "error": err.Error(),
 		})
@@ -145,6 +152,9 @@ func (h *LessonContentHandler) UpdateContent(c *fiber.Ctx) error {
 
 	content, err := h.service.UpdateContent(c.Context(), contentID, userID, isAdmin, req)
 	if err != nil {
+		if writeCourseLocked(c, err) {
+			return nil
+		}
 		if status := lessonContentErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
 		}
@@ -191,6 +201,9 @@ func (h *LessonContentHandler) ReorderContents(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 
 	if err := h.service.ReorderContents(c.Context(), lessonID, userID, isAdmin, req); err != nil {
+		if writeCourseLocked(c, err) {
+			return nil
+		}
 		if status := lessonContentErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
 		}
@@ -221,6 +234,9 @@ func (h *LessonContentHandler) DeleteContent(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 
 	if err := h.service.DeleteContent(c.Context(), contentID, userID, isAdmin); err != nil {
+		if writeCourseLocked(c, err) {
+			return nil
+		}
 		if status := lessonContentErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
 		}

@@ -3,7 +3,7 @@ package dto
 import "github.com/google/uuid"
 
 type UpdatePermissionDTO struct {
-	Description string `json:"description" binding:"required,min=1,max=500"`
+	Description string `json:"description" validate:"required,min=1,max=500"`
 }
 
 type PermissionResponseDTO struct {

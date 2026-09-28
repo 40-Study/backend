@@ -9,20 +9,20 @@ import (
 // Class DTOs
 
 type CreateClassDTO struct {
-	Name        string     `json:"name" binding:"required,min=2,max=255"`
+	Name        string     `json:"name" validate:"required,min=2,max=255"`
 	Description *string    `json:"description"`
 	CourseID    *uuid.UUID `json:"course_id"`
-	MaxStudents *int       `json:"max_students" binding:"omitempty,min=1"`
+	MaxStudents *int       `json:"max_students" validate:"omitempty,min=1"`
 	StartDate   *string    `json:"start_date"`
 	EndDate     *string    `json:"end_date"`
 }
 
 type UpdateClassDTO struct {
-	Name        *string    `json:"name" binding:"omitempty,min=2,max=255"`
+	Name        *string    `json:"name" validate:"omitempty,min=2,max=255"`
 	Description *string    `json:"description"`
 	CourseID    *uuid.UUID `json:"course_id"`
-	Status      *string    `json:"status" binding:"omitempty,oneof=draft active archived"`
-	MaxStudents *int       `json:"max_students" binding:"omitempty,min=1"`
+	Status      *string    `json:"status" validate:"omitempty,oneof=draft active archived"`
+	MaxStudents *int       `json:"max_students" validate:"omitempty,min=1"`
 	StartDate   *string    `json:"start_date"`
 	EndDate     *string    `json:"end_date"`
 }
@@ -52,12 +52,12 @@ type ClassListResponseDTO struct {
 // TeacherClass DTOs
 
 type AssignTeacherDTO struct {
-	TeacherID uuid.UUID `json:"teacher_id" binding:"required"`
-	Role      string    `json:"role" binding:"omitempty,oneof=primary assistant"`
+	TeacherID uuid.UUID `json:"teacher_id" validate:"required"`
+	Role      string    `json:"role" validate:"omitempty,oneof=primary assistant"`
 }
 
 type AssignTeachersDTO struct {
-	Teachers []AssignTeacherDTO `json:"teachers" binding:"required,min=1,dive"`
+	Teachers []AssignTeacherDTO `json:"teachers" validate:"required,min=1,dive"`
 }
 
 type TeacherClassResponseDTO struct {
@@ -79,7 +79,7 @@ type TeacherClassListResponseDTO struct {
 // StudentClass DTOs
 
 type EnrollStudentDTO struct {
-	StudentID uuid.UUID `json:"student_id" binding:"required"`
+	StudentID uuid.UUID `json:"student_id" validate:"required"`
 }
 
 type StudentClassResponseDTO struct {

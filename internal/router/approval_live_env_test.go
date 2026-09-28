@@ -78,6 +78,9 @@ func (f *apvUserSystemRoleRepo) hasRole(userID uuid.UUID, name string) bool {
 
 type apvCourseReviewRepo struct {
 	courses map[uuid.UUID]*model.Course
+	// empty: khoá chưa có bài nào — submit trả ErrCourseEmptyContent như repo thật (D2, QA vòng 2;
+	// câu đếm SQL thật có test Postgres riêng ở repository/approval_pg_test.go).
+	empty map[uuid.UUID]bool
 }
 
 func (f *apvCourseReviewRepo) ApplyReviewAction(_ context.Context, courseID uuid.UUID, action repository.CourseReviewAction,
@@ -93,6 +96,9 @@ func (f *apvCourseReviewRepo) ApplyReviewAction(_ context.Context, courseID uuid
 	if err != nil {
 		return nil, err
 	}
+	if action == repository.CourseActionSubmit && f.empty[courseID] {
+		return nil, repository.ErrCourseEmptyContent
+	}
 	now := time.Now()
 	c.Status = next
 	switch action {
@@ -102,6 +108,8 @@ func (f *apvCourseReviewRepo) ApplyReviewAction(_ context.Context, courseID uuid
 		c.PublishedAt, c.ReviewedBy, c.ReviewedAt, c.RejectionReason = &now, reviewerID, &now, nil
 	case repository.CourseActionReject:
 		c.ReviewedBy, c.ReviewedAt, c.RejectionReason = reviewerID, &now, reason
+	case repository.CourseActionWithdraw:
+		c.SubmittedAt = nil
 	}
 	return c, nil
 }

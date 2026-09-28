@@ -90,6 +90,8 @@ type Services struct {
 	ParentInvitation *service.ParentInvitationService
 	// ===== Parent Dashboard =====
 	ParentDashboard *service.ParentDashboardService
+	// ===== Parent Link Request (QA vòng 2 lane E: phụ huynh gửi, con xác nhận) =====
+	ParentLink *service.ParentLinkService
 	// ===== Discussion Forum =====
 	Discussion *service.DiscussionService
 	// ===== Note (Phase 1 §3) =====
@@ -357,6 +359,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 			repos.Submission,
 			repos.UserStats,
 		),
+		ParentLink: service.NewParentLinkService(resources.DB),
 
 		// ===== Role =====
 		Role:       service.NewRoleService(repos.Role, repos.Permission),
