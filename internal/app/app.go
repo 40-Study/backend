@@ -284,6 +284,8 @@ func New() (*App, error) {
 	// dùng chung nhiều lane đang sửa song song). Group "/api" thứ 2 chỉ là tiền tố, không kèm
 	// middleware nào nên không ảnh hưởng route đã đăng ký trong SetupAllRoutes.
 	router.SetupWithdrawalRoutes(fiberApp.Group("/api"), resources.Config, handlers.Withdrawal, resources.Redis, permChecker)
+	// QA vòng 2 lane E: liên kết phụ huynh-học sinh do phụ huynh khởi xướng — cùng lý do đăng ký riêng.
+	router.SetupParentLinkRoutes(fiberApp.Group("/api"), resources.Config, handlers.ParentLink, resources.Redis)
 
 	return &App{
 		Resources: resources,

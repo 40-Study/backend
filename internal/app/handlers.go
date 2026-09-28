@@ -87,6 +87,7 @@ type Handlers struct {
 
 	// ===== Parent Dashboard =====
 	ParentDashboard *handler.ParentDashboardHandler
+	ParentLink      *handler.ParentLinkHandler
 
 	// ===== Schedule =====
 	Schedule *handler.ScheduleHandler
@@ -209,6 +210,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 
 		// ===== Parent Dashboard =====
 		ParentDashboard: handler.NewParentDashboardHandler(services.ParentDashboard),
+		ParentLink:      handler.NewParentLinkHandler(services.ParentLink),
 
 		// ===== Schedule =====
 		Schedule: handler.NewScheduleHandler(services.Schedule),

@@ -41,6 +41,9 @@ func (h *EnrollmentHandler) Enroll(c *fiber.Ctx) error {
 
 	enrollment, err := h.service.Enroll(c.Context(), userID, courseID)
 	if err != nil {
+		if err == service.ErrCourseHidden {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "Course not found"})
+		}
 		if err == service.ErrPaymentRequired {
 			return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
 				"message": "Khóa học trả phí, vui lòng thanh toán qua đơn hàng",

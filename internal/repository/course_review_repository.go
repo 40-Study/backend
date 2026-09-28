@@ -19,15 +19,21 @@ var (
 	ErrCourseReviewNotFound      = errors.New("course not found")
 	ErrCourseReviewNotOwner      = errors.New("forbidden: not the owner")
 	ErrCourseInvalidReviewStatus = errors.New("invalid course status for this review action")
+	// ErrCourseEmptyContent (D2, QA vòng 2): nộp duyệt khoá chưa có bài học nào — trước đây gửi
+	// được khoá 0 bài lên hàng chờ admin.
+	ErrCourseEmptyContent = errors.New("course must have at least one lesson before submitting for review")
 )
 
-// CourseReviewAction — 3 hành động của luồng duyệt.
+// CourseReviewAction — các hành động của luồng duyệt.
 type CourseReviewAction string
 
 const (
 	CourseActionSubmit  CourseReviewAction = "submit"
 	CourseActionApprove CourseReviewAction = "approve"
 	CourseActionReject  CourseReviewAction = "reject"
+	// CourseActionWithdraw (Q5, QA vòng 2): giảng viên rút yêu cầu duyệt để sửa tiếp — khoá đang
+	// chờ duyệt bị khoá sửa (service.ErrCourseLockedForReview), đây là đường duy nhất để mở lại.
+	CourseActionWithdraw CourseReviewAction = "withdraw"
 )
 
 // EvaluateCourseReviewTransition là hàm THUẦN (không DB) quyết định trạng thái mới của khoá học
@@ -35,6 +41,7 @@ const (
 //   - submit : draft|rejected -> pending_review (giáo viên nộp / nộp lại)
 //   - approve: pending_review -> published   (chỉ admin)
 //   - reject : pending_review -> rejected    (chỉ admin)
+//   - withdraw: pending_review -> draft      (giáo viên chủ khoá rút yêu cầu để sửa)
 //
 // Mọi cặp khác trả ErrCourseInvalidReviewStatus — đặc biệt KHÔNG có đường nào tới published ngoài
 // approve, nên giáo viên không tự xuất bản được.
@@ -51,6 +58,10 @@ func EvaluateCourseReviewTransition(current string, action CourseReviewAction) (
 	case CourseActionReject:
 		if current == model.CourseStatusPendingReview {
 			return model.CourseStatusRejected, nil
+		}
+	case CourseActionWithdraw:
+		if current == model.CourseStatusPendingReview {
+			return model.CourseStatusDraft, nil
 		}
 	}
 	return "", ErrCourseInvalidReviewStatus
@@ -107,6 +118,22 @@ func (r *CourseReviewRepository) ApplyReviewAction(
 		if err != nil {
 			return err
 		}
+		if action == CourseActionSubmit {
+			// Đếm TRONG transaction đang giữ khoá dòng course: nộp và xoá bài chạy song song thì
+			// xoá bài đã phải qua ensureCourseEditable (khoá còn draft) — trường hợp xoá commit
+			// sau lần đếm này vẫn có thể lọt, chấp nhận vì admin còn duyệt tay.
+			// sections xoá mềm (deleted_at), lessons xoá cứng: bài trong chương đã xoá không tính.
+			var lessonCount int64
+			if err := tx.Model(&model.Lesson{}).
+				Joins("JOIN sections ON sections.id = lessons.section_id AND sections.deleted_at IS NULL").
+				Where("sections.course_id = ?", course.ID).
+				Count(&lessonCount).Error; err != nil {
+				return err
+			}
+			if lessonCount == 0 {
+				return ErrCourseEmptyContent
+			}
+		}
 
 		now := time.Now()
 		updates := map[string]interface{}{"status": next}
@@ -122,6 +149,9 @@ func (r *CourseReviewRepository) ApplyReviewAction(
 			updates["reviewed_by"] = reviewerID
 			updates["reviewed_at"] = now
 			updates["rejection_reason"] = reason
+		case CourseActionWithdraw:
+			// Về nháp như chưa từng nộp: hàng chờ admin xếp theo submitted_at, lần nộp sau ghi lại.
+			updates["submitted_at"] = nil
 		}
 		if err := tx.Model(&model.Course{}).Where("id = ?", course.ID).Updates(updates).Error; err != nil {
 			return err

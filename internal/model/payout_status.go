@@ -16,10 +16,14 @@ const (
 	PayoutStatusApproved  = "approved"  // admin đã duyệt, chờ chuyển khoản tay
 	PayoutStatusRejected  = "rejected"  // admin từ chối (kèm lý do) — giải phóng số dư
 	PayoutStatusCompleted = "completed" // admin xác nhận đã chuyển khoản xong
+	// PayoutStatusCancelled (Q2, QA vòng 2): giảng viên tự huỷ khi yêu cầu còn pending (vd nhập
+	// sai số tiền). Tách khỏi "rejected" vì rejected nghĩa là admin từ chối kèm lý do. Không thuộc
+	// Open/Reserved nên huỷ xong là trả lại số dư và gửi được yêu cầu mới ngay.
+	PayoutStatusCancelled = "cancelled"
 )
 
 var PayoutStatuses = []string{
-	PayoutStatusPending, PayoutStatusApproved, PayoutStatusRejected, PayoutStatusCompleted,
+	PayoutStatusPending, PayoutStatusApproved, PayoutStatusRejected, PayoutStatusCompleted, PayoutStatusCancelled,
 }
 
 // PayoutOpenStatuses — yêu cầu "đang xử lý" (chưa kết thúc). Quyết định chủ dự án #7: mỗi giảng

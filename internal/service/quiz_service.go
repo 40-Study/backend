@@ -339,6 +339,12 @@ func (s *QuizService) checkSessionQuizAccess(ctx context.Context, sessionID, use
 // vi hiện có. Quiz không gắn lesson/course/session nào (dữ liệu mồ côi) mặc định KHÔNG khoá —
 // giữ đúng hành vi trước bản vá cho trường hợp hiếm này (không có gate nào áp được).
 func (s *QuizService) checkQuizAccess(ctx context.Context, quiz *model.Quiz, userID uuid.UUID, canView bool) error {
+	// D4 (review PR #79): quiz của khoá chưa xuất bản ẩn với người ngoài — xem quiz_course_guard.go.
+	if !canView {
+		if err := s.ensureQuizCourseVisible(ctx, quiz, userID); err != nil {
+			return err
+		}
+	}
 	switch {
 	case quiz.LessonID != nil:
 		return s.checkLessonQuizAccess(ctx, *quiz.LessonID, userID, canView)
@@ -513,7 +519,7 @@ func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, ses
 			return nil, err
 		}
 		if err := s.checkQuizAccess(ctx, q, userID, canView); err != nil {
-			if err == ErrLessonLocked || err == ErrLessonNotInCourse {
+			if err == ErrLessonLocked || err == ErrLessonNotInCourse || err == ErrCourseHidden {
 				continue
 			}
 			return nil, err

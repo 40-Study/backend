@@ -138,21 +138,30 @@ func (s *LessonContentService) GetContentsByLessonID(ctx context.Context, lesson
 	// CAO-4: chu so huu khoa hoc / admin duoc bypass qua BypassLock (gatherLessonLockInput),
 	// nen van phai chay het nhanh nay (khong short-circuit rieng o day) de logic bypass nam
 	// DUY NHAT o mot cho (lesson_lock.go), khong lech voi SectionService/LessonService.
+	//
+	// D4 (review PR #79): khoá học phải được tra cho CẢ bài preview — trước bản vá nhánh preview
+	// bỏ qua mọi kiểm tra, nên người ngoài đọc được video_url bài preview của khoá nháp/chờ duyệt.
+	// Bài preview chỉ công khai khi bản thân khoá được phép xem (canViewCourse).
+	courseID, err := s.enrollmentRepo.GetCourseIDByLessonID(ctx, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	course, err := s.courseRepo.GetByID(ctx, courseID)
+	if err != nil {
+		return nil, err
+	}
+	if course == nil {
+		return nil, ErrCourseHidden
+	}
+	bypass := isAdmin || course.InstructorID == userID
+	lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, courseID, course.Sequential, bypass)
+	if err != nil {
+		return nil, err
+	}
+	if !canViewCourse(course, userID, isAdmin, lockInput.Enrolled) {
+		return nil, ErrCourseHidden
+	}
 	if !lesson.IsPreview {
-		courseID, err := s.enrollmentRepo.GetCourseIDByLessonID(ctx, lessonID)
-		if err != nil {
-			return nil, err
-		}
-		course, err := s.courseRepo.GetByID(ctx, courseID)
-		if err != nil {
-			return nil, err
-		}
-		sequential := course != nil && course.Sequential
-		bypass := isAdmin || (course != nil && course.InstructorID == userID)
-		lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, courseID, sequential, bypass)
-		if err != nil {
-			return nil, err
-		}
 		// Quyết định team lead (review vòng 2): lessonID không thực sự thuộc LessonOrder của
 		// courseID vừa suy ra (dữ liệu không nhất quán) không được ResolveLessonLock âm thầm mở
 		// (idx==-1) hay khoá nhầm lý do — phải là lỗi rõ ràng. Xem EnsureLessonInCourse.

@@ -30,6 +30,10 @@ func NewQuizHandler(service service.QuizServiceInterface, permChecker *middlewar
 // và "nội dung bài học" theo cùng một cơ chế. handled=true nghĩa là caller RETURN NGAY resp (đã
 // ghi response); handled=false nghĩa là svcErr không phải 1 trong 2 sentinel, caller tự xử lý tiếp.
 func respondLessonLockError(c *fiber.Ctx, svcErr error) (resp error, handled bool) {
+	// D4 (review PR #79): quiz của khoá chưa xuất bản -> 404 như khoá không tồn tại.
+	if svcErr == service.ErrCourseHidden {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "Quiz not found"}), true
+	}
 	if svcErr == service.ErrLessonLocked {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"message": "LESSON_LOCKED",

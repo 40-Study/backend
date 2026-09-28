@@ -169,6 +169,7 @@ func TestCourseReview_PG_FullCycleAgainstRealConstraint(t *testing.T) {
 	if err := tx.Create(&course).Error; err != nil {
 		t.Fatal(err)
 	}
+	apvLesson(t, tx, course.ID) // D2: khoá phải có ít nhất 1 bài mới nộp được
 	repo := NewCourseReviewRepository(tx)
 	if _, err := repo.ApplyReviewAction(ctx, course.ID, CourseActionSubmit, &other.ID, nil, nil); !errors.Is(err, ErrCourseReviewNotOwner) {
 		t.Fatalf("nguoi khac nop phai bi chan, err=%v", err)
@@ -191,5 +192,92 @@ func TestCourseReview_PG_FullCycleAgainstRealConstraint(t *testing.T) {
 	list, total, err := repo.ListForReview(ctx, AdminCourseReviewFilter{Status: model.CourseStatusPublished, Keyword: "PG approval", Page: 1, PageSize: 20})
 	if err != nil || total < 1 || len(list) < 1 || list[0].Instructor.Email != teacher.Email {
 		t.Fatalf("ListForReview: err=%v total=%d list=%v", err, total, list)
+	}
+}
+
+// apvSection tạo 1 chương (chưa có bài) cho khoá.
+func apvSection(t *testing.T, tx *gorm.DB, courseID uuid.UUID) model.Section {
+	t.Helper()
+	s := model.Section{CourseID: courseID, Title: "QA-chuong", DisplayOrder: 1}
+	if err := tx.Create(&s).Error; err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// apvLesson tạo 1 chương + 1 bài cho khoá (đủ điều kiện nộp duyệt theo D2).
+func apvLesson(t *testing.T, tx *gorm.DB, courseID uuid.UUID) {
+	t.Helper()
+	s := apvSection(t, tx, courseID)
+	if err := tx.Create(&model.Lesson{SectionID: s.ID, Title: "QA-bai", DisplayOrder: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// D2 + Q5 (QA vòng 2) trên SQL thật:
+//   - khoá 0 bài, chỉ có chương rỗng, hoặc bài nằm trong chương ĐÃ XOÁ MỀM -> ErrCourseEmptyContent,
+//     khoá vẫn draft (không ghi gì);
+//   - có bài -> nộp được;
+//   - rút yêu cầu: người khác -> NotOwner; chủ khoá -> về draft, submitted_at = NULL; rút lần 2
+//     (không còn pending) -> ErrCourseInvalidReviewStatus; nộp lại được.
+func TestCourseReview_PG_SubmitRequiresLessonAndWithdraw(t *testing.T) {
+	tx := apvPgTx(t)
+	ctx := context.Background()
+	teacher, other := apvUser(t, tx, "qa-apv-teacher"), apvUser(t, tx, "qa-apv-other")
+	course := model.Course{InstructorID: teacher.ID, Title: "QA-PG empty course", Slug: "qa-pg-empty-" + uuid.NewString(), Status: model.CourseStatusDraft}
+	if err := tx.Create(&course).Error; err != nil {
+		t.Fatal(err)
+	}
+	repo := NewCourseReviewRepository(tx)
+	submit := func() error {
+		_, err := repo.ApplyReviewAction(ctx, course.ID, CourseActionSubmit, &teacher.ID, nil, nil)
+		return err
+	}
+	status := func() model.Course {
+		var c model.Course
+		if err := tx.Where("id = ?", course.ID).First(&c).Error; err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+
+	if err := submit(); !errors.Is(err, ErrCourseEmptyContent) {
+		t.Fatalf("khoa 0 bai: err=%v, muon ErrCourseEmptyContent", err)
+	}
+	apvSection(t, tx, course.ID)
+	if err := submit(); !errors.Is(err, ErrCourseEmptyContent) {
+		t.Fatalf("khoa chi co chuong rong: err=%v, muon ErrCourseEmptyContent", err)
+	}
+	deleted := apvSection(t, tx, course.ID)
+	if err := tx.Create(&model.Lesson{SectionID: deleted.ID, Title: "QA-bai-trong-chuong-da-xoa", DisplayOrder: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Delete(&deleted).Error; err != nil { // xoá mềm chương
+		t.Fatal(err)
+	}
+	if err := submit(); !errors.Is(err, ErrCourseEmptyContent) {
+		t.Fatalf("bai nam trong chuong da xoa van duoc tinh: err=%v", err)
+	}
+	if c := status(); c.Status != model.CourseStatusDraft || c.SubmittedAt != nil {
+		t.Fatalf("nop that bai nhung khoa bi ghi: %+v", c)
+	}
+
+	apvLesson(t, tx, course.ID)
+	if err := submit(); err != nil {
+		t.Fatalf("khoa co bai phai nop duoc: %v", err)
+	}
+
+	if _, err := repo.ApplyReviewAction(ctx, course.ID, CourseActionWithdraw, &other.ID, nil, nil); !errors.Is(err, ErrCourseReviewNotOwner) {
+		t.Fatalf("nguoi khac rut yeu cau: err=%v, muon ErrCourseReviewNotOwner", err)
+	}
+	c, err := repo.ApplyReviewAction(ctx, course.ID, CourseActionWithdraw, &teacher.ID, nil, nil)
+	if err != nil || c.Status != model.CourseStatusDraft || c.SubmittedAt != nil {
+		t.Fatalf("rut yeu cau: err=%v c=%+v, muon draft + submitted_at NULL", err, c)
+	}
+	if _, err := repo.ApplyReviewAction(ctx, course.ID, CourseActionWithdraw, &teacher.ID, nil, nil); !errors.Is(err, ErrCourseInvalidReviewStatus) {
+		t.Fatalf("rut lan 2 khi da la draft: err=%v", err)
+	}
+	if err := submit(); err != nil {
+		t.Fatalf("nop lai sau khi rut: %v", err)
 	}
 }
