@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
@@ -79,6 +80,14 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 
 	order, err := h.orderService.CreateOrder(c.Context(), userID, req)
 	if err != nil {
+		// B4 (QA vòng 2 N17): đã có đơn còn hạn cho khoá này — 409 để web dẫn user sang
+		// "Đơn hàng của tôi" thay vì báo lỗi chung chung.
+		if errors.Is(err, service.ErrOrderInProgress) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"code":    "ERR_ORDER_IN_PROGRESS",
+				"message": err.Error(),
+			})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"code":    "ERR_CREATE_ORDER",
 			"message": err.Error(),

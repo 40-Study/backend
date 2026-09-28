@@ -68,13 +68,13 @@ func TestBuildRefundQuery_ConditionalOnCompletedStatus(t *testing.T) {
 	repo, captured := dryRunOrderRepo(t)
 	orderID := uuid.New()
 	actorID := uuid.New()
-	_ = repo.buildRefundQuery(orderID, "ly do", "manual_bank_transfer", time.Now(), actorID)
+	_ = repo.buildRefundQuery(orderID, "ly do", "manual_bank_transfer", "FT-QA-1", time.Now(), actorID)
 
 	// Cấu trúc câu lệnh: phải có ĐIỀU KIỆN status trong WHERE (không phải UPDATE vô điều kiện).
 	if !strings.Contains(captured.sql, "WHERE id = ? AND status = ?") {
 		t.Fatalf("SQL thieu WHERE id = ? AND status = ? (chong double-refund):\n%s", captured.sql)
 	}
-	for _, col := range []string{"refund_reason", "refund_method", "refunded_at", "refunded_by", "status"} {
+	for _, col := range []string{"refund_reason", "refund_method", "refund_transaction_ref", "refunded_at", "refunded_by", "status"} {
 		if !strings.Contains(captured.sql, col) {
 			t.Fatalf("SQL thieu cot %q:\n%s", col, captured.sql)
 		}
@@ -94,7 +94,7 @@ func TestBuildRefundQuery_ConditionalOnCompletedStatus(t *testing.T) {
 func TestRefundOrder_ZeroRowsAffectedMeansAlreadyRefunded(t *testing.T) {
 	repo, _ := dryRunOrderRepo(t)
 	// DummyDialector không Exec thật -> RowsAffected luôn 0 trên DryRun, đúng nhánh cần kiểm.
-	applied, err := repo.RefundOrder(uuid.New(), "ly do", "manual_bank_transfer", time.Now(), uuid.New())
+	applied, err := repo.RefundOrder(uuid.New(), "ly do", "manual_bank_transfer", "FT-QA-1", time.Now(), uuid.New())
 	if err != nil {
 		t.Fatalf("khong ky vong loi tren DryRun: %v", err)
 	}

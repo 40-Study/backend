@@ -292,13 +292,15 @@ func (r *OrderRepository) SetPlatformFeeSnapshot(orderID uuid.UUID, feePercent, 
 // CÙNG transaction — điều kiện "WHERE status = 'completed'" ở đây là defense-in-depth (giữ cùng
 // "hình dạng" UPDATE có điều kiện với phần còn lại của codebase), KHÔNG phải cơ chế chống race
 // chính (cơ chế chính là row lock của GetForUpdate).
-func (r *OrderRepository) buildRefundQuery(orderID uuid.UUID, reason, refundMethod string, refundedAt time.Time, refundedBy uuid.UUID) *gorm.DB {
+func (r *OrderRepository) buildRefundQuery(orderID uuid.UUID, reason, refundMethod, transactionRef string, refundedAt time.Time, refundedBy uuid.UUID) *gorm.DB {
 	updates := map[string]interface{}{
 		"status":        "refunded",
 		"refund_reason": reason,
 		"refund_method": refundMethod,
 		"refunded_at":   refundedAt,
 		"refunded_by":   refundedBy,
+		// B6: mã giao dịch chuyển khoản hoàn tiền (quyết định #1), ghi cùng UPDATE chuyển trạng thái.
+		"refund_transaction_ref": transactionRef,
 	}
 	return r.db.Model(&model.Order{}).
 		Where("id = ? AND status = ?", orderID, "completed").
@@ -308,8 +310,8 @@ func (r *OrderRepository) buildRefundQuery(orderID uuid.UUID, reason, refundMeth
 // RefundOrder chuyển đơn sang "refunded" — applied=false nghĩa là đơn KHÔNG còn ở "completed"
 // tại thời điểm UPDATE thật thực thi (double-refund, hoặc trạng thái đã đổi) — caller (đã khoá
 // dòng qua GetForUpdate) coi đây là ErrOrderAlreadyRefunded.
-func (r *OrderRepository) RefundOrder(orderID uuid.UUID, reason, refundMethod string, refundedAt time.Time, refundedBy uuid.UUID) (applied bool, err error) {
-	result := r.buildRefundQuery(orderID, reason, refundMethod, refundedAt, refundedBy)
+func (r *OrderRepository) RefundOrder(orderID uuid.UUID, reason, refundMethod, transactionRef string, refundedAt time.Time, refundedBy uuid.UUID) (applied bool, err error) {
+	result := r.buildRefundQuery(orderID, reason, refundMethod, transactionRef, refundedAt, refundedBy)
 	if result.Error != nil {
 		return false, result.Error
 	}

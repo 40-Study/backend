@@ -64,6 +64,9 @@ type Order struct {
 	RefundMethod *string    `gorm:"type:varchar(30)" json:"refund_method,omitempty"`
 	RefundedAt   *time.Time `json:"refunded_at,omitempty"`
 	RefundedBy   *uuid.UUID `gorm:"type:uuid" json:"refunded_by,omitempty"`
+	// RefundTransactionRef (B6, QA vòng 2): mã giao dịch chuyển khoản hoàn tiền admin đã thực hiện
+	// NGOÀI hệ thống — quyết định #1 yêu cầu "kèm ghi chú/mã giao dịch" để đối soát sao kê.
+	RefundTransactionRef *string `gorm:"type:varchar(100)" json:"refund_transaction_ref,omitempty"`
 
 	// Relationships
 	User        User         `gorm:"foreignKey:UserID" json:"-"`

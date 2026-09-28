@@ -48,7 +48,7 @@ type OrderRepositoryInterface interface {
 	// AdminOrderFilter. Xem OrderRepository.ListAdmin.
 	ListAdmin(filter AdminOrderFilter) ([]model.Order, int64, error)
 	// RefundOrder — xem comment tại OrderRepository.RefundOrder.
-	RefundOrder(orderID uuid.UUID, reason, refundMethod string, refundedAt time.Time, refundedBy uuid.UUID) (applied bool, err error)
+	RefundOrder(orderID uuid.UUID, reason, refundMethod, transactionRef string, refundedAt time.Time, refundedBy uuid.UUID) (applied bool, err error)
 }
 
 // AdminOrderFilter — tham số lọc cho ListAdmin (GET /api/orders/admin). Zero-value = không lọc

@@ -50,6 +50,10 @@ var (
 	ErrIdempotencyPayloadMismatch      = errors.New("idempotency payload mismatch")
 	ErrIdempotencyKeyNotFound          = errors.New("idempotency key not found")
 	ErrIdempotencyKeyExpired           = errors.New("idempotency key expired")
+	// ErrOrderInProgress (B4, QA vòng 2 N17): user đã có đơn còn hạn (pending/processing) chứa
+	// khoá học đang mua mà không trả lại được đơn cũ (đơn đã mở phiên thanh toán, khác tập khoá,
+	// hoặc có mã giảm giá). Handler trả 409; message tiếng Việt vì web hiển thị thẳng.
+	ErrOrderInProgress = errors.New("Bạn đang có đơn hàng chưa thanh toán cho khoá học này. Hãy tiếp tục thanh toán hoặc huỷ đơn đó trong mục Đơn hàng của tôi.")
 )
 
 type OrderServiceInterface interface {
@@ -137,6 +141,11 @@ func (s *OrderService) isValidTransition(from, to string) bool {
 //   2. ExpiresAt hiển thị cho đơn "pending" ở toOrderResponse bên dưới;
 //   3. ngưỡng lazy-sweep đơn "pending" chưa từng tạo intent (sweepExpiredHeldOrders, H3-01b).
 const pendingOrderDefaultTTL = 24 * time.Hour
+
+// afterOpenOrderCheckHook — seam CHỈ cho test race B4 (order_service_postgres_test.go): chạy ngay
+// sau bước kiểm đơn trùng, trước khi ghi đơn. Test dùng nó để giữ nhiều request cùng đứng giữa
+// "kiểm" và "ghi", nhờ vậy test đỏ chắc chắn nếu thiếu khoá advisory. Production luôn nil.
+var afterOpenOrderCheckHook func()
 
 func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dto.CreateOrderRequest) (*dto.OrderResponse, error) {
 	// H3-01b (review vòng 4): quét lazy — trước khi tạo đơn mới, chuyển các đơn pending/
@@ -343,8 +352,30 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 	// bước nào sau order_items/history KHÔNG rollback được order đã insert. Dựng orderItemRepo/
 	// orderHistoryRepo TX-BOUND qua txRepo.TxDB() để toàn bộ order + order_items + history +
 	// voucher used_count + (đơn 0đ) fulfillment CÙNG rollback nếu bất kỳ bước nào lỗi.
+	var reusedOrderID uuid.UUID
 	err = s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
 		txDB := txRepo.TxDB()
+
+		// B4 (QA vòng 2 N17): chặn mở nhiều đơn cùng lúc cho CÙNG khoá học. Phải kiểm TRONG
+		// transaction và SAU một khoá theo user: nếu chỉ SELECT rồi INSERT, 2 request đồng thời
+		// (double-click, 2 tab) cùng đọc "chưa có đơn" rồi cùng tạo. Khoá advisory theo user_id
+		// tuần tự hoá riêng việc tạo đơn của 1 user, không khoá dòng users (tránh chặn các UPDATE
+		// khác lên users) và tự nhả khi transaction kết thúc.
+		if err := txDB.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "create_order:"+userID.String()).Error; err != nil {
+			return err
+		}
+		reuseID, err := findReusableOpenOrder(txDB, userID, courseIDs, req.CouponCode)
+		if err != nil {
+			return err
+		}
+		if afterOpenOrderCheckHook != nil {
+			afterOpenOrderCheckHook()
+		}
+		if reuseID != uuid.Nil {
+			// Chưa ghi gì trong transaction này nên return sớm là an toàn (không cần rollback gì).
+			reusedOrderID = reuseID
+			return nil
+		}
 
 		// C-01 (review vòng 5, phát hiện lại ở review vòng 5→6): khoá voucher + đếm
 		// usage_per_user + reserve PHẢI chạy TRƯỚC txRepo.Create(order) — TRƯỚC ĐÂY khối này
@@ -432,6 +463,15 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 		return nil, err
 	}
 
+	if reusedOrderID != uuid.Nil {
+		// Trả lại đơn pending cũ (idempotent). Vẫn dọn giỏ như khi tạo mới vì user đang đi tiếp
+		// sang bước thanh toán đúng các khoá này.
+		if err := s.clearCheckedOutCart(ctx, userID, req.Source, selectedCourseIDs); err != nil {
+			return nil, err
+		}
+		return s.GetOrderByID(ctx, reusedOrderID, userID, false)
+	}
+
 	// Gắn Course (chỉ trong bộ nhớ, SAU khi đã commit) để response có course_name — items được
 	// tạo theo đúng thứ tự courses ở trên.
 	for i := range items {
@@ -443,18 +483,8 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 	// item 26 (review web vòng 1): chỉ xóa khỏi giỏ hàng đúng các course ĐÃ CHỌN — trước đây
 	// luôn DeleteByUserID (xóa TOÀN BỘ giỏ) dù client chỉ chọn một phần. Không có course_ids
 	// (checkout cả giỏ, hành vi mặc định cũ) vẫn xóa toàn bộ như trước.
-	if req.Source == "cart" {
-		if len(selectedCourseIDs) > 0 {
-			for _, courseID := range selectedCourseIDs {
-				if err := s.cartRepo.Delete(ctx, userID, courseID); err != nil {
-					return nil, err
-				}
-			}
-		} else {
-			if err := s.cartRepo.DeleteByUserID(ctx, userID); err != nil {
-				return nil, err
-			}
-		}
+	if err := s.clearCheckedOutCart(ctx, userID, req.Source, selectedCourseIDs); err != nil {
+		return nil, err
 	}
 
 	// item 14/H2-03: fulfillment cho đơn 0đ giờ chạy BÊN TRONG transaction phía trên (cùng
@@ -514,9 +544,14 @@ func (s *OrderService) GetUserOrders(ctx context.Context, userID uuid.UUID, page
 	}
 
 	orderResponses := make([]dto.OrderResponse, 0, len(orders))
-	for _, order := range orders {
-		items, _ := s.orderItemRepo.GetByOrderID(order.ID)
-		orderResponses = append(orderResponses, *s.toOrderResponse(&order, items))
+	for i := range orders {
+		// B2 (QA vòng 2 N3): trước đây `items, _ :=` nuốt lỗi, trả đơn không có dòng nào như thể
+		// đơn rỗng. Lỗi đọc DB phải nổi lên thành 500 thay vì dữ liệu sai.
+		items, err := s.orderItemRepo.GetByOrderID(orders[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		orderResponses = append(orderResponses, *s.toOrderResponse(&orders[i], items))
 	}
 
 	totalPages := int(total) / limit
@@ -747,6 +782,10 @@ func (s *OrderService) getCoursesByIDs(ctx context.Context, ids []uuid.UUID) ([]
 		if err != nil {
 			return nil, err
 		}
+		// CourseRepository.GetByID trả (nil, nil) khi không tìm thấy — trước đây *course panic.
+		if course == nil {
+			return nil, ErrCourseNotFound
+		}
 		courses = append(courses, *course)
 	}
 	return courses, nil
@@ -765,7 +804,6 @@ func (s *OrderService) toOrderResponse(order *model.Order, items []model.OrderIt
 		})
 	}
 
-	now := time.Now()
 	response := &dto.OrderResponse{
 		ID:             order.ID,
 		OrderNumber:    order.OrderNumber,
@@ -781,14 +819,112 @@ func (s *OrderService) toOrderResponse(order *model.Order, items []model.OrderIt
 		CouponID:       order.CouponID,
 		Notes:          order.Notes,
 		Items:          itemResponses,
-		CreatedAt:      now,
-	}
-
-	// Hạn giữ đơn "pending" — cùng nguồn với payment code và lazy-sweep (pendingOrderDefaultTTL)
-	if order.Status == "pending" {
-		expiresAt := now.Add(pendingOrderDefaultTTL)
-		response.ExpiresAt = &expiresAt
+		// B1 (QA vòng 2 N2): trước đây gán time.Now() nên "ngày tạo" đổi theo mỗi lần đọc.
+		CreatedAt:            order.CreatedAt,
+		ExpiresAt:            orderHoldExpiresAt(order),
+		RefundReason:         order.RefundReason,
+		RefundTransactionRef: order.RefundTransactionRef,
+		RefundedAt:           order.RefundedAt,
 	}
 
 	return response
+}
+
+// orderHoldExpiresAt — hạn giữ đơn còn mở, tính từ dữ liệu ĐÃ LƯU nên đọc bao nhiêu lần cũng ra
+// cùng một giá trị. B1 (QA vòng 2): trước đây là now()+24h lúc render, tức hạn tự lùi mỗi lần
+// đọc và không khớp mốc lazy-sweep thật (GetExpiredHeldOrdersForUser). Hai mốc ở đây khớp đúng
+// điều kiện sweep: processing có mã thanh toán thì hết hạn theo payment_code_expired_at, còn
+// pending chưa mở phiên thanh toán thì theo created_at + pendingOrderDefaultTTL.
+func orderHoldExpiresAt(order *model.Order) *time.Time {
+	switch order.Status {
+	case "processing":
+		return order.PaymentCodeExpiredAt
+	case "pending":
+		if order.PaymentCodeExpiredAt != nil {
+			return order.PaymentCodeExpiredAt
+		}
+		expiresAt := order.CreatedAt.Add(pendingOrderDefaultTTL)
+		return &expiresAt
+	}
+	return nil
+}
+
+// findReusableOpenOrder (B4) — chạy TRONG transaction tạo đơn, sau khoá advisory theo user.
+// Trả về:
+//   - uuid.Nil, nil: user không có đơn còn hạn nào chứa các khoá này, được tạo đơn mới;
+//   - id, nil: đúng 1 đơn "pending" còn hạn có ĐÚNG tập khoá này và cả đơn cũ lẫn yêu cầu mới
+//     đều không dùng mã giảm giá, nên trả lại đơn đó (giá và số tiền không đổi);
+//   - ErrOrderInProgress: các trường hợp còn lại. Đơn "processing" đã có mã chuyển khoản gắn với
+//     số tiền cũ, còn đơn khác tập khoá/có voucher mà trả lại thì user sẽ trả sai số tiền mình
+//     vừa chọn, nên buộc user tiếp tục hoặc huỷ đơn cũ một cách tường minh.
+//
+// Đơn đã quá hạn (cùng điều kiện với GetExpiredHeldOrdersForUser) không tính, vì lazy-sweep đầu
+// CreateOrder chỉ là best-effort và có thể đã lỗi.
+func findReusableOpenOrder(txDB *gorm.DB, userID uuid.UUID, courseIDs []uuid.UUID, couponCode string) (uuid.UUID, error) {
+	now := time.Now()
+	var open []model.Order
+	err := txDB.
+		Where("user_id = ? AND status IN ('pending','processing')", userID).
+		Where("(payment_code_expired_at IS NOT NULL AND payment_code_expired_at >= ?) OR (payment_code_expired_at IS NULL AND created_at >= ?)",
+			now, now.Add(-pendingOrderDefaultTTL)).
+		Where("EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND oi.course_id IN ?)", courseIDs).
+		Find(&open).Error
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if len(open) == 0 {
+		return uuid.Nil, nil
+	}
+	if len(open) > 1 {
+		return uuid.Nil, ErrOrderInProgress
+	}
+	order := open[0]
+	if order.Status != "pending" || order.VoucherID != nil || couponCode != "" {
+		return uuid.Nil, ErrOrderInProgress
+	}
+	var itemCourseIDs []uuid.UUID
+	if err := txDB.Model(&model.OrderItem{}).Where("order_id = ?", order.ID).Pluck("course_id", &itemCourseIDs).Error; err != nil {
+		return uuid.Nil, err
+	}
+	if !sameCourseSet(itemCourseIDs, courseIDs) {
+		return uuid.Nil, ErrOrderInProgress
+	}
+	return order.ID, nil
+}
+
+func sameCourseSet(a, b []uuid.UUID) bool {
+	setA := make(map[uuid.UUID]struct{}, len(a))
+	for _, id := range a {
+		setA[id] = struct{}{}
+	}
+	setB := make(map[uuid.UUID]struct{}, len(b))
+	for _, id := range b {
+		setB[id] = struct{}{}
+	}
+	if len(setA) != len(setB) {
+		return false
+	}
+	for id := range setB {
+		if _, ok := setA[id]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// clearCheckedOutCart — item 26: nguồn "cart" chỉ xoá khỏi giỏ đúng các khoá đã chọn; không gửi
+// course_ids (checkout cả giỏ) thì xoá toàn bộ giỏ. Nguồn "buy_now" không đụng giỏ.
+func (s *OrderService) clearCheckedOutCart(ctx context.Context, userID uuid.UUID, source string, selectedCourseIDs []uuid.UUID) error {
+	if source != "cart" {
+		return nil
+	}
+	if len(selectedCourseIDs) == 0 {
+		return s.cartRepo.DeleteByUserID(ctx, userID)
+	}
+	for _, courseID := range selectedCourseIDs {
+		if err := s.cartRepo.Delete(ctx, userID, courseID); err != nil {
+			return err
+		}
+	}
+	return nil
 }

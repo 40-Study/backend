@@ -47,10 +47,13 @@ func (r *OrderItemRepository) GetByID(id uuid.UUID) (*model.OrderItem, error) {
 	return &item, nil
 }
 
-// GetByOrderID - Get all items for an order
+// GetByOrderID - Get all items for an order, kèm Course để response có course_name.
+// B2 (QA vòng 2 N3): trước đây không Preload nên course_name luôn rỗng ở /orders/me và chi tiết
+// đơn admin. Preload Unscoped vì đơn là chứng từ lịch sử: khoá đã bị xoá mềm vẫn phải hiện tên.
 func (r *OrderItemRepository) GetByOrderID(orderID uuid.UUID) ([]model.OrderItem, error) {
 	var items []model.OrderItem
-	if err := r.db.Where("order_id = ?", orderID).Find(&items).Error; err != nil {
+	if err := r.db.Preload("Course", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }).
+		Where("order_id = ?", orderID).Order("created_at ASC").Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil

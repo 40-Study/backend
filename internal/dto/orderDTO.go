@@ -37,6 +37,11 @@ type OrderResponse struct {
 	Items          []OrderItemResponse `json:"items"`
 	CreatedAt      time.Time           `json:"created_at"`
 	ExpiresAt      *time.Time          `json:"expires_at,omitempty"`
+	// Refund* (B6, QA vòng 2): chỉ có khi đơn đã hoàn tiền — trang chi tiết admin hiển thị dấu vết
+	// đối soát (lý do, mã giao dịch chuyển khoản, thời điểm).
+	RefundReason         *string    `json:"refund_reason,omitempty"`
+	RefundTransactionRef *string    `json:"refund_transaction_ref,omitempty"`
+	RefundedAt           *time.Time `json:"refunded_at,omitempty"`
 }
 
 type OrderItemResponse struct {
@@ -187,6 +192,9 @@ type AdminOrderListResponse struct {
 type RefundOrderRequest struct {
 	Reason       string `json:"reason" validate:"required,max=500"`
 	RefundMethod string `json:"refund_method" validate:"required,oneof=manual_bank_transfer"`
+	// TransactionRef (B6, quyết định #1 "kèm ghi chú/mã giao dịch"): mã giao dịch chuyển khoản
+	// hoàn tiền admin đã làm ngoài hệ thống, bắt buộc để đối soát sao kê ngân hàng.
+	TransactionRef string `json:"transaction_ref" validate:"required,max=100"`
 }
 
 // RefundOrderResponse — 200 của POST /orders/admin/:id/refund.
