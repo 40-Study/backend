@@ -344,6 +344,11 @@ func (s *CourseService) UpdateCourse(ctx context.Context, id, actorUserID uuid.U
 		course.DiscountExpiresAt = req.DiscountExpiresAt
 	}
 	if req.Status != nil {
+		// Phase 3: PUT không còn được tự xuất bản — chỉ published<->archived/draft thủ công;
+		// nộp duyệt/duyệt/từ chối đi qua endpoint riêng (course_status_guard.go).
+		if err := ValidateManualCourseStatusChange(course.Status, *req.Status); err != nil {
+			return nil, err
+		}
 		course.Status = *req.Status
 	}
 	if req.Requirements != nil {
@@ -434,6 +439,9 @@ func (s *CourseService) toCourseResponseDTO(course *model.Course) *dto.CourseRes
 		UpdatedAt:         course.UpdatedAt,
 		Sequential:        course.Sequential,
 		MinVideoPct:       course.MinVideoPct,
+		SubmittedAt:       course.SubmittedAt,
+		RejectionReason:   course.RejectionReason,
+		ReviewedAt:        course.ReviewedAt,
 	}
 	if resp.MinVideoPct <= 0 {
 		// Dong cu duoc AutoMigrate them cot voi gia tri 0 — tra ve dung nguong THUC TE dang

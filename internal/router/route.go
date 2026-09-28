@@ -26,6 +26,7 @@ func SetupAllRoutes(
 	profileHandler *handler.ProfileHandler,
 	teacherHandler *handler.TeacherHandler,
 	teacherProfileHandler *handler.TeacherProfileHandler,
+	approvalHandler *handler.ApprovalHandler,
 	classHandler *handler.ClassHandler,
 	classLessonContentHandler *handler.ClassLessonContentHandler,
 	attendanceHandler *handler.AttendanceHandler,
@@ -95,6 +96,8 @@ func SetupAllRoutes(
 	SetupOrganizationRoutes(api, cfg, organizationHandler, redis, permChecker)
 	SetupProfileRoutes(api, cfg, profileHandler, redis)
 	SetupTeacherRoutes(api, cfg, teacherHandler, redis, permChecker)
+	// Phase 3: PHẢI trước SetupTeacherProfileRoutes — "/teacher-profiles/me" tĩnh phải thắng "/:id".
+	SetupApprovalRoutes(api, cfg, approvalHandler, redis, permChecker)
 	SetupTeacherProfileRoutes(api, cfg, teacherProfileHandler, redis)
 	SetupClassRoutes(api, cfg, classHandler, attendanceHandler, redis)
 	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis, permChecker)

@@ -70,6 +70,16 @@ func AuthMiddleware(cfg *config.Config, rdb *redis.Client) fiber.Handler {
 					"error":   "Please login again",
 				})
 			}
+			// Phase 3 (quyết định #6): lần bump gần nhất là admin ĐỔI VAI TRÒ (duyệt hồ sơ giáo
+			// viên) -> báo code riêng; POST /auth/refresh-token sẽ cấp token mới với vai trò mới
+			// (xem service/auth_service_role_refresh.go), web tự refresh không bắt đăng nhập lại.
+			if marker, mErr := rdb.Get(c.Context(), constants.KeyRoleChanged(claims.UserID.String())).Result(); mErr == nil && marker == userVerStr {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+					"message": "Role changed",
+					"code":    "ROLE_CHANGED",
+					"error":   "Please refresh token",
+				})
+			}
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"message": "All sessions revoked",
 				"error":   "Please login again",

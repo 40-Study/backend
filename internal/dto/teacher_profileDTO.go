@@ -29,6 +29,12 @@ type TeacherProfileResponseDTO struct {
 	Department      *string   `json:"department,omitempty"`
 	CreatedAt       string    `json:"created_at"`
 	UpdatedAt       string    `json:"updated_at"`
+
+	// Phase 3 duyệt giáo viên
+	ApprovalStatus    string  `json:"approval_status"`
+	RejectionReason   *string `json:"rejection_reason,omitempty"`
+	ReviewedAt        *string `json:"reviewed_at,omitempty"`
+	ResubmissionCount int     `json:"resubmission_count"`
 }
 
 type TeacherProfileListResponseDTO struct {

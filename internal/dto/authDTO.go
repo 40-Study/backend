@@ -165,6 +165,10 @@ type AddSystemProfileResponseDto struct {
 type RefreshTokenResponseDto struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
+	// Phase 3: chỉ có khi refresh qua đường "admin vừa đổi vai trò" (duyệt hồ sơ giáo viên) —
+	// web dùng để chuyển active role và điều hướng sang khu mới mà không cần đăng xuất.
+	RoleChanged bool   `json:"role_changed,omitempty"`
+	ActiveRole  string `json:"active_role,omitempty"`
 }
 
 

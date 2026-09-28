@@ -90,6 +90,11 @@ type CourseResponseDTO struct {
 	// ——— Phase 1 §2 ———
 	Sequential  bool `json:"sequential"`
 	MinVideoPct int  `json:"min_video_pct"`
+
+	// ——— Phase 3 duyệt khoá học ———
+	SubmittedAt     *time.Time `json:"submitted_at,omitempty"`
+	RejectionReason *string    `json:"rejection_reason,omitempty"`
+	ReviewedAt      *time.Time `json:"reviewed_at,omitempty"`
 }
 
 type CourseInstructorDTO struct {

@@ -38,6 +38,33 @@ func (h *CourseHandler) CreateCourse(c *fiber.Ctx) error {
 	}
 	req.InstructorID = userID
 
+	// Phase 3: trước đây route POST /courses chỉ có AuthMiddleware — BẤT KỲ ai đăng nhập (học
+	// viên, ứng viên giảng viên chưa được duyệt) cũng tạo được khoá học. Giờ bắt buộc
+	// COURSES_CREATE (TEACHER; SYSTEM_ADMIN qua "*"). Kiểm ở handler (đã giữ permChecker) thay vì
+	// router để không phải đổi chữ ký SetupCourseRoutes dùng chung.
+	// permChecker nil = lỗi wiring -> từ chối (fail-closed), không lặng lẽ cho qua.
+	if h.permChecker == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Permission checker not configured",
+		})
+	}
+	var activeOrgID *uuid.UUID
+	if orgID, ok := c.Locals("active_org_id").(uuid.UUID); ok {
+		activeOrgID = &orgID
+	}
+	allowed, err := h.permChecker.HasPermission(c.Context(), userID, activeOrgID, "COURSES_CREATE")
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to resolve permissions",
+		})
+	}
+	if !allowed {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"success": false,
+			"message": "forbidden: missing permission COURSES_CREATE",
+		})
+	}
+
 	if errors := utils.ValidateStruct(req); len(errors) > 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Validation failed",
@@ -258,6 +285,12 @@ func (h *CourseHandler) UpdateCourse(c *fiber.Ctx) error {
 		if err == service.ErrNotCourseOwner {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 				"message": "You are not the instructor of this course",
+			})
+		}
+		if err == service.ErrCourseStatusChangeNotAllowed {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "Course status cannot be changed directly — use submit-review / admin approval",
+				"code":    "COURSE_STATUS_CHANGE_NOT_ALLOWED",
 			})
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{

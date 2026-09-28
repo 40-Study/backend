@@ -65,10 +65,18 @@ type Course struct {
 	Requirements      pq.StringArray   `gorm:"type:text[]" json:"requirements"`
 	Objectives        pq.StringArray   `gorm:"type:text[]" json:"objectives"`
 	TargetAudience    pq.StringArray   `gorm:"type:text[]" json:"target_audience"`
-	Status            string           `gorm:"type:varchar(20);default:'draft';check:status IN ('draft', 'pending_review', 'published', 'archived');index" json:"status"`
+	Status            string           `gorm:"type:varchar(20);default:'draft';check:status IN ('draft', 'pending_review', 'published', 'rejected', 'archived');index" json:"status"`
 	PublishedAt       *time.Time       `json:"published_at,omitempty"`
 	IsFeatured        bool             `gorm:"default:false" json:"is_featured"`
 	IsFree            bool             `gorm:"default:false" json:"is_free"`
+
+	// Phase 3 duyệt khoá học: dấu vết duyệt/từ chối. SubmittedAt = lần gần nhất giáo viên nộp
+	// duyệt (hàng chờ admin sắp theo cột này). RejectionReason chỉ có giá trị khi status=rejected
+	// (được xoá khi duyệt).
+	SubmittedAt     *time.Time `gorm:"column:submitted_at" json:"submitted_at,omitempty"`
+	RejectionReason *string    `gorm:"type:text;column:rejection_reason" json:"rejection_reason,omitempty"`
+	ReviewedBy      *uuid.UUID `gorm:"type:uuid;column:reviewed_by" json:"reviewed_by,omitempty"`
+	ReviewedAt      *time.Time `gorm:"column:reviewed_at" json:"reviewed_at,omitempty"`
 
 	// ——— Phase 1 §2: hai cong tac cua khoa hoc ———
 	//

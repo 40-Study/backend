@@ -39,6 +39,17 @@ func (s *TeacherProfileService) CreateTeacherProfile(ctx context.Context, req dt
 		return nil, errors.New("teacher profile already exists for this user")
 	}
 
+	// Phase 3: hồ sơ mới = đơn đăng ký chờ duyệt (pending), TRỪ khi user đã là TEACHER (giáo
+	// viên cũ tạo hồ sơ muộn) — không đẩy họ vào hàng chờ duyệt.
+	isTeacher, err := s.repo.HasActiveSystemRole(ctx, req.UserID, "TEACHER")
+	if err != nil {
+		return nil, err
+	}
+	approvalStatus := model.TeacherApprovalPending
+	if isTeacher {
+		approvalStatus = model.TeacherApprovalApproved
+	}
+
 	profile := &model.TeacherProfile{
 		UserID:          req.UserID,
 		Specialization:  req.Specialization,
@@ -46,6 +57,7 @@ func (s *TeacherProfileService) CreateTeacherProfile(ctx context.Context, req dt
 		ExperienceYears: req.ExperienceYears,
 		CertificateInfo: req.CertificateInfo,
 		Department:      req.Department,
+		ApprovalStatus:  approvalStatus,
 	}
 
 	if err := s.repo.Create(ctx, profile); err != nil {
@@ -142,7 +154,16 @@ func (s *TeacherProfileService) DeleteTeacherProfile(ctx context.Context, id, ac
 }
 
 func toTeacherProfileResponseDTO(p *model.TeacherProfile) *dto.TeacherProfileResponseDTO {
+	var reviewedAt *string
+	if p.ReviewedAt != nil {
+		s := p.ReviewedAt.Format("2006-01-02T15:04:05Z07:00")
+		reviewedAt = &s
+	}
 	return &dto.TeacherProfileResponseDTO{
+		ApprovalStatus:    p.ApprovalStatus,
+		RejectionReason:   p.RejectionReason,
+		ReviewedAt:        reviewedAt,
+		ResubmissionCount: p.ResubmissionCount,
 		ID:              p.ID,
 		UserID:          p.UserID,
 		Specialization:  p.Specialization,

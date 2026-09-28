@@ -17,6 +17,8 @@ type TeacherProfileRepositoryInterface interface {
 	GetByUserID(ctx context.Context, userID uuid.UUID) (*model.TeacherProfile, error)
 	Update(ctx context.Context, profile *model.TeacherProfile) error
 	Delete(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	// HasActiveSystemRole (Phase 3) — cài đặt ở teacher_application_repository.go.
+	HasActiveSystemRole(ctx context.Context, userID uuid.UUID, roleName string) (bool, error)
 }
 
 type TeacherProfileRepository struct {
