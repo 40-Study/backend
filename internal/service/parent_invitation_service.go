@@ -135,7 +135,9 @@ func (s *ParentInvitationService) InviteParent(
 		if err != nil {
 			return nil, err
 		}
-		if relation != nil {
+		// Chỉ quan hệ ĐANG active mới là "đã liên kết": sau khi một bên huỷ liên kết (dòng
+		// 'revoked', QA vòng 2 lane E) học sinh phải mời lại được.
+		if relation != nil && relation.Status == model.ParentStudentStatusActive {
 			return &dto.InviteParentResponseDto{
 				Status:       "error",
 				Message:      "Phụ huynh đã có tài khoản và đã được liên kết với học sinh này.",
@@ -243,9 +245,15 @@ func (s *ParentInvitationService) RespondToInvitation(
 		invitation.RespondedAt = &now
 		return errors.New("lời mời đã hết hạn")
 	}
-	// check xem lời mời này có dành cho user này không
-	if invitation.InviteeUserID != nil && *invitation.InviteeUserID != parentUserID {
-		return errors.New("lời mời này không dành cho bạn")
+	// Lời mời có dành cho người đang bấm không. Review PR #81 vòng 2, B-1: lời mời gửi tới email chưa
+	// có tài khoản (InviteeUserID nil) trước đây ai biết ID cũng chấp nhận được (ID lộ qua
+	// /invitations/validate/:token), kể cả tài khoản phụ của phụ huynh vừa bị con huỷ liên kết. Nay
+	// người bấm phải có đúng email được mời VÀ đang giữ vai PARENT; sai điều kiện nào cũng cùng một
+	// lỗi, không nói lý do.
+	if ok, err := s.isInvitee(ctx, invitation, parentUserID); err != nil {
+		return err
+	} else if !ok {
+		return errInvitationNotForYou
 	}
 
 	// Frontend gửi "accept" / "reject", map sang status tương ứng
@@ -264,24 +272,24 @@ func (s *ParentInvitationService) RespondToInvitation(
 	if action != "accept" {
 		return errors.New("hành động không hợp lệ, chỉ chấp nhận 'accept' hoặc 'reject'")
 	}
-	// tạo quan hệ học sinh phụ huynh
 	now := time.Now()
-	relation := &model.ParentStudentRelation{
-		ParentUserID:       parentUserID,
-		StudentUserID:      invitation.StudentUserID,
-		Relationship:       invitation.Relationship,
-		Status:             model.ParentStudentStatusActive,
-		CanViewProgress:    true,
-		CanViewGrades:      true,
-		CanViewAttendance:  true,
-		CanContactTeachers: true,
-		CanMakePayments:    true,
-		CanManageAccount:   false,
-		ConfirmedAt:        &now,
-		ConfirmedBy:        &invitation.Relationship,
-	}
-	if err := s.parentStudentRepo.CreateRelation(ctx, relation); err != nil {
+	// Review PR #81 vòng 2, B-2: đọc-rồi-ghi dòng quan hệ chạy trong transaction giữ CÙNG khoá theo
+	// cặp với ParentLinkService (Respond/revoke), nên luồng lời mời và luồng yêu cầu không còn cùng
+	// chèn dòng cho một cặp (trước đây bên thua nhận 23505 -> 500).
+	var revokedAfterInvite bool
+	err = s.parentStudentRepo.RunLocked(ctx, pairLockKey(parentUserID, invitation.StudentUserID), func(ps repository.ParentStudentRepositoryInterface) error {
+		var err error
+		revokedAfterInvite, err = activateRelationFromInvitation(ctx, ps, invitation, parentUserID, now)
 		return err
+	})
+	if err != nil {
+		return err
+	}
+	if revokedAfterInvite {
+		if err := s.invitationRepo.UpdateStatus(ctx, invitation.ID, model.ParentInvitationStatusRevoked, &now); err != nil {
+			log.Printf("[ParentInvitation] không đánh dấu được lời mời %s là revoked: %v", invitation.ID, err)
+		}
+		return errors.New("lời mời không còn hiệu lực vì liên kết đã bị huỷ sau khi mời, học sinh cần gửi lời mời mới")
 	}
 	// update trạng thái lời mời thành accepted
 	if err := s.invitationRepo.UpdateStatus(ctx, invitation.ID, model.ParentInvitationStatusAccepted, &now); err != nil {
@@ -292,6 +300,83 @@ func (s *ParentInvitationService) RespondToInvitation(
 	s.publishInvitationEvent(ctx, invitation.ID, invitation.StudentUserID, invitation.InviteeEmail, parentUserID, "accepted")
 
 	return nil
+}
+
+// errInvitationNotForYou — một lỗi chung cho mọi trường hợp người bấm không phải người được mời.
+var errInvitationNotForYou = errors.New("lời mời này không dành cho bạn")
+
+// isInvitee: lời mời gắn tài khoản thì so id; lời mời theo email thì người bấm phải có email đó
+// (chuẩn hoá hoa/thường, khoảng trắng) và đang giữ vai PARENT.
+func (s *ParentInvitationService) isInvitee(ctx context.Context, invitation *model.ParentInvitation, userID uuid.UUID) (bool, error) {
+	if invitation.InviteeUserID != nil {
+		return *invitation.InviteeUserID == userID, nil
+	}
+	user, err := s.userRepo.FindUserByID(ctx, userID)
+	if err != nil || user == nil {
+		return false, err
+	}
+	if normalizeLinkEmail(user.Email) != normalizeLinkEmail(invitation.InviteeEmail) {
+		return false, nil
+	}
+	roles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, model.UserSystemRoleStatusActive)
+	if err != nil {
+		return false, err
+	}
+	for _, r := range roles {
+		if r.SystemRole != nil && r.SystemRole.Name == roleParent {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// activateRelationFromInvitation tạo hoặc kích hoạt lại quan hệ của cặp; chạy trong RunLocked.
+// Trả revokedAfterInvite=true (không ghi gì) nếu liên kết bị huỷ SAU KHI lời mời được tạo.
+func activateRelationFromInvitation(ctx context.Context, ps repository.ParentStudentRepositoryInterface,
+	invitation *model.ParentInvitation, parentUserID uuid.UUID, now time.Time) (bool, error) {
+	// Cặp này từng liên kết rồi bị huỷ (hoặc đã liên kết qua yêu cầu của phụ huynh): kích hoạt lại
+	// dòng cũ thay vì chèn dòng thứ hai — uq_parent_student_relations_pair chặn trùng cặp.
+	existing, err := ps.FindByParentAndStudent(ctx, parentUserID, invitation.StudentUserID)
+	if err != nil {
+		return false, err
+	}
+	if existing == nil {
+		return false, ps.CreateRelation(ctx, &model.ParentStudentRelation{
+			ParentUserID:       parentUserID,
+			StudentUserID:      invitation.StudentUserID,
+			Relationship:       invitation.Relationship,
+			Status:             model.ParentStudentStatusActive,
+			CanViewProgress:    true,
+			CanViewGrades:      true,
+			CanViewAttendance:  true,
+			CanContactTeachers: true,
+			CanMakePayments:    true,
+			CanManageAccount:   false,
+			ConfirmedAt:        &now,
+			ConfirmedBy:        &invitation.Relationship,
+		})
+	}
+	if existing.Status == model.ParentStudentStatusActive {
+		return false, nil
+	}
+	// Review PR #81, MAJOR-2: liên kết bị huỷ SAU KHI lời mời được tạo nghĩa là lời mời này đã mất
+	// hiệu lực — chấp nhận nó sẽ liên kết lại mà con không đồng ý lần nữa. (Huỷ liên kết qua
+	// ParentLinkService đã thu hồi lời mời; kiểm này chặn cả dữ liệu cũ và đường huỷ khác.)
+	revokedAt := existing.UpdatedAt
+	if existing.RevokedAt != nil {
+		revokedAt = *existing.RevokedAt
+	}
+	if revokedAt.After(invitation.CreatedAt) {
+		return true, nil
+	}
+	// MINOR-6: kích hoạt lại thì đặt lại đủ quyền như một liên kết mới, không giữ quyền cũ.
+	existing.Relationship = invitation.Relationship
+	existing.Status = model.ParentStudentStatusActive
+	existing.CanViewProgress, existing.CanViewGrades, existing.CanViewAttendance = true, true, true
+	existing.CanContactTeachers, existing.CanMakePayments, existing.CanManageAccount = true, true, false
+	existing.ConfirmedAt, existing.ConfirmedBy = &now, &invitation.Relationship
+	existing.RevokedAt, existing.RevokedBy = nil, nil
+	return false, ps.SaveRelation(ctx, existing)
 }
 
 // publishInvitationEvent đẩy event accept/reject vào RabbitMQ
