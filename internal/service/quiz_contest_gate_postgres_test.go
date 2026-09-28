@@ -207,19 +207,20 @@ func TestContestGate_SuaQuizKhiCuocThiDaCongBo_BiChan(t *testing.T) {
 }
 
 // Đường nộp thường (/quizzes/:id/submit) không được "nhặt" attempt contest: bài thi chỉ nộp qua
-// SubmitContestAttempt (có hạn giờ cuộc thi). Không gate (trước B1) cũng phải đúng.
+// SubmitContestAttempt (có hạn giờ cuộc thi). Không gate (trước B1) cũng phải đúng. Dùng chính người
+// tạo quiz để đi qua được kiểm quyền quiz standalone (R2-A) và chạm tới bộ lọc attempt contest.
 func TestSubmitQuiz_BoQuaAttemptContest(t *testing.T) {
 	f := newContestFixture(t)
 	ctx := context.Background()
-	owner, student := f.user("owner"), f.user("student")
+	owner := f.user("owner")
 	cq := f.standaloneQuiz(owner, false)
-	attemptID := f.startContestAttempt(cq.ID, student)
+	attemptID := f.startContestAttempt(cq.ID, owner)
 
-	if _, err := f.quiz.SubmitQuiz(ctx, cq.ID, student, false, dto.SubmitQuizDTO{Answers: []dto.SubmitAnswerDTO{}}); err == nil {
-		t.Errorf("nộp thường không attempt_id: không được nộp attempt contest")
+	if _, err := f.quiz.SubmitQuiz(ctx, cq.ID, owner, false, dto.SubmitQuizDTO{Answers: []dto.SubmitAnswerDTO{}}); err == nil || errors.Is(err, ErrQuizNotOwner) {
+		t.Errorf("nộp thường không attempt_id: phải bị từ chối vì không có attempt thường, nhận %v", err)
 	}
 	id := attemptID.String()
-	if _, err := f.quiz.SubmitQuiz(ctx, cq.ID, student, false, dto.SubmitQuizDTO{AttemptID: &id, Answers: []dto.SubmitAnswerDTO{}}); err == nil {
+	if _, err := f.quiz.SubmitQuiz(ctx, cq.ID, owner, false, dto.SubmitQuizDTO{AttemptID: &id, Answers: []dto.SubmitAnswerDTO{}}); err == nil || errors.Is(err, ErrQuizNotOwner) {
 		t.Errorf("nộp thường kèm attempt_id contest: phải bị từ chối")
 	}
 	if n := f.count("quiz_attempts", "id = ? AND completed_at IS NOT NULL", attemptID); n != 0 {

@@ -47,14 +47,36 @@ func respondQuizLockCheck(c *fiber.Ctx, err error) error {
 	})
 }
 
+// quizEditAccessChecker — PR #80: ai được sửa quiz (khoá cuộc thi, chủ sở hữu). Interface riêng,
+// không gộp vào QuizCourseEditLocker, để fake cũ chỉ cài guard khoá học vẫn dùng được.
+type quizEditAccessChecker interface {
+	CheckQuizEditAccess(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) error
+}
+
+var _ quizEditAccessChecker = (*service.QuizService)(nil)
+
 // CourseEditLock — middleware cho route ghi quiz/câu hỏi đã có; param là tên tham số route chứa
 // quiz id ("id" hoặc "quizId"). Id sai định dạng: để handler phía sau trả 400 như cũ.
+//
+// PR #80 (merge với #79): kiểm "ai được sửa" (403) TRƯỚC khoá "khoá học đang chờ duyệt" (409), cùng
+// thứ tự checkQuizMutable dùng cho khoá cuộc thi. Nếu không, người lạ sửa quiz của khoá đang chờ
+// duyệt nhận 409 COURSE_PENDING_REVIEW còn ở khoá khác nhận 403 QUIZ_FORBIDDEN: hai lớp cho hai mã
+// trên cùng một route, và mã 409 để lộ trạng thái khoá. Lỗi không thuộc nhóm quyền (quiz không tồn
+// tại...) để handler phía sau trả như cũ.
 func (h *QuizHandler) CourseEditLock(param string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		locker := h.quizLocker()
 		quizID, err := uuid.Parse(c.Params(param))
 		if locker == nil || err != nil {
 			return c.Next()
+		}
+		if checker, ok := h.service.(quizEditAccessChecker); ok {
+			if userID, ok := c.Locals("user_id").(uuid.UUID); ok {
+				isAdmin := isAdminActor(c, h.permChecker, userID)
+				if resp, handled := respondQuizGateError(c, checker.CheckQuizEditAccess(c.Context(), quizID, userID, isAdmin)); handled {
+					return resp
+				}
+			}
 		}
 		return respondQuizLockCheck(c, locker.EnsureQuizCourseEditable(c.Context(), quizID))
 	}

@@ -21,25 +21,34 @@ import (
 // F1: đáp án câu fill_blank ("Hà Nội") không được xuất hiện ở bất kỳ đường nào trả đề cho người
 // không có quyền xem đáp án: đề thi, /start, và GET quiz/câu hỏi. Lựa chọn của câu trắc nghiệm vẫn
 // phải còn (thí sinh cần chúng để chọn).
+//
+// Từ re-review vòng 2 (R2-A) quiz standalone chỉ người tạo/admin đọc được qua đường thường — cả hai
+// đều có quyền xem đáp án — nên các đường thường được thử trên quiz gắn khoá học với học viên đã
+// enroll (người đọc hợp lệ nhưng không có quyền xem đáp án). Đề thi cuộc thi vẫn thử trên quiz
+// standalone.
 func TestFillBlank_KhongLoDapAn_MoiDuongTraDe(t *testing.T) {
 	f := newContestFixture(t)
 	ctx := context.Background()
 	owner, student := f.user("owner"), f.user("student")
 	cq := f.standaloneQuiz(owner, false)
+	courseID, _ := f.course(owner)
+	f.enroll(student, courseID)
+	lq := f.standaloneQuiz(owner, false)
+	f.attachQuiz(lq.ID, "course_id", courseID)
 
 	contest, err := f.quiz.GetContestAttemptQuestions(ctx, cq.ID, f.startContestAttempt(cq.ID, student))
 	if err != nil {
 		t.Fatalf("GetContestAttemptQuestions: %v", err)
 	}
-	started, err := f.quiz.StartQuiz(ctx, cq.ID, student, false, dto.StartQuizDTO{Mode: "practice"})
+	started, err := f.quiz.StartQuiz(ctx, lq.ID, student, false, dto.StartQuizDTO{Mode: "practice"})
 	if err != nil {
 		t.Fatalf("StartQuiz: %v", err)
 	}
-	detail, err := f.quiz.GetQuizByID(ctx, cq.ID, student, false)
+	detail, err := f.quiz.GetQuizByID(ctx, lq.ID, student, false)
 	if err != nil {
 		t.Fatalf("GetQuizByID: %v", err)
 	}
-	questions, err := f.quiz.GetQuestionsByQuiz(ctx, cq.ID, student, false)
+	questions, err := f.quiz.GetQuestionsByQuiz(ctx, lq.ID, student, false)
 	if err != nil {
 		t.Fatalf("GetQuestionsByQuiz: %v", err)
 	}
@@ -156,7 +165,14 @@ func TestCanViewAnswerKey_NguoiTaoXemDuocQuizCuaMinh(t *testing.T) {
 		}
 	}
 	check(owner, true)
-	check(stranger, false)
+	// Re-review vòng 2 (R2-A): người lạ không còn đọc được quiz standalone, nên không có đường nào để
+	// "giấu đáp án" — bị chặn hẳn. Nhánh giấu đáp án cho người đọc hợp lệ: TestFillBlank_... .
+	if _, err := f.quiz.GetQuizByID(ctx, cq.ID, stranger, false); !errors.Is(err, ErrQuizNotOwner) {
+		t.Errorf("người lạ đọc quiz standalone: muốn ErrQuizNotOwner, nhận %v", err)
+	}
+	if _, err := f.quiz.GetQuestionsByQuiz(ctx, cq.ID, stranger, false); !errors.Is(err, ErrQuizNotOwner) {
+		t.Errorf("người lạ đọc câu hỏi quiz standalone: muốn ErrQuizNotOwner, nhận %v", err)
+	}
 }
 
 // F4: voucher đã hết tổng lượt dùng bị từ chối; học viên đã tự lưu voucher thì phát lại dòng cũ,

@@ -711,6 +711,62 @@ func (vs *VoucherService) SaveVoucher(ctx context.Context, userID uuid.UUID, req
 	return vs.vr.GetUserVoucherByUserAndVoucher(ctx, userID, voucher.ID)
 }
 
+// Lý do không phát được voucher làm giải (VoucherGrantError.Reason), viết sẵn cho admin đọc.
+const (
+	VoucherGrantReasonNotFound     = "không tồn tại hoặc đã bị xoá"
+	VoucherGrantReasonInactive     = "đang tắt"
+	VoucherGrantReasonExpired      = "đã hết hạn"
+	VoucherGrantReasonUsageLimit   = "đã hết tổng lượt dùng"
+	VoucherGrantReasonNotStarted   = "chưa tới ngày hiệu lực"
+	VoucherGrantReasonPerUserLimit = "người thắng đã dùng hết lượt của voucher này (tính cả đơn đang chờ thanh toán)"
+)
+
+// VoucherGrantError (re-review vòng 2, chủ dự án chốt 29/09): lần chốt vẫn bị chặn khi một voucher
+// giải không phát được, nhưng lỗi phải nói rõ NGƯỜI THẮNG nào và VOUCHER nào để admin sửa giải rồi
+// chốt lại. Unwrap về ErrVoucherUnavailableForGrant nên mọi chỗ đang dùng errors.Is vẫn chạy;
+// ContestService dùng errors.As để lấy chi tiết. UserName/Rank do IssueAwardTx điền thêm.
+type VoucherGrantError struct {
+	UserID, VoucherID uuid.UUID
+	VoucherCode       string
+	Reason            string
+	UserName          string
+	Rank              *int
+}
+
+func (e *VoucherGrantError) Unwrap() error { return ErrVoucherUnavailableForGrant }
+
+// Error là câu hiển thị cho admin, ví dụ: Không phát được voucher GIAI1 cho người thắng Nguyễn An
+// (hạng 1, user ...): đã hết tổng lượt dùng. Sửa giải hoặc voucher rồi chốt lại.
+func (e *VoucherGrantError) Error() string {
+	who := e.UserID.String()
+	if e.UserName != "" {
+		who = e.UserName + " (" + who + ")"
+	}
+	if e.Rank != nil {
+		who = fmt.Sprintf("%s, hạng %d", who, *e.Rank)
+	}
+	code := e.VoucherCode
+	if code == "" {
+		code = e.VoucherID.String()
+	}
+	return fmt.Sprintf("Không phát được voucher %s cho người thắng %s: %s. Sửa giải hoặc voucher rồi chốt lại.", code, who, e.Reason)
+}
+
+// voucherGrantBlockReason: lý do voucher không phát được cho BẤT KỲ ai; "" = phát được.
+func voucherGrantBlockReason(v *model.Voucher, now time.Time) string {
+	switch {
+	case !v.IsActive:
+		return VoucherGrantReasonInactive
+	case v.EndDate != nil && !v.EndDate.After(now):
+		return VoucherGrantReasonExpired
+	case v.IsUsageLimitReached():
+		return VoucherGrantReasonUsageLimit
+	case v.StartDate != nil && v.StartDate.After(now):
+		return VoucherGrantReasonNotStarted
+	}
+	return ""
+}
+
 // GrantVoucherTx (contract "Cuộc thi" §5, §6): ghi user_vouchers cho userID TRÊN "tx" được truyền
 // vào, để việc phát voucher nằm CHUNG transaction chốt kết quả — lỗi ở bất kỳ người đạt giải nào
 // làm rollback toàn bộ, không để lại voucher phát dở cho một nửa bảng xếp hạng.
@@ -730,20 +786,16 @@ func (vs *VoucherService) GrantVoucherTx(ctx context.Context, tx *gorm.DB, userI
 	err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "SHARE"}).
 		Where("id = ?", voucherID).Take(&voucher).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, ErrVoucherUnavailableForGrant
+		return nil, &VoucherGrantError{UserID: userID, VoucherID: voucherID, Reason: VoucherGrantReasonNotFound}
 	}
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now()
-	// Review PR #80, F4: voucher đã hết TỔNG lượt dùng thì người thắng nhận về một voucher không
-	// dùng được, và lỗi chỉ lộ ra lúc thanh toán. Từ chối ngay để admin biết lúc chốt.
-	if !voucher.IsActive || (voucher.EndDate != nil && !voucher.EndDate.After(now)) || voucher.IsUsageLimitReached() {
-		return nil, ErrVoucherUnavailableForGrant
-	}
-	// Chưa tới start_date: người thắng cầm voucher chưa dùng được (chủ dự án chốt 28/09: từ chối).
-	if voucher.StartDate != nil && voucher.StartDate.After(now) {
-		return nil, ErrVoucherUnavailableForGrant
+	// Voucher tắt / hết hạn / hết tổng lượt (review PR #80, F4) / chưa tới start_date (chốt 28/09):
+	// người thắng sẽ cầm voucher không dùng được, nên từ chối ngay để admin biết lúc chốt.
+	if reason := voucherGrantBlockReason(&voucher, now); reason != "" {
+		return nil, &VoucherGrantError{UserID: userID, VoucherID: voucherID, VoucherCode: voucher.Code, Reason: reason}
 	}
 	// Giới hạn lượt theo từng user (usage_per_user): đếm đúng luật của LockAndCheckUsagePerUser
 	// (đã dùng + đang giữ trong đơn chờ) nhưng KHÔNG khoá FOR UPDATE — tx chốt đã giữ FOR SHARE ở
@@ -759,7 +811,7 @@ func (vs *VoucherService) GrantVoucherTx(ctx context.Context, tx *gorm.DB, userI
 			return nil, err
 		}
 		if used+held >= int64(voucher.UsagePerUser) {
-			return nil, ErrVoucherUnavailableForGrant
+			return nil, &VoucherGrantError{UserID: userID, VoucherID: voucherID, VoucherCode: voucher.Code, Reason: VoucherGrantReasonPerUserLimit}
 		}
 	}
 	// Idempotent (chủ dự án chốt): user_vouchers không có unique (user_id, voucher_id). Nếu học viên
