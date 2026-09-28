@@ -80,7 +80,8 @@ jobs:
       - name: Postgres tests ran (no SKIP)
         shell: bash
         run: |
-          grep -E -- '--- (PASS|FAIL|SKIP): Test(Withdrawal|RefundOrder_Waits|TeacherEarnings_Fee|BuildStatusCheckConstraintSQL_Postgres|CheckAndProcessPayment_Chot|ListByCourse_LocTheoSection|RevokeActiveAssignment|AdminListUsers_Keyword)' go-test.log
+          # Phase 4 (rút tiền) + Phase 3 (duyệt giảng viên/khoá học, *_PG_*) + test Postgres có sẵn.
+          grep -E -- '--- (PASS|FAIL|SKIP): Test(Withdrawal|RefundOrder_Waits|TeacherEarnings_Fee|BuildCheckConstraintSQL_Postgres|IsolatedSchema|CheckAndProcessPayment_Chot|ListByCourse_LocTheoSection|RevokeActiveAssignment|AdminListUsers_Keyword|\w+_PG_)' go-test.log
           if grep -q -- '--- SKIP' go-test.log; then echo "::error::Có test bị SKIP (mất kết nối Postgres?)"; exit 1; fi
 
   python-transaction-api:
