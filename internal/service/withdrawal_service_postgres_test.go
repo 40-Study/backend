@@ -35,12 +35,10 @@ type withdrawalFixture struct {
 
 var testMinWithdrawal = decimal.NewFromInt(100000)
 
-// migrateLikeAPIBoot — đúng các bước schema lúc API khởi động (AutoMigrate + RunPostMigrations).
+// migrateLikeAPIBoot — đúng bước schema lúc API khởi động: database.Migrate (AutoMigrate rồi tự
+// gọi RunPostMigrations).
 func migrateLikeAPIBoot(db *gorm.DB) error {
-	if err := database.Migrate(db); err != nil {
-		return err
-	}
-	return database.RunPostMigrations(db)
+	return database.Migrate(db)
 }
 
 // newWithdrawalFixture mở 1 schema Postgres TẠM riêng (pgtest.IsolatedSchema), migrate như lúc

@@ -172,6 +172,19 @@ func (h *TeacherProfileHandler) DeleteTeacherProfile(c *fiber.Ctx) error {
 		if teacherProfileForbiddenResponse(c, err) {
 			return nil
 		}
+		// Review PR #73 (MAJOR #2): chặn đường lách giới hạn nộp lại bằng xoá rồi tạo lại.
+		if err == service.ErrTeacherProfileHardDeleteForbidden {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"message": "Teacher profile cannot be permanently deleted",
+				"code":    "HARD_DELETE_FORBIDDEN",
+			})
+		}
+		if err == service.ErrTeacherProfileUnderReview {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "Teacher application is pending or rejected and cannot be deleted",
+				"code":    "APPLICATION_UNDER_REVIEW",
+			})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete teacher profile",
 			"error":   err.Error(),

@@ -74,8 +74,26 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"title\": \"Go Programming - Updated\",\n  \"level\": \"intermediate\",\n  \"status\": \"published\",\n  \"discount_price\": 199000,\n  \"is_featured\": true\n}"
+              "raw": "{\n  \"title\": \"Go Programming - Updated\",\n  \"level\": \"intermediate\",\n  \"discount_price\": 199000,\n  \"is_featured\": true\n}"
             }
+          }
+        },
+        {
+          "name": "Submit Course For Review (teacher)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/courses/{{course_id}}/submit-review"
+          }
+        },
+        {
+          "name": "Approve Course (admin)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "url": "{{base_url}}/admin/courses/{{course_id}}/approve"
           }
         },
         {

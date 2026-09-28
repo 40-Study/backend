@@ -4,8 +4,8 @@ package model
 //
 // PayoutStatuses là NGUỒN SỰ THẬT DUY NHẤT cho danh sách giá trị hợp lệ của cột
 // instructor_payouts.status, cùng khuôn với OrderStatuses (order_status.go):
-//   - RunPostMigrations SINH câu CHECK constraint từ slice này (buildStatusCheckConstraintSQL,
-//     internal/database/status_constraint.go), không chép tay chuỗi SQL.
+//   - RunPostMigrations SINH câu CHECK constraint từ slice này (buildCheckConstraintSQL,
+//     internal/database/check_constraint.go), không chép tay chuỗi SQL.
 //   - Tag `check:` của InstructorPayout.Status (payment.go) buộc phải là literal tĩnh (giới hạn
 //     struct tag của Go) — TestPayoutStatusTagMatchesSSOT đối chiếu 2 chiều tag với slice này.
 //

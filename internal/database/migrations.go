@@ -237,6 +237,51 @@ func RunPostMigrations(db *gorm.DB) error {
 			`,
 		},
 		{
+			// Phase 3 duyệt khoá học (2026-09-28): nới chk_courses_status thêm 'rejected' — SQL
+			// SINH từ model.CourseStatuses (SSOT, course_status.go). AutoMigrate KHÔNG nới rộng
+			// constraint đã tồn tại theo tên trên DB cũ.
+			name: "widen chk_courses_status to match model.CourseStatuses (phase-3 approval)",
+			sql:  buildCheckConstraintSQL("courses", "chk_courses_status", "status", model.CourseStatuses),
+		},
+		{
+			// Phase 3: FK cho courses.reviewed_by (cột do AutoMigrate thêm, không kèm FK).
+			name: "fk courses.reviewed_by -> users (phase-3 approval)",
+			sql:  buildForeignKeySQL("courses", "fk_courses_reviewed_by", "reviewed_by"),
+		},
+		{
+			// Phase 3 duyệt giáo viên: CHECK approval_status sinh từ model.TeacherApprovalStatuses.
+			name: "chk_teacher_profiles_approval_status (phase-3 approval)",
+			sql: buildCheckConstraintSQL("teacher_profiles", "chk_teacher_profiles_approval_status",
+				"approval_status", model.TeacherApprovalStatuses),
+		},
+		{
+			name: "fk teacher_profiles.reviewed_by -> users (phase-3 approval)",
+			sql:  buildForeignKeySQL("teacher_profiles", "fk_teacher_profiles_reviewed_by", "reviewed_by"),
+		},
+		{
+			// Phase 3: AutoMigrate thêm approval_status DEFAULT 'pending' cho MỌI hồ sơ cũ — kể
+			// cả hồ sơ của giáo viên ĐANG dạy thật, khiến họ lọt vào hàng chờ duyệt. Hồ sơ nào mà
+			// chủ đã giữ role TEACHER active thì coi như đã duyệt. Điều kiện theo DỮ LIỆU (không
+			// theo "cột vừa được thêm", vì AutoMigrate chạy TRƯỚC file này nên khối IF NOT EXISTS
+			// column sẽ không bao giờ tới) nên idempotent; ứng viên đang chờ thật (giữ
+			// TEACHER_APPLICANT, chưa có TEACHER) không bị chạm tới.
+			name: "backfill approved for teacher_profiles of existing TEACHER users (phase-3 approval)",
+			sql: `
+				UPDATE teacher_profiles tp
+				SET approval_status = 'approved'
+				WHERE tp.approval_status = 'pending'
+				  AND tp.deleted_at IS NULL
+				  AND EXISTS (
+					SELECT 1 FROM user_system_roles usr
+					JOIN system_roles sr ON sr.id = usr.system_role_id
+					WHERE usr.user_id = tp.user_id
+					  AND usr.status = 'active'
+					  AND usr.deleted_at IS NULL
+					  AND sr.name = 'TEACHER'
+				  );
+			`,
+		},
+		{
 			// Phase 4 rút tiền giảng viên (2026-09-28): cột lý do từ chối trên instructor_payouts.
 			// AutoMigrate đã thêm từ model; khối này là lớp phòng thủ tường minh, idempotent.
 			name: "add rejection_reason column to instructor_payouts (phase-4 withdrawal)",
@@ -244,7 +289,8 @@ func RunPostMigrations(db *gorm.DB) error {
 				DO $$
 				BEGIN
 					IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-					               WHERE table_name='instructor_payouts' AND column_name='rejection_reason') THEN
+					               WHERE table_schema = current_schema() AND table_name='instructor_payouts'
+					                 AND column_name='rejection_reason') THEN
 						ALTER TABLE instructor_payouts ADD COLUMN rejection_reason TEXT;
 					END IF;
 				END $$;
@@ -255,7 +301,7 @@ func RunPostMigrations(db *gorm.DB) error {
 			// (pending/approved/rejected/completed, bỏ processing/failed). Bảng chưa từng có luồng
 			// ghi nào trước Phase 4 nên không cần backfill. SQL sinh từ slice SSOT.
 			name: "sync chk_instructor_payouts_status to model.PayoutStatuses (phase-4 withdrawal)",
-			sql: buildStatusCheckConstraintSQL("instructor_payouts", "chk_instructor_payouts_status",
+			sql: buildCheckConstraintSQL("instructor_payouts", "chk_instructor_payouts_status",
 				"status", model.PayoutStatuses),
 		},
 	}

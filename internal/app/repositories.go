@@ -21,6 +21,9 @@ type Repositories struct {
 	// ===== Teacher =====
 	Teacher        *repository.TeacherRepository
 	TeacherProfile *repository.TeacherProfileRepository
+	// Phase 3 duyệt khoá học + duyệt giáo viên
+	CourseReview       *repository.CourseReviewRepository
+	TeacherApplication *repository.TeacherApplicationRepository
 
 	// ===== Class =====
 	Class              *repository.ClassRepository
@@ -163,6 +166,10 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		// ===== Teacher =====
 		Teacher:        repository.NewTeacherRepository(db),
 		TeacherProfile: repository.NewTeacherProfileRepository(db),
+
+		// Phase 3 duyệt khoá học + duyệt giáo viên
+		CourseReview:       repository.NewCourseReviewRepository(db),
+		TeacherApplication: repository.NewTeacherApplicationRepository(db),
 
 		// ===== Class =====
 		Class:              repository.NewClassRepository(db),

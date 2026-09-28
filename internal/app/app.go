@@ -182,6 +182,7 @@ func New() (*App, error) {
 		// ===== Teacher =====
 		handlers.Teacher,
 		handlers.TeacherProfile,
+		handlers.Approval,
 
 		// ===== Class =====
 		handlers.Class,
