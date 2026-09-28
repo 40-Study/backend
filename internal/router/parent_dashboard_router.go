@@ -20,4 +20,5 @@ func SetupParentDashboardRoutes(api fiber.Router, cfg *config.Config, h *handler
 	children.Get("/timetable", h.GetChildTimetable)
 	children.Get("/attendance", h.GetChildAttendance)
 	children.Get("/assignments", h.GetChildAssignments)
+	children.Get("/sessions/:sessionId/analysis", h.GetChildSessionAnalysis)
 }
