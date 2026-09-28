@@ -85,6 +85,39 @@ func TestCreatePaymentIntent_FreshPendingStillOpens(t *testing.T) {
 	}
 }
 
+// Quyết định chủ dự án 28/09: hạn mã thanh toán không vượt hạn giữ đơn. Đơn còn 2h hạn giữ → mã
+// hết hạn đúng created_at + 24h (còn ~2h), không phải now + 24h.
+func TestCreatePaymentIntent_CodeExpiryCappedAtOrderHold(t *testing.T) {
+	f := newOrderFixture(t)
+	student := f.user()
+	order := f.createOrder(student, f.course("QA-order hạn mã theo hạn giữ"))
+	f.exec("UPDATE orders SET created_at = ? WHERE id = ?", time.Now().Add(-22*time.Hour), order.ID)
+	holdDeadline := f.dbCreatedAt(order.ID).Add(pendingOrderDefaultTTL)
+
+	resp, err := f.paymentService().CreatePaymentIntent(context.Background(), student, order.ID, false, "qr_transfer")
+	if err != nil {
+		t.Fatalf("CreatePaymentIntent: %v", err)
+	}
+	if !resp.ExpiredAt.Equal(holdDeadline) {
+		t.Fatalf("hạn mã trả về = %s, muốn đúng hạn giữ đơn %s (còn %s, không phải now+24h)", resp.ExpiredAt, holdDeadline, time.Until(holdDeadline).Round(time.Minute))
+	}
+	if remaining := time.Until(resp.ExpiredAt); remaining > 2*time.Hour || remaining < 2*time.Hour-5*time.Minute {
+		t.Fatalf("mã còn %s, muốn ~2h", remaining)
+	}
+	stored := f.loadOrder(order.ID)
+	if stored.PaymentCodeExpiredAt == nil || !stored.PaymentCodeExpiredAt.Equal(holdDeadline) {
+		t.Fatalf("payment_code_expired_at lưu = %v, muốn %s", stored.PaymentCodeExpiredAt, holdDeadline)
+	}
+	// expires_at hiển thị sau khi mở phiên (processing) phải giữ nguyên mốc, không lùi thêm.
+	r, err := f.svc.GetOrderByID(context.Background(), order.ID, student, false)
+	if err != nil {
+		t.Fatalf("GetOrderByID: %v", err)
+	}
+	if r.ExpiresAt == nil || !r.ExpiresAt.Equal(holdDeadline) {
+		t.Fatalf("expires_at hiển thị = %v, muốn %s", r.ExpiresAt, holdDeadline)
+	}
+}
+
 // Luồng poll/đối chiếu (web gọi GetPaymentStatus): đơn pending quá hạn giữ phải chốt "expired",
 // không trả "pending" mãi như trước.
 func TestGetPaymentStatus_StalePendingBecomesExpired(t *testing.T) {

@@ -230,7 +230,13 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 
 	// Generate payment code
 	paymentCode := s.generatePaymentCode()
-	expiresAt := time.Now().Add(pendingOrderDefaultTTL) // cùng hạn giữ đơn, xem order_service.go
+	// Quyết định chủ dự án 28/09: hạn mã = min(now+24h, hạn giữ đơn). Trước đây luôn now+24h nên
+	// đơn mở thanh toán sát hạn được giữ tới ~48h kể từ lúc tạo. Web đếm ngược theo expired_at
+	// trả về ở đây nên tự hiển thị đúng mốc này.
+	expiresAt := time.Now().Add(pendingOrderDefaultTTL)
+	if holdExpiresAt := orderHoldExpiresAt(order); holdExpiresAt != nil && holdExpiresAt.Before(expiresAt) {
+		expiresAt = *holdExpiresAt
+	}
 
 	// Update order to processing status
 	oldStatus := order.Status
