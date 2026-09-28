@@ -106,10 +106,13 @@ func (r *ContestRepository) InsertParticipantTx(tx *gorm.DB, contestID, userID u
 	return res.RowsAffected, res.Error
 }
 
-// IncrementParticipantCountTx giữ chỗ nguyên tử: 0 dòng = hết chỗ.
-func (r *ContestRepository) IncrementParticipantCountTx(tx *gorm.DB, contestID uuid.UUID) (int64, error) {
+// IncrementParticipantCountTx giữ chỗ nguyên tử: 0 dòng = hết chỗ HOẶC cuộc thi vừa đổi trạng thái
+// (huỷ/hết giờ) giữa lúc kiểm tra và lúc ghi — điều kiện trạng thái kiểm lại ngay trong UPDATE.
+func (r *ContestRepository) IncrementParticipantCountTx(tx *gorm.DB, contestID uuid.UUID, now time.Time) (int64, error) {
 	res := tx.Exec(`UPDATE contests SET participant_count = participant_count + 1
-		WHERE id = ? AND (max_participants = 0 OR participant_count < max_participants)`, contestID)
+		WHERE id = ? AND status = ? AND end_time > ?
+		  AND (max_participants = 0 OR participant_count < max_participants)`,
+		contestID, model.ContestStatusPublished, now)
 	return res.RowsAffected, res.Error
 }
 

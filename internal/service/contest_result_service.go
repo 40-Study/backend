@@ -2,13 +2,21 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/model"
 )
 
-// MyResult — #15: chỉ bài của CHÍNH người gọi. Đáp án (questions) chỉ trả khi cuộc thi đã đóng
-// (ENDED/FINALIZED) — trước đó null để thí sinh đã nộp không chuyển đáp án cho người đang làm.
+// answersOpen: cuộc thi đã đóng VÀ đã qua ân hạn nộp bài (model.Contest.AnswersAvailableAt).
+// Dùng chung cho đáp án trong my-result và bảng xếp hạng công khai.
+func answersOpen(c *model.Contest, now time.Time) bool {
+	return isClosedPhase(c.Phase(now)) && !now.Before(c.AnswersAvailableAt())
+}
+
+// MyResult — #15: chỉ bài của CHÍNH người gọi. Đáp án (questions) chỉ trả từ AnswersAvailableAt
+// (end_time + ân hạn) — trước đó null để thí sinh đã nộp không chuyển đáp án cho người còn nộp được.
 func (s *ContestService) MyResult(ctx context.Context, id uuid.UUID, actor *ContestActor) (*dto.ContestMyResultDTO, error) {
 	c, err := s.repo.GetByID(ctx, id)
 	if err != nil {
@@ -25,8 +33,8 @@ func (s *ContestService) MyResult(ctx context.Context, id uuid.UUID, actor *Cont
 	if p == nil || p.CompletedAt == nil || p.AttemptID == nil {
 		return nil, ErrContestResultNotFound
 	}
-	out := &dto.ContestMyResultDTO{MyParticipation: mp, AnswersAvailableAt: c.EndTime}
-	if isClosedPhase(c.Phase(now)) {
+	out := &dto.ContestMyResultDTO{MyParticipation: mp, AnswersAvailableAt: c.AnswersAvailableAt()}
+	if answersOpen(c, now) {
 		if out.Questions, err = s.engine.GetContestAttemptReview(ctx, *p.AttemptID); err != nil {
 			return nil, err
 		}
@@ -34,14 +42,14 @@ func (s *ContestService) MyResult(ctx context.Context, id uuid.UUID, actor *Cont
 	return out, nil
 }
 
-// Leaderboard — #16: công khai SAU khi đóng; chủ/admin xem mọi lúc. Trước khi chốt xếp hạng
+// Leaderboard — #16: công khai từ AnswersAvailableAt (cùng mốc với đáp án); chủ/admin xem mọi lúc. Trước khi chốt xếp hạng
 // sống theo §4.4, sau khi chốt đọc contest_participants.rank đã ghi.
 func (s *ContestService) Leaderboard(ctx context.Context, id uuid.UUID, actor *ContestActor, page, limit int) (*dto.LeaderboardPageDTO, error) {
 	c, err := s.repo.GetByID(ctx, id)
 	if c, err = s.loadPublished(c, err, actor); err != nil {
 		return nil, err
 	}
-	if !isClosedPhase(c.Phase(s.now())) && !actor.canManage(c) {
+	if !answersOpen(c, s.now()) && !actor.canManage(c) {
 		return nil, ErrContestLeaderboardHidden
 	}
 	page, limit = normalizePage(page, limit)

@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -264,6 +263,11 @@ func (s *ContestService) UpdatePrizes(ctx context.Context, id uuid.UUID, actor *
 	if err := s.checkVouchers(ctx, inputVoucherIDs(prizes)); err != nil {
 		return nil, err
 	}
+	// Cùng quy ước với Approve: body {} (prizes nil) giữ nguyên giải; mảng rỗng tường minh xoá hết.
+	var newPrizes []model.ContestPrize
+	if prizes != nil {
+		newPrizes = prizeModels(prizes)
+	}
 	return s.transition(ctx, id, []string{model.ContestStatusPublished, model.ContestStatusPendingReview},
-		"finalized_at IS NULL", map[string]interface{}{"updated_at": time.Now()}, prizeModels(prizes))
+		"finalized_at IS NULL", map[string]interface{}{"updated_at": s.now()}, newPrizes)
 }

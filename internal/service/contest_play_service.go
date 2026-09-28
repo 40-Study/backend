@@ -154,7 +154,7 @@ func (s *ContestService) Join(ctx context.Context, id uuid.UUID, actor *ContestA
 		if n == 0 {
 			return ErrContestAlreadyJoined
 		}
-		if n, err = s.repo.IncrementParticipantCountTx(tx, id); err != nil {
+		if n, err = s.repo.IncrementParticipantCountTx(tx, id, now); err != nil {
 			return err
 		}
 		if n == 0 {
@@ -162,6 +162,13 @@ func (s *ContestService) Join(ctx context.Context, id uuid.UUID, actor *ContestA
 		}
 		return nil
 	})
+	if errors.Is(err, ErrContestFull) {
+		// 0 dòng cũng xảy ra khi cuộc thi bị huỷ/hết giờ ngay trước UPDATE: báo đúng lý do.
+		if cur, gerr := s.repo.GetByID(ctx, id); gerr == nil && cur != nil &&
+			(cur.Status != model.ContestStatusPublished || !now.Before(cur.EndTime)) {
+			return nil, ErrContestClosed
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

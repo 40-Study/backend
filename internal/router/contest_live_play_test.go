@@ -1,7 +1,6 @@
 package router
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -11,7 +10,10 @@ import (
 	"study.com/v1/internal/model"
 )
 
-var answerKeys = []string{`"is_correct"`, `"correct_answer_ids"`, `"explanation"`, `"answer_key"`, `"test_cases"`}
+// Tên field đáp án VÀ chính chuỗi đáp án/giải thích trong đề (secretFillBlank là đáp án đúng của
+// câu fill_blank, nằm ở question_answers.answer_text — tìm theo tên field sẽ bỏ lọt nó).
+var answerKeys = []string{`"is_correct"`, `"correct_answer_ids"`, `"explanation"`, `"answer_key"`, `"test_cases"`,
+	secretFillBlank, secretExplanation}
 
 func assertNoAnswerLeak(t *testing.T, what, raw string) {
 	t.Helper()
@@ -41,14 +43,17 @@ func TestContestLive_NoAnswerOrVoucherCodeLeak(t *testing.T) {
 	e.must("join", e.do("POST", "/api/contests/"+cid+"/join", "student1", ""), 201)
 	st := e.must("start", e.do("POST", "/api/contests/"+cid+"/start", "student1", ""), 200)
 	assertNoAnswerLeak(t, "start", st.raw)
-	if qs, _ := st.data()["questions"].([]interface{}); len(qs) != 2 {
-		t.Fatalf("start phai tra 2 cau hoi: %s", st.raw)
+	if qs, _ := st.data()["questions"].([]interface{}); len(qs) != 3 {
+		t.Fatalf("start phai tra 3 cau hoi (co fill_blank): %s", st.raw)
 	}
 	sub := e.must("submit", e.do("POST", "/api/contests/"+cid+"/submit", "student1", answersBody(st.data()["attempt_id"].(string), correct, 1)), 200)
 	assertNoAnswerLeak(t, "submit", sub.raw)
-	// decimal: test = string, cmd/api (MarshalJSONWithoutQuotes) = number — so theo giá trị.
-	if fmt.Sprint(sub.data()["score"]) != "1" || fmt.Sprint(sub.data()["total_points"]) != "2" {
-		t.Fatalf("diem sai: %s", sub.raw)
+	// Decimal ra JSON NUMBER như cmd/api (ĐÍNH CHÍNH 2): kiểu float64 sau Unmarshal, không phải string.
+	if s, ok := sub.data()["score"].(float64); !ok || s != 1 {
+		t.Fatalf("score phai la number 1: %s", sub.raw)
+	}
+	if tp, ok := sub.data()["total_points"].(float64); !ok || tp != 3 {
+		t.Fatalf("total_points phai la number 3: %s", sub.raw)
 	}
 	for _, who := range []string{"", "student1", "student2"} {
 		d := e.must("detail "+who, e.do("GET", "/api/contests/"+slug, who, ""), 200)
@@ -71,7 +76,7 @@ func TestContestLive_NoAnswerOrVoucherCodeLeak(t *testing.T) {
 
 	e.setWindow(id, 2*time.Hour, -time.Minute)
 	res = e.must("my-result ENDED", e.do("GET", "/api/contests/"+cid+"/my-result", "student1", ""), 200)
-	if qs, _ := res.data()["questions"].([]interface{}); len(qs) != 2 || !strings.Contains(res.raw, `"correct_answer_ids"`) {
+	if qs, _ := res.data()["questions"].([]interface{}); len(qs) != 3 || !strings.Contains(res.raw, `"correct_answer_ids"`) {
 		t.Fatalf("my-result sau khi dong phai co dap an: %s", res.raw)
 	}
 	lb = e.must("BXH ENDED", e.do("GET", "/api/contests/"+cid+"/leaderboard", "", ""), 200)

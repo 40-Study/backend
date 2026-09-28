@@ -66,9 +66,10 @@ func RateLimiter(rdb *redis.Client, config RateLimitConfig) fiber.Handler {
 		count, err := rdb.Incr(ctx, key).Result()
 		if err != nil {
 			// M-02 (audit 260909): trước đây fail-open (cho qua khi Redis lỗi) — Redis down
-			// đồng nghĩa brute-force login/OTP không còn giới hạn. RateLimiter() chỉ được dùng
-			// bởi AuthRateLimiter/OTPRateLimiter (endpoint đăng nhập/OTP/reset-password/
-			// select-role/refresh-token) nên fail-closed ở đây không ảnh hưởng route khác.
+			// đồng nghĩa brute-force login/OTP không còn giới hạn. Mọi route dùng RateLimiter()
+			// đều fail-closed (503) khi Redis lỗi: AuthRateLimiter/OTPRateLimiter (đăng nhập/OTP/
+			// reset-password/select-role/refresh-token) và giới hạn theo user của cuộc thi
+			// (join/start/submit, router/contest_routes.go) — Redis down thì các route này tạm 503.
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 				"error": "Rate limiting service unavailable, please try again later",
 			})

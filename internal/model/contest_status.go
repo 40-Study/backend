@@ -98,3 +98,10 @@ func ContestPhaseAt(status string, startTime, endTime time.Time, finalizedAt *ti
 func (c *Contest) Phase(now time.Time) string {
 	return ContestPhaseAt(c.Status, c.StartTime, c.EndTime, c.FinalizedAt, now)
 }
+
+// AnswersAvailableAt: mốc mở đáp án, kết quả chi tiết và bảng xếp hạng công khai. Bằng end_time
+// cộng ĐÚNG ân hạn nộp bài: trong ân hạn, người bắt đầu sát giờ vẫn còn nộp được, nên mở đáp án
+// lúc end_time sẽ cho người đã nộp chuyển đáp án cho họ (review PR #82, ĐÍNH CHÍNH 2).
+func (c *Contest) AnswersAvailableAt() time.Time {
+	return c.EndTime.Add(ContestSubmitGraceSeconds * time.Second)
+}

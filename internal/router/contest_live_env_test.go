@@ -3,9 +3,9 @@ package router
 // MVP "Cuộc thi" — môi trường test route SỐNG trên Postgres THẬT (pgtest.IsolatedSchema +
 // database.Migrate): Fiber route thật (SetupContestRoutes) → AuthMiddleware/OptionalAuth/
 // PermissionChecker thật → ContestHandler/ContestService/ContestRepository thật → Postgres.
-// Chỉ fake: kho quyền (như approval_live_env_test.go), engine chấm bài và issuer phát thưởng của
-// lane B2 (contest_fakes_test.go) — fake ghi/đọc quiz_attempts, user_vouchers bằng CHÍNH tx được
-// truyền vào nên rollback/khóa dòng được kiểm thật.
+// Engine chấm bài là QuizService THẬT của lane B2. Chỉ fake: kho quyền (như
+// approval_live_env_test.go) và issuer phát thưởng (contest_fakes_test.go) — fake ghi user_vouchers
+// bằng CHÍNH tx được truyền vào nên rollback được kiểm thật, và phát hiện thông báo gửi trước commit.
 
 import (
 	"context"
@@ -40,7 +40,7 @@ type ctEnv struct {
 	db     *gorm.DB
 	svc    *service.ContestService
 	issuer *fakeIssuer
-	engine *fakeEngine
+	engine *delayEngine
 	ids    map[string]uuid.UUID // admin, teacherA, teacherB, student1..student5, parent
 	toks   map[string]string
 }
@@ -90,8 +90,18 @@ func newCtEnv(t *testing.T) *ctEnv {
 	}
 
 	pc := middleware.NewPermissionChecker(usr, &apvSystemRoleRepo{perms: perms}, nil, nil)
+	// Production (cmd/api) serialize decimal thành số JSON; test phải thấy đúng shape đó.
+	prevQuotes := decimal.MarshalJSONWithoutQuotes
+	decimal.MarshalJSONWithoutQuotes = true
+	t.Cleanup(func() { decimal.MarshalJSONWithoutQuotes = prevQuotes })
+
 	e.issuer = &fakeIssuer{db: db}
-	e.engine = &fakeEngine{db: db}
+	// Engine THẬT của lane B2 (QuizService) — để test bắt được lỗi lộ đáp án của engine (vd
+	// fill_blank), chỉ bọc thêm độ trễ tuỳ chọn cho test race.
+	quizSvc := service.NewQuizService(repository.NewQuizRepository(db), nil, repository.NewCourseRepository(db),
+		repository.NewSectionRepository(db), repository.NewLessonRepository(db), repository.NewLivestreamRepository(db),
+		repository.NewEnrollmentRepository(db))
+	e.engine = &delayEngine{ContestQuizEngine: quizSvc}
 	e.svc = service.NewContestService(repository.NewContestRepository(db), e.engine, e.issuer,
 		repository.NewEnrollmentRepository(db))
 	app := fiber.New()
@@ -146,9 +156,24 @@ func (e *ctEnv) must(what string, r ctResp, status int, code ...string) ctResp {
 
 // ── Dữ liệu ─────────────────────────────────────────────────────────────────
 
-// newQuiz tạo quiz standalone của owner gồm 2 câu single_choice (1 điểm/câu). Trả quiz id và
-// đáp án ĐÚNG của từng câu (để test nộp bài đúng/sai).
-func (e *ctEnv) newQuiz(owner string) (uuid.UUID, map[uuid.UUID]uuid.UUID) {
+// Chuỗi bí mật trong đề: đáp án đúng của câu fill_blank (lưu ở question_answers.answer_text) và
+// nội dung explanation. Test (d) tìm CHÍNH các chuỗi này trong response, không chỉ tên field —
+// review PR #82 (B-1) cho thấy tìm tên field bỏ lọt đáp án fill_blank nằm trong "answer_text".
+const (
+	secretFillBlank   = "QA_CONTEST_SECRET_HANOI"
+	secretExplanation = "QA_CONTEST_SECRET_EXPLANATION"
+)
+
+// quizKey — đáp án của đề test: câu chọn (đúng/sai theo id lựa chọn) và câu điền (text).
+type quizKey struct {
+	right, wrong map[uuid.UUID]uuid.UUID // câu single_choice -> id lựa chọn đúng / sai
+	blank        uuid.UUID               // câu fill_blank
+	order        []uuid.UUID             // thứ tự câu cố định để chọn "n câu đúng" tất định
+}
+
+// newQuiz tạo quiz standalone của owner: 2 câu single_choice + 1 câu fill_blank (1 điểm/câu,
+// tổng 3). Câu fill_blank có đáp án đúng là secretFillBlank.
+func (e *ctEnv) newQuiz(owner string) (uuid.UUID, quizKey) {
 	e.t.Helper()
 	q := model.Quiz{Title: "QA-contest quiz " + uuid.NewString()[:6], TriggerType: "manual"}
 	if err := e.db.Create(&q).Error; err != nil {
@@ -157,24 +182,37 @@ func (e *ctEnv) newQuiz(owner string) (uuid.UUID, map[uuid.UUID]uuid.UUID) {
 	if err := e.db.Exec("UPDATE quizzes SET created_by = ? WHERE id = ?", e.ids[owner], q.ID).Error; err != nil {
 		e.t.Fatal(err)
 	}
-	correct := map[uuid.UUID]uuid.UUID{}
+	key := quizKey{right: map[uuid.UUID]uuid.UUID{}, wrong: map[uuid.UUID]uuid.UUID{}}
 	for i := 1; i <= 2; i++ {
 		qq := model.Question{QuizID: q.ID, QuestionText: "Cau " + string(rune('0'+i)), QuestionType: "single_choice",
-			Points: decimal.NewFromInt(1), DisplayOrder: i, Explanation: strPtr("giai thich bi mat")}
+			Points: decimal.NewFromInt(1), DisplayOrder: i, Explanation: strPtr(secretExplanation)}
 		if err := e.db.Create(&qq).Error; err != nil {
 			e.t.Fatal(err)
 		}
 		for j, ok := range []bool{true, false} {
-			a := model.QuestionAnswer{QuestionID: qq.ID, AnswerText: "dap an", IsCorrect: ok, DisplayOrder: j + 1}
+			a := model.QuestionAnswer{QuestionID: qq.ID, AnswerText: "lua chon " + string(rune('A'+j)), IsCorrect: ok, DisplayOrder: j + 1}
 			if err := e.db.Create(&a).Error; err != nil {
 				e.t.Fatal(err)
 			}
 			if ok {
-				correct[qq.ID] = a.ID
+				key.right[qq.ID] = a.ID
+			} else {
+				key.wrong[qq.ID] = a.ID
 			}
 		}
+		key.order = append(key.order, qq.ID)
 	}
-	return q.ID, correct
+	fb := model.Question{QuizID: q.ID, QuestionText: "Thu do Viet Nam?", QuestionType: "fill_blank",
+		Points: decimal.NewFromInt(1), DisplayOrder: 3, Explanation: strPtr(secretExplanation)}
+	if err := e.db.Create(&fb).Error; err != nil {
+		e.t.Fatal(err)
+	}
+	if err := e.db.Create(&model.QuestionAnswer{QuestionID: fb.ID, AnswerText: secretFillBlank, IsCorrect: true, DisplayOrder: 1}).Error; err != nil {
+		e.t.Fatal(err)
+	}
+	key.blank = fb.ID
+	key.order = append(key.order, fb.ID)
+	return q.ID, key
 }
 
 func (e *ctEnv) newVoucher(active bool) uuid.UUID {
@@ -202,7 +240,7 @@ func contestBody(quizID uuid.UUID, extra string) string {
 }
 
 // publishedContest: teacherA tạo → gửi duyệt → admin duyệt; trả id + slug.
-func (e *ctEnv) publishedContest(extra string) (uuid.UUID, string, map[uuid.UUID]uuid.UUID) {
+func (e *ctEnv) publishedContest(extra string) (uuid.UUID, string, quizKey) {
 	e.t.Helper()
 	quizID, correct := e.newQuiz("teacherA")
 	r := e.must("tao", e.do("POST", "/api/contests", "teacherA", contestBody(quizID, extra)), 201)
@@ -223,16 +261,23 @@ func (e *ctEnv) setWindow(id uuid.UUID, startAgo, endIn time.Duration) {
 	}
 }
 
-func answersBody(attemptID string, correct map[uuid.UUID]uuid.UUID, nRight int) string {
+// answersBody trả lời ĐÚNG nRight câu đầu (theo key.order), sai các câu còn lại.
+func answersBody(attemptID string, key quizKey, nRight int) string {
 	parts := []string{}
-	i := 0
-	for q, a := range correct {
-		sel := a.String()
-		if i >= nRight {
-			sel = uuid.NewString() // đáp án sai
+	for i, q := range key.order {
+		if q == key.blank {
+			text := "sai roi"
+			if i < nRight {
+				text = secretFillBlank
+			}
+			parts = append(parts, `{"question_id":"`+q.String()+`","text_answer":"`+text+`"}`)
+			continue
 		}
-		parts = append(parts, `{"question_id":"`+q.String()+`","selected_answer_ids":["`+sel+`"]}`)
-		i++
+		sel := key.wrong[q]
+		if i < nRight {
+			sel = key.right[q]
+		}
+		parts = append(parts, `{"question_id":"`+q.String()+`","selected_answer_ids":["`+sel.String()+`"]}`)
 	}
 	return `{"attempt_id":"` + attemptID + `","answers":[` + strings.Join(parts, ",") + `]}`
 }

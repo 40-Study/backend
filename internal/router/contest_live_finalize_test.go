@@ -13,7 +13,8 @@ import (
 )
 
 // finalizeFixture: cuộc thi có giải hạng 1 (voucher + chứng nhận), hạng 2 (chứng nhận) và ngưỡng
-// chứng nhận 50%; 3 thí sinh đã nộp (2/2, 2/2, 1/2), cuộc thi đã kết thúc hơn 60s.
+// chứng nhận 30%; 3 thí sinh đã nộp (2/3, 2/3, 1/3 — người thứ 3 đạt ngưỡng nhờ 33,33%), cuộc thi
+// đã kết thúc hơn 60s.
 // rank2Voucher (tuỳ chọn) gắn thêm voucher cho giải hạng 2.
 func (e *ctEnv) finalizeFixture(voucherID uuid.UUID, rank2Voucher ...uuid.UUID) uuid.UUID {
 	e.t.Helper()
@@ -22,7 +23,7 @@ func (e *ctEnv) finalizeFixture(voucherID uuid.UUID, rank2Voucher ...uuid.UUID) 
 		rank2 = `,"voucher_id":"` + rank2Voucher[0].String() + `"`
 	}
 	quizID, correct := e.newQuiz("teacherA")
-	r := e.must("tao", e.do("POST", "/api/contests", "teacherA", contestBody(quizID, `"certificate_min_percentage":50`)), 201)
+	r := e.must("tao", e.do("POST", "/api/contests", "teacherA", contestBody(quizID, `"certificate_min_percentage":30`)), 201)
 	cid := r.data()["id"].(string)
 	e.must("gui duyet", e.do("POST", "/api/contests/"+cid+"/submit-review", "teacherA", ""), 200)
 	e.must("duyet", e.do("POST", "/api/admin/contests/"+cid+"/approve", "admin", `{"prizes":[`+
