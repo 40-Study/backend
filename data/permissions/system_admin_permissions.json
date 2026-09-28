@@ -46,5 +46,9 @@
   {
     "name": "REPORTS_MODERATE",
     "description": "Kiểm duyệt report vi phạm: xem toàn bộ danh sách, đổi trạng thái, xoá report (A-P0-1, QA 260927)"
+  },
+  {
+    "name": "WALLET_WITHDRAWALS_MANAGE",
+    "description": "Xem và xử lý yêu cầu rút tiền của giảng viên: duyệt, từ chối, xác nhận đã chuyển khoản (Phase 4, 28/09/2026)"
   }
 ]

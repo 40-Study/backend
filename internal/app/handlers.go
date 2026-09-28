@@ -64,6 +64,8 @@ type Handlers struct {
 	UserStats   *handler.UserStatsHandler
 	// ===== Wallet =====
 	Wallet *handler.WalletHandler
+	// Phase 4: rút tiền giảng viên
+	Withdrawal *handler.WithdrawalHandler
 
 	// ===== OAuth =====
 	OAuth *handler.OAuthHandler
@@ -183,7 +185,8 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		Leaderboard: handler.NewLeaderboardHandler(services.Leaderboard),
 		UserStats:   handler.NewUserStatsHandler(services.UserStats),
 		// ===== Wallet =====
-		Wallet: handler.NewWalletHandler(services.Wallet),
+		Wallet:     handler.NewWalletHandler(services.Wallet),
+		Withdrawal: handler.NewWithdrawalHandler(services.Withdrawal),
 
 		// ===== OAuth =====
 		OAuth: handler.NewOAuthHandler(services.OAuth, cfg),

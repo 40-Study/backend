@@ -59,6 +59,12 @@ type TeacherWalletResponse struct {
 	BankName       *string         `json:"bank_name,omitempty"`
 	BankAccountNum *string         `json:"bank_account_number,omitempty"`
 	BankAccountNam *string         `json:"bank_account_name,omitempty"`
+
+	// Phase 4: tổng yêu cầu rút đang xử lý (pending+approved), mức rút tối thiểu, và cờ "đang có
+	// 1 yêu cầu chưa xong" (quyết định #7). AvailBalance có thể ÂM (quyết định #8).
+	PendingWithdrawal   decimal.Decimal `json:"pending_withdrawal"`
+	MinWithdrawalAmount decimal.Decimal `json:"min_withdrawal_amount"`
+	HasOpenWithdrawal   bool            `json:"has_open_withdrawal"`
 }
 
 // TeacherTransaction is a single earning/refund row for the teacher

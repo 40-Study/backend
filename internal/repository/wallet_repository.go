@@ -69,16 +69,60 @@ type TeacherEarningsRow struct {
 	OrderCount    int64
 }
 
-// GetTeacherEarnings returns total earnings from completed orders containing the teacher's courses
+// ─── Phần giảng viên của 1 dòng order_items (SSOT, Phase 4) ─────────────────
+//
+// Quyết định chủ dự án #2: phí nền tảng % được CHỐT vào từng đơn lúc thanh toán
+// (orders.platform_fee_amount, tính trên orders.total_amount — PaymentService.CheckAndProcessPayment).
+// Một đơn có thể chứa khoá của NHIỀU giảng viên, nên phí cấp đơn được phân bổ về từng item theo tỉ
+// lệ final_price / tổng final_price của cả đơn:
+//
+//	phần GV của item = final_price − ROUND(platform_fee_amount × final_price / tổng final_price đơn, 2)
+//
+// Dùng SỐ TIỀN phí đã chốt (không tính lại từ %) để khớp đúng báo cáo doanh thu admin
+// (teacher_share = gross − platform_fee_amount) với đơn 1 khoá. Đơn tạo trước khi có phí có
+// platform_fee_amount = 0 nên phần GV = final_price như trước. Chỉ đơn `completed` được tính: đơn
+// `refunded` rơi khỏi tổng (đó là cách "trừ doanh thu giảng viên khi hoàn tiền" của Phase 2).
+const teacherEarningsJoins = `JOIN orders ON orders.id = order_items.order_id
+	JOIN courses ON courses.id = order_items.course_id
+	JOIN (SELECT order_id, SUM(final_price) AS items_total FROM order_items GROUP BY order_id) AS order_totals
+		ON order_totals.order_id = order_items.order_id`
+
+const teacherShareExpr = `order_items.final_price - CASE WHEN order_totals.items_total > 0
+	THEN ROUND(orders.platform_fee_amount * order_items.final_price / order_totals.items_total, 2)
+	ELSE 0 END`
+
+// GetTeacherEarnings trả tổng phần giảng viên (sau phí nền tảng) của các đơn `completed`.
 func (r *WalletRepository) GetTeacherEarnings(teacherID uuid.UUID) (*TeacherEarningsRow, error) {
 	var res TeacherEarningsRow
 	err := r.db.Model(&model.OrderItem{}).
-		Joins("JOIN orders ON orders.id = order_items.order_id").
-		Joins("JOIN courses ON courses.id = order_items.course_id").
+		Joins(teacherEarningsJoins).
 		Where("courses.instructor_id = ? AND orders.status = ?", teacherID, "completed").
-		Select("COALESCE(SUM(order_items.final_price), 0) AS total_earnings, COUNT(DISTINCT orders.id) AS order_count").
+		Select("COALESCE(SUM(" + teacherShareExpr + "), 0) AS total_earnings, COUNT(DISTINCT orders.id) AS order_count").
 		Scan(&res).Error
 	return &res, err
+}
+
+// GetTeacherEarningsByIDs — cùng công thức GetTeacherEarnings, gom nhóm cho nhiều giảng viên trong
+// 1 câu (trang admin rút tiền). Giảng viên không có đơn nào sẽ vắng mặt trong map (= 0).
+func (r *WalletRepository) GetTeacherEarningsByIDs(teacherIDs []uuid.UUID) (map[uuid.UUID]decimal.Decimal, error) {
+	out := make(map[uuid.UUID]decimal.Decimal, len(teacherIDs))
+	if len(teacherIDs) == 0 {
+		return out, nil
+	}
+	var rows []struct {
+		TeacherID uuid.UUID
+		Total     decimal.Decimal
+	}
+	err := r.db.Model(&model.OrderItem{}).
+		Joins(teacherEarningsJoins).
+		Where("courses.instructor_id IN ? AND orders.status = ?", teacherIDs, "completed").
+		Select("courses.instructor_id AS teacher_id, COALESCE(SUM(" + teacherShareExpr + "), 0) AS total").
+		Group("courses.instructor_id").
+		Scan(&rows).Error
+	for _, row := range rows {
+		out[row.TeacherID] = row.Total
+	}
+	return out, err
 }
 
 // TeacherTransactionRow is a flattened row for teacher transaction history
@@ -140,12 +184,60 @@ func (r *WalletRepository) GetTeacherTransactions(teacherID uuid.UUID, txType st
 	return rows, total, err
 }
 
-// GetTeacherPayoutTotal returns the sum of completed payouts for a teacher
-func (r *WalletRepository) GetTeacherPayoutTotal(teacherID uuid.UUID) (decimal.Decimal, error) {
-	var total decimal.Decimal
+// TeacherPayoutSums — tổng tiền yêu cầu rút của 1 giảng viên theo nhóm trạng thái.
+type TeacherPayoutSums struct {
+	Open      decimal.Decimal // pending + approved (đang xử lý)
+	Completed decimal.Decimal // đã chuyển khoản xong
+}
+
+// Reserved = tổng đã giữ chỗ trên số dư (mọi trạng thái trừ rejected), xem model.PayoutReservedStatuses.
+func (s TeacherPayoutSums) Reserved() decimal.Decimal { return s.Open.Add(s.Completed) }
+
+// GetTeacherPayoutSums đọc tổng yêu cầu rút của giảng viên. Khi gọi trên repo tạo từ tx đã khoá
+// teacher_profiles (WithdrawalRepository.LockTeacherProfile), kết quả không bị request rút song song
+// của cùng giảng viên làm lệch.
+func (r *WalletRepository) GetTeacherPayoutSums(teacherID uuid.UUID) (TeacherPayoutSums, error) {
+	var res struct {
+		Open      decimal.Decimal
+		Completed decimal.Decimal
+	}
 	err := r.db.Model(&model.InstructorPayout{}).
-		Where("instructor_id = ? AND status = ?", teacherID, "completed").
-		Select("COALESCE(SUM(amount), 0)").
-		Scan(&total).Error
-	return total, err
+		Where("instructor_id = ?", teacherID).
+		Select(`COALESCE(SUM(amount) FILTER (WHERE status IN ?), 0) AS open,
+			COALESCE(SUM(amount) FILTER (WHERE status = ?), 0) AS completed`,
+			model.PayoutOpenStatuses, model.PayoutStatusCompleted).
+		Scan(&res).Error
+	return TeacherPayoutSums{Open: res.Open, Completed: res.Completed}, err
+}
+
+// GetTeacherReservedByIDs — tổng giữ chỗ (model.PayoutReservedStatuses) theo từng giảng viên.
+func (r *WalletRepository) GetTeacherReservedByIDs(teacherIDs []uuid.UUID) (map[uuid.UUID]decimal.Decimal, error) {
+	out := make(map[uuid.UUID]decimal.Decimal, len(teacherIDs))
+	if len(teacherIDs) == 0 {
+		return out, nil
+	}
+	var rows []struct {
+		InstructorID uuid.UUID
+		Total        decimal.Decimal
+	}
+	err := r.db.Model(&model.InstructorPayout{}).
+		Where("instructor_id IN ? AND status IN ?", teacherIDs, model.PayoutReservedStatuses).
+		Select("instructor_id, COALESCE(SUM(amount), 0) AS total").
+		Group("instructor_id").
+		Scan(&rows).Error
+	for _, row := range rows {
+		out[row.InstructorID] = row.Total
+	}
+	return out, err
+}
+
+// GetTeacherIDsWithReservedPayouts — số dư chỉ có thể âm khi giảng viên đã có yêu cầu rút giữ chỗ
+// (thu nhập không bao giờ âm), nên đây là tập ứng viên duy nhất cần xét cho cảnh báo số dư âm.
+func (r *WalletRepository) GetTeacherIDsWithReservedPayouts() ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := r.db.Model(&model.InstructorPayout{}).
+		Where("status IN ?", model.PayoutReservedStatuses).
+		Distinct().
+		Pluck("instructor_id", &ids).Error
+	return ids, err
 }

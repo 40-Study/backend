@@ -78,6 +78,8 @@ type Repositories struct {
 	UserStats   *repository.UserStatsRepository
 	// ===== Wallet =====
 	Wallet *repository.WalletRepository
+	// Phase 4: yêu cầu rút tiền giảng viên
+	Withdrawal *repository.WithdrawalRepository
 
 	// ===== Coin =====
 	CoinWallet      *repository.CoinWalletRepository
@@ -206,7 +208,8 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		Leaderboard: repository.NewLeaderboardRepository(db),
 		UserStats:   repository.NewUserStatsRepository(db),
 		// ===== Wallet =====
-		Wallet: repository.NewWalletRepository(db),
+		Wallet:     repository.NewWalletRepository(db),
+		Withdrawal: repository.NewWithdrawalRepository(db),
 
 		// ===== Coin =====
 		CoinWallet:      repository.NewCoinWalletRepository(db),
