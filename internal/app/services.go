@@ -80,6 +80,8 @@ type Services struct {
 	UserStats   *service.UserStatsService
 	// ===== Wallet =====
 	Wallet *service.WalletService
+	// Phase 4: rút tiền giảng viên
+	Withdrawal *service.WithdrawalService
 
 	// ===== OAuth =====
 	OAuth *service.OAuthService
@@ -449,7 +451,8 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Leaderboard: service.NewLeaderboardService(repos.Leaderboard),
 		UserStats:   service.NewUserStatsService(repos.UserStats),
 		// ===== Wallet =====
-		Wallet: service.NewWalletService(repos.Wallet, repos.TeacherProfile),
+		Wallet:     service.NewWalletService(repos.Wallet, repos.TeacherProfile, resources.Config.WithdrawalMinAmount),
+		Withdrawal: service.NewWithdrawalService(repos.Withdrawal, repos.Wallet, resources.Config.WithdrawalMinAmount),
 
 		// ===== Discussion Forum =====
 		// R7 (code-reviewer-260919-1557): repos.Enrollment them vao de kiem enroll/lesson_id

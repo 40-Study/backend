@@ -281,6 +281,29 @@ func RunPostMigrations(db *gorm.DB) error {
 				  );
 			`,
 		},
+		{
+			// Phase 4 rút tiền giảng viên (2026-09-28): cột lý do từ chối trên instructor_payouts.
+			// AutoMigrate đã thêm từ model; khối này là lớp phòng thủ tường minh, idempotent.
+			name: "add rejection_reason column to instructor_payouts (phase-4 withdrawal)",
+			sql: `
+				DO $$
+				BEGIN
+					IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+					               WHERE table_schema = current_schema() AND table_name='instructor_payouts'
+					                 AND column_name='rejection_reason') THEN
+						ALTER TABLE instructor_payouts ADD COLUMN rejection_reason TEXT;
+					END IF;
+				END $$;
+			`,
+		},
+		{
+			// Phase 4: đổi CHECK status của instructor_payouts sang model.PayoutStatuses
+			// (pending/approved/rejected/completed, bỏ processing/failed). Bảng chưa từng có luồng
+			// ghi nào trước Phase 4 nên không cần backfill. SQL sinh từ slice SSOT.
+			name: "sync chk_instructor_payouts_status to model.PayoutStatuses (phase-4 withdrawal)",
+			sql: buildCheckConstraintSQL("instructor_payouts", "chk_instructor_payouts_status",
+				"status", model.PayoutStatuses),
+		},
 	}
 
 	for _, stmt := range statements {

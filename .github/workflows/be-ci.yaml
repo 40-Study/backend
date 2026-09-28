@@ -10,7 +10,32 @@ jobs:
   go-backend:
     name: Build Go Backend
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    # Test tích hợp chạy trên Postgres THẬT (khoá dòng, CHECK constraint, window function...).
+    # CI=true: pgtest.Open/IsolatedSchema FAIL thay vì SKIP khi không kết nối được DB.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: study_ci
+          POSTGRES_PASSWORD: study_ci_only
+          POSTGRES_DB: study_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U study_ci -d study_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CI: "true"
+      ENVIRONMENT: test
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_USER: study_ci
+      DB_PASSWORD: study_ci_only
+      DB_NAME: study_test
+      JWT_SECRET: ci-only-jwt-secret-not-used-outside-tests
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -31,9 +56,33 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      # Test unit chạy trên DryRun/sqlmock, không cần Postgres
+      # Tạo schema public (AutoMigrate + roles/permissions) cho các test tích hợp tự ROLLBACK.
+      # Test cần COMMIT dữ liệu tự tạo schema tạm riêng (pgtest.IsolatedSchema). LoadConfig
+      # (viper.Unmarshal) chỉ thấy key có trong file cấu hình/default, không thấy biến chỉ nằm
+      # trong env — nên ghi env CI của job ra .env (giá trị chỉ dùng cho DB tạm của CI).
+      - name: Migrate test database
+        run: |
+          env | grep -E '^(DB_[A-Z]+|JWT_SECRET|ENVIRONMENT)=' > .env
+          go run ./cmd/seed -mode=base
+
       - name: Test
-        run: go test -count=1 ./...
+        shell: bash
+        run: |
+          set +e
+          go test -count=1 -v ./... > go-test.log 2>&1
+          rc=$?
+          grep -E '^(ok|FAIL|panic)|--- FAIL' go-test.log
+          if [ "$rc" -ne 0 ]; then grep -B2 -A20 -- '--- FAIL' go-test.log | head -200; fi
+          exit $rc
+
+      # Bằng chứng test Postgres đã CHẠY thật: in kết quả các test tích hợp, và chặn mọi SKIP
+      # (trong repo chỉ pgtest mới Skip, tức là lọt mất DB).
+      - name: Postgres tests ran (no SKIP)
+        shell: bash
+        run: |
+          # Phase 4 (rút tiền) + Phase 3 (duyệt giảng viên/khoá học, *_PG_*) + test Postgres có sẵn.
+          grep -E -- '--- (PASS|FAIL|SKIP): Test(Withdrawal|RefundOrder_Waits|TeacherEarnings_Fee|BuildCheckConstraintSQL_Postgres|IsolatedSchema|CheckAndProcessPayment_Chot|ListByCourse_LocTheoSection|RevokeActiveAssignment|AdminListUsers_Keyword|\w+_PG_)' go-test.log
+          if grep -q -- '--- SKIP' go-test.log; then echo "::error::Có test bị SKIP (mất kết nối Postgres?)"; exit 1; fi
 
   python-transaction-api:
     name: Build Python Transaction API

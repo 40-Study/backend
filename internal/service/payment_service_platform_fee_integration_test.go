@@ -15,24 +15,17 @@ package service
 // internal/repository/note_repository_postgres_test.go, R5) — ket noi Postgres dev that, tao du
 // lieu trong 1 transaction ROLLBACK cuoi cung, bo qua (t.Skip) neu khong ket noi duoc.
 import (
-	"bufio"
 	"context"
-	"fmt"
-	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 	"study.com/v1/internal/grpc"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/testutil/pgtest"
 )
 
 // fakeTransactionServiceMatched — TransactionServiceInterface gia lap, luon tra ve 1 giao dich
@@ -183,59 +176,9 @@ func TestCheckAndProcessPayment_ChotPhiNenTangDungThoiDiemThanhToan(t *testing.T
 	}
 }
 
-// openTestPostgresForPaymentTest — cung QUY UOC ket noi Postgres dev that nhu
-// internal/repository/note_repository_postgres_test.go (R5): doc .env theo duong dan tuong doi
-// voi file nay, bo qua (t.Skip) neu khong ket noi duoc, de suite khong do gay tren may khong co
-// Postgres chay san. Khong tai su dung truc tiep ham cua repository_test (khac package, khong
-// export) — day la ban sao Y HET quy uoc, khong phai logic moi.
+// openTestPostgresForPaymentTest — ket noi Postgres qua pgtest.Open: bo qua khi chay local khong
+// co DB, nhung FAIL khi CI=true (review Phase 4, B-2). Test tu ROLLBACK nen khong de lai du lieu.
 func openTestPostgresForPaymentTest(t *testing.T) *gorm.DB {
 	t.Helper()
-
-	_, thisFile, _, ok := runtime.Caller(0)
-	if ok {
-		repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
-		envPath := filepath.Join(repoRoot, ".env")
-		if f, ferr := os.Open(envPath); ferr == nil {
-			defer f.Close()
-			scanner := bufio.NewScanner(f)
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
-				if line == "" || strings.HasPrefix(line, "#") {
-					continue
-				}
-				parts := strings.SplitN(line, "=", 2)
-				if len(parts) != 2 {
-					continue
-				}
-				key := strings.TrimSpace(parts[0])
-				val := strings.Trim(strings.TrimSpace(parts[1]), `"'`)
-				if _, exists := os.LookupEnv(key); !exists {
-					_ = os.Setenv(key, val)
-				}
-			}
-		}
-	}
-
-	envOrDefault := func(key, def string) string {
-		if v := os.Getenv(key); v != "" {
-			return v
-		}
-		return def
-	}
-
-	host := envOrDefault("DB_HOST", "localhost")
-	port := envOrDefault("DB_PORT", "5432")
-	user := envOrDefault("DB_USER", "study_user")
-	pass := os.Getenv("DB_PASSWORD")
-	name := envOrDefault("DB_NAME", "study_db")
-
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=Asia/Ho_Chi_Minh",
-		host, user, pass, name, port)
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		t.Skipf("khong ket noi duoc Postgres that (%s:%s/%s) — bo qua test tich hop chot phi nen tang: %v", host, port, name, err)
-	}
-	return db
+	return pgtest.Open(t)
 }

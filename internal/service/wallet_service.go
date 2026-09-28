@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/repository"
 )
@@ -25,10 +26,13 @@ type WalletServiceInterface interface {
 type WalletService struct {
 	walletRepo         *repository.WalletRepository
 	teacherProfileRepo repository.TeacherProfileRepositoryInterface
+	// minWithdrawal (Phase 4): chỉ để trả về cho UI hiển thị mức rút tối thiểu; kiểm tra thật nằm ở
+	// WithdrawalService.
+	minWithdrawal decimal.Decimal
 }
 
-func NewWalletService(walletRepo *repository.WalletRepository, teacherProfileRepo repository.TeacherProfileRepositoryInterface) *WalletService {
-	return &WalletService{walletRepo: walletRepo, teacherProfileRepo: teacherProfileRepo}
+func NewWalletService(walletRepo *repository.WalletRepository, teacherProfileRepo repository.TeacherProfileRepositoryInterface, minWithdrawal decimal.Decimal) *WalletService {
+	return &WalletService{walletRepo: walletRepo, teacherProfileRepo: teacherProfileRepo, minWithdrawal: minWithdrawal}
 }
 
 // GetWallet returns the user's wallet summary (total spent + order count)
@@ -109,7 +113,7 @@ func (s *WalletService) GetTeacherWallet(ctx context.Context, teacherID uuid.UUI
 		return nil, err
 	}
 
-	paidOut, err := s.walletRepo.GetTeacherPayoutTotal(teacherID)
+	payouts, err := s.walletRepo.GetTeacherPayoutSums(teacherID)
 	if err != nil {
 		return nil, err
 	}
@@ -120,13 +124,18 @@ func (s *WalletService) GetTeacherWallet(ctx context.Context, teacherID uuid.UUI
 		return nil, err
 	}
 
+	// Phase 4: số dư khả dụng trừ cả yêu cầu ĐANG xử lý (pending/approved), không chỉ yêu cầu đã
+	// chuyển xong — cùng công thức availableBalance mà WithdrawalService dùng khi tạo yêu cầu.
 	resp := &dto.TeacherWalletResponse{
-		UserID:        teacherID,
-		TotalEarnings: earnings.TotalEarnings,
-		TotalPaidOut:  paidOut,
-		AvailBalance:  earnings.TotalEarnings.Sub(paidOut),
-		Currency:      "VND",
-		OrderCount:    earnings.OrderCount,
+		UserID:              teacherID,
+		TotalEarnings:       earnings.TotalEarnings,
+		TotalPaidOut:        payouts.Completed,
+		AvailBalance:        availableBalance(earnings.TotalEarnings, payouts),
+		PendingWithdrawal:   payouts.Open,
+		MinWithdrawalAmount: s.minWithdrawal,
+		HasOpenWithdrawal:   payouts.Open.IsPositive(),
+		Currency:            "VND",
+		OrderCount:          earnings.OrderCount,
 	}
 
 	if profile != nil {

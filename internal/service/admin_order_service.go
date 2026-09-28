@@ -138,6 +138,12 @@ func (s *AdminOrderService) RefundOrder(ctx context.Context, actorID, orderID uu
 			return ErrOrderNotRefundable
 		}
 
+		// Phase 4: khoá hồ sơ các giảng viên của đơn để hoàn tiền không chen giữa lúc admin đang
+		// duyệt/đánh dấu đã chuyển 1 yêu cầu rút (xem WithdrawalService.transition).
+		if err := repository.LockTeacherProfilesOfOrder(ctx, txDB, order.ID); err != nil {
+			return err
+		}
+
 		now := time.Now()
 		applied, err := txRepo.RefundOrder(order.ID, reason, refundMethod, now, actorID)
 		if err != nil {

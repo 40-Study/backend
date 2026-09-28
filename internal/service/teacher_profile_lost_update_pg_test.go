@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
@@ -175,7 +176,7 @@ func TestTeacherProfile_PG_BankInfoUpdateDuringApproveKeepsApproval(t *testing.T
 		}
 	}
 
-	err := NewWalletService(nil, repo).UpdateBankInfo(ctx, u.ID, dto.UpdateBankInfoRequest{
+	err := NewWalletService(nil, repo, decimal.Zero).UpdateBankInfo(ctx, u.ID, dto.UpdateBankInfoRequest{
 		BankName: "VCB", BankAccountNumber: "0123456789", BankAccountName: "NGUYEN VAN A"})
 	if err != nil {
 		t.Fatal(err)

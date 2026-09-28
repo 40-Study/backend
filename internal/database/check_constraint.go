@@ -9,23 +9,30 @@ import (
 // buildOrderStatusConstraintSQL (migrations.go): sinh khối DO $$ idempotent đảm bảo constraint
 // `constraintName` trên `table` là CHECK (column IN (values...)) với ĐỦ mọi giá trị SSOT.
 //
-// Cùng lý do với bản orders: AutoMigrate chỉ tạo constraint còn thiếu THEO TÊN, không nới rộng
-// constraint đã có trên DB cũ khi tag Go đổi (đúng trường hợp courses.status thêm 'rejected').
-// Chỉ DROP+ADD khi constraint chưa tồn tại hoặc định nghĩa hiện tại THIẾU ít nhất 1 giá trị —
-// không trả giá ACCESS EXCLUSIVE + validate toàn bảng mỗi lần boot.
+// Cùng lý do với bản orders: AutoMigrate chỉ tạo constraint còn thiếu THEO TÊN, không sửa
+// constraint đã có trên DB cũ khi tag Go đổi (courses.status thêm 'rejected' ở Phase 3,
+// instructor_payouts.status bỏ 'processing'/'failed' ở Phase 4).
 //
-// Không refactor buildOrderStatusConstraintSQL sang hàm này trong phase 3: migrations.go đang
-// được lane Phase 4 cùng thêm entry song song, quy ước là chỉ THÊM dòng ở file dùng chung.
+// "Đã đúng" = constraint của CHÍNH bảng này (conrelid, không nhầm với bảng cùng tên constraint ở
+// schema khác) chứa ĐỦ mọi giá trị (LIKE từng giá trị có bọc nháy) VÀ không THỪA giá trị nào: mỗi
+// giá trị xuất hiện đúng 1 lần trong pg_get_constraintdef dưới dạng literal có 2 dấu nháy đơn,
+// nên số dấu nháy phải bằng 2*len(values) — constraint cũ thừa giá trị thì số nháy lệch. Chỉ
+// DROP+ADD khi lệch, không trả giá ACCESS EXCLUSIVE + validate toàn bảng mỗi lần boot.
+//
+// Gộp từ 2 helper song song của Phase 3 (#73, chỉ kiểm thiếu) và Phase 4 (#74, kiểm cả thừa).
 //
 // table/constraintName/column/values luôn là hằng số compile-time trong code Go (SSOT ở
 // internal/model), không bao giờ là input người dùng — nối chuỗi vào SQL an toàn.
 func buildCheckConstraintSQL(table, constraintName, column string, values []string) string {
 	quoted := make([]string, len(values))
-	likeConditions := make([]string, len(values))
+	conditions := make([]string, 0, len(values)+1)
 	for i, v := range values {
 		quoted[i] = "'" + v + "'"
-		likeConditions[i] = fmt.Sprintf("pg_get_constraintdef(oid) LIKE '%%''%s''%%'", v)
+		conditions = append(conditions, fmt.Sprintf("pg_get_constraintdef(oid) LIKE '%%''%s''%%'", v))
 	}
+	conditions = append(conditions, fmt.Sprintf(
+		"length(pg_get_constraintdef(oid)) - length(replace(pg_get_constraintdef(oid), '''', '')) = %d",
+		2*len(values)))
 
 	return fmt.Sprintf(`
 		DO $$
@@ -33,14 +40,15 @@ func buildCheckConstraintSQL(table, constraintName, column string, values []stri
 			IF NOT EXISTS (
 				SELECT 1 FROM pg_constraint
 				WHERE conname = '%s'
-				  AND (%s)
+				  AND conrelid = '%s'::regclass
+				  AND %s
 			) THEN
 				ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;
 				ALTER TABLE %s ADD CONSTRAINT %s
 					CHECK (%s IN (%s));
 			END IF;
 		END $$;
-	`, constraintName, strings.Join(likeConditions, " AND "),
+	`, constraintName, table, strings.Join(conditions, "\n\t\t\t\t  AND "),
 		table, constraintName,
 		table, constraintName,
 		column, strings.Join(quoted, ", "))

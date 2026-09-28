@@ -280,6 +280,11 @@ func New() (*App, error) {
 		resources.Queue,
 	)
 
+	// Phase 4 rút tiền giảng viên: đăng ký riêng thay vì thêm tham số vào SetupAllRoutes (router
+	// dùng chung nhiều lane đang sửa song song). Group "/api" thứ 2 chỉ là tiền tố, không kèm
+	// middleware nào nên không ảnh hưởng route đã đăng ký trong SetupAllRoutes.
+	router.SetupWithdrawalRoutes(fiberApp.Group("/api"), resources.Config, handlers.Withdrawal, resources.Redis, permChecker)
+
 	return &App{
 		Resources: resources,
 		Repos:     repos,

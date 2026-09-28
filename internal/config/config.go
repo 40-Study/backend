@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/spf13/viper"
 )
 
@@ -109,6 +110,27 @@ type Config struct {
 	FrontendURL                string `mapstructure:"FRONTEND_URL"`
 	ParentInvitationDailyLimit int    `mapstructure:"PARENT_INVITATION_DAILY_LIMIT"` // Số lần gửi lời mời phụ huynh tối đa trong 24 giờ của mỗi học sinh
 	TempDir                    string `mapstructure:"TEMP_DIR"`                      // Thư mục tạm để xử lý video, nên đặt ở ổ đĩa có dung lượng lớn và tốc độ cao (ví dụ: D:\temp\video-processing)
+
+	// Phase 4 rút tiền giảng viên (quyết định chủ dự án #7: tối thiểu 100.000đ, cấu hình được).
+	// Raw là chuỗi đọc từ env WITHDRAWAL_MIN_AMOUNT; WithdrawalMinAmount là giá trị đã parse +
+	// validate trong LoadConfig (sai định dạng hoặc <= 0 thì dừng khởi động, không lặng lẽ dùng mặc định).
+	WithdrawalMinAmountRaw string          `mapstructure:"WITHDRAWAL_MIN_AMOUNT"`
+	WithdrawalMinAmount    decimal.Decimal `mapstructure:"-"`
+}
+
+// DefaultWithdrawalMinAmount — mặc định của WITHDRAWAL_MIN_AMOUNT (VND).
+const DefaultWithdrawalMinAmount = "100000"
+
+// parseWithdrawalMinAmount là hàm thuần để unit test: chỉ chấp nhận số dương.
+func parseWithdrawalMinAmount(raw string) (decimal.Decimal, error) {
+	v, err := decimal.NewFromString(strings.TrimSpace(raw))
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("WITHDRAWAL_MIN_AMOUNT %q is not a number: %w", raw, err)
+	}
+	if !v.IsPositive() {
+		return decimal.Zero, fmt.Errorf("WITHDRAWAL_MIN_AMOUNT must be greater than 0, got %s", v)
+	}
+	return v, nil
 }
 
 func LoadConfig() (*Config, error) {
@@ -151,6 +173,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("GITHUB_TOKEN_URL", "https://github.com/login/oauth/access_token")
 	viper.SetDefault("GITHUB_SCOPES", []string{"user:email"})
 	viper.SetDefault("FRONTEND_URL", "http://localhost:3000")
+	viper.SetDefault("WITHDRAWAL_MIN_AMOUNT", DefaultWithdrawalMinAmount)
 
 	viper.AutomaticEnv()
 
@@ -223,6 +246,12 @@ func LoadConfig() (*Config, error) {
 	if err := validateJWTSecret(config.JWTSecret, configFile); err != nil {
 		return nil, err
 	}
+
+	minWithdrawal, err := parseWithdrawalMinAmount(config.WithdrawalMinAmountRaw)
+	if err != nil {
+		return nil, err
+	}
+	config.WithdrawalMinAmount = minWithdrawal
 
 	// Set JWT expiration durations
 	accessMinutes := viper.GetInt("JWT_ACCESS_EXPIRATION_MINUTES")
