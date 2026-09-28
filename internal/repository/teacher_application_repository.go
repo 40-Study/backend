@@ -135,20 +135,7 @@ func (r *TeacherApplicationRepository) Approve(ctx context.Context, userID, revi
 		if err := EvaluateTeacherReview(profile.ApprovalStatus); err != nil {
 			return err
 		}
-		teacherRoleID, err := findSystemRoleID(tx, systemRoleTeacher)
-		if err != nil {
-			return err
-		}
-		if err := grantSystemRoleTx(tx, userID, teacherRoleID, reviewerID); err != nil {
-			return err
-		}
-		// TEACHER_APPLICANT có thể chưa được seed trên DB cũ, hoặc user nộp hồ sơ mà không giữ
-		// role này (vd học viên tự tạo hồ sơ) — khi đó không có gì để gỡ, không phải lỗi.
-		if applicantRoleID, err := findSystemRoleID(tx, systemRoleTeacherApplicant); err == nil {
-			if err := revokeSystemRoleTx(tx, userID, applicantRoleID, reviewerID); err != nil {
-				return err
-			}
-		} else if !errors.Is(err, ErrSystemRoleMissing) {
+		if err := swapApplicantToTeacherTx(tx, userID, reviewerID); err != nil {
 			return err
 		}
 
@@ -164,6 +151,29 @@ func (r *TeacherApplicationRepository) Approve(ctx context.Context, userID, revi
 		return nil
 	})
 	return out, err
+}
+
+// swapApplicantToTeacherTx — phần đổi vai trò của Approve: GÁN TEACHER trước rồi mới GỠ
+// TEACHER_APPLICANT (user không bao giờ ở trạng thái 0 vai trò). Tách hàm riêng để pin bằng test
+// DryRun không cần Postgres (approval_role_swap_dryrun_test.go).
+func swapApplicantToTeacherTx(tx *gorm.DB, userID, reviewerID uuid.UUID) error {
+	teacherRoleID, err := findSystemRoleID(tx, systemRoleTeacher)
+	if err != nil {
+		return err
+	}
+	if err := grantSystemRoleTx(tx, userID, teacherRoleID, reviewerID); err != nil {
+		return err
+	}
+	// TEACHER_APPLICANT có thể chưa được seed trên DB cũ, hoặc user nộp hồ sơ mà không giữ
+	// role này (vd học viên tự tạo hồ sơ) — khi đó không có gì để gỡ, không phải lỗi.
+	applicantRoleID, err := findSystemRoleID(tx, systemRoleTeacherApplicant)
+	if errors.Is(err, ErrSystemRoleMissing) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return revokeSystemRoleTx(tx, userID, applicantRoleID, reviewerID)
 }
 
 // grantSystemRoleTx gán role (hoặc kích hoạt lại mapping cũ). Unique index idx_usr_user_role
@@ -242,6 +252,24 @@ func (r *TeacherApplicationRepository) Resubmit(ctx context.Context, userID uuid
 		return nil
 	})
 	return out, err
+}
+
+func (r *TeacherProfileRepository) GetByUserIDIncludingDeleted(ctx context.Context, userID uuid.UUID) (*model.TeacherProfile, error) {
+	var profile model.TeacherProfile
+	err := r.db.WithContext(ctx).Unscoped().Where("user_id = ?", userID).First(&profile).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &profile, nil
+}
+
+// Restore bỏ deleted_at và ghi nội dung mới; resubmission_count/rejection_reason giữ nguyên.
+func (r *TeacherProfileRepository) Restore(ctx context.Context, profile *model.TeacherProfile) error {
+	profile.DeletedAt = gorm.DeletedAt{}
+	return r.db.WithContext(ctx).Unscoped().Save(profile).Error
 }
 
 // HasActiveSystemRole (TeacherProfileRepository) — dùng khi tạo hồ sơ giáo viên: người ĐÃ giữ

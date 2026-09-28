@@ -23,7 +23,8 @@ import (
 // CHỈ KHI marker == user_version hiện tại, tức lần bump GẦN NHẤT chính là đổi vai trò. Nếu sau đó
 // có đăng xuất mọi nơi / khoá tài khoản / đổi mật khẩu (revokeAllSessions INCR tiếp) thì marker
 // lệch version -> refresh bị từ chối như cũ; refresh token vẫn phải khớp bản lưu trong Redis
-// (bước 3 của RefreshToken), nên cơ chế này không mở thêm đường nào cho token đã bị thu hồi.
+// (bước 3 của RefreshToken). Token đã bị vô hiệu TRƯỚC lần đổi vai trò (version < marker-1) cũng
+// bị từ chối — xem isRoleChangeRefresh.
 
 // MarkRoleChanged bump user_version + ghi marker đổi vai trò. Gọi SAU khi transaction gán/gỡ
 // role đã commit.
@@ -38,9 +39,13 @@ func (s *AuthService) MarkRoleChanged(ctx context.Context, userID uuid.UUID) err
 	return s.redisClient.Set(ctx, constants.KeyRoleChanged(userID.String()), newVersion, s.cfg.JWTRefreshExpiration).Err()
 }
 
-// isRoleChangeRefresh: token có version CŨ hơn hiện tại VÀ lần bump gần nhất là đổi vai trò.
+// isRoleChangeRefresh: lần bump gần nhất là đổi vai trò VÀ token mang ĐÚNG version ngay trước lần
+// bump đó (current-1). Review PR #73 (MAJOR #3): bản trước chỉ đòi token "cũ hơn", nên một refresh
+// token đã bị vô hiệu bởi lần bump KHÁC trước đó mà không xoá hash refresh (thu hồi role tổ chức,
+// xoá profile vai trò) lại "hồi sinh" sau khi được duyệt giáo viên. MarkRoleChanged INCR đúng 1
+// đơn vị nên token hợp lệ ngay trước khi duyệt luôn có version = marker-1.
 func (s *AuthService) isRoleChangeRefresh(ctx context.Context, userID uuid.UUID, tokenVersion, currentVersion int64) (bool, error) {
-	if tokenVersion >= currentVersion {
+	if tokenVersion != currentVersion-1 {
 		return false, nil
 	}
 	markerStr, err := s.redisClient.Get(ctx, constants.KeyRoleChanged(userID.String())).Result()

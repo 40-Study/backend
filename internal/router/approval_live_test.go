@@ -186,6 +186,29 @@ func TestApprovalLive_RoleChangeRefreshDeniedAfterLaterRevoke(t *testing.T) {
 	}
 }
 
+// Review PR #73 (MAJOR #3): refresh token bị vô hiệu bởi một lần bump user_version KHÔNG xoá hash
+// refresh (thu hồi role tổ chức, xoá profile vai trò) không được "hồi sinh" sau khi duyệt giáo viên.
+func TestApprovalLive_OldRefreshNotRevivedByLaterTeacherApproval(t *testing.T) {
+	e := newApvEnv(t)
+	// Mô phỏng thu hồi role tổ chức: chỉ INCR user_version (user_organization_role_service), giữ
+	// nguyên auth:refresh:{uid}.
+	if err := e.rdb.Incr(context.Background(), constants.KeyUserVersion(e.applicantID.String())).Err(); err != nil {
+		t.Fatal(err)
+	}
+	expectStatus(t, "refresh sau khi thu hoi role to chuc",
+		e.do(t, "POST", "/api/auth/refresh-token", "", "", "rfToken="+e.applicantRefresh), 401)
+
+	expectStatus(t, "admin duyet ho so",
+		e.do(t, "POST", "/api/admin/teacher-applications/"+e.applicantID.String()+"/approve", e.adminTok, ""), 200)
+
+	r := e.do(t, "POST", "/api/auth/refresh-token", "", "", "rfToken="+e.applicantRefresh)
+	expectStatus(t, "refresh token cu (da bi vo hieu truoc khi duyet) sau khi duyet", r, 401)
+	r = e.do(t, "GET", "/api/teacher-profiles/me", e.applicantTok, "")
+	if r.status != 401 || r.body["code"] == "ROLE_CHANGED" {
+		t.Fatalf("token cu hon lan doi vai tro khong duoc bao ROLE_CHANGED: %d %v", r.status, r.body)
+	}
+}
+
 // Quyết định #5: từ chối bắt lý do; nộp lại tối đa 3 lần, lần nộp lại thứ 4 bị chặn.
 func TestApprovalLive_TeacherResubmitLimit(t *testing.T) {
 	e := newApvEnv(t)

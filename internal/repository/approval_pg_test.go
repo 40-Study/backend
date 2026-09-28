@@ -135,6 +135,30 @@ func TestTeacherApplicationResubmit_PG_LimitAndReject(t *testing.T) {
 	}
 }
 
+// Review PR #73 (MAJOR #1): GetAll phục vụ route công khai — SQL thật chỉ trả hồ sơ approved.
+func TestTeacherProfileGetAll_PG_OnlyApproved(t *testing.T) {
+	tx := apvPgTx(t)
+	ctx := context.Background()
+	tag := "apv-public-" + uuid.NewString()[:8]
+	ids := map[string]uuid.UUID{}
+	for _, st := range model.TeacherApprovalStatuses {
+		u := apvUser(t, tx, tag)
+		spec := tag
+		p := model.TeacherProfile{UserID: u.ID, ApprovalStatus: st, Specialization: &spec}
+		if err := tx.Create(&p).Error; err != nil {
+			t.Fatal(err)
+		}
+		ids[st] = p.ID
+	}
+	rows, total, err := NewTeacherProfileRepository(tx).GetAll(ctx, 1, 50, tag, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(rows) != 1 || rows[0].ID != ids[model.TeacherApprovalApproved] {
+		t.Fatalf("GetAll cong khai phai chi co 1 ho so approved, got total=%d rows=%v", total, rows)
+	}
+}
+
 // CHECK chk_courses_status thật phải chấp nhận 'rejected' (post-migration đã nới) và luồng
 // submit -> reject -> submit -> approve chạy được trên SQL thật.
 func TestCourseReview_PG_FullCycleAgainstRealConstraint(t *testing.T) {
