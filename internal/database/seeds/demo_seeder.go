@@ -43,6 +43,16 @@ func (s *Seeder) SeedDemoData() error {
 		return fmt.Errorf("demo vouchers: %w", err)
 	}
 
+	// S-P1-3 (QA 260927): quiz demo, trỏ đúng course/lesson thật (xem SeedDemoQuiz).
+	if err := s.SeedDemoQuiz(courses); err != nil {
+		return fmt.Errorf("demo quiz: %w", err)
+	}
+
+	// parent P0-2 (QA 260927): liên kết cha-con active để test luồng phụ huynh (xem SeedDemoFamilyLinks).
+	if err := s.SeedDemoFamilyLinks(users); err != nil {
+		return fmt.Errorf("demo family links: %w", err)
+	}
+
 	log.Println("=== Demo data seeded successfully ===")
 	return nil
 }

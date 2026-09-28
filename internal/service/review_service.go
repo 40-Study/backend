@@ -3,14 +3,13 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"log"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/shopspring/decimal"
+	"study.com/v1/internal/apperr"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -77,7 +76,7 @@ func (s *ReviewService) CreateReview(ctx context.Context, userID, courseID uuid.
 	// Check if already reviewed
 	existing, _ := s.repo.GetReviewByUserAndCourse(ctx, userID, courseID)
 	if existing != nil {
-		return nil, errors.New("you have already reviewed this course")
+		return nil, apperr.Conflict("you have already reviewed this course")
 	}
 
 	review := &model.Review{
@@ -197,10 +196,10 @@ func (s *ReviewService) getCachedRatingStats(ctx context.Context, courseID uuid.
 func (s *ReviewService) UpdateReview(ctx context.Context, reviewID, userID uuid.UUID, req dto.UpdateReviewDTO) (*dto.ReviewResponseDTO, error) {
 	review, err := s.repo.GetReviewByID(ctx, reviewID)
 	if err != nil || review == nil {
-		return nil, errors.New("review not found")
+		return nil, apperr.NotFound("review not found")
 	}
 	if review.UserID != userID {
-		return nil, errors.New("forbidden: not the owner")
+		return nil, apperr.Forbidden("forbidden: not the owner")
 	}
 
 	if req.Rating != nil {
@@ -224,10 +223,10 @@ func (s *ReviewService) UpdateReview(ctx context.Context, reviewID, userID uuid.
 func (s *ReviewService) DeleteReview(ctx context.Context, reviewID, userID uuid.UUID) error {
 	review, err := s.repo.GetReviewByID(ctx, reviewID)
 	if err != nil || review == nil {
-		return errors.New("review not found")
+		return apperr.NotFound("review not found")
 	}
 	if review.UserID != userID {
-		return fmt.Errorf("forbidden: not the owner")
+		return apperr.Forbidden("forbidden: not the owner")
 	}
 
 	courseID := review.CourseID

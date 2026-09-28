@@ -9,6 +9,13 @@ import (
 	"study.com/v1/internal/model"
 )
 
+// demoVideoBrokenURL (S-P1-1, QA 260927): URL video mẫu cũ trỏ vào bucket Google Cloud Storage
+// công khai NHƯNG bị chặn (403 — xác nhận bằng curl trực tiếp, không phải lỗi tạm thời), khiến
+// mọi bài giảng video demo không phát được. demoVideoURL là video mẫu công khai khác còn sống
+// (MDN interactive-examples, CC0, xác nhận 200 + Content-Type video/mp4).
+const demoVideoBrokenURL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
+const demoVideoURL = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
+
 // SeedDemoCourses tạo khoá học kèm chương, bài học và nội dung bài học.
 // Trả về map slug -> Course để các seeder sau (enrollment) tham chiếu.
 func (s *Seeder) SeedDemoCourses(
@@ -17,6 +24,15 @@ func (s *Seeder) SeedDemoCourses(
 	tags map[string]model.Tag,
 ) (map[string]model.Course, error) {
 	log.Println("Seeding demo courses...")
+
+	// Backfill (S-P1-1): các bản ghi lesson_content ĐÃ TỒN TẠI từ lần seed trước còn giữ URL cũ —
+	// `Attrs()` trong `FirstOrCreate` bên dưới chỉ áp dụng khi TẠO MỚI bản ghi, không cập nhật bản
+	// ghi đã có sẵn, nên chỉ sửa hằng số là chưa đủ để DB dev hiện tại hết lỗi 403.
+	if err := s.db.Model(&model.LessonContent{}).
+		Where("video_url = ?", demoVideoBrokenURL).
+		Update("video_url", demoVideoURL).Error; err != nil {
+		return nil, fmt.Errorf("failed to backfill lesson content video_url: %w", err)
+	}
 
 	result := make(map[string]model.Course, len(demoCourses))
 
@@ -161,9 +177,9 @@ func (s *Seeder) seedLessonContent(lesson model.Lesson, spec lessonSpec) error {
 		DisplayOrder: 1,
 	}
 
-	// Chỉ nội dung video mới có URL phát; demo dùng video mẫu công khai.
+	// Chỉ nội dung video mới có URL phát; demo dùng video mẫu công khai còn sống (S-P1-1).
 	if spec.ContentType == "video" {
-		content.VideoURL = ptr("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4")
+		content.VideoURL = ptr(demoVideoURL)
 	}
 
 	if err := s.db.Where("lesson_id = ?", lesson.ID).

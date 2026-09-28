@@ -2,9 +2,9 @@ package service
 
 import (
 	"context"
-	"errors"
 
 	"github.com/google/uuid"
+	"study.com/v1/internal/apperr"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -36,10 +36,10 @@ func (s *CartService) AddToCart(ctx context.Context, userID uuid.UUID, req dto.A
 	// Check if course exists
 	course, err := s.courseRepo.GetByID(ctx, req.CourseID)
 	if err != nil {
-		return nil, errors.New("course not found")
+		return nil, apperr.NotFound("course not found")
 	}
 	if course == nil {
-		return nil, errors.New("course not found")
+		return nil, apperr.NotFound("course not found")
 	}
 
 	// Check if course is already in cart
@@ -48,7 +48,7 @@ func (s *CartService) AddToCart(ctx context.Context, userID uuid.UUID, req dto.A
 		return nil, err
 	}
 	if exists {
-		return nil, errors.New("course already in cart")
+		return nil, apperr.Conflict("course already in cart")
 	}
 
 	// Check if user already enrolled
@@ -57,7 +57,7 @@ func (s *CartService) AddToCart(ctx context.Context, userID uuid.UUID, req dto.A
 		return nil, err
 	}
 	if enrollment != nil {
-		return nil, errors.New("you are already enrolled in this course")
+		return nil, apperr.Conflict("you are already enrolled in this course")
 	}
 
 	// Create cart item

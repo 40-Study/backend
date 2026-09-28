@@ -95,7 +95,7 @@ func SetupAllRoutes(
 	SetupTeacherRoutes(api, cfg, teacherHandler, redis, permChecker)
 	SetupTeacherProfileRoutes(api, cfg, teacherProfileHandler, redis)
 	SetupClassRoutes(api, cfg, classHandler, attendanceHandler, redis)
-	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis)
+	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis, permChecker)
 	SetupCartRoutes(api, cfg, cartHandler, redis)
 	SetupCourseRoutes(api, cfg, courseHandler, sectionHandler, lessonHandler, lessonContentHandler, classHandler, classLessonContentHandler, attendanceHandler, redis)
 	SetupEnrollmentRoutes(api, cfg, enrollmentHandler, redis)
@@ -156,7 +156,7 @@ func SetupAllRoutes(
 	SetupCertificateRoutes(api, cfg, certificateHandler, redis)
 
 	// Report routes
-	SetupReportRoutes(api, cfg, reportHandler, redis)
+	SetupReportRoutes(api, cfg, reportHandler, redis, permChecker)
 
 	// Coin routes
 	SetupCoinRoutes(api, cfg, coinHandler, redis, permChecker)

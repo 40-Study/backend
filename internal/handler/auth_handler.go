@@ -9,6 +9,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
@@ -79,6 +80,10 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 
 	response, err := h.authService.Register(c.Context(), req)
 	if err != nil {
+		// Review vòng 4 (PR #69): request đã qua ValidateStruct (otp đủ 6 số) — lỗi ở đây là
+		// service thực sự so sánh OTP thật và từ chối (sai mã/hết hạn/không có phiên chờ), không
+		// phải request rác. Xem comment ở Login cho lý do đầy đủ.
+		c.Locals(middleware.AuthCredentialRejectedLocalsKey, true)
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Register failed",
 			"error":   err.Error(),
@@ -147,6 +152,12 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 
 	response, err := h.authService.Login(c.Context(), req)
 	if err != nil {
+		// Review vòng 4 (PR #69, sửa lỗ hổng review vòng 3): request đã qua BodyParser +
+		// ValidateStruct ở trên (cấu trúc hợp lệ: email đúng định dạng, password >= 8 ký tự,
+		// device_info đủ field) — lỗi ở ĐÂY nghĩa là service đã thực sự so sánh với mật khẩu
+		// thật (hoặc email không tồn tại) và từ chối, không phải request rác. Đặt cờ để
+		// middleware.AccountFailureLockout (account_lockout.go) đếm đúng 1 lần thất bại thật.
+		c.Locals(middleware.AuthCredentialRejectedLocalsKey, true)
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"message": "Login failed",
 			"error":   err.Error(),
@@ -538,6 +549,10 @@ func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {
 	}
 
 	if err := h.authService.ResetPassword(c.Context(), req); err != nil {
+		// Review vòng 4 (PR #69): request đã qua ValidateStruct (otp đủ 6 số, new_password >= 8
+		// ký tự) — lỗi ở đây là service thực sự so sánh OTP thật và từ chối, không phải request
+		// rác. Xem comment ở Login cho lý do đầy đủ.
+		c.Locals(middleware.AuthCredentialRejectedLocalsKey, true)
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Reset password failed",
 			"error":   err.Error(),
