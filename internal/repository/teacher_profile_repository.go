@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -15,7 +16,9 @@ type TeacherProfileRepositoryInterface interface {
 	GetAll(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.TeacherProfile, int64, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*model.TeacherProfile, error)
 	GetByUserID(ctx context.Context, userID uuid.UUID) (*model.TeacherProfile, error)
-	Update(ctx context.Context, profile *model.TeacherProfile) error
+	// UpdateContentFields ghi ĐÚNG các cột nội dung được truyền (review N1) — không bao giờ ghi cột
+	// duyệt, để không hoàn tác Approve/Reject/Resubmit commit xen giữa lúc đọc và lúc ghi.
+	UpdateContentFields(ctx context.Context, id uuid.UUID, fields map[string]interface{}) error
 	Delete(ctx context.Context, id uuid.UUID, hardDelete bool) error
 	// HasActiveSystemRole (Phase 3) — cài đặt ở teacher_application_repository.go.
 	HasActiveSystemRole(ctx context.Context, userID uuid.UUID, roleName string) (bool, error)
@@ -87,8 +90,41 @@ func (r *TeacherProfileRepository) GetByUserID(ctx context.Context, userID uuid.
 	return &profile, nil
 }
 
-func (r *TeacherProfileRepository) Update(ctx context.Context, profile *model.TeacherProfile) error {
-	return r.db.WithContext(ctx).Save(profile).Error
+// ErrTeacherProfileColumnNotEditable: caller cố ghi một cột ngoài danh sách nội dung (vd
+// approval_status) qua UpdateContentFields — lỗi lập trình, không phải lỗi người dùng.
+var ErrTeacherProfileColumnNotEditable = errors.New("teacher profile column is not editable")
+
+// teacherProfileContentColumns — cột chủ hồ sơ được tự sửa. Cột duyệt (approval_status,
+// resubmission_count, rejection_reason, reviewed_*) CHỈ đổi trong transaction có FOR UPDATE ở
+// teacher_application_repository.go.
+var teacherProfileContentColumns = map[string]struct{}{
+	"specialization": {}, "education": {}, "experience_years": {}, "certificate_info": {}, "department": {},
+	"bank_name": {}, "bank_account_number": {}, "bank_account_name": {},
+}
+
+// UpdateContentFields — review N1 (review-260928-phase3-pr73-pr30.md): trước đây Update = Save cả
+// dòng đã đọc từ trước, không khoá. Approve/Reject/Resubmit commit trong khoảng đọc-ghi bị ghi đè
+// bằng giá trị cũ (hồ sơ quay về pending khi user đã giữ TEACHER, lời từ chối bị hoàn tác, lượt
+// nộp lại biến mất). UPDATE chỉ các cột nội dung thì 2 bên không còn giẫm cột của nhau; bản thân
+// câu UPDATE vẫn chờ row lock của transaction duyệt nếu đang chạy.
+func (r *TeacherProfileRepository) UpdateContentFields(ctx context.Context, id uuid.UUID, fields map[string]interface{}) error {
+	if len(fields) == 0 {
+		return nil
+	}
+	for column := range fields {
+		if _, ok := teacherProfileContentColumns[column]; !ok {
+			return fmt.Errorf("%w: %s", ErrTeacherProfileColumnNotEditable, column)
+		}
+	}
+	result := r.db.WithContext(ctx).Model(&model.TeacherProfile{}).Where("id = ?", id).Updates(fields)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		// Hồ sơ bị xoá mềm giữa lúc đọc và lúc ghi.
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (r *TeacherProfileRepository) Delete(ctx context.Context, id uuid.UUID, hardDelete bool) error {
