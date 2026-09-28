@@ -236,6 +236,17 @@ type ContestCertificateDTO struct {
 	IssuedAt          time.Time `json:"issued_at"`
 }
 
+// ContestVoucherGrantErrorDTO — "details" của 409 CONTEST_VOUCHER_UNAVAILABLE khi chốt: người thắng
+// và voucher nào không phát được, để admin sửa giải rồi chốt lại (chỉ route admin trả).
+type ContestVoucherGrantErrorDTO struct {
+	UserID      uuid.UUID `json:"user_id"`
+	UserName    string    `json:"user_name"`
+	Rank        *int      `json:"rank"`
+	VoucherID   uuid.UUID `json:"voucher_id"`
+	VoucherCode string    `json:"voucher_code"`
+	Reason      string    `json:"reason"`
+}
+
 type FinalizeResultDTO struct {
 	ContestID        uuid.UUID `json:"contest_id"`
 	FinalizedAt      time.Time `json:"finalized_at"`

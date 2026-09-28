@@ -67,7 +67,11 @@ func respondContestError(c *fiber.Ctx, err error) error {
 	var ve *service.ContestValidationError
 	switch {
 	case errors.As(err, &ce):
-		return c.Status(ce.Status).JSON(fiber.Map{"message": ce.Message, "code": ce.Code})
+		body := fiber.Map{"message": ce.Message, "code": ce.Code}
+		if ce.Details != nil {
+			body["details"] = ce.Details
+		}
+		return c.Status(ce.Status).JSON(body)
 	case errors.As(err, &ve):
 		return contestValidationFailed(c, ve.Errors)
 	case errors.Is(err, errUnauthenticated):

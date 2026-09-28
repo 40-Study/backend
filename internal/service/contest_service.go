@@ -58,9 +58,21 @@ type ContestError struct {
 	Status  int
 	Code    string
 	Message string
+	Details interface{} // tuỳ chọn, handler trả ở field "details" (vd. chi tiết voucher khi chốt)
 }
 
 func (e *ContestError) Error() string { return e.Code + ": " + e.Message }
+
+// Is so theo Status+Code: lỗi dựng riêng kèm Details (withDetails) vẫn khớp sentinel bằng errors.Is.
+func (e *ContestError) Is(target error) bool {
+	t, ok := target.(*ContestError)
+	return ok && t.Status == e.Status && t.Code == e.Code
+}
+
+// withDetails trả BẢN SAO của sentinel với message/details riêng — không bao giờ sửa sentinel dùng chung.
+func (e *ContestError) withDetails(message string, details interface{}) *ContestError {
+	return &ContestError{Status: e.Status, Code: e.Code, Message: message, Details: details}
+}
 
 func cerr(status int, code, msg string) *ContestError {
 	return &ContestError{Status: status, Code: code, Message: msg}

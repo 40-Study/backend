@@ -64,6 +64,15 @@ func (s *ContestService) Finalize(ctx context.Context, id uuid.UUID, actor *Cont
 		result.ContestID, result.FinalizedAt = id, now
 		return nil
 	})
+	// Voucher giải không phát được: vẫn 409 CONTEST_VOUCHER_UNAVAILABLE, nhưng nói rõ người thắng và
+	// voucher nào (B2 VoucherGrantError) để admin sửa giải rồi chốt lại.
+	var ge *VoucherGrantError
+	if errors.As(err, &ge) {
+		return nil, ErrContestVoucherUnusable.withDetails(ge.Error(), &dto.ContestVoucherGrantErrorDTO{
+			UserID: ge.UserID, UserName: ge.UserName, Rank: ge.Rank,
+			VoucherID: ge.VoucherID, VoucherCode: ge.VoucherCode, Reason: ge.Reason,
+		})
+	}
 	if errors.Is(err, ErrVoucherUnavailableForGrant) {
 		return nil, ErrContestVoucherUnusable
 	}

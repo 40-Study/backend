@@ -32,9 +32,15 @@ type fakeIssuer struct {
 	notified         [][]service.ContestResultNotice
 	db               *gorm.DB // đọc ngoài tx để kiểm "thông báo chỉ sau commit"
 	uncommittedCalls int
+	// delegate (tuỳ chọn): phát thưởng bằng ContestRewardService THẬT của B2 (lỗi voucher chi tiết),
+	// thông báo vẫn qua fake để giữ kiểm tra "sau commit".
+	delegate *service.ContestRewardService
 }
 
-func (f *fakeIssuer) IssueAwardTx(_ context.Context, tx *gorm.DB, g service.ContestAwardGrant) (*service.ContestAwardIssued, error) {
+func (f *fakeIssuer) IssueAwardTx(ctx context.Context, tx *gorm.DB, g service.ContestAwardGrant) (*service.ContestAwardIssued, error) {
+	if f.delegate != nil {
+		return f.delegate.IssueAwardTx(ctx, tx, g)
+	}
 	out := &service.ContestAwardIssued{}
 	if g.VoucherID != nil {
 		var n int64
