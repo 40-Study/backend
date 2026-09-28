@@ -28,6 +28,11 @@ type EnrollmentResponseDTO struct {
 	CourseSlug      string          `json:"course_slug,omitempty"`
 	CourseThumbnail *string         `json:"course_thumbnail,omitempty"`
 	CourseCategory  string          `json:"course_category,omitempty"`
+	// InstructorID/Instructor (việc phụ lane A, mở khoá E1 QA vòng 2): trước đây DTO không có
+	// giảng viên nên web dựng instructor.id = "" và hộp "Tin nhắn mới" lọc mất mọi khoá, báo sai
+	// "chưa đăng ký khoá nào". Cùng shape với CourseResponseDTO để web dùng lại mapper sẵn có.
+	InstructorID uuid.UUID            `json:"instructor_id"`
+	Instructor   *CourseInstructorDTO `json:"instructor,omitempty"`
 
 	// WatchedSeconds: tong so giay video da xem cua ghi danh nay, cong don tu
 	// lesson_progress.video_watched_seconds (du lieu that do trinh phat video ghi len qua

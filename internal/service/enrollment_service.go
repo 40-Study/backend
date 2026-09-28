@@ -245,6 +245,8 @@ func (s *EnrollmentService) GetMyEnrollments(ctx context.Context, userID uuid.UU
 		if enrollments[i].Course.Category != nil {
 			d.CourseCategory = enrollments[i].Course.Category.Name
 		}
+		d.InstructorID = enrollments[i].Course.InstructorID
+		d.Instructor = courseInstructorSummary(&enrollments[i].Course)
 		// Pending assignments cho khoa nay.
 		d.PendingAssignments = toPendingAssignmentDTOs(pendingByCourse[enrollments[i].CourseID])
 		result[i] = *d
@@ -256,6 +258,24 @@ func (s *EnrollmentService) GetMyEnrollments(ctx context.Context, userID uuid.UU
 		Page:        page,
 		PageSize:    pageSize,
 	}, nil
+}
+
+// courseInstructorSummary dựng thông tin giảng viên cho DTO ghi danh từ Course.Instructor đã
+// Preload (GetByUserID). Trả nil khi chưa preload được giảng viên (ID rỗng) để JSON bỏ trường,
+// thay vì một object tên rỗng khiến web tưởng là dữ liệu thật.
+func courseInstructorSummary(course *model.Course) *dto.CourseInstructorDTO {
+	if course == nil || course.Instructor.ID == uuid.Nil {
+		return nil
+	}
+	name := course.Instructor.UserName
+	if course.Instructor.FullName != nil && *course.Instructor.FullName != "" {
+		name = *course.Instructor.FullName
+	}
+	return &dto.CourseInstructorDTO{
+		ID:        course.Instructor.ID,
+		Name:      name,
+		AvatarURL: course.Instructor.AvatarURL,
+	}
 }
 
 func (s *EnrollmentService) GetEnrollmentDetail(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*dto.EnrollmentDetailDTO, error) {
@@ -599,9 +619,22 @@ func (s *EnrollmentService) resolveServerVideoDuration(ctx context.Context, less
 	for _, c := range contents {
 		if c.Type == "video" {
 			hasVideo = true
-			if c.Duration > 0 {
-				return c.Duration, true, nil
-			}
+			break
+		}
+	}
+
+	// A1 (QA vòng 2, N5/S-P1-1): độ dài THẬT của video (video_uploads.duration, do ffmpeg đo) được
+	// ưu tiên HƠN lesson_contents.duration khai tay — kể cả khi cột khai tay đã > 0. Trước đây chỉ
+	// đối chiếu khi cột khai tay = 0, nên một content khai 900s cho video thật dài 5s làm mẫu số
+	// sai: xem trọn 5s chỉ được 0,6% và bài KHÔNG BAO GIỜ đạt ngưỡng 90%. Chiều ngược lại (khai
+	// ngắn hơn video thật) còn tệ hơn: xem vài giây là "hoàn thành". Server là nguồn sự thật, nên
+	// khi server biết độ dài thật thì không tin con số khai tay.
+	if uploadDur := s.realDurationFromVideoUpload(ctx, contents); uploadDur > 0 {
+		return uploadDur, hasVideo, nil
+	}
+	for _, c := range contents {
+		if c.Type == "video" && c.Duration > 0 {
+			return c.Duration, true, nil
 		}
 	}
 
@@ -618,9 +651,7 @@ func (s *EnrollmentService) resolveServerVideoDuration(ctx context.Context, less
 	//
 	// Tự chữa ở ĐÂY thay vì lúc tạo: đây là thời điểm ĐỌC duration (lúc ghi tiến độ), lúc đó
 	// video đã xử lý xong nên không còn race — và nó chữa được cả những bài đã tạo từ trước.
-	if healed := s.healDurationFromVideoUpload(ctx, contents); healed > 0 {
-		return healed, hasVideo, nil
-	}
+	// (Đường chữa này nay nằm trong realDurationFromVideoUpload ở trên, chạy cho mọi content video.)
 
 	legacy, err := s.lessonRepo.GetLegacyVideoDurationByLessonID(ctx, lessonID)
 	if err != nil {
@@ -633,17 +664,20 @@ func (s *EnrollmentService) resolveServerVideoDuration(ctx context.Context, less
 	return legacy, hasVideo, nil
 }
 
-// healDurationFromVideoUpload chữa lesson_contents.duration = 0 bằng thời lượng thật của video
-// gốc trên video_uploads (khớp qua upload id nhúng trong URL HLS), rồi ghi lại để các nhịp
-// heartbeat sau không phải tra lại. Trả 0 khi không chữa được — mọi trường hợp không chữa được
-// đều là "không biết", không phải lỗi, nên không làm hỏng request tiến độ đang chạy.
-func (s *EnrollmentService) healDurationFromVideoUpload(ctx context.Context, contents []model.LessonContent) int {
+// realDurationFromVideoUpload trả thời lượng thật của video gốc trên video_uploads (khớp qua
+// upload id nhúng trong URL HLS) cho content video đầu tiên tra được, và ghi lại xuống
+// lesson_contents.duration khi cột đó đang lệch (0 hoặc khai tay sai) để các nhịp heartbeat sau
+// và các màn hình khác đọc đúng. Trả 0 khi không tra được — mọi trường hợp đó đều là "không
+// biết", không phải lỗi, nên không làm hỏng request tiến độ đang chạy. Video ngoài hệ thống
+// (URL không phải HLS nội bộ, vd video mẫu của seed) không có bản ghi upload nên rơi về
+// lesson_contents.duration — dữ liệu seed phải tự khai đúng (xem seeds/demo_courses.go).
+func (s *EnrollmentService) realDurationFromVideoUpload(ctx context.Context, contents []model.LessonContent) int {
 	if s.videoUploadRepo == nil {
 		return 0
 	}
 	for i := range contents {
 		c := &contents[i]
-		if c.Type != "video" || c.Duration > 0 || c.VideoURL == nil {
+		if c.Type != "video" || c.VideoURL == nil {
 			continue
 		}
 		m := hlsUploadIDPattern.FindStringSubmatch(*c.VideoURL)
@@ -658,16 +692,19 @@ func (s *EnrollmentService) healDurationFromVideoUpload(ctx context.Context, con
 		if err != nil || upload == nil || upload.Duration == nil || *upload.Duration <= 0 {
 			continue
 		}
-		healed := int(*upload.Duration)
+		uploadDur := int(*upload.Duration)
+		if uploadDur == c.Duration {
+			return uploadDur
+		}
 		// Ghi lại để lần sau rẻ. Dùng UpdateContentDuration (một cột) chứ KHÔNG dùng
 		// UpdateContent — UpdateContent là db.Save() nên ghi đè MỌI cột từ struct vừa nạp, sẽ
 		// nuốt im lặng thay đổi của request song song (C-5). Ghi hỏng thì vẫn trả duration vừa
 		// tìm được: không đánh đổi lợi ích cache lấy việc chặn tiến độ học — nhưng phải LOG,
 		// không được nuốt.
-		if err := s.lessonRepo.UpdateContentDuration(ctx, c.ID, healed); err != nil {
+		if err := s.lessonRepo.UpdateContentDuration(ctx, c.ID, uploadDur); err != nil {
 			log.Printf("[WARN] Khong ghi nguoc duoc duration cho lesson_content %s: %v", c.ID, err)
 		}
-		return healed
+		return uploadDur
 	}
 	return 0
 }
@@ -924,17 +961,17 @@ func (s *EnrollmentService) toEnrollmentResponseDTO(enrollment *model.Enrollment
 		ID:               enrollment.ID,
 		UserID:           enrollment.UserID,
 		CourseID:         enrollment.CourseID,
-		EnrolledAt:       enrollment.EnrolledAt.Format("2006-01-02T15:04:05Z"),
+		EnrolledAt:       enrollment.EnrolledAt.UTC().Format(time.RFC3339),
 		ProgressPercent:  enrollment.ProgressPercent,
 		CompletedLessons: enrollment.CompletedLessons,
 		TotalLessons:     enrollment.TotalLessons,
 	}
 	if enrollment.CompletedAt != nil {
-		formatted := enrollment.CompletedAt.Format("2006-01-02T15:04:05Z")
+		formatted := enrollment.CompletedAt.UTC().Format(time.RFC3339)
 		resp.CompletedAt = &formatted
 	}
 	if enrollment.LastAccessedAt != nil {
-		formatted := enrollment.LastAccessedAt.Format("2006-01-02T15:04:05Z")
+		formatted := enrollment.LastAccessedAt.UTC().Format(time.RFC3339)
 		resp.LastAccessedAt = &formatted
 	}
 	return resp
@@ -949,10 +986,10 @@ func (s *EnrollmentService) toLessonProgressResponseDTO(lp *model.LessonProgress
 		Status:           lp.Status,
 		ProgressPercent:  lp.ProgressPercent,
 		VideoWatchedSecs: lp.VideoWatchedSecs,
-		LastAccessedAt:   lp.LastAccessedAt.Format("2006-01-02T15:04:05Z"),
+		LastAccessedAt:   lp.LastAccessedAt.UTC().Format(time.RFC3339),
 	}
 	if lp.CompletedAt != nil {
-		formatted := lp.CompletedAt.Format("2006-01-02T15:04:05Z")
+		formatted := lp.CompletedAt.UTC().Format(time.RFC3339)
 		resp.CompletedAt = &formatted
 	}
 	return resp
@@ -977,7 +1014,7 @@ func (s *EnrollmentService) GetCourseEnrollments(ctx context.Context, courseID u
 		items[i] = dto.CourseEnrollmentItemDTO{
 			ID:              e.ID,
 			UserID:          e.UserID,
-			EnrolledAt:      e.EnrolledAt.Format("2006-01-02T15:04:05Z"),
+			EnrolledAt:      e.EnrolledAt.UTC().Format(time.RFC3339),
 			ProgressPercent: e.ProgressPercent,
 		}
 		if e.User.Email != "" {
@@ -987,7 +1024,7 @@ func (s *EnrollmentService) GetCourseEnrollments(ctx context.Context, courseID u
 			items[i].UserName = *e.User.FullName
 		}
 		if e.CompletedAt != nil {
-			formatted := e.CompletedAt.Format("2006-01-02T15:04:05Z")
+			formatted := e.CompletedAt.UTC().Format(time.RFC3339)
 			items[i].CompletedAt = &formatted
 		}
 	}
@@ -1013,14 +1050,14 @@ func (s *EnrollmentService) DebugGetCourseEnrollments(ctx context.Context, cours
 			ID:         e.ID,
 			UserID:     e.UserID,
 			CourseID:   e.CourseID,
-			EnrolledAt: e.EnrolledAt.Format("2006-01-02T15:04:05Z"),
+			EnrolledAt: e.EnrolledAt.UTC().Format(time.RFC3339),
 			IsDeleted:  e.DeletedAt.Valid,
 		}
 		if e.User.Email != "" {
 			result[i].UserEmail = e.User.Email
 		}
 		if e.DeletedAt.Valid {
-			formatted := e.DeletedAt.Time.Format("2006-01-02T15:04:05Z")
+			formatted := e.DeletedAt.Time.UTC().Format(time.RFC3339)
 			result[i].DeletedAt = &formatted
 		}
 	}
