@@ -3,20 +3,20 @@ package dto
 import "github.com/google/uuid"
 
 type CreateTeacherProfileDTO struct {
-	UserID          uuid.UUID `json:"user_id" binding:"required"`
-	Specialization  *string   `json:"specialization" binding:"omitempty,max=255"`
-	Education       *string   `json:"education" binding:"omitempty,max=255"`
-	ExperienceYears *int      `json:"experience_years" binding:"omitempty,min=0"`
+	UserID          uuid.UUID `json:"user_id" validate:"required"`
+	Specialization  *string   `json:"specialization" validate:"omitempty,max=255"`
+	Education       *string   `json:"education" validate:"omitempty,max=255"`
+	ExperienceYears *int      `json:"experience_years" validate:"omitempty,min=0"`
 	CertificateInfo *string   `json:"certificate_info"`
-	Department      *string   `json:"department" binding:"omitempty,max=255"`
+	Department      *string   `json:"department" validate:"omitempty,max=255"`
 }
 
 type UpdateTeacherProfileDTO struct {
-	Specialization  *string `json:"specialization" binding:"omitempty,max=255"`
-	Education       *string `json:"education" binding:"omitempty,max=255"`
-	ExperienceYears *int    `json:"experience_years" binding:"omitempty,min=0"`
+	Specialization  *string `json:"specialization" validate:"omitempty,max=255"`
+	Education       *string `json:"education" validate:"omitempty,max=255"`
+	ExperienceYears *int    `json:"experience_years" validate:"omitempty,min=0"`
 	CertificateInfo *string `json:"certificate_info"`
-	Department      *string `json:"department" binding:"omitempty,max=255"`
+	Department      *string `json:"department" validate:"omitempty,max=255"`
 }
 
 type TeacherProfileResponseDTO struct {

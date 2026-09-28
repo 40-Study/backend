@@ -11,6 +11,7 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 type ClassLessonContentServiceInterface interface {
@@ -512,8 +513,8 @@ func (s *ClassLessonContentService) toResponseDTO(clc *model.ClassLessonContent)
 		ScheduledAt:     clc.ScheduledAt,
 		EndAt:           clc.EndAt,
 		Status:          clc.Status,
-		CreatedAt:       clc.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:       clc.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:       utils.FormatTimestamp(clc.CreatedAt),
+		UpdatedAt:       utils.FormatTimestamp(clc.UpdatedAt),
 	}
 
 	// From preloaded relationships

@@ -8,6 +8,7 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 type TeacherServiceInterface interface {
@@ -166,7 +167,7 @@ func toTeacherResponseDTO(user *model.User) *dto.TeacherResponseDTO {
 		DateOfBirth: user.DateOfBirth,
 		IsVerified:  user.IsVerified,
 		IsActive:    user.IsActive,
-		CreatedAt:   user.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   user.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:   utils.FormatTimestamp(user.CreatedAt),
+		UpdatedAt:   utils.FormatTimestamp(user.UpdatedAt),
 	}
 }

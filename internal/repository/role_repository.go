@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/utils"
 )
 
 type RoleRepositoryInterface interface {
@@ -93,7 +94,7 @@ func (r *RoleRepository) GetAllRoles(ctx context.Context, page, pageSize int, ke
 		query = query.Where("organization_id = ?", *organizationID)
 	}
 	if keyword != "" {
-		query = query.Where("name ILIKE ?", "%"+keyword+"%")
+		query = query.Where("name ILIKE ?", utils.ContainsLikePattern(keyword))
 	}
 
 	if err := query.Count(&total).Error; err != nil {

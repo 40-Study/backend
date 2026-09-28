@@ -9,6 +9,7 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 // ErrNotTeacherProfileOwner: C-05 (audit 260909) — trước đây UpdateTeacherProfile/
@@ -224,21 +225,16 @@ func toPublicTeacherProfileDTO(p *model.TeacherProfile) *dto.PublicTeacherProfil
 		ExperienceYears: p.ExperienceYears,
 		CertificateInfo: p.CertificateInfo,
 		Department:      p.Department,
-		CreatedAt:       p.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:       p.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:       utils.FormatTimestamp(p.CreatedAt),
+		UpdatedAt:       utils.FormatTimestamp(p.UpdatedAt),
 	}
 }
 
 func toTeacherProfileResponseDTO(p *model.TeacherProfile) *dto.TeacherProfileResponseDTO {
-	var reviewedAt *string
-	if p.ReviewedAt != nil {
-		s := p.ReviewedAt.Format("2006-01-02T15:04:05Z07:00")
-		reviewedAt = &s
-	}
 	return &dto.TeacherProfileResponseDTO{
 		ApprovalStatus:    p.ApprovalStatus,
 		RejectionReason:   p.RejectionReason,
-		ReviewedAt:        reviewedAt,
+		ReviewedAt:        utils.FormatTimestampPtr(p.ReviewedAt),
 		ResubmissionCount: p.ResubmissionCount,
 		ID:              p.ID,
 		UserID:          p.UserID,
@@ -247,7 +243,7 @@ func toTeacherProfileResponseDTO(p *model.TeacherProfile) *dto.TeacherProfileRes
 		ExperienceYears: p.ExperienceYears,
 		CertificateInfo: p.CertificateInfo,
 		Department:      p.Department,
-		CreatedAt:       p.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:       p.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:       utils.FormatTimestamp(p.CreatedAt),
+		UpdatedAt:       utils.FormatTimestamp(p.UpdatedAt),
 	}
 }

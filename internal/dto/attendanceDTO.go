@@ -3,25 +3,25 @@ package dto
 import "github.com/google/uuid"
 
 type CreateAttendanceDTO struct {
-	StudentID uuid.UUID `json:"student_id" binding:"required"`
-	Date      string    `json:"date" binding:"required"`
-	Status    string    `json:"status" binding:"required,oneof=present absent late excused"`
+	StudentID uuid.UUID `json:"student_id" validate:"required"`
+	Date      string    `json:"date" validate:"required"`
+	Status    string    `json:"status" validate:"required,oneof=present absent late excused"`
 	Note      *string   `json:"note"`
 }
 
 type BulkCreateAttendanceDTO struct {
-	Date        string               `json:"date" binding:"required"`
-	Attendances []AttendanceEntryDTO `json:"attendances" binding:"required,min=1"`
+	Date        string               `json:"date" validate:"required"`
+	Attendances []AttendanceEntryDTO `json:"attendances" validate:"required,min=1"`
 }
 
 type AttendanceEntryDTO struct {
-	StudentID uuid.UUID `json:"student_id" binding:"required"`
-	Status    string    `json:"status" binding:"required,oneof=present absent late excused"`
+	StudentID uuid.UUID `json:"student_id" validate:"required"`
+	Status    string    `json:"status" validate:"required,oneof=present absent late excused"`
 	Note      *string   `json:"note"`
 }
 
 type UpdateAttendanceDTO struct {
-	Status *string `json:"status" binding:"omitempty,oneof=present absent late excused"`
+	Status *string `json:"status" validate:"omitempty,oneof=present absent late excused"`
 	Note   *string `json:"note"`
 }
 

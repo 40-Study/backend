@@ -9,6 +9,7 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 type AttendanceServiceInterface interface {
@@ -144,6 +145,6 @@ func toAttendanceResponseDTO(a *model.Attendance) *dto.AttendanceResponseDTO {
 		Date:      a.Date.Format("2006-01-02"),
 		Status:    a.Status,
 		Note:      a.Note,
-		CreatedAt: a.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt: utils.FormatTimestamp(a.CreatedAt),
 	}
 }
