@@ -9,71 +9,97 @@ package service
 //   - Q5: khoá đang chờ duyệt không sửa được (ensureCourseEditable) — trước bản vá tạo/sửa/xoá
 //     quiz và câu hỏi của khoá pending_review vẫn 201/200.
 //
+// Re-review vòng 2: một quiz có thể gắn CẢ lesson_id lẫn course_id. Trước đây guard chỉ xét
+// course_id, nên gửi {lesson_id: bài của khoá đang chờ duyệt, course_id: khoá nháp khác} lách
+// được Q5 (quiz mới hiện trong bài của khoá pending). Giờ guard xét MỌI khoá mà quiz gắn vào, và
+// khi TẠO quiz thì hai khoá phải trùng nhau (khoá suy ra từ lesson là chuẩn), người tạo phải là
+// chủ khoá hoặc admin (vá IDOR teacher2 tạo quiz trong khoá của teacher1, có từ trước #79).
+//
 // Quiz gắn session_id (quiz trong buổi live) KHÔNG thuộc phạm vi: đó là hoạt động lớp học trực
 // tiếp, không phải nội dung admin duyệt; quyền của nó vẫn theo checkSessionQuizAccess.
-// Quyền SỞ HỮU quiz (giảng viên B sửa quiz của giảng viên A) KHÔNG xử lý ở đây: PR #80 thêm
-// created_by + kiểm chủ quiz.
+// Quyền SỬA/XOÁ quiz đã có của người khác (giảng viên B sửa quiz của A) KHÔNG xử lý ở đây: PR #80
+// thêm created_by + ErrQuizNotOwner.
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 	"study.com/v1/internal/model"
 )
 
-// quizContentCourse trả khoá học mà quiz là NỘI DUNG của nó (course_id trực tiếp, hoặc
-// lesson_id -> section -> course). nil khi quiz không gắn khoá/bài hoặc dữ liệu mồ côi.
-func (s *QuizService) quizContentCourse(ctx context.Context, lessonID, courseID *uuid.UUID) (*model.Course, error) {
-	var cid *uuid.UUID
-	switch {
-	case courseID != nil:
-		cid = courseID
-	case lessonID != nil:
-		lesson, err := s.lessonRepo.GetByID(ctx, *lessonID)
-		if err != nil {
-			return nil, err
-		}
-		if lesson == nil {
-			return nil, nil
-		}
-		section, err := s.sectionRepo.GetByID(ctx, lesson.SectionID)
-		if err != nil {
-			return nil, err
-		}
-		if section == nil {
-			return nil, nil
-		}
-		cid = &section.CourseID
-	default:
+var (
+	// ErrQuizCourseMismatch — body tạo quiz có lesson_id thuộc khoá A nhưng course_id là khoá B.
+	ErrQuizCourseMismatch = errors.New("lesson_id and course_id belong to different courses")
+	// ErrQuizCourseNotOwner — tạo quiz trong khoá (đã xuất bản) mà mình không phải chủ khoá.
+	ErrQuizCourseNotOwner = errors.New("only the course owner or an admin can add quizzes to this course")
+)
+
+// lessonCourse — khoá chứa bài học (lesson -> section -> course). nil khi lessonID nil hoặc dữ
+// liệu mồ côi.
+func (s *QuizService) lessonCourse(ctx context.Context, lessonID *uuid.UUID) (*model.Course, error) {
+	if lessonID == nil {
 		return nil, nil
 	}
-	return s.courseRepo.GetByID(ctx, *cid)
+	lesson, err := s.lessonRepo.GetByID(ctx, *lessonID)
+	if err != nil || lesson == nil {
+		return nil, err
+	}
+	section, err := s.sectionRepo.GetByID(ctx, lesson.SectionID)
+	if err != nil || section == nil {
+		return nil, err
+	}
+	return s.courseRepo.GetByID(ctx, section.CourseID)
+}
+
+// quizContentCourses — MỌI khoá mà quiz là nội dung của nó: khoá của lesson_id và khoá course_id
+// (bỏ trùng). Rỗng khi quiz không gắn khoá/bài hoặc dữ liệu mồ côi.
+func (s *QuizService) quizContentCourses(ctx context.Context, lessonID, courseID *uuid.UUID) ([]*model.Course, error) {
+	fromLesson, err := s.lessonCourse(ctx, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	var direct *model.Course
+	if courseID != nil && (fromLesson == nil || fromLesson.ID != *courseID) {
+		if direct, err = s.courseRepo.GetByID(ctx, *courseID); err != nil {
+			return nil, err
+		}
+	}
+	courses := make([]*model.Course, 0, 2)
+	for _, c := range []*model.Course{fromLesson, direct} {
+		if c != nil {
+			courses = append(courses, c)
+		}
+	}
+	return courses, nil
 }
 
 // ensureQuizCourseVisible — D4 cho quiz: người KHÔNG phải chủ khoá/admin (caller đã lọc
 // canView=true) đọc quiz của khoá chưa xuất bản thì nhận ErrCourseHidden, như khoá không tồn tại.
-// Khoá công khai: không tốn truy vấn enrollment.
+// Chỉ cần MỘT khoá gắn với quiz bị ẩn là quiz bị ẩn. Khoá công khai: không tốn truy vấn enrollment.
 func (s *QuizService) ensureQuizCourseVisible(ctx context.Context, quiz *model.Quiz, userID uuid.UUID) error {
-	course, err := s.quizContentCourse(ctx, quiz.LessonID, quiz.CourseID)
+	courses, err := s.quizContentCourses(ctx, quiz.LessonID, quiz.CourseID)
 	if err != nil {
 		return err
 	}
-	if course == nil || !isPrivateCourseStatus(course.Status) {
-		return nil
-	}
-	enrolled, err := isEnrolledInCourse(ctx, s.enrollmentRepo, userID, course.ID)
-	if err != nil {
-		return err
-	}
-	if !canViewCourse(course, userID, false, enrolled) {
-		return ErrCourseHidden
+	for _, course := range courses {
+		if !isPrivateCourseStatus(course.Status) {
+			continue
+		}
+		enrolled, err := isEnrolledInCourse(ctx, s.enrollmentRepo, userID, course.ID)
+		if err != nil {
+			return err
+		}
+		if !canViewCourse(course, userID, false, enrolled) {
+			return ErrCourseHidden
+		}
 	}
 	return nil
 }
 
-// EnsureQuizCourseEditable — Q5 cho quiz/câu hỏi ĐÃ CÓ: quiz thuộc khoá đang chờ duyệt thì
-// ErrCourseLockedForReview (kể cả admin, cùng luật ensureCourseEditable). Quiz không tồn tại trả
-// nil để handler phía sau trả 404 như cũ.
+// EnsureQuizCourseEditable — Q5 cho quiz/câu hỏi ĐÃ CÓ: quiz gắn với BẤT KỲ khoá nào đang chờ
+// duyệt thì ErrCourseLockedForReview (kể cả admin, cùng luật ensureCourseEditable). Quiz không
+// tồn tại trả nil để handler phía sau trả 404 như cũ.
 func (s *QuizService) EnsureQuizCourseEditable(ctx context.Context, quizID uuid.UUID) error {
 	quiz, err := s.repo.GetQuizByID(ctx, quizID)
 	if err != nil {
@@ -82,17 +108,47 @@ func (s *QuizService) EnsureQuizCourseEditable(ctx context.Context, quizID uuid.
 	if quiz == nil {
 		return nil
 	}
-	return s.EnsureNewQuizCourseEditable(ctx, quiz.LessonID, quiz.CourseID)
-}
-
-// EnsureNewQuizCourseEditable — Q5 khi TẠO quiz gắn course_id/lesson_id của khoá đang chờ duyệt.
-func (s *QuizService) EnsureNewQuizCourseEditable(ctx context.Context, lessonID, courseID *uuid.UUID) error {
-	course, err := s.quizContentCourse(ctx, lessonID, courseID)
+	courses, err := s.quizContentCourses(ctx, quiz.LessonID, quiz.CourseID)
 	if err != nil {
 		return err
 	}
-	if course == nil {
-		return nil
+	for _, course := range courses {
+		if err := ensureCourseEditable(course); err != nil {
+			return err
+		}
 	}
-	return ensureCourseEditable(course)
+	return nil
+}
+
+// EnsureNewQuizCourseEditable — kiểm trước khi TẠO quiz gắn course_id/lesson_id, theo thứ tự:
+//  1. có cả hai mà khác khoá -> ErrQuizCourseMismatch (400);
+//  2. không phải chủ khoá/admin -> ErrCourseHidden (404) nếu khoá chưa xuất bản (không lộ sự tồn
+//     tại, như D4), ErrQuizCourseNotOwner (403) nếu đã xuất bản;
+//  3. khoá đang chờ duyệt -> ErrCourseLockedForReview (409).
+//
+// lesson_id/course_id không tồn tại: trả nil để CreateQuiz tự báo lỗi như cũ.
+func (s *QuizService) EnsureNewQuizCourseEditable(ctx context.Context, userID uuid.UUID, isAdmin bool, lessonID, courseID *uuid.UUID) error {
+	fromLesson, err := s.lessonCourse(ctx, lessonID)
+	if err != nil {
+		return err
+	}
+	if fromLesson != nil && courseID != nil && fromLesson.ID != *courseID {
+		return ErrQuizCourseMismatch
+	}
+	courses, err := s.quizContentCourses(ctx, lessonID, courseID)
+	if err != nil {
+		return err
+	}
+	for _, course := range courses {
+		if !isAdmin && course.InstructorID != userID {
+			if isPrivateCourseStatus(course.Status) {
+				return ErrCourseHidden
+			}
+			return ErrQuizCourseNotOwner
+		}
+		if err := ensureCourseEditable(course); err != nil {
+			return err
+		}
+	}
+	return nil
 }

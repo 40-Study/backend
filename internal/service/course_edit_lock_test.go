@@ -21,9 +21,14 @@ type editLockCourseRepo struct {
 	repository.CourseRepositoryInterface
 	course  *model.Course
 	updated bool
+	// others — khoá khác theo id (test quiz gắn 2 khoá); id lạ trả course như cũ.
+	others map[uuid.UUID]*model.Course
 }
 
-func (r *editLockCourseRepo) GetByID(context.Context, uuid.UUID) (*model.Course, error) {
+func (r *editLockCourseRepo) GetByID(_ context.Context, id uuid.UUID) (*model.Course, error) {
+	if c, ok := r.others[id]; ok {
+		return c, nil
+	}
 	return r.course, nil
 }
 func (r *editLockCourseRepo) GetDetailByID(context.Context, uuid.UUID) (*model.Course, error) {

@@ -2,7 +2,10 @@ package database
 
 import (
 	"fmt"
+	"log"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 // buildCheckConstraintSQL (Phase 3 duyệt khoá học/giáo viên) — bản TỔNG QUÁT của
@@ -27,7 +30,8 @@ import (
 // động. Vì vậy constraint luôn được ADD ... NOT VALID (Postgres vẫn kiểm MỌI dòng INSERT/UPDATE
 // mới, tức không nới validate dữ liệu mới), rồi VALIDATE trong khối EXCEPTION riêng:
 //   - dữ liệu sạch (trường hợp bình thường): VALIDATE thành công, constraint validated đầy đủ;
-//   - còn dòng cũ ngoài danh sách: chỉ RAISE WARNING, constraint giữ NOT VALID, backend vẫn lên.
+//   - còn dòng cũ ngoài danh sách: RAISE WARNING (chỉ vào log Postgres), constraint giữ NOT VALID,
+//     backend vẫn lên; RunPostMigrations ghi thêm cảnh báo vào log BACKEND (logNotValidCheckConstraints).
 // Điều kiện "đã đúng" đòi cả convalidated, nên lần boot sau (khi dữ liệu đã được dọn) tự validate
 // lại. KHÔNG chọn "chỉ mở rộng, không bao giờ bỏ giá trị" vì như vậy giá trị đã bỏ khỏi SSOT vẫn
 // ghi mới được, tức là làm yếu validate.
@@ -87,4 +91,29 @@ func buildForeignKeySQL(table, constraintName, column string) string {
 			END IF;
 		END $$;
 	`, constraintName, table, constraintName, column)
+}
+
+// notValidCheckConstraints — CHECK constraint (của bảng nhìn thấy được trong search_path) đang
+// NOT VALID, dạng "bảng.constraint". Re-review vòng 2 PR #79: RAISE WARNING trong khối DO chỉ vào
+// log Postgres (backend không cài OnNotice), nên suy giảm này trước đây im lặng phía ứng dụng.
+func notValidCheckConstraints(db *gorm.DB) ([]string, error) {
+	var names []string
+	err := db.Raw(`SELECT conrelid::regclass::text || '.' || conname FROM pg_constraint
+		WHERE contype = 'c' AND NOT convalidated AND pg_table_is_visible(conrelid)
+		ORDER BY 1`).Scan(&names).Error
+	return names, err
+}
+
+// logNotValidCheckConstraints ghi vào log backend mỗi CHECK constraint còn NOT VALID sau
+// post-migration. Không chặn khởi động: đây là tình huống rollback đã biết (xem
+// buildCheckConstraintSQL), cần người vận hành dọn dữ liệu cũ.
+func logNotValidCheckConstraints(db *gorm.DB) {
+	names, err := notValidCheckConstraints(db)
+	if err != nil {
+		log.Printf("Warning: không đọc được trạng thái CHECK constraint: %v", err)
+		return
+	}
+	for _, name := range names {
+		log.Printf("Warning: CHECK constraint %s đang NOT VALID: còn dòng cũ ngoài danh sách giá trị (ghi mới vẫn bị kiểm). Dọn dữ liệu cũ rồi khởi động lại để VALIDATE.", name)
+	}
 }

@@ -101,8 +101,12 @@ func (s *EnrollmentService) Enroll(ctx context.Context, userID, courseID uuid.UU
 	if err != nil {
 		return nil, err
 	}
-	if course == nil {
-		return nil, errors.New("course not found")
+	// D4 (re-review vòng 2 PR #79): khoá chưa xuất bản coi như không tồn tại. Trước đây tự ghi
+	// danh khoá nháp giá 0 được (201), rồi canViewCourse tin cờ enrolled nên người ngoài đọc được
+	// toàn bộ nội dung khoá nháp. Không tồn tại và chưa xuất bản trả CÙNG lỗi (404) để không lộ
+	// khoá nháp có thật.
+	if course == nil || isPrivateCourseStatus(course.Status) {
+		return nil, ErrCourseHidden
 	}
 	// C-06: endpoint tự-ghi-danh chỉ dành cho khóa MIỄN PHÍ. Khóa trả phí phải đi qua
 	// payment_service.CheckAndProcessPayment (lane khác) sau khi đơn hàng completed.

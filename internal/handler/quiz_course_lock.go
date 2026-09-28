@@ -14,7 +14,7 @@ import (
 // để không đổi QuizServiceInterface/constructor (PR #80 đang sửa chính các hàm đó).
 type QuizCourseEditLocker interface {
 	EnsureQuizCourseEditable(ctx context.Context, quizID uuid.UUID) error
-	EnsureNewQuizCourseEditable(ctx context.Context, lessonID, courseID *uuid.UUID) error
+	EnsureNewQuizCourseEditable(ctx context.Context, userID uuid.UUID, isAdmin bool, lessonID, courseID *uuid.UUID) error
 }
 
 // Service thật luôn phải có guard — nếu method bị đổi tên thì vỡ lúc biên dịch, không âm thầm
@@ -34,6 +34,14 @@ func respondQuizLockCheck(c *fiber.Ctx, err error) error {
 	if writeCourseLocked(c, err) {
 		return nil
 	}
+	switch err {
+	case service.ErrQuizCourseMismatch:
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+	case service.ErrQuizCourseNotOwner:
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": err.Error()})
+	case service.ErrCourseHidden:
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "Course not found"})
+	}
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 		"message": "Failed to check course status", "error": err.Error(),
 	})
@@ -52,13 +60,18 @@ func (h *QuizHandler) CourseEditLock(param string) fiber.Handler {
 	}
 }
 
-// NewQuizCourseEditLock — middleware cho POST /quizzes: đọc course_id/lesson_id từ body.
+// NewQuizCourseEditLock — middleware cho POST /quizzes: đọc course_id/lesson_id từ body, kiểm
+// khoá nhất quán + người tạo là chủ khoá/admin + khoá không chờ duyệt (re-review vòng 2).
 // Body/uuid sai: để CreateQuiz tự validate như cũ.
 func (h *QuizHandler) NewQuizCourseEditLock() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		locker := h.quizLocker()
 		if locker == nil {
 			return c.Next()
+		}
+		userID, ok := c.Locals("user_id").(uuid.UUID)
+		if !ok {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
 		}
 		var body struct {
 			LessonID string `json:"lesson_id"`
@@ -74,6 +87,7 @@ func (h *QuizHandler) NewQuizCourseEditLock() fiber.Handler {
 		if id, err := uuid.Parse(body.CourseID); err == nil {
 			courseID = &id
 		}
-		return respondQuizLockCheck(c, locker.EnsureNewQuizCourseEditable(c.Context(), lessonID, courseID))
+		isAdmin := isAdminActor(c, h.permChecker, userID)
+		return respondQuizLockCheck(c, locker.EnsureNewQuizCourseEditable(c.Context(), userID, isAdmin, lessonID, courseID))
 	}
 }

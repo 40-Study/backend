@@ -87,7 +87,7 @@ func TestQuizCourseEditLock_PendingReviewBlocksQuizWrites(t *testing.T) {
 		if err := svc.EnsureQuizCourseEditable(ctx, q.ID); !errors.Is(err, ErrCourseLockedForReview) {
 			t.Errorf("%s: sửa quiz khoá chờ duyệt err=%v, muốn ErrCourseLockedForReview", attach, err)
 		}
-		if err := svc.EnsureNewQuizCourseEditable(ctx, q.LessonID, q.CourseID); !errors.Is(err, ErrCourseLockedForReview) {
+		if err := svc.EnsureNewQuizCourseEditable(ctx, f.owner, false, q.LessonID, q.CourseID); !errors.Is(err, ErrCourseLockedForReview) {
 			t.Errorf("%s: tạo quiz khoá chờ duyệt err=%v, muốn ErrCourseLockedForReview", attach, err)
 		}
 	}
@@ -107,5 +107,74 @@ func TestQuizCourseEditLock_PendingReviewBlocksQuizWrites(t *testing.T) {
 	}
 	if err := quizSvc(f, nil).EnsureQuizCourseEditable(ctx, uuid.New()); err != nil {
 		t.Errorf("quiz không tồn tại: %v", err)
+	}
+}
+
+// otherCourse thêm khoá B (cùng chủ khoá A) vào repo của fixture.
+func otherCourse(f *editLockFixture, status string) *model.Course {
+	b := &model.Course{InstructorID: f.owner, Status: status}
+	b.ID = uuid.New()
+	f.course.others = map[uuid.UUID]*model.Course{b.ID: b}
+	return b
+}
+
+// Re-review vòng 2: {lesson_id: bài khoá A đang chờ duyệt, course_id: khoá nháp B} từng lách Q5
+// (guard chỉ xét course_id). Tạo quiz: 2 khoá lệch -> 400; quiz ĐÃ CÓ gắn lệch: xét MỌI khoá.
+func TestQuizCourseGuard_LessonAndCourseMismatch(t *testing.T) {
+	ctx := context.Background()
+	f := newEditLockFixture(model.CourseStatusPendingReview)
+	b := otherCourse(f, model.CourseStatusDraft)
+	lid, aID := f.lessonID(), f.courseID()
+	svc := quizSvc(f, nil)
+	for who, admin := range map[string]bool{"chủ khoá": false, "admin": true} {
+		if err := svc.EnsureNewQuizCourseEditable(ctx, f.owner, admin, &lid, &b.ID); !errors.Is(err, ErrQuizCourseMismatch) {
+			t.Errorf("%s: lesson khoá A + course_id khoá B err=%v, muốn ErrQuizCourseMismatch", who, err)
+		}
+	}
+	if err := svc.EnsureNewQuizCourseEditable(ctx, f.owner, false, &lid, &aID); !errors.Is(err, ErrCourseLockedForReview) {
+		t.Errorf("lesson + course_id cùng khoá A chờ duyệt: err=%v, muốn ErrCourseLockedForReview", err)
+	}
+
+	// Quiz đã có (dữ liệu tạo trước bản vá): gắn bài A (chờ duyệt) + course_id B (nháp).
+	mixed := &model.Quiz{Title: "QA-quiz-lech", LessonID: &lid, CourseID: &b.ID}
+	mixed.ID = uuid.New()
+	if err := quizSvc(f, mixed).EnsureQuizCourseEditable(ctx, mixed.ID); !errors.Is(err, ErrCourseLockedForReview) {
+		t.Errorf("quiz gắn lệch: sửa err=%v, muốn ErrCourseLockedForReview (khoá A đang chờ duyệt)", err)
+	}
+
+	// Đọc: bài thuộc khoá nháp, course_id là khoá đã xuất bản -> người ngoài vẫn bị ẩn.
+	g := newEditLockFixture(model.CourseStatusDraft)
+	pub := otherCourse(g, model.CourseStatusPublished)
+	glid := g.lessonID()
+	hidden := &model.Quiz{Title: "QA-quiz-an", LessonID: &glid, CourseID: &pub.ID}
+	hidden.ID = uuid.New()
+	if err := quizSvc(g, hidden).ensureQuizCourseVisible(ctx, hidden, uuid.New()); !errors.Is(err, ErrCourseHidden) {
+		t.Errorf("quiz gắn bài khoá nháp + course_id khoá published: err=%v, muốn ErrCourseHidden", err)
+	}
+}
+
+// Re-review vòng 2: IDOR — giảng viên khác tạo quiz trong khoá của mình (có từ trước #79).
+func TestQuizCourseGuard_CreateRequiresCourseOwner(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		status string
+		want   error
+	}{
+		{model.CourseStatusPublished, ErrQuizCourseNotOwner},
+		{model.CourseStatusDraft, ErrCourseHidden}, // khoá chưa xuất bản: không lộ sự tồn tại
+	} {
+		f := newEditLockFixture(tc.status)
+		for attach, q := range quizFixtures(f) {
+			svc := quizSvc(f, q)
+			if err := svc.EnsureNewQuizCourseEditable(ctx, uuid.New(), false, q.LessonID, q.CourseID); !errors.Is(err, tc.want) {
+				t.Errorf("%s/%s: GV khác tạo quiz err=%v, muốn %v", tc.status, attach, err, tc.want)
+			}
+			if err := svc.EnsureNewQuizCourseEditable(ctx, f.owner, false, q.LessonID, q.CourseID); err != nil {
+				t.Errorf("%s/%s: chủ khoá tạo quiz err=%v", tc.status, attach, err)
+			}
+			if err := svc.EnsureNewQuizCourseEditable(ctx, uuid.New(), true, q.LessonID, q.CourseID); err != nil {
+				t.Errorf("%s/%s: admin tạo quiz err=%v", tc.status, attach, err)
+			}
+		}
 	}
 }

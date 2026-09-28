@@ -19,12 +19,15 @@ import (
 
 type lockedQuizSvc struct {
 	service.QuizServiceInterface
-	lockErr error
-	writes  int
+	lockErr  error
+	writes   int
+	gotUser  uuid.UUID
+	gotAdmin bool
 }
 
 func (s *lockedQuizSvc) EnsureQuizCourseEditable(context.Context, uuid.UUID) error { return s.lockErr }
-func (s *lockedQuizSvc) EnsureNewQuizCourseEditable(context.Context, *uuid.UUID, *uuid.UUID) error {
+func (s *lockedQuizSvc) EnsureNewQuizCourseEditable(_ context.Context, userID uuid.UUID, isAdmin bool, _, _ *uuid.UUID) error {
+	s.gotUser, s.gotAdmin = userID, isAdmin
 	return s.lockErr
 }
 func (s *lockedQuizSvc) GetQuizByID(context.Context, uuid.UUID, uuid.UUID, bool) (*dto.QuizDetailDTO, error) {
@@ -84,6 +87,39 @@ func TestQuizCourseEditLock_PendingCourseBlocksWrites(t *testing.T) {
 	ok := &lockedQuizSvc{}
 	if code, body := doQuiz(t, quizLockApp(ok), "PUT", "/quizzes/"+qid, `{"title":"QA-quiz"}`); code != 200 || ok.writes != 1 {
 		t.Fatalf("khoá sửa được: PUT = %d %s, writes=%d", code, body, ok.writes)
+	}
+}
+
+// Re-review vòng 2: lỗi guard khi TẠO quiz map đúng mã và chặn TRƯỚC CreateQuiz.
+func TestQuizCourseEditLock_CreateGuardStatusMapping(t *testing.T) {
+	body := `{"title":"QA-quiz","lesson_id":"` + uuid.NewString() + `","course_id":"` + uuid.NewString() + `"}`
+	for _, tc := range []struct {
+		err  error
+		want int
+	}{
+		{service.ErrQuizCourseMismatch, 400},
+		{service.ErrQuizCourseNotOwner, 403},
+		{service.ErrCourseHidden, 404},
+	} {
+		svc := &lockedQuizSvc{lockErr: tc.err}
+		if code, raw := doQuiz(t, quizLockApp(svc), "POST", "/quizzes", body); code != tc.want || svc.writes != 0 {
+			t.Errorf("%v: POST /quizzes = %d %s (writes=%d), muốn %d và không ghi", tc.err, code, raw, svc.writes, tc.want)
+		}
+	}
+}
+
+// Guard tạo quiz phải nhận ĐÚNG người gọi (kiểm chủ khoá) — không phải uuid.Nil hay admin=true.
+func TestQuizCourseEditLock_CreatePassesCaller(t *testing.T) {
+	caller := uuid.New()
+	svc := &lockedQuizSvc{}
+	app := fiber.New()
+	app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", caller); return c.Next() })
+	app.Post("/quizzes", NewQuizHandler(svc, nil).NewQuizCourseEditLock(), func(c *fiber.Ctx) error { return c.SendStatus(200) })
+	if code, body := doQuiz(t, app, "POST", "/quizzes", `{"title":"QA-quiz","course_id":"`+uuid.NewString()+`"}`); code != 200 {
+		t.Fatalf("POST = %d %s", code, body)
+	}
+	if svc.gotUser != caller || svc.gotAdmin {
+		t.Fatalf("guard nhận user=%s admin=%v, muốn user=%s admin=false (không có permChecker)", svc.gotUser, svc.gotAdmin, caller)
 	}
 }
 

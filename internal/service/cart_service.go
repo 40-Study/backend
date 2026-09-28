@@ -38,7 +38,9 @@ func (s *CartService) AddToCart(ctx context.Context, userID uuid.UUID, req dto.A
 	if err != nil {
 		return nil, apperr.NotFound("course not found")
 	}
-	if course == nil {
+	// D4 (re-review vòng 2 PR #79): khoá chưa xuất bản coi như không tồn tại — không cho vào giỏ
+	// (lộ tiêu đề/giá/giảng viên, và mở đường mua khoá nháp).
+	if course == nil || isPrivateCourseStatus(course.Status) {
 		return nil, apperr.NotFound("course not found")
 	}
 

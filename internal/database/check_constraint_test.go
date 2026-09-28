@@ -1,7 +1,9 @@
 package database
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"strings"
 	"testing"
 
@@ -159,6 +161,9 @@ func TestBuildCheckConstraintSQL_PostgresLegacyRowsDoNotBlockBoot(t *testing.T) 
 	if validated() {
 		t.Fatal("còn dòng 'cancelled' mà constraint lại báo validated")
 	}
+	if names, err := notValidCheckConstraints(tx); err != nil || !containsStr(names, "qa_rb.chk_qa_rb_status") {
+		t.Fatalf("notValidCheckConstraints = %v (err=%v), muốn có qa_rb.chk_qa_rb_status", names, err)
+	}
 	must("SAVEPOINT sp")
 	if err := exec("INSERT INTO qa_rb VALUES ('cancelled')"); err == nil {
 		t.Fatal("constraint NOT VALID vẫn phải chặn ghi MỚI giá trị ngoài danh sách")
@@ -170,4 +175,44 @@ func TestBuildCheckConstraintSQL_PostgresLegacyRowsDoNotBlockBoot(t *testing.T) 
 	if !validated() {
 		t.Fatal("dữ liệu đã sạch nhưng lần chạy sau không validate lại constraint")
 	}
+	if names, _ := notValidCheckConstraints(tx); containsStr(names, "qa_rb.chk_qa_rb_status") {
+		t.Fatalf("đã validate nhưng vẫn báo NOT VALID: %v", names)
+	}
+}
+
+// TestRunPostMigrations_LogsNotValidConstraint (re-review vòng 2 PR #79): RAISE WARNING chỉ vào log
+// Postgres, nên RunPostMigrations phải tự ghi vào log BACKEND mỗi CHECK constraint còn NOT VALID.
+// Chạy trong transaction ROLLBACK trên DB đã migrate.
+func TestRunPostMigrations_LogsNotValidConstraint(t *testing.T) {
+	db := pgtest.Open(t)
+	tx := db.Begin()
+	defer tx.Rollback()
+	for _, sql := range []string{
+		"CREATE TEMP TABLE qa_nv (status varchar(20))",
+		"INSERT INTO qa_nv VALUES ('cu')",
+		"ALTER TABLE qa_nv ADD CONSTRAINT chk_qa_nv_status CHECK (status IN ('moi')) NOT VALID",
+	} {
+		if err := tx.Exec(sql).Error; err != nil {
+			t.Fatalf("%v\n%s", err, sql)
+		}
+	}
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(prev)
+	if err := RunPostMigrations(tx); err != nil {
+		t.Fatalf("RunPostMigrations: %v", err)
+	}
+	if !strings.Contains(buf.String(), "qa_nv.chk_qa_nv_status") || !strings.Contains(buf.String(), "NOT VALID") {
+		t.Fatalf("log backend không có cảnh báo NOT VALID cho qa_nv.chk_qa_nv_status:\n%s", buf.String())
+	}
+}
+
+func containsStr(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
