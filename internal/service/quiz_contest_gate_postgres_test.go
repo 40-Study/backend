@@ -25,8 +25,9 @@ func TestQuizCreatedBy_GhiNguoiTao_MyQuizzesChiTraCuaMinh(t *testing.T) {
 		t.Fatalf("CreateQuiz: %v", err)
 	}
 	quizB := f.standaloneQuiz(teacherB, false)
-	// A nhân bản quiz của B: bản sao thuộc về A (người gọi), không phải B.
-	copied, err := f.quiz.DuplicateQuiz(ctx, quizB.ID, teacherA, false)
+	// A nhân bản quiz của chính A: bản sao cũng thuộc A. (A nhân bản quiz của B bị chặn, xem
+	// TestQuizOwnership_NguoiLaKhongSuaXoaNhanBan.)
+	copied, err := f.quiz.DuplicateQuiz(ctx, created.ID, teacherA, false)
 	if err != nil {
 		t.Fatalf("DuplicateQuiz: %v", err)
 	}

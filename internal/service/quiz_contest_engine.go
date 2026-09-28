@@ -84,21 +84,11 @@ func (s *QuizService) GetContestAttemptQuestions(ctx context.Context, quizID, at
 		return nil, errors.New("quiz not found")
 	}
 
+	// toAttemptQuestion bỏ danh sách lựa chọn của câu fill_blank/essay (lựa chọn = đáp án), review
+	// PR #80 F1.
 	questions := make([]dto.AttemptQuestionDTO, len(quiz.Questions))
-	for i, q := range quiz.Questions {
-		answers := make([]dto.AttemptAnswerDTO, len(q.Answers))
-		for j, a := range q.Answers {
-			answers[j] = dto.AttemptAnswerDTO{ID: a.ID, AnswerText: a.AnswerText, DisplayOrder: a.DisplayOrder}
-		}
-		questions[i] = dto.AttemptQuestionDTO{
-			ID:           q.ID,
-			QuestionText: q.QuestionText,
-			QuestionType: q.QuestionType,
-			Points:       q.Points,
-			DisplayOrder: q.DisplayOrder,
-			ImageURL:     q.ImageURL,
-			Answers:      answers,
-		}
+	for i := range quiz.Questions {
+		questions[i] = toAttemptQuestion(&quiz.Questions[i])
 	}
 	shuffleContestQuestions(questions, attemptID, quiz.ShuffleQuestions, quiz.ShuffleAnswers)
 	return questions, nil
