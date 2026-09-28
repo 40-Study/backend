@@ -89,7 +89,7 @@ func newCtEnv(t *testing.T) *ctEnv {
 	}
 
 	pc := middleware.NewPermissionChecker(usr, &apvSystemRoleRepo{perms: perms}, nil, nil)
-	e.issuer = &fakeIssuer{}
+	e.issuer = &fakeIssuer{db: db}
 	e.svc = service.NewContestService(repository.NewContestRepository(db), &fakeEngine{db: db}, e.issuer,
 		repository.NewEnrollmentRepository(db))
 	app := fiber.New()

@@ -93,6 +93,10 @@ func TestContestLive_FinalizeIdempotentSequential(t *testing.T) {
 	if d["already_finalized"] != true || d["award_count"] != 3.0 || d["voucher_count"] != 1.0 || d["notified_count"] != 0.0 {
 		t.Fatalf("chot lan 2 sai: %s", r.raw)
 	}
+	// Contract §5 bước 7: thông báo gửi SAU commit — lúc được gọi, kết nối ngoài tx đã thấy kết quả chốt.
+	if e.issuer.uncommittedCalls != 0 {
+		t.Fatal("thong bao duoc gui TRUOC khi ket qua chot commit")
+	}
 	if e.count("contest_awards", id) != 3 || e.userVoucherCount() != 1 || e.issuer.notifyCalls() != 1 {
 		t.Fatalf("phat trung: awards=%d vouchers=%d notify=%d", e.count("contest_awards", id), e.userVoucherCount(), e.issuer.notifyCalls())
 	}

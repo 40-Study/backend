@@ -125,8 +125,10 @@ func (f *fakeEngine) GetContestAttemptReview(_ context.Context, attemptID uuid.U
 }
 
 type fakeIssuer struct {
-	mu       sync.Mutex
-	notified [][]service.ContestResultNotice
+	mu               sync.Mutex
+	notified         [][]service.ContestResultNotice
+	db               *gorm.DB // đọc ngoài tx để kiểm "thông báo chỉ sau commit"
+	uncommittedCalls int
 }
 
 func (f *fakeIssuer) IssueAwardTx(_ context.Context, tx *gorm.DB, g service.ContestAwardGrant) (*service.ContestAwardIssued, error) {
@@ -155,6 +157,15 @@ func (f *fakeIssuer) IssueAwardTx(_ context.Context, tx *gorm.DB, g service.Cont
 func (f *fakeIssuer) NotifyContestResults(_ context.Context, notices []service.ContestResultNotice) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Kết nối pool NGOÀI tx chốt: nếu thông báo được gửi trong tx (chưa commit) thì kết nối này
+	// chưa thấy finalized_at → ghi nhận vi phạm contract §5 bước 7.
+	if f.db != nil && len(notices) > 0 {
+		var committed int64
+		f.db.Table("contests").Where("id = ? AND finalized_at IS NOT NULL", notices[0].ContestID).Count(&committed)
+		if committed == 0 {
+			f.uncommittedCalls++
+		}
+	}
 	f.notified = append(f.notified, notices)
 	return len(notices), nil
 }
