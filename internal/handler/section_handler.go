@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -21,6 +23,9 @@ func NewSectionHandler(service service.SectionServiceInterface, permChecker *mid
 // sectionForbiddenResponse ánh xạ ErrNotSectionCourseOwner (C-12) sang HTTP 403; trả false
 // khi lỗi không phải lỗi quyền để handler tiếp tục xử lý theo nhánh 400 hiện có.
 func sectionForbiddenResponse(c *fiber.Ctx, err error) bool {
+	if writeCourseLocked(c, err) {
+		return true
+	}
 	if err == service.ErrNotSectionCourseOwner {
 		_ = c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"message": "You are not the instructor of this course",
@@ -100,6 +105,11 @@ func (h *SectionHandler) GetAllSections(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 	sections, err := h.service.GetAllSections(c.Context(), courseID, userID, isAdmin)
 	if err != nil {
+		// D4 (QA vòng 2): khoá không tồn tại hoặc người xem không được thấy khoá chưa xuất bản
+		// -> 404 như nhau (trước đây mọi lỗi đều 500, còn khoá nháp thì trả giáo trình).
+		if errors.Is(err, service.ErrCourseHidden) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "Course not found"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve sections",
 			"error":   err.Error(),
@@ -121,7 +131,15 @@ func (h *SectionHandler) GetSectionByID(c *fiber.Ctx) error {
 		})
 	}
 
-	section, err := h.service.GetSectionByID(c.Context(), sectionID)
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	section, err := h.service.GetSectionByID(c.Context(), sectionID, userID, isAdmin)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Section not found",
@@ -256,7 +274,18 @@ func (h *SectionHandler) ReorderSections(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.ReorderSections(c.Context(), courseID, req); err != nil {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	if err := h.service.ReorderSections(c.Context(), courseID, userID, isAdmin, req); err != nil {
+		if sectionForbiddenResponse(c, err) {
+			return nil
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to reorder sections",
 			"error":   err.Error(),

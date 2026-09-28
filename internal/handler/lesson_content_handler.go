@@ -59,6 +59,9 @@ func (h *LessonContentHandler) CreateContent(c *fiber.Ctx) error {
 
 	content, err := h.service.CreateContent(c.Context(), lessonID, userID, isAdmin, req)
 	if err != nil {
+		if writeCourseLocked(c, err) {
+			return nil
+		}
 		if status := lessonContentErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
 		}
@@ -145,6 +148,9 @@ func (h *LessonContentHandler) UpdateContent(c *fiber.Ctx) error {
 
 	content, err := h.service.UpdateContent(c.Context(), contentID, userID, isAdmin, req)
 	if err != nil {
+		if writeCourseLocked(c, err) {
+			return nil
+		}
 		if status := lessonContentErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
 		}
@@ -191,6 +197,9 @@ func (h *LessonContentHandler) ReorderContents(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 
 	if err := h.service.ReorderContents(c.Context(), lessonID, userID, isAdmin, req); err != nil {
+		if writeCourseLocked(c, err) {
+			return nil
+		}
 		if status := lessonContentErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
 		}
@@ -221,6 +230,9 @@ func (h *LessonContentHandler) DeleteContent(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 
 	if err := h.service.DeleteContent(c.Context(), contentID, userID, isAdmin); err != nil {
+		if writeCourseLocked(c, err) {
+			return nil
+		}
 		if status := lessonContentErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{"message": "Forbidden", "error": err.Error()})
 		}

@@ -38,7 +38,8 @@ type LessonServiceInterface interface {
 	GetLessonByID(ctx context.Context, lessonID, userID uuid.UUID, isAdmin bool) (*dto.LessonResponseDTO, error)
 	UpdateLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateLessonDTO) (*dto.LessonResponseDTO, error)
 	DeleteLesson(ctx context.Context, lessonID, actorUserID uuid.UUID, isAdmin bool) error
-	ReorderLessons(ctx context.Context, sectionID uuid.UUID, req dto.ReorderDTO) error
+	// ReorderLessons (QA vòng 2): trước đây không nhận người gọi nên không kiểm chủ sở hữu.
+	ReorderLessons(ctx context.Context, sectionID, actorUserID uuid.UUID, isAdmin bool, req dto.ReorderDTO) error
 }
 
 type LessonService struct {
@@ -62,20 +63,10 @@ func NewLessonService(
 	}
 }
 
-func (s *LessonService) validateSection(ctx context.Context, sectionID uuid.UUID) error {
-	exists, err := s.sectionRepo.Exists(ctx, sectionID)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return errors.New("section not found")
-	}
-	return nil
-}
-
 // checkSectionCourseOwnership tra ve section (neu ton tai) sau khi xac nhan actorUserID la
-// giang vien so huu course chua section do (qua section.CourseID -> course.InstructorID).
-func (s *LessonService) checkSectionCourseOwnership(ctx context.Context, sectionID, actorUserID uuid.UUID) (*model.Section, error) {
+// giang vien so huu course chua section do (qua section.CourseID -> course.InstructorID) — hoặc
+// admin khi isAdmin — và khoá không đang chờ duyệt (Q5, ensureCourseEditable).
+func (s *LessonService) checkSectionCourseOwnership(ctx context.Context, sectionID, actorUserID uuid.UUID, isAdmin bool) (*model.Section, error) {
 	section, err := s.sectionRepo.GetByID(ctx, sectionID)
 	if err != nil {
 		return nil, err
@@ -90,8 +81,11 @@ func (s *LessonService) checkSectionCourseOwnership(ctx context.Context, section
 	if course == nil {
 		return nil, errors.New("course not found")
 	}
-	if course.InstructorID != actorUserID {
+	if course.InstructorID != actorUserID && !isAdmin {
 		return nil, ErrNotLessonCourseOwner
+	}
+	if err := ensureCourseEditable(course); err != nil {
+		return nil, err
 	}
 	return section, nil
 }
@@ -125,11 +119,13 @@ func requireLessonCourseOwnerOrAdmin(ctx context.Context, sectionRepo repository
 	if course.InstructorID != actorUserID && !isAdmin {
 		return ErrNotLessonCourseOwner
 	}
-	return nil
+	// Q5: chặn ở ĐÂY là chặn luôn mọi thao tác ghi nội dung bài (LessonContentService dùng chung
+	// hàm này cho create/update/delete/reorder content), không phải sửa từng service.
+	return ensureCourseEditable(course)
 }
 
 func (s *LessonService) CreateLesson(ctx context.Context, sectionID, actorUserID uuid.UUID, req dto.CreateLessonDTO) (*dto.LessonResponseDTO, error) {
-	section, err := s.checkSectionCourseOwnership(ctx, sectionID, actorUserID)
+	section, err := s.checkSectionCourseOwnership(ctx, sectionID, actorUserID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -209,6 +205,10 @@ func (s *LessonService) GetAllLessons(ctx context.Context, sectionID, userID uui
 	lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, section.CourseID, sequential, bypass)
 	if err != nil {
 		return nil, err
+	}
+	// D4: danh sách bài của khoá chưa xuất bản chỉ dành cho chủ khoá/admin/người đã ghi danh.
+	if course != nil && !canViewCourse(course, userID, isAdmin, lockInput.Enrolled) {
+		return nil, ErrCourseHidden
 	}
 
 	lessons, err := s.lessonRepo.GetAllBySectionID(ctx, sectionID)
@@ -291,6 +291,10 @@ func (s *LessonService) resolveLessonByIDLock(ctx context.Context, lesson *model
 	lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, courseID, sequential, bypass)
 	if err != nil {
 		return false, nil, nil, err
+	}
+	// D4: bài của khoá chưa xuất bản — người ngoài nhận "không tồn tại", không phải metadata khoá.
+	if course != nil && !canViewCourse(course, userID, isAdmin, lockInput.Enrolled) {
+		return false, nil, nil, ErrCourseHidden
 	}
 	// Quyết định team lead (review vòng 2): xem chú thích tại EnsureLessonInCourse — lessonID
 	// không thuộc LessonOrder của courseID vừa suy ra là lỗi rõ ràng, không mở lén.
@@ -449,8 +453,8 @@ func (s *LessonService) DeleteLesson(ctx context.Context, lessonID, actorUserID 
 	return nil
 }
 
-func (s *LessonService) ReorderLessons(ctx context.Context, sectionID uuid.UUID, req dto.ReorderDTO) error {
-	if err := s.validateSection(ctx, sectionID); err != nil {
+func (s *LessonService) ReorderLessons(ctx context.Context, sectionID, actorUserID uuid.UUID, isAdmin bool, req dto.ReorderDTO) error {
+	if _, err := s.checkSectionCourseOwnership(ctx, sectionID, actorUserID, isAdmin); err != nil {
 		return err
 	}
 

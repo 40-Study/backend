@@ -31,6 +31,9 @@ func SetupApprovalRoutes(
 	// Giáo viên chủ khoá nộp/nộp lại duyệt (kiểm chủ sở hữu trong repository).
 	api.Post("/courses/:id/submit-review", auth, permChecker.RequirePermissions("COURSES_UPDATE_OWN"),
 		approvalHandler.SubmitCourseForReview)
+	// Q5 (QA vòng 2): rút yêu cầu duyệt để sửa tiếp — cùng quyền với nộp duyệt.
+	api.Post("/courses/:id/withdraw-review", auth, permChecker.RequirePermissions("COURSES_UPDATE_OWN"),
+		approvalHandler.WithdrawCourseReview)
 
 	api.Get("/admin/courses", auth, approveCourses, approvalHandler.ListCoursesForReview)
 	api.Post("/admin/courses/:id/approve", auth, approveCourses, approvalHandler.ApproveCourse)
