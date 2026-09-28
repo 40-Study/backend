@@ -44,9 +44,11 @@ func TestUpdateCourse_TeacherCannotSetPublishedDirectly(t *testing.T) {
 	}
 }
 
-// Admin cũng không xuất bản qua PUT (phải đi approve để có reviewed_by/reviewed_at).
+// Admin cũng không xuất bản qua PUT (phải đi approve để có reviewed_by/reviewed_at). Dựng khoá
+// draft: khoá pending_review giờ bị chặn sớm hơn bởi ErrCourseLockedForReview (Q5, xem
+// course_edit_lock_test.go).
 func TestUpdateCourse_AdminCannotPublishViaPut(t *testing.T) {
-	repo := &guardCourseRepoStub{course: &model.Course{InstructorID: uuid.New(), Status: model.CourseStatusPendingReview}}
+	repo := &guardCourseRepoStub{course: &model.Course{InstructorID: uuid.New(), Status: model.CourseStatusDraft}}
 	status := model.CourseStatusPublished
 	_, err := NewCourseService(repo, nil, nil, nil).UpdateCourse(context.Background(), uuid.New(), uuid.New(), true, dto.UpdateCourseDTO{Status: &status})
 	if !errors.Is(err, ErrCourseStatusChangeNotAllowed) {

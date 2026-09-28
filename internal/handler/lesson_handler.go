@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -20,6 +22,9 @@ func NewLessonHandler(service service.LessonServiceInterface, permChecker *middl
 
 // lessonForbiddenResponse ánh xạ ErrNotLessonCourseOwner (C-12) sang HTTP 403.
 func lessonForbiddenResponse(c *fiber.Ctx, err error) bool {
+	if writeCourseLocked(c, err) {
+		return true
+	}
 	if err == service.ErrNotLessonCourseOwner {
 		_ = c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"message": "You are not the instructor of this course",
@@ -99,6 +104,10 @@ func (h *LessonHandler) GetAllLessons(c *fiber.Ctx) error {
 
 	lessons, err := h.service.GetAllLessons(c.Context(), sectionID, userID, isAdmin)
 	if err != nil {
+		// D4 (QA vòng 2): chương không tồn tại / khoá chưa xuất bản mà người xem không có quyền.
+		if errors.Is(err, service.ErrCourseHidden) || err.Error() == "section not found" {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "Section not found"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve lessons",
 			"error":   err.Error(),
@@ -257,7 +266,18 @@ func (h *LessonHandler) ReorderLessons(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.ReorderLessons(c.Context(), sectionID, req); err != nil {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+
+	if err := h.service.ReorderLessons(c.Context(), sectionID, userID, isAdmin, req); err != nil {
+		if lessonForbiddenResponse(c, err) {
+			return nil
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to reorder lessons",
 			"error":   err.Error(),

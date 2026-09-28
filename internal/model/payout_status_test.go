@@ -42,9 +42,9 @@ func TestPayoutStatusSubsets(t *testing.T) {
 			t.Fatalf("%q không thuộc PayoutStatuses", s)
 		}
 	}
-	for _, s := range PayoutReservedStatuses {
-		if s == PayoutStatusRejected {
-			t.Fatal("rejected không được giữ chỗ số dư")
+	for _, s := range append(append([]string{}, PayoutOpenStatuses...), PayoutReservedStatuses...) {
+		if s == PayoutStatusRejected || s == PayoutStatusCancelled {
+			t.Fatalf("%s không được giữ chỗ số dư hay tính là đang xử lý", s)
 		}
 	}
 	if IsValidPayoutStatus("processing") || IsValidPayoutStatus("") {

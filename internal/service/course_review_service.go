@@ -48,6 +48,8 @@ func isOneOf(v string, allowed []string) bool {
 
 type CourseReviewServiceInterface interface {
 	SubmitForReview(ctx context.Context, courseID, actorID uuid.UUID) (*dto.CourseReviewResultDTO, error)
+	// WithdrawReview (Q5, QA vòng 2): giảng viên chủ khoá rút yêu cầu duyệt, khoá về draft để sửa.
+	WithdrawReview(ctx context.Context, courseID, actorID uuid.UUID) (*dto.CourseReviewResultDTO, error)
 	ListForReview(ctx context.Context, status, keyword string, page, pageSize int) (*dto.AdminCourseReviewListDTO, error)
 	Approve(ctx context.Context, courseID, adminID uuid.UUID) (*dto.CourseReviewResultDTO, error)
 	Reject(ctx context.Context, courseID, adminID uuid.UUID, rawReason string) (*dto.CourseReviewResultDTO, error)
@@ -75,6 +77,16 @@ func toReviewResult(c *model.Course) *dto.CourseReviewResultDTO {
 
 func (s *CourseReviewService) SubmitForReview(ctx context.Context, courseID, actorID uuid.UUID) (*dto.CourseReviewResultDTO, error) {
 	course, err := s.repo.ApplyReviewAction(ctx, courseID, repository.CourseActionSubmit, &actorID, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return toReviewResult(course), nil
+}
+
+// WithdrawReview — pending_review -> draft, chỉ chủ khoá (ownerID). Khoá dòng course giống nộp
+// duyệt: admin duyệt/từ chối cùng lúc thì một trong hai bên nhận ErrCourseInvalidReviewStatus.
+func (s *CourseReviewService) WithdrawReview(ctx context.Context, courseID, actorID uuid.UUID) (*dto.CourseReviewResultDTO, error) {
+	course, err := s.repo.ApplyReviewAction(ctx, courseID, repository.CourseActionWithdraw, &actorID, nil, nil)
 	if err != nil {
 		return nil, err
 	}

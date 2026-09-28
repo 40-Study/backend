@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"study.com/v1/internal/constants"
 	"study.com/v1/internal/model"
 )
@@ -236,5 +237,33 @@ func TestApprovalLive_TeacherResubmitLimit(t *testing.T) {
 	}
 	if e.teacherApp.profiles[e.applicantID].ApprovalStatus != model.TeacherApprovalRejected {
 		t.Fatal("lan nop lai bi chan van doi trang thai")
+	}
+}
+
+// Q5 + D2 (QA vòng 2) qua route THẬT: rút yêu cầu duyệt (chỉ chủ khoá, chỉ khi pending_review) và
+// nộp khoá rỗng bị 422 COURSE_EMPTY.
+func TestApprovalLive_CourseWithdrawReviewAndEmptySubmit(t *testing.T) {
+	e := newApvEnv(t)
+	cid := e.draftCourseID.String()
+
+	expectStatus(t, "rut khi dang draft", e.do(t, "POST", "/api/courses/"+cid+"/withdraw-review", e.teacherTok, ""), 400)
+	expectStatus(t, "chu khoa nop duyet", e.do(t, "POST", "/api/courses/"+cid+"/submit-review", e.teacherTok, ""), 200)
+	expectStatus(t, "giao vien khac rut yeu cau", e.do(t, "POST", "/api/courses/"+cid+"/withdraw-review", e.otherTeacherTok, ""), 403)
+	expectStatus(t, "hoc vien rut yeu cau", e.do(t, "POST", "/api/courses/"+cid+"/withdraw-review", e.studentTok, ""), 403)
+
+	r := e.do(t, "POST", "/api/courses/"+cid+"/withdraw-review", e.teacherTok, "")
+	expectStatus(t, "chu khoa rut yeu cau", r, 200)
+	c := e.courses.courses[e.draftCourseID]
+	if r.data()["status"] != "draft" || c.Status != model.CourseStatusDraft || c.SubmittedAt != nil {
+		t.Fatalf("rut yeu cau phai ve draft, submitted_at=nil: data=%v course=%+v", r.data(), c)
+	}
+	expectStatus(t, "khong co trong hang cho sau khi rut", e.do(t, "GET", "/api/admin/courses?status=pending_review", e.adminTok, ""), 200)
+	expectStatus(t, "admin duyet khoa da rut", e.do(t, "POST", "/api/admin/courses/"+cid+"/approve", e.adminTok, ""), 400)
+
+	e.courses.empty = map[uuid.UUID]bool{e.draftCourseID: true}
+	r = e.do(t, "POST", "/api/courses/"+cid+"/submit-review", e.teacherTok, "")
+	expectStatus(t, "nop khoa 0 bai", r, 422)
+	if r.body["code"] != "COURSE_EMPTY" || e.courses.courses[e.draftCourseID].Status != model.CourseStatusDraft {
+		t.Fatalf("nop khoa rong: body=%v status=%s", r.body, e.courses.courses[e.draftCourseID].Status)
 	}
 }

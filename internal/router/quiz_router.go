@@ -18,15 +18,16 @@ func SetupQuizRoutes(
 
 	// ============================================================================
 	// QUIZ CRUD
+	// Route ghi quiz/câu hỏi đi qua CourseEditLock: khoá đang chờ duyệt -> 409 COURSE_PENDING_REVIEW (Q5).
 	// ============================================================================
 	quizzes := api.Group("/quizzes", auth)
 	{
-		quizzes.Post("/", quizHandler.CreateQuiz)
+		quizzes.Post("/", quizHandler.NewQuizCourseEditLock(), quizHandler.CreateQuiz)
 		quizzes.Get("/", quizHandler.GetAllQuizzes)
 		quizzes.Get("/:id", quizHandler.GetQuizByID)
-		quizzes.Put("/:id", quizHandler.UpdateQuiz)
-		quizzes.Delete("/:id", quizHandler.DeleteQuiz)
-		quizzes.Post("/:id/duplicate", quizHandler.DuplicateQuiz)
+		quizzes.Put("/:id", quizHandler.CourseEditLock("id"), quizHandler.UpdateQuiz)
+		quizzes.Delete("/:id", quizHandler.CourseEditLock("id"), quizHandler.DeleteQuiz)
+		quizzes.Post("/:id/duplicate", quizHandler.CourseEditLock("id"), quizHandler.DuplicateQuiz)
 	}
 
 	// ============================================================================
@@ -34,14 +35,14 @@ func SetupQuizRoutes(
 	// ============================================================================
 	questions := api.Group("/quizzes/:quizId/questions", auth)
 	{
-		questions.Post("/", quizHandler.CreateQuestion)
+		questions.Post("/", quizHandler.CourseEditLock("quizId"), quizHandler.CreateQuestion)
 		questions.Get("/", quizHandler.GetQuestionsByQuiz)
 		// M3-01 (review vòng 4): Fiber khớp route theo THỨ TỰ ĐĂNG KÝ — PUT /reorder đăng ký
 		// TRƯỚC PUT /:id (cùng lỗi MEDIUM-11 đã sửa ở grade_router.go, quét ra còn sót ở đây).
-		questions.Put("/reorder", quizHandler.ReorderQuestions)
-		questions.Put("/:id", quizHandler.UpdateQuestion)
-		questions.Delete("/:id", quizHandler.DeleteQuestion)
-		questions.Post("/bulk", quizHandler.BulkCreateQuestions)
+		questions.Put("/reorder", quizHandler.CourseEditLock("quizId"), quizHandler.ReorderQuestions)
+		questions.Put("/:id", quizHandler.CourseEditLock("quizId"), quizHandler.UpdateQuestion)
+		questions.Delete("/:id", quizHandler.CourseEditLock("quizId"), quizHandler.DeleteQuestion)
+		questions.Post("/bulk", quizHandler.CourseEditLock("quizId"), quizHandler.BulkCreateQuestions)
 	}
 
 	// ============================================================================

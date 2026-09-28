@@ -232,6 +232,12 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 	if len(courses) != len(courseIDs) {
 		return nil, ErrCourseNotFound
 	}
+	// D4 (re-review vòng 2 PR #79): không mua được khoá chưa xuất bản (đơn 0đ ghi danh ngay).
+	for i := range courses {
+		if isPrivateCourseStatus(courses[i].Status) {
+			return nil, ErrCourseNotFound
+		}
+	}
 
 	// Giá hiệu lực (khuyến mãi nếu có) — phải KHỚP tổng giỏ hàng (cart_service), xem
 	// Course.EffectivePrice. Smoke test 11/09: giỏ 499.000đ nhưng đơn tính 999.000đ.

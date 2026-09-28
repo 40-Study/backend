@@ -378,6 +378,8 @@ func RunPostMigrations(db *gorm.DB) error {
 		}
 	}
 
+	logNotValidCheckConstraints(db)
+
 	log.Printf("Post-migrations applied: %d statement group(s)\n", len(statements))
 	return nil
 }
