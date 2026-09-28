@@ -42,10 +42,7 @@ func (h *CartHandler) AddToCart(c *fiber.Ctx) error {
 
 	item, err := h.service.AddToCart(c.Context(), userID, req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to add to cart",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, "Failed to add to cart")
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -65,10 +62,7 @@ func (h *CartHandler) GetCart(c *fiber.Ctx) error {
 
 	cart, err := h.service.GetCart(c.Context(), userID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to get cart",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, "Failed to get cart")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -102,10 +96,7 @@ func (h *CartHandler) RemoveFromCart(c *fiber.Ctx) error {
 	}
 
 	if err := h.service.RemoveFromCart(c.Context(), userID, req.CourseIDs); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to remove from cart",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, "Failed to remove from cart")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -123,10 +114,7 @@ func (h *CartHandler) ClearCart(c *fiber.Ctx) error {
 	}
 
 	if err := h.service.ClearCart(c.Context(), userID); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to clear cart",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, "Failed to clear cart")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -153,10 +141,7 @@ func (h *CartHandler) CheckCourseInCart(c *fiber.Ctx) error {
 
 	inCart, err := h.service.CheckCourseInCart(c.Context(), userID, courseID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to check cart",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, "Failed to check cart")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

@@ -134,7 +134,11 @@ func New() (*App, error) {
 
 	handlers := InitHandlers(services, repos, resources.MinioWrapper, resources.Config, permChecker)
 
-	fiberApp := fiber.New()
+	// Review PR #69 BLOCKER (QA 260927): fiber.New() KHÔNG có config nghĩa là c.IP() luôn trả
+	// TCP peer trực tiếp — sau proxy Next.js, TẤT CẢ người dùng đứng chung 1 peer, nên mọi rate
+	// limiter theo IP chia sẻ 1 bucket cho toàn bộ website. Xem BuildFiberConfig (fiber_config.go)
+	// để biết chi tiết đầy đủ.
+	fiberApp := fiber.New(BuildFiberConfig(resources.Config))
 
 	// H-02 (audit 260909): trước đây không có recover middleware nên bất kỳ panic nào
 	// (vd nil pointer dereference ở H-01) đều làm sập kết nối thay vì trả 500 có log.

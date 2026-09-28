@@ -15,8 +15,12 @@ func SetupSystemRoleRoutes(
 	redis *redis.Client,
 	permChecker *middleware.PermissionChecker,
 ) {
-	// Public route: allow clients to list system roles without auth
-	systemRolesPublic := api.Group("/system-roles")
+	// A-P2-1 (QA 260927): trước đây route này public hoàn toàn (comment cũ "allow clients to list
+	// system roles without auth"). Đã grep web/src: màn hình cần danh sách vai trò TRƯỚC khi đăng
+	// nhập (/login/role) gọi GET /auth/system-roles (auth_router.go, vẫn public — route KHÁC),
+	// còn GET /system-roles (route này) chỉ được /admin/page.tsx và /admin/roles/page.tsx gọi —
+	// hai trang admin luôn có token sẵn — nên gate `auth` không phá luồng nào.
+	systemRolesPublic := api.Group("/system-roles", middleware.AuthMiddleware(cfg, redis))
 	systemRolesPublic.Get("/", systemRoleHandler.GetAllSystemRoles)
 
 	// Protected routes: require auth + quyền quản trị RBAC hệ thống cho mọi thao tác ghi.

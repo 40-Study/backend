@@ -49,10 +49,7 @@ func (h *ReviewHandler) CreateReview(c *fiber.Ctx) error {
 
 	review, err := h.service.CreateReview(c.Context(), userID, courseID, req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to create review",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, "Failed to create review")
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -83,10 +80,7 @@ func (h *ReviewHandler) GetReviewsByCourse(c *fiber.Ctx) error {
 
 	reviews, err := h.service.GetReviewsByCourse(c.Context(), courseID, userID, page, pageSize)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to retrieve reviews",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, "Failed to retrieve reviews")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -128,10 +122,7 @@ func (h *ReviewHandler) UpdateReview(c *fiber.Ctx) error {
 
 	review, err := h.service.UpdateReview(c.Context(), id, userID, req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to update review",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, "Failed to update review")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -157,10 +148,7 @@ func (h *ReviewHandler) DeleteReview(c *fiber.Ctx) error {
 	}
 
 	if err := h.service.DeleteReview(c.Context(), id, userID); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to delete review",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, "Failed to delete review")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -200,10 +188,7 @@ func (h *ReviewHandler) ReactToReview(c *fiber.Ctx) error {
 	}
 
 	if err := h.service.ReactToReview(c.Context(), id, userID, req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to react to review",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, "Failed to react to review")
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -228,10 +213,7 @@ func (h *ReviewHandler) RemoveReaction(c *fiber.Ctx) error {
 	}
 
 	if err := h.service.RemoveReaction(c.Context(), id, userID); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to remove reaction",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, "Failed to remove reaction")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
