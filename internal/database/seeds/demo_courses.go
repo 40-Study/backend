@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	"github.com/shopspring/decimal"
 	"study.com/v1/internal/model"
 )
 
@@ -15,6 +16,15 @@ import (
 // (MDN interactive-examples, CC0, xác nhận 200 + Content-Type video/mp4).
 const demoVideoBrokenURL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
 const demoVideoURL = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
+
+// demoVideoDurationSeconds (A1, QA vòng 2 — N5/S-P1-1, lỗi P0): độ dài THẬT của demoVideoURL,
+// đo bằng ffprobe ngày 28/09/2026 (5,055s). Trước đây content video khai Duration =
+// DurationMin*60 (600–1800s) cho một video chỉ dài 5s; server dùng con số khai đó làm mẫu số nên
+// xem hết video chỉ được 5/900 = 0,6% < ngưỡng 90% và KHÔNG bài video demo nào hoàn thành được.
+// Làm tròn XUỐNG (5 chứ không phải 6): xem trọn 5,055s trên mẫu số 6 chỉ được 84%, lại trượt
+// ngưỡng. Video này không có bản ghi video_uploads (URL ngoài hệ thống) nên server không tự đối
+// chiếu được — con số ở đây phải đúng. Đổi demoVideoURL thì PHẢI đo và đổi hằng số này theo.
+const demoVideoDurationSeconds = 5
 
 // SeedDemoCourses tạo khoá học kèm chương, bài học và nội dung bài học.
 // Trả về map slug -> Course để các seeder sau (enrollment) tham chiếu.
@@ -32,6 +42,14 @@ func (s *Seeder) SeedDemoCourses(
 		Where("video_url = ?", demoVideoBrokenURL).
 		Update("video_url", demoVideoURL).Error; err != nil {
 		return nil, fmt.Errorf("failed to backfill lesson content video_url: %w", err)
+	}
+	// Backfill (A1): content video demo đã seed từ trước còn khai duration sai (DurationMin*60) —
+	// FirstOrCreate + Attrs không cập nhật bản ghi có sẵn. Điều kiện `duration <> ?` giữ lệnh này
+	// idempotent: chạy lại không ghi gì thêm.
+	if err := s.db.Model(&model.LessonContent{}).
+		Where("video_url = ? AND type = ? AND duration <> ?", demoVideoURL, "video", demoVideoDurationSeconds).
+		Update("duration", demoVideoDurationSeconds).Error; err != nil {
+		return nil, fmt.Errorf("failed to backfill demo video duration: %w", err)
 	}
 
 	result := make(map[string]model.Course, len(demoCourses))
@@ -55,6 +73,9 @@ func (s *Seeder) SeedDemoCourses(
 			return nil, err
 		}
 		if err := s.seedCourseCurriculum(course.ID, spec.Sections); err != nil {
+			return nil, err
+		}
+		if err := s.syncCourseRatingStats(&course); err != nil {
 			return nil, err
 		}
 
@@ -83,15 +104,16 @@ func (s *Seeder) upsertCourse(spec courseSpec, instructorID, categoryID uuid.UUI
 		TotalDurationMins: totalDuration(spec.Sections),
 		TotalLessons:      totalLessons(spec.Sections),
 		TotalStudents:     spec.TotalStudents,
-		AverageRating:     rating(spec.Rating),
-		TotalReviews:      spec.TotalReviews,
-		Requirements:      pq.StringArray(spec.Requirements),
-		Objectives:        pq.StringArray(spec.Objectives),
-		TargetAudience:    pq.StringArray(spec.TargetAudience),
-		Status:            "published",
-		PublishedAt:       &publishedAt,
-		IsFeatured:        spec.IsFeatured,
-		IsFree:            spec.IsFree,
+		// AverageRating/TotalReviews KHÔNG ghi cứng nữa (A6, QA vòng 2): con số 318/204/... cũ không
+		// khớp bảng reviews (thực tế 0 review) nên trang khoá hiện "318 đánh giá" mà danh sách rỗng.
+		// Hai cột này là giá trị suy ra từ bảng reviews — syncCourseRatingStats tính lại sau upsert.
+		Requirements:   pq.StringArray(spec.Requirements),
+		Objectives:     pq.StringArray(spec.Objectives),
+		TargetAudience: pq.StringArray(spec.TargetAudience),
+		Status:         "published",
+		PublishedAt:    &publishedAt,
+		IsFeatured:     spec.IsFeatured,
+		IsFree:         spec.IsFree,
 	}
 
 	if spec.DiscountPrice > 0 {
@@ -107,6 +129,35 @@ func (s *Seeder) upsertCourse(spec courseSpec, instructorID, categoryID uuid.UUI
 		return model.Course{}, fmt.Errorf("failed to seed course %s: %w", spec.Slug, err)
 	}
 	return course, nil
+}
+
+// syncCourseRatingStats (A6, QA vòng 2) ghi average_rating/total_reviews của khoá bằng số THẬT
+// tính từ bảng reviews (bỏ review đã xoá mềm — Model(&Review{}) tự thêm deleted_at IS NULL), cùng
+// công thức với ReviewService.recomputeCourseRatingStats. Chạy mỗi lần seed nên sửa luôn cả DB đã
+// seed số giả từ trước; chạy lại nhiều lần cho cùng kết quả (idempotent).
+func (s *Seeder) syncCourseRatingStats(course *model.Course) error {
+	var stats struct {
+		Total int64
+		Avg   float64
+	}
+	if err := s.db.Model(&model.Review{}).
+		Where("course_id = ?", course.ID).
+		Select("COUNT(*) AS total, COALESCE(AVG(rating), 0) AS avg").
+		Scan(&stats).Error; err != nil {
+		return fmt.Errorf("failed to compute rating stats for course %s: %w", course.Slug, err)
+	}
+	avg := decimal.NewFromFloat(stats.Avg).Round(2)
+	if err := s.db.Model(&model.Course{}).
+		Where("id = ?", course.ID).
+		UpdateColumns(map[string]interface{}{
+			"average_rating": avg,
+			"total_reviews":  stats.Total,
+		}).Error; err != nil {
+		return fmt.Errorf("failed to sync rating stats for course %s: %w", course.Slug, err)
+	}
+	course.AverageRating = avg
+	course.TotalReviews = int(stats.Total)
+	return nil
 }
 
 // attachCourseTags gắn tag vào khoá học qua bảng many2many course_tags.
@@ -178,8 +229,10 @@ func (s *Seeder) seedLessonContent(lesson model.Lesson, spec lessonSpec) error {
 	}
 
 	// Chỉ nội dung video mới có URL phát; demo dùng video mẫu công khai còn sống (S-P1-1).
+	// Duration của content video PHẢI là độ dài thật của file đó (A1) — không phải DurationMin.
 	if spec.ContentType == "video" {
 		content.VideoURL = ptr(demoVideoURL)
+		content.Duration = demoVideoDurationSeconds
 	}
 
 	if err := s.db.Where("lesson_id = ?", lesson.ID).

@@ -25,6 +25,9 @@ type CertificateServiceInterface interface {
 
 type CertificateEnrollmentRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Enrollment, error)
+	// GetByUserID (A4, QA vòng 2): liệt kê ghi danh của học viên để cấp bù chứng chỉ cho khoá đã
+	// hoàn thành — xem issueMissingCertificates.
+	GetByUserID(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]model.Enrollment, int64, error)
 }
 
 type CertificateService struct {
@@ -89,6 +92,31 @@ func (s *CertificateService) IssueCertificate(ctx context.Context, userID, cours
 		return nil, errors.New("certificate already issued for this course")
 	}
 
+	cert, err := s.createCertificate(ctx, userID, courseID, enrollmentID)
+	if err != nil {
+		return nil, err
+	}
+	certNumber := cert.CertificateNumber
+	now := cert.IssuedAt
+
+	loaded, _ := s.repo.GetCertificateByID(ctx, cert.ID)
+	if loaded != nil {
+		return s.mapCertToDTO(loaded), nil
+	}
+	return &dto.CertificateResponseDTO{
+		ID:                cert.ID,
+		UserID:            userID,
+		CourseID:          courseID,
+		EnrollmentID:      enrollmentID,
+		CertificateNumber: certNumber,
+		IssuedAt:          now,
+		CreatedAt:         cert.CreatedAt,
+	}, nil
+}
+
+// createCertificate ghi một chứng chỉ mới rồi đẩy việc tạo PDF sang RabbitMQ. Nơi gọi chịu trách
+// nhiệm kiểm tra ghi danh đã hoàn thành và chưa có chứng chỉ.
+func (s *CertificateService) createCertificate(ctx context.Context, userID, courseID, enrollmentID uuid.UUID) (*model.Certificate, error) {
 	certNumber := fmt.Sprintf("CERT-%s-%s", time.Now().Format("20060102"), uuid.New().String()[:8])
 	now := time.Now()
 
@@ -128,20 +156,66 @@ func (s *CertificateService) IssueCertificate(ctx context.Context, userID, cours
 			}
 		}
 	}
+	return cert, nil
+}
 
-	loaded, _ := s.repo.GetCertificateByID(ctx, cert.ID)
-	if loaded != nil {
-		return s.mapCertToDTO(loaded), nil
+// certificateBackfillPageSize: số ghi danh đọc mỗi trang khi quét cấp bù chứng chỉ.
+const certificateBackfillPageSize = 100
+
+// issueMissingCertificates (A4, QA vòng 2, N14): trước đây chứng chỉ KHÔNG BAO GIỜ tự cấp — chỉ có
+// POST /certificates mà web không gọi ở đâu, nên học viên học xong 100% vẫn thấy "chưa có chứng
+// chỉ". Hàm này cấp chứng chỉ cho mọi ghi danh đã hoàn thành (completed_at do recalculateProgress
+// đặt khi tiến độ chạm 100%) mà chưa có chứng chỉ.
+//
+// Vì sao cấp ở đây (lúc đọc danh sách) thay vì ngay trong UpdateLessonProgress: nối
+// EnrollmentService với CertificateService phải sửa app/services.go, file ngoài phạm vi lane A.
+// Cấp lúc đọc vẫn đúng với người dùng (danh sách luôn đủ khi họ mở ra xem), idempotent, và cấp bù
+// luôn cho người đã hoàn thành TRƯỚC bản vá này.
+//
+// Idempotent: kiểm tra chứng chỉ có sẵn trước khi tạo; hai request song song cùng tạo thì unique
+// index (user_id, course_id) chặn bản thứ hai — lỗi đó được coi là "đã có", đọc lại để xác nhận.
+func (s *CertificateService) issueMissingCertificates(ctx context.Context, userID uuid.UUID) error {
+	if s.enrollmentRepo == nil {
+		return nil
 	}
-	return &dto.CertificateResponseDTO{
-		ID:                cert.ID,
-		UserID:            userID,
-		CourseID:          courseID,
-		EnrollmentID:      enrollmentID,
-		CertificateNumber: certNumber,
-		IssuedAt:          now,
-		CreatedAt:         cert.CreatedAt,
-	}, nil
+	for page := 1; ; page++ {
+		enrollments, total, err := s.enrollmentRepo.GetByUserID(ctx, userID, page, certificateBackfillPageSize)
+		if err != nil {
+			return fmt.Errorf("list enrollments: %w", err)
+		}
+		for i := range enrollments {
+			e := &enrollments[i]
+			if e.CompletedAt == nil {
+				continue
+			}
+			if err := s.ensureCertificate(ctx, e); err != nil {
+				return err
+			}
+		}
+		if len(enrollments) == 0 || int64(page*certificateBackfillPageSize) >= total {
+			return nil
+		}
+	}
+}
+
+// ensureCertificate tạo chứng chỉ cho một ghi danh đã hoàn thành nếu chưa có. Không lỗi khi đã có.
+func (s *CertificateService) ensureCertificate(ctx context.Context, e *model.Enrollment) error {
+	existing, err := s.repo.GetCertificateByCourseAndUser(ctx, e.CourseID, e.UserID)
+	if err != nil {
+		return fmt.Errorf("check existing certificate: %w", err)
+	}
+	if existing != nil {
+		return nil
+	}
+	if _, err := s.createCertificate(ctx, e.UserID, e.CourseID, e.ID); err != nil {
+		// Thua race với request song song: unique index đã có bản ghi -> coi như đã cấp.
+		again, lookupErr := s.repo.GetCertificateByCourseAndUser(ctx, e.CourseID, e.UserID)
+		if lookupErr == nil && again != nil {
+			return nil
+		}
+		return fmt.Errorf("issue certificate for enrollment %s: %w", e.ID, err)
+	}
+	return nil
 }
 
 func (s *CertificateService) GetMyCertificates(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.CertificateListDTO, error) {
@@ -150,6 +224,10 @@ func (s *CertificateService) GetMyCertificates(ctx context.Context, userID uuid.
 	}
 	if pageSize < 1 || pageSize > 50 {
 		pageSize = 10
+	}
+
+	if err := s.issueMissingCertificates(ctx, userID); err != nil {
+		return nil, err
 	}
 
 	certs, total, err := s.repo.GetCertificatesByUserID(ctx, userID, page, pageSize)
