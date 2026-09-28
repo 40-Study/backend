@@ -204,6 +204,55 @@ func TestGrantVoucherTx_HetLuot_VaIdempotent(t *testing.T) {
 	}
 }
 
+// Chủ dự án chốt 28/09: voucher chưa tới start_date, hoặc user đã hết lượt usage_per_user của voucher
+// đó, bị từ chối; voucher đã tới ngày và user khác chưa dùng thì phát được.
+func TestGrantVoucherTx_ChuaToiNgay_HetLuotCuaUser(t *testing.T) {
+	f := newContestFixture(t)
+	vs := newTestVoucherService(f)
+	ctx := context.Background()
+	used, fresh := f.user("used"), f.user("fresh")
+	grant := func(userID, voucherID uuid.UUID) error {
+		return f.db.Transaction(func(tx *gorm.DB) error {
+			_, err := vs.GrantVoucherTx(ctx, tx, userID, voucherID, model.UserVoucherSourceContestReward, "")
+			return err
+		})
+	}
+	setStart := func(voucherID uuid.UUID, start time.Time) {
+		if err := f.db.Model(&model.Voucher{}).Where("id = ?", voucherID).Update("start_date", start).Error; err != nil {
+			t.Fatalf("đặt start_date: %v", err)
+		}
+	}
+
+	future := f.voucher(true, nil)
+	setStart(future, time.Now().Add(48*time.Hour))
+	if err := grant(fresh, future); !errors.Is(err, ErrVoucherUnavailableForGrant) {
+		t.Errorf("voucher chưa tới start_date: muốn ErrVoucherUnavailableForGrant, nhận %v", err)
+	}
+	started := f.voucher(true, nil)
+	setStart(started, time.Now().Add(-48*time.Hour))
+	if err := grant(fresh, started); err != nil {
+		t.Errorf("voucher đã tới start_date phải phát được: %v", err)
+	}
+
+	perUser := f.voucher(true, nil)
+	if err := f.db.Model(&model.Voucher{}).Where("id = ?", perUser).Update("usage_per_user", 1).Error; err != nil {
+		t.Fatalf("đặt usage_per_user: %v", err)
+	}
+	if err := f.db.Exec(`INSERT INTO voucher_logs (id, user_id, voucher_id, voucher_code, order_id, action, amount, created_at)
+		VALUES (gen_random_uuid(), ?, ?, 'QA', gen_random_uuid(), 'used', 0, now())`, used, perUser).Error; err != nil {
+		t.Fatalf("ghi lượt đã dùng: %v", err)
+	}
+	if err := grant(used, perUser); !errors.Is(err, ErrVoucherUnavailableForGrant) {
+		t.Errorf("user đã hết usage_per_user: muốn ErrVoucherUnavailableForGrant, nhận %v", err)
+	}
+	if err := grant(fresh, perUser); err != nil {
+		t.Errorf("user khác chưa dùng voucher phải nhận được: %v", err)
+	}
+	if n := f.count("user_vouchers", "user_id = ? AND voucher_id IN ?", used, []uuid.UUID{perUser}); n != 0 {
+		t.Errorf("user hết lượt vẫn được ghi %d dòng ví", n)
+	}
+}
+
 // M5 (mutation M33 của review): engine phải đối chiếu attempt với ĐÚNG quiz được hỏi. Dùng một quiz
 // THẬT khác (không phải uuid ngẫu nhiên, vốn rơi vào nhánh "quiz not found" và che mất lỗi).
 func TestContestEngine_AttemptKhacQuiz_BiTuChoi(t *testing.T) {

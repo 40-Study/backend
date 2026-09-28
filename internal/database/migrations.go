@@ -311,6 +311,10 @@ func RunPostMigrations(db *gorm.DB) error {
 			return fmt.Errorf("post-migration %q failed: %w", stmt.name, err)
 		}
 	}
+	// Gán chủ cho quiz cũ (quizzes.created_by), xem quiz_created_by_backfill.go.
+	if err := runQuizCreatedByBackfill(db); err != nil {
+		return err
+	}
 
 	log.Printf("Post-migrations applied: %d statement group(s)\n", len(statements))
 	return nil

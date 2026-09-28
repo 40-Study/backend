@@ -716,7 +716,8 @@ func (vs *VoucherService) SaveVoucher(ctx context.Context, userID uuid.UUID, req
 // làm rollback toàn bộ, không để lại voucher phát dở cho một nửa bảng xếp hạng.
 //
 // Voucher phải còn dùng được: tồn tại, chưa xoá mềm (scope DeletedAt của GORM tự loại), is_active,
-// end_date NULL hoặc còn ở tương lai, chưa hết tổng lượt dùng. Ngược lại trả ErrVoucherUnavailableForGrant (409
+// start_date NULL hoặc đã tới, end_date NULL hoặc còn ở tương lai, chưa hết tổng lượt dùng và chưa
+// hết lượt dùng của chính user đó. Ngược lại trả ErrVoucherUnavailableForGrant (409
 // CONTEST_VOUCHER_UNAVAILABLE). Khoá FOR SHARE dòng voucher để một thao tác tắt/xoá voucher chạy
 // song song phải chờ transaction này kết thúc, tránh vừa kiểm "đang bật" xong thì voucher bị tắt.
 // Không động tới used_count/usage_limit: đó là lượt DÙNG khi thanh toán, còn đây chỉ là đưa voucher
@@ -739,6 +740,27 @@ func (vs *VoucherService) GrantVoucherTx(ctx context.Context, tx *gorm.DB, userI
 	// dùng được, và lỗi chỉ lộ ra lúc thanh toán. Từ chối ngay để admin biết lúc chốt.
 	if !voucher.IsActive || (voucher.EndDate != nil && !voucher.EndDate.After(now)) || voucher.IsUsageLimitReached() {
 		return nil, ErrVoucherUnavailableForGrant
+	}
+	// Chưa tới start_date: người thắng cầm voucher chưa dùng được (chủ dự án chốt 28/09: từ chối).
+	if voucher.StartDate != nil && voucher.StartDate.After(now) {
+		return nil, ErrVoucherUnavailableForGrant
+	}
+	// Giới hạn lượt theo từng user (usage_per_user): đếm đúng luật của LockAndCheckUsagePerUser
+	// (đã dùng + đang giữ trong đơn chờ) nhưng KHÔNG khoá FOR UPDATE — tx chốt đã giữ FOR SHARE ở
+	// trên; hai lần chốt dùng chung voucher cùng nâng khoá lên FOR UPDATE sẽ deadlock.
+	if voucher.HasPerUserLimit() {
+		txVr := repository.NewVoucherRepository(tx)
+		used, err := txVr.CountUserVoucherUsage(ctx, userID, voucherID)
+		if err != nil {
+			return nil, err
+		}
+		held, err := txVr.CountUserHeldOrders(ctx, userID, voucherID)
+		if err != nil {
+			return nil, err
+		}
+		if used+held >= int64(voucher.UsagePerUser) {
+			return nil, ErrVoucherUnavailableForGrant
+		}
 	}
 	// Idempotent (chủ dự án chốt): user_vouchers không có unique (user_id, voucher_id). Nếu học viên
 	// đã tự lưu voucher này (SaveVoucher) thì dùng lại dòng cũ, không tạo dòng trùng trong ví.
