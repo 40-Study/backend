@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -34,6 +35,7 @@ func NewTeacherProfileService(repo repository.TeacherProfileRepositoryInterface)
 var (
 	ErrTeacherProfileHardDeleteForbidden = errors.New("forbidden: teacher profile cannot be permanently deleted")
 	ErrTeacherProfileUnderReview         = errors.New("teacher profile is pending or rejected and cannot be deleted")
+	ErrTeacherProfileAlreadyExists       = errors.New("teacher profile already exists for this user")
 )
 
 func (s *TeacherProfileService) CreateTeacherProfile(ctx context.Context, req dto.CreateTeacherProfileDTO) (*dto.TeacherProfileResponseDTO, error) {
@@ -44,7 +46,7 @@ func (s *TeacherProfileService) CreateTeacherProfile(ctx context.Context, req dt
 		return nil, err
 	}
 	if existing != nil && !existing.DeletedAt.Valid {
-		return nil, errors.New("teacher profile already exists for this user")
+		return nil, ErrTeacherProfileAlreadyExists
 	}
 
 	// Phase 3: hồ sơ mới = đơn đăng ký chờ duyệt (pending), TRỪ khi user đã là TEACHER (giáo
@@ -68,7 +70,16 @@ func (s *TeacherProfileService) CreateTeacherProfile(ctx context.Context, req dt
 		existing.CertificateInfo = req.CertificateInfo
 		existing.Department = req.Department
 		existing.ApprovalStatus = approvalStatus
+		// Review N3: về pending = đơn MỚI chờ xét; giữ reviewed_at/by của lần duyệt cũ thì admin
+		// thấy đơn chờ mang dấu "đã xét". Còn approved (vẫn giữ TEACHER) thì lần duyệt cũ vẫn đúng.
+		if approvalStatus == model.TeacherApprovalPending {
+			existing.ReviewedAt = nil
+			existing.ReviewedBy = nil
+		}
 		if err := s.repo.Restore(ctx, existing); err != nil {
+			if errors.Is(err, repository.ErrTeacherProfileNotDeleted) {
+				return nil, ErrTeacherProfileAlreadyExists
+			}
 			return nil, err
 		}
 		return toTeacherProfileResponseDTO(existing), nil
@@ -143,27 +154,40 @@ func (s *TeacherProfileService) UpdateTeacherProfile(ctx context.Context, id, ac
 		return nil, ErrNotTeacherProfileOwner
 	}
 
+	// Review N1: chỉ ghi các cột nội dung người dùng gửi lên, KHÔNG Save cả dòng vừa đọc — dòng đó
+	// có thể đã cũ nếu admin duyệt/từ chối hoặc chính user nộp lại xen giữa (xem UpdateContentFields).
+	fields := map[string]interface{}{}
 	if req.Specialization != nil {
-		profile.Specialization = req.Specialization
+		fields["specialization"] = req.Specialization
 	}
 	if req.Education != nil {
-		profile.Education = req.Education
+		fields["education"] = req.Education
 	}
 	if req.ExperienceYears != nil {
-		profile.ExperienceYears = req.ExperienceYears
+		fields["experience_years"] = req.ExperienceYears
 	}
 	if req.CertificateInfo != nil {
-		profile.CertificateInfo = req.CertificateInfo
+		fields["certificate_info"] = req.CertificateInfo
 	}
 	if req.Department != nil {
-		profile.Department = req.Department
+		fields["department"] = req.Department
 	}
-
-	if err := s.repo.Update(ctx, profile); err != nil {
+	if err := s.repo.UpdateContentFields(ctx, id, fields); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("teacher profile not found")
+		}
 		return nil, err
 	}
 
-	return toTeacherProfileResponseDTO(profile), nil
+	// Đọc lại để response phản ánh trạng thái duyệt HIỆN TẠI, không phải bản đọc trước khi ghi.
+	updated, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if updated == nil {
+		return nil, errors.New("teacher profile not found")
+	}
+	return toTeacherProfileResponseDTO(updated), nil
 }
 
 func (s *TeacherProfileService) DeleteTeacherProfile(ctx context.Context, id, actorUserID uuid.UUID, hardDelete bool) error {
