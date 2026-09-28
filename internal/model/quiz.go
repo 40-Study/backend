@@ -15,6 +15,11 @@ type Quiz struct {
 	CourseID  *uuid.UUID `gorm:"type:uuid;index" json:"course_id,omitempty"`
 	SessionID *uuid.UUID `gorm:"type:uuid;index" json:"session_id,omitempty"` // Live quiz
 
+	// CreatedBy (contract "Cuộc thi" §1.6): người tạo quiz — nguồn cho "quiz của tôi"
+	// (GetQuizzesByCreator) và điều kiện "quiz của chính giảng viên" khi gắn vào cuộc thi. NULL với
+	// quiz tạo trước khi có cột này. FK tới users do migration của lane B1 thêm (buildForeignKeySQL).
+	CreatedBy *uuid.UUID `gorm:"type:uuid;index" json:"created_by,omitempty"`
+
 	Title          string          `gorm:"type:varchar(255);not null" json:"title"`
 	Description    *string         `gorm:"type:text" json:"description,omitempty"`
 	TimeLimitMins  *int            `gorm:"column:time_limit_minutes" json:"time_limit_minutes,omitempty"`
