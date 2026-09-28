@@ -98,10 +98,40 @@ func (s *QuizService) checkContestAccess(ctx context.Context, quizID, userID uui
 	return s.contestGate.CheckQuizAccess(ctx, quizID, userID, isAdmin)
 }
 
-// checkContestEditable: người ngoài vẫn nhận 403 như mọi route khác (không để lộ quiz có tồn tại
-// hay không qua mã 409), rồi mới tới luật "cuộc thi đang chạy thì không ai sửa được, kể cả admin".
-func (s *QuizService) checkContestEditable(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) error {
+// ErrQuizNotOwner (review PR #80, F2): sửa/xoá/nhân bản quiz hoặc câu hỏi của quiz mà người gọi
+// không tạo ra. Handler ánh xạ sang 403 QUIZ_FORBIDDEN.
+var ErrQuizNotOwner = errors.New("only the quiz creator or an admin can modify this quiz")
+
+// checkQuizOwner: chỉ người tạo quiz (created_by) hoặc admin được sửa, xoá, nhân bản quiz và câu
+// hỏi của nó. Trước bản vá, mọi tài khoản đăng nhập đều sửa được quiz của người khác, và nhân bản
+// quiz của giảng viên khác rồi làm bài trên bản sao là đọc được đáp án trước khi quiz gốc được gắn
+// vào cuộc thi. Quiz tạo trước khi có cột created_by (NULL) không có chủ xác định nên chỉ admin
+// được sửa — chủ dự án chốt, không để thành "vô chủ ai cũng sửa".
+func (s *QuizService) checkQuizOwner(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) error {
+	if isAdmin {
+		return nil
+	}
+	quiz, err := s.repo.GetQuizByID(ctx, quizID)
+	if err != nil {
+		return err
+	}
+	if quiz == nil {
+		return errors.New("quiz not found")
+	}
+	if quiz.CreatedBy != nil && *quiz.CreatedBy == userID {
+		return nil
+	}
+	return ErrQuizNotOwner
+}
+
+// checkQuizMutable: thứ tự kiểm cho mọi thao tác sửa. (1) Khoá cuộc thi: người ngoài nhận 403 như
+// mọi route khác, không để lộ trạng thái cuộc thi qua mã 409. (2) Chủ sở hữu. (3) Cuộc thi đang
+// chờ duyệt/đã công bố/đã huỷ thì không ai sửa được, kể cả admin (409).
+func (s *QuizService) checkQuizMutable(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) error {
 	if err := s.checkContestAccess(ctx, quizID, userID, isAdmin); err != nil {
+		return err
+	}
+	if err := s.checkQuizOwner(ctx, quizID, userID, isAdmin); err != nil {
 		return err
 	}
 	if s.contestGate == nil {
@@ -137,6 +167,12 @@ func NewQuizService(
 // không chắc chắn.
 func (s *QuizService) canViewQuizAnswerKey(ctx context.Context, quiz *model.Quiz, userID uuid.UUID, isAdmin bool) (bool, error) {
 	if isAdmin {
+		return true, nil
+	}
+	// Review PR #80, F3: người tạo quiz luôn xem được đáp án của chính mình. Quiz standalone (loại
+	// gắn vào cuộc thi) không lần ra khoá học nào nên trước đây bị giấu cả với người tạo. Không mở
+	// thêm đường lộ: thí sinh cuộc thi đã bị gate cuộc thi chặn trước khi tới đây.
+	if quiz.CreatedBy != nil && *quiz.CreatedBy == userID {
 		return true, nil
 	}
 
@@ -322,12 +358,47 @@ func (s *QuizService) checkQuizAccess(ctx context.Context, quiz *model.Quiz, use
 func stripAnswerKey(q *dto.QuestionResponseDTO) dto.QuestionResponseDTO {
 	out := *q
 	out.Explanation = nil
+	// Review PR #80, F1: với câu mà "lựa chọn" chính là đáp án (fill_blank, essay) thì giấu
+	// is_correct là chưa đủ, answer_text đã là đáp án — bỏ cả danh sách.
+	if answerOptionsRevealKey(q.QuestionType) {
+		out.Answers = []dto.AnswerResponseDTO{}
+		return out
+	}
 	out.Answers = make([]dto.AnswerResponseDTO, len(q.Answers))
 	for i, a := range q.Answers {
 		a.IsCorrect = nil
 		out.Answers[i] = a
 	}
 	return out
+}
+
+// answerOptionsRevealKey (review PR #80, F1): fill_blank chấm bằng cách so text_answer với
+// answer_text của các lựa chọn is_correct (checkAnswer), nên danh sách lựa chọn CHÍNH LÀ đáp án;
+// essay nếu có lựa chọn thì đó là đáp án mẫu. Với trắc nghiệm (single/multiple/true_false) các lựa
+// chọn là phương án, trả ra được miễn là giấu is_correct.
+func answerOptionsRevealKey(questionType string) bool {
+	return questionType == "fill_blank" || questionType == "essay"
+}
+
+// toAttemptQuestion map câu hỏi sang dạng đề làm bài, KHÔNG kèm đáp án: dùng chung cho StartQuiz và
+// đề thi (GetContestAttemptQuestions) để hai đường không lệch nhau.
+func toAttemptQuestion(q *model.Question) dto.AttemptQuestionDTO {
+	answers := []dto.AttemptAnswerDTO{}
+	if !answerOptionsRevealKey(q.QuestionType) {
+		answers = make([]dto.AttemptAnswerDTO, len(q.Answers))
+		for j, a := range q.Answers {
+			answers[j] = dto.AttemptAnswerDTO{ID: a.ID, AnswerText: a.AnswerText, DisplayOrder: a.DisplayOrder}
+		}
+	}
+	return dto.AttemptQuestionDTO{
+		ID:           q.ID,
+		QuestionText: q.QuestionText,
+		QuestionType: q.QuestionType,
+		Points:       q.Points,
+		DisplayOrder: q.DisplayOrder,
+		ImageURL:     q.ImageURL,
+		Answers:      answers,
+	}
 }
 
 const (
@@ -545,7 +616,7 @@ func (s *QuizService) GetQuizByID(ctx context.Context, id, userID uuid.UUID, isA
 }
 
 func (s *QuizService) UpdateQuiz(ctx context.Context, id, userID uuid.UUID, isAdmin bool, req dto.UpdateQuizDTO) (*dto.QuizResponseDTO, error) {
-	if err := s.checkContestEditable(ctx, id, userID, isAdmin); err != nil {
+	if err := s.checkQuizMutable(ctx, id, userID, isAdmin); err != nil {
 		return nil, err
 	}
 	quiz, err := s.repo.GetQuizByID(ctx, id)
@@ -593,7 +664,7 @@ func (s *QuizService) UpdateQuiz(ctx context.Context, id, userID uuid.UUID, isAd
 }
 
 func (s *QuizService) DeleteQuiz(ctx context.Context, id, userID uuid.UUID, isAdmin bool) error {
-	if err := s.checkContestEditable(ctx, id, userID, isAdmin); err != nil {
+	if err := s.checkQuizMutable(ctx, id, userID, isAdmin); err != nil {
 		return err
 	}
 	quiz, err := s.repo.GetQuizByID(ctx, id)
@@ -613,8 +684,13 @@ func (s *QuizService) DeleteQuiz(ctx context.Context, id, userID uuid.UUID, isAd
 }
 
 func (s *QuizService) DuplicateQuiz(ctx context.Context, id, userID uuid.UUID, isAdmin bool) (*dto.QuizResponseDTO, error) {
-	// Nhân bản = đọc toàn bộ câu hỏi + đáp án đúng, nên chịu cùng khoá đọc của cuộc thi.
+	// Nhân bản = chép toàn bộ câu hỏi + đáp án đúng sang quiz của người gọi, nên chịu cùng khoá đọc
+	// của cuộc thi VÀ chỉ chủ quiz/admin được làm (review PR #80, F2: nhân bản quiz người khác rồi
+	// làm bài trên bản sao là đọc được đáp án).
 	if err := s.checkContestAccess(ctx, id, userID, isAdmin); err != nil {
+		return nil, err
+	}
+	if err := s.checkQuizOwner(ctx, id, userID, isAdmin); err != nil {
 		return nil, err
 	}
 	original, err := s.repo.GetQuizWithQuestions(ctx, id)
@@ -680,7 +756,7 @@ func (s *QuizService) DuplicateQuiz(ctx context.Context, id, userID uuid.UUID, i
 // ============================================================================
 
 func (s *QuizService) CreateQuestion(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.CreateQuestionDTO) (*dto.QuestionResponseDTO, error) {
-	if err := s.checkContestEditable(ctx, quizID, userID, isAdmin); err != nil {
+	if err := s.checkQuizMutable(ctx, quizID, userID, isAdmin); err != nil {
 		return nil, err
 	}
 	quiz, err := s.repo.GetQuizByID(ctx, quizID)
@@ -772,7 +848,7 @@ func (s *QuizService) GetQuestionsByQuiz(ctx context.Context, quizID, userID uui
 func (s *QuizService) UpdateQuestion(ctx context.Context, quizID, questionID, userID uuid.UUID, isAdmin bool, req dto.UpdateQuestionDTO) (*dto.QuestionResponseDTO, error) {
 	// Kiểm theo quizID trên route; câu hỏi thuộc quiz khác bị chặn ở kiểm "belong" bên dưới, nên
 	// không thể mượn một quiz không khoá để sửa câu hỏi của quiz đang thi.
-	if err := s.checkContestEditable(ctx, quizID, userID, isAdmin); err != nil {
+	if err := s.checkQuizMutable(ctx, quizID, userID, isAdmin); err != nil {
 		return nil, err
 	}
 	question, err := s.repo.GetQuestionByID(ctx, questionID)
@@ -829,7 +905,7 @@ func (s *QuizService) UpdateQuestion(ctx context.Context, quizID, questionID, us
 }
 
 func (s *QuizService) DeleteQuestion(ctx context.Context, quizID, questionID, userID uuid.UUID, isAdmin bool) error {
-	if err := s.checkContestEditable(ctx, quizID, userID, isAdmin); err != nil {
+	if err := s.checkQuizMutable(ctx, quizID, userID, isAdmin); err != nil {
 		return err
 	}
 	question, err := s.repo.GetQuestionByID(ctx, questionID)
@@ -849,7 +925,7 @@ func (s *QuizService) DeleteQuestion(ctx context.Context, quizID, questionID, us
 }
 
 func (s *QuizService) ReorderQuestions(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.ReorderQuestionsDTO) error {
-	if err := s.checkContestEditable(ctx, quizID, userID, isAdmin); err != nil {
+	if err := s.checkQuizMutable(ctx, quizID, userID, isAdmin); err != nil {
 		return err
 	}
 	ids := make([]uuid.UUID, len(req.QuestionIDs))
@@ -936,24 +1012,8 @@ func (s *QuizService) StartQuiz(ctx context.Context, quizID, userID uuid.UUID, i
 
 	// Build questions for attempt (without correct answers)
 	questions := make([]dto.AttemptQuestionDTO, len(quiz.Questions))
-	for i, q := range quiz.Questions {
-		answers := make([]dto.AttemptAnswerDTO, len(q.Answers))
-		for j, a := range q.Answers {
-			answers[j] = dto.AttemptAnswerDTO{
-				ID:           a.ID,
-				AnswerText:   a.AnswerText,
-				DisplayOrder: a.DisplayOrder,
-			}
-		}
-		questions[i] = dto.AttemptQuestionDTO{
-			ID:           q.ID,
-			QuestionText: q.QuestionText,
-			QuestionType: q.QuestionType,
-			Points:       q.Points,
-			DisplayOrder: q.DisplayOrder,
-			ImageURL:     q.ImageURL,
-			Answers:      answers,
-		}
+	for i := range quiz.Questions {
+		questions[i] = toAttemptQuestion(&quiz.Questions[i])
 	}
 
 	return &dto.StartQuizResponseDTO{

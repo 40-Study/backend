@@ -716,7 +716,7 @@ func (vs *VoucherService) SaveVoucher(ctx context.Context, userID uuid.UUID, req
 // làm rollback toàn bộ, không để lại voucher phát dở cho một nửa bảng xếp hạng.
 //
 // Voucher phải còn dùng được: tồn tại, chưa xoá mềm (scope DeletedAt của GORM tự loại), is_active,
-// end_date NULL hoặc còn ở tương lai. Ngược lại trả ErrVoucherUnavailableForGrant (409
+// end_date NULL hoặc còn ở tương lai, chưa hết tổng lượt dùng. Ngược lại trả ErrVoucherUnavailableForGrant (409
 // CONTEST_VOUCHER_UNAVAILABLE). Khoá FOR SHARE dòng voucher để một thao tác tắt/xoá voucher chạy
 // song song phải chờ transaction này kết thúc, tránh vừa kiểm "đang bật" xong thì voucher bị tắt.
 // Không động tới used_count/usage_limit: đó là lượt DÙNG khi thanh toán, còn đây chỉ là đưa voucher
@@ -735,8 +735,21 @@ func (vs *VoucherService) GrantVoucherTx(ctx context.Context, tx *gorm.DB, userI
 		return nil, err
 	}
 	now := time.Now()
-	if !voucher.IsActive || (voucher.EndDate != nil && !voucher.EndDate.After(now)) {
+	// Review PR #80, F4: voucher đã hết TỔNG lượt dùng thì người thắng nhận về một voucher không
+	// dùng được, và lỗi chỉ lộ ra lúc thanh toán. Từ chối ngay để admin biết lúc chốt.
+	if !voucher.IsActive || (voucher.EndDate != nil && !voucher.EndDate.After(now)) || voucher.IsUsageLimitReached() {
 		return nil, ErrVoucherUnavailableForGrant
+	}
+	// Idempotent (chủ dự án chốt): user_vouchers không có unique (user_id, voucher_id). Nếu học viên
+	// đã tự lưu voucher này (SaveVoucher) thì dùng lại dòng cũ, không tạo dòng trùng trong ví.
+	var existing model.UserVoucher
+	err = tx.WithContext(ctx).Where("user_id = ? AND voucher_id = ?", userID, voucherID).
+		Order("saved_at ASC").Take(&existing).Error
+	if err == nil {
+		return &existing, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
 	}
 	userVoucher := &model.UserVoucher{
 		UserID:    userID,

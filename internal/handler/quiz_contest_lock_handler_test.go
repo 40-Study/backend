@@ -186,4 +186,25 @@ func TestQuizRoutes_QuizGanCuocThi_HocVien403_Chu200_Sua409(t *testing.T) {
 			t.Errorf("học viên %s %s: muốn 403, nhận %d %v", r.method, r.path, code, body)
 		}
 	}
+
+	// Review PR #80, F2: quiz CHƯA gắn cuộc thi vẫn chỉ chủ quiz/admin được sửa và nhân bản.
+	free := model.Quiz{Title: "Quiz tự do", TriggerType: "manual", CreatedBy: &owner}
+	if err := db.Create(&free).Error; err != nil {
+		t.Fatalf("tạo quiz: %v", err)
+	}
+	fq := "/quizzes/" + free.ID.String()
+	for _, r := range []struct{ method, path, body string }{
+		{"PUT", fq, `{"title":"Bị sửa"}`},
+		{"POST", fq + "/duplicate", ""},
+		{"POST", fq + "/questions", `{"question_text":"Mới","question_type":"essay"}`},
+		{"DELETE", fq, ""},
+	} {
+		code, body := callAs(t, app, student, r.method, r.path, r.body)
+		if code != 403 || body["code"] != "QUIZ_FORBIDDEN" {
+			t.Errorf("người lạ %s %s: muốn 403 QUIZ_FORBIDDEN, nhận %d %v", r.method, r.path, code, body)
+		}
+	}
+	if code, body := callAs(t, app, owner, "PUT", fq, `{"title":"Chủ sửa"}`); code != 200 {
+		t.Errorf("chủ quiz sửa quiz của mình: muốn 200, nhận %d %v", code, body)
+	}
 }

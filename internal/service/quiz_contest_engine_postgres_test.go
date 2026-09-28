@@ -122,7 +122,9 @@ func TestGetContestAttemptQuestions_KhongLoDapAn_OnDinhKhiReload(t *testing.T) {
 		t.Fatalf("muốn 4 câu, nhận %d", len(first))
 	}
 	raw, _ := json.Marshal(first)
-	for _, leak := range []string{"is_correct", "correct_answer_ids", "explanation", "Giải thích bí mật", "answer_key"} {
+	// Quét cả TÊN field lẫn GIÁ TRỊ đáp án thật: "Hà Nội" là đáp án câu fill_blank (review PR #80,
+	// F1 — bản trước chỉ quét tên field nên xanh dù đề đang lộ đáp án).
+	for _, leak := range []string{"is_correct", "correct_answer_ids", "explanation", "Giải thích bí mật", "answer_key", "Hà Nội"} {
 		if strings.Contains(string(raw), leak) {
 			t.Errorf("đề thi lộ %q: %s", leak, raw)
 		}

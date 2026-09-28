@@ -59,6 +59,11 @@ func respondQuizGateError(c *fiber.Ctx, svcErr error) (resp error, handled bool)
 			"message": "Không thể sửa quiz khi cuộc thi đang chờ duyệt, đã công bố hoặc đã huỷ",
 			"code":    "CONTEST_QUIZ_LOCKED",
 		}), true
+	case errors.Is(svcErr, service.ErrQuizNotOwner):
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"message": "Chỉ người tạo quiz hoặc admin được thao tác",
+			"code":    "QUIZ_FORBIDDEN",
+		}), true
 	}
 	return respondLessonLockError(c, svcErr)
 }
