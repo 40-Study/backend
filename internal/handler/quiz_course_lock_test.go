@@ -27,15 +27,6 @@ func (s *lockedQuizSvc) EnsureQuizCourseEditable(context.Context, uuid.UUID) err
 func (s *lockedQuizSvc) EnsureNewQuizCourseEditable(context.Context, *uuid.UUID, *uuid.UUID) error {
 	return s.lockErr
 }
-func (s *lockedQuizSvc) CreateQuiz(context.Context, dto.CreateQuizDTO) (*dto.QuizResponseDTO, error) {
-	s.writes++
-	return &dto.QuizResponseDTO{}, nil
-}
-func (s *lockedQuizSvc) UpdateQuiz(context.Context, uuid.UUID, dto.UpdateQuizDTO) (*dto.QuizResponseDTO, error) {
-	s.writes++
-	return &dto.QuizResponseDTO{}, nil
-}
-func (s *lockedQuizSvc) DeleteQuiz(context.Context, uuid.UUID) error { s.writes++; return nil }
 func (s *lockedQuizSvc) GetQuizByID(context.Context, uuid.UUID, uuid.UUID, bool) (*dto.QuizDetailDTO, error) {
 	return nil, service.ErrCourseHidden
 }
@@ -47,9 +38,12 @@ func quizLockApp(svc *lockedQuizSvc) *fiber.App {
 	app := fiber.New()
 	app.Use(func(c *fiber.Ctx) error { c.Locals("user_id", uuid.New()); return c.Next() })
 	h := NewQuizHandler(svc, nil)
-	app.Post("/quizzes", h.NewQuizCourseEditLock(), h.CreateQuiz)
-	app.Put("/quizzes/:id", h.CourseEditLock("id"), h.UpdateQuiz)
-	app.Delete("/quizzes/:id", h.CourseEditLock("id"), h.DeleteQuiz)
+	// Handler cuối giả thay cho CreateQuiz/UpdateQuiz/DeleteQuiz: test chỉ kiểm middleware có
+	// chặn TRƯỚC khi tới handler ghi hay không, không phụ thuộc chữ ký hàm ghi (PR #80 đổi chúng).
+	write := func(c *fiber.Ctx) error { svc.writes++; return c.SendStatus(fiber.StatusOK) }
+	app.Post("/quizzes", h.NewQuizCourseEditLock(), write)
+	app.Put("/quizzes/:id", h.CourseEditLock("id"), write)
+	app.Delete("/quizzes/:id", h.CourseEditLock("id"), write)
 	app.Get("/quizzes/:id", h.GetQuizByID)
 	app.Get("/quizzes/:quizId/questions", h.GetQuestionsByQuiz)
 	return app
