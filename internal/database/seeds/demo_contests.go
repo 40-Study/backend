@@ -89,9 +89,10 @@ func (s *Seeder) seedContestPrizes(contestID uuid.UUID) error {
 
 // seedContestWinner — attempt đã nộp + participant có hạng + award có số chứng nhận.
 func (s *Seeder) seedContestWinner(c model.Contest, userID uuid.UUID, rank int, score decimal.Decimal) error {
-	var p model.ContestParticipant
-	if err := s.db.Where("contest_id = ? AND user_id = ?", c.ID, userID).First(&p).Error; err == nil {
-		return nil // đã seed
+	var existing int64
+	if err := s.db.Model(&model.ContestParticipant{}).Where("contest_id = ? AND user_id = ?", c.ID, userID).
+		Count(&existing).Error; err != nil || existing > 0 {
+		return err // existing > 0: đã seed
 	}
 	total := decimal.NewFromInt(3)
 	pct := score.Div(total).Mul(decimal.NewFromInt(100)).Round(2)
@@ -103,7 +104,7 @@ func (s *Seeder) seedContestWinner(c model.Contest, userID uuid.UUID, rank int, 
 	if err := s.db.Create(&attempt).Error; err != nil {
 		return fmt.Errorf("seed contest attempt: %w", err)
 	}
-	p = model.ContestParticipant{ContestID: c.ID, UserID: userID, AttemptID: &attempt.ID, Rank: &rank}
+	p := model.ContestParticipant{ContestID: c.ID, UserID: userID, AttemptID: &attempt.ID, Rank: &rank}
 	if err := s.db.Create(&p).Error; err != nil {
 		return fmt.Errorf("seed contest participant: %w", err)
 	}
