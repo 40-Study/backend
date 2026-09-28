@@ -53,9 +53,9 @@ type ContestAwardIssued struct {
 }
 
 type ContestResultNotice struct {
-	UserID, ContestID         uuid.UUID
-	ContestTitle, ContestSlug string
-	Rank                      *int
+	UserID, ContestID          uuid.UUID
+	ContestTitle, ContestSlug  string
+	Rank                       *int
 	HasCertificate, HasVoucher bool
 }
 

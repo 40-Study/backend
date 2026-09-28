@@ -84,10 +84,10 @@ func TestGrantVoucherTx_VoucherKhongDungDuoc(t *testing.T) {
 		t.Fatalf("xoá mềm voucher: %v", err)
 	}
 	cases := map[string]uuid.UUID{
-		"tắt":            f.voucher(false, nil),
-		"hết hạn":        f.voucher(true, &past),
-		"đã xoá":         deleted,
-		"không tồn tại":  uuid.New(),
+		"tắt":           f.voucher(false, nil),
+		"hết hạn":       f.voucher(true, &past),
+		"đã xoá":        deleted,
+		"không tồn tại": uuid.New(),
 	}
 	for name, id := range cases {
 		err := f.db.Transaction(func(tx *gorm.DB) error {
