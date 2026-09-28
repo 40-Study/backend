@@ -4,12 +4,22 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
+	"study.com/v1/internal/model"
 )
 
 // Phase 1 quản lý người dùng (2026-09-28) — bất biến bắt buộc khi khoá tài khoản / gỡ vai trò
 // hệ thống. Tách thành hàm THUẦN (không đụng DB) để unit-test được KHÔNG cần Postgres — phần
 // khoá dòng (SELECT ... FOR UPDATE, trong transaction) nằm ở user_repository.go /
 // user_system_role_repository.go, gọi các hàm này SAU KHI đã lấy dữ liệu đã khoá.
+//
+// fetchIsActiveByUserIDs (bên dưới) là ngoại lệ DUY NHẤT có đụng DB trong file này — cố ý, để
+// CẢ HAI call site (khoá tài khoản, gỡ vai trò hệ thống) đọc `users.is_active` THẬT qua ĐÚNG 1
+// hàm, thay vì mỗi nơi tự suy diễn is_active theo cách riêng. Review đối kháng
+// (plans/reports/review-260928-users-pr72-pr28.md, finding #1 BLOCKER) phát hiện
+// RevokeActiveAssignment từng gán CỨNG is_active=true cho mọi holder SYSTEM_ADMIN — bỏ qua
+// tài khoản đã bị khoá trước đó, khiến guard "còn >=1 SYSTEM_ADMIN hoạt động" bị vượt qua bằng
+// 1 thao tác gỡ vai trò tuần tự (không cần race).
 
 var (
 	// ErrLastSystemAdmin — thao tác sẽ làm hệ thống không còn SYSTEM_ADMIN nào đang hoạt động
@@ -53,4 +63,25 @@ func evaluateLastActiveRoleGuard(activeRoleCount int) error {
 		return ErrLastActiveRoleOfUser
 	}
 	return nil
+}
+
+// fetchIsActiveByUserIDs trả về map is_active THẬT từ bảng `users` cho đúng tập userID truyền
+// vào, đọc qua CHÍNH transaction `tx` (thấy được dữ liệu đã SELECT ... FOR UPDATE ở lượt khoá
+// dòng trước đó trong cùng transaction, nếu có). Dùng cho CẢ HAI đường "khoá tài khoản"
+// (user_repository.go) và "gỡ vai trò hệ thống" (user_system_role_repository.go) — một user còn
+// giữ vai trò SYSTEM_ADMIN active không đồng nghĩa tài khoản của họ đang is_active=true (đã bị
+// khoá trước đó bởi một thao tác khác); phải hỏi DB, không được suy diễn/gán cứng.
+func fetchIsActiveByUserIDs(tx *gorm.DB, userIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	activeStatus := make(map[uuid.UUID]bool, len(userIDs))
+	if len(userIDs) == 0 {
+		return activeStatus, nil
+	}
+	var rows []model.User
+	if err := tx.Select("id", "is_active").Where("id IN ?", userIDs).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		activeStatus[row.ID] = row.IsActive
+	}
+	return activeStatus, nil
 }

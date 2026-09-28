@@ -339,13 +339,17 @@ func (r *UserSystemRoleRepository) RevokeActiveAssignment(
 				return err
 			}
 			adminUserIDs := make([]uuid.UUID, 0, len(adminRows))
-			activeStatus := make(map[uuid.UUID]bool, len(adminRows))
 			for _, a := range adminRows {
 				adminUserIDs = append(adminUserIDs, a.UserID)
-				// Gỡ VAI TRÒ khác với khoá TÀI KHOẢN — mọi holder trong tập dòng active này
-				// đều được coi là "đang hoạt động" cho mục đích bất biến này (đã lọc is_active
-				// tài khoản ở lượt khoá riêng, không lặp lại truy vấn users ở đây — YAGNI).
-				activeStatus[a.UserID] = true
+			}
+			// BLOCKER đã sửa (review-260928-users-pr72-pr28.md finding #1): giữ vai trò
+			// SYSTEM_ADMIN active KHÔNG đồng nghĩa tài khoản đó is_active=true (có thể đã bị
+			// khoá bởi một thao tác khác trước đó) — phải đọc `users.is_active` THẬT qua
+			// fetchIsActiveByUserIDs (dùng chung với nhánh khoá tài khoản ở user_repository.go),
+			// không được gán cứng true cho mọi holder.
+			activeStatus, err := fetchIsActiveByUserIDs(tx, adminUserIDs)
+			if err != nil {
+				return err
 			}
 			if err := evaluateLastSystemAdminGuard(adminUserIDs, activeStatus, userID); err != nil {
 				return err

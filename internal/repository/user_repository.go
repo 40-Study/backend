@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,13 @@ import (
 // ErrAdminUserNotFound (Phase 1 quản lý người dùng, 2026-09-28) — user không tồn tại, dùng
 // riêng cho các thao tác admin (list/detail/khoá) để handler map đúng 404.
 var ErrAdminUserNotFound = errors.New("user not found")
+
+// adminUserKeywordEscaper escape các ký tự wildcard của ILIKE (`%`, `_`) và ký tự escape mặc
+// định (`\`) trước khi bọc keyword trong "%...%" ở AdminListUsers — nếu không, keyword chứa
+// `%`/`_` bị Postgres hiểu là wildcard thay vì ký tự literal (review-260928-users-pr72-pr28.md
+// finding #3). `\` PHẢI đứng đầu danh sách cặp thay thế vì nó là ký tự escape: NewReplacer chạy
+// 1 lượt duy nhất qua chuỗi gốc nên thứ tự khai báo không gây escape lặp lại ký tự vừa chèn.
+var adminUserKeywordEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // AdminUserListFilter — tham số lọc GET /api/users (contract phase-01-user-management.md).
 type AdminUserListFilter struct {
@@ -141,7 +149,13 @@ func (r *UserRepository) AdminListUsers(ctx context.Context, filter AdminUserLis
 	query := r.db.WithContext(ctx).Model(&model.User{})
 
 	if filter.Keyword != "" {
-		like := "%" + filter.Keyword + "%"
+		// MINOR đã sửa (review-260928-users-pr72-pr28.md finding #3): ILIKE coi `%`/`_` trong
+		// input là wildcard thật (Postgres), nên keyword chứa các ký tự này trả kết quả sai
+		// (vd. keyword="%" khớp mọi user). Escape `\` TRƯỚC (chính nó là ký tự escape mặc định
+		// của ILIKE), rồi mới escape `%`/`_` — cả 3 cặp thay thế chạy 1 lượt duy nhất qua
+		// strings.NewReplacer nên không bị escape lặp lại ký tự vừa chèn.
+		escaped := adminUserKeywordEscaper.Replace(filter.Keyword)
+		like := "%" + escaped + "%"
 		query = query.Where(
 			"email ILIKE ? OR user_name ILIKE ? OR full_name ILIKE ?",
 			like, like, like,
@@ -251,24 +265,15 @@ func (r *UserRepository) LockOrUnlockUser(
 			}
 
 			if isTargetAdmin {
-				activeStatus := map[uuid.UUID]bool{targetUserID: user.IsActive}
-				missing := make([]uuid.UUID, 0, len(adminUserIDs))
-				for _, id := range adminUserIDs {
-					if id == targetUserID {
-						continue
-					}
-					missing = append(missing, id)
+				// Dùng CHUNG fetchIsActiveByUserIDs (user_admin_guards.go) với nhánh gỡ vai trò
+				// hệ thống (user_system_role_repository.go::RevokeActiveAssignment) — một công
+				// thức duy nhất để đọc is_active thật, tránh 2 nơi tính bất biến này khác nhau
+				// (review-260928-users-pr72-pr28.md finding #1). targetUserID vẫn nằm trong tập
+				// truy vấn — user vừa SELECT ... FOR UPDATE ở trên nên không có race đọc lại.
+				activeStatus, err := fetchIsActiveByUserIDs(tx, adminUserIDs)
+				if err != nil {
+					return err
 				}
-				if len(missing) > 0 {
-					var others []model.User
-					if err := tx.Select("id", "is_active").Where("id IN ?", missing).Find(&others).Error; err != nil {
-						return err
-					}
-					for _, o := range others {
-						activeStatus[o.ID] = o.IsActive
-					}
-				}
-
 				if err := evaluateLastSystemAdminGuard(adminUserIDs, activeStatus, targetUserID); err != nil {
 					return err
 				}
