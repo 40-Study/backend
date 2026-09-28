@@ -3,21 +3,21 @@ package dto
 import "github.com/google/uuid"
 
 type CreateSystemRoleDTO struct {
-	Name        string `json:"name" binding:"required,min=2,max=100"`
-	Description string `json:"description" binding:"max=500"`
+	Name        string `json:"name" validate:"required,min=2,max=100"`
+	Description string `json:"description" validate:"max=500"`
 }
 
 type UpdateSystemRoleDTO struct {
-	Name        *string `json:"name" binding:"omitempty,min=2,max=100"`
-	Description *string `json:"description" binding:"omitempty,max=500"`
+	Name        *string `json:"name" validate:"omitempty,min=2,max=100"`
+	Description *string `json:"description" validate:"omitempty,max=500"`
 }
 
 type AddPermissionsToSystemRoleDTO struct {
-	PermissionIDs []uuid.UUID `json:"permission_ids" binding:"required,min=1,dive,required"`
+	PermissionIDs []uuid.UUID `json:"permission_ids" validate:"required,min=1,dive,required"`
 }
 
 type RemovePermissionsFromSystemRoleDTO struct {
-	PermissionIDs []uuid.UUID `json:"permission_ids" binding:"required,min=1,dive,required"`
+	PermissionIDs []uuid.UUID `json:"permission_ids" validate:"required,min=1,dive,required"`
 }
 
 type SystemRoleResponseDTO struct {

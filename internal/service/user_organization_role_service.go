@@ -12,6 +12,7 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 type UserOrganizationRoleServiceInterface interface {
@@ -423,18 +424,14 @@ func toUserOrgRoleResponseDTO(uor *model.UserOrganizationRole) *dto.UserOrgRoleR
 		UserID:         uor.UserID,
 		RoleID:         uor.RoleID,
 		OrganizationID: uor.OrganizationID,
-		GrantedAt:      uor.GrantedAt.Format("2006-01-02T15:04:05Z"),
+		GrantedAt:      utils.FormatTimestamp(uor.GrantedAt),
 		GrantedBy:      uor.GrantedBy,
 		Notes:          uor.Notes,
 		Status:         uor.Status,
 		RevokedBy:      uor.RevokedBy,
-		CreatedAt:      uor.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:      uor.UpdatedAt.Format("2006-01-02T15:04:05Z"),
-	}
-
-	if uor.RevokedAt != nil {
-		revokedAt := uor.RevokedAt.Format("2006-01-02T15:04:05Z")
-		result.RevokedAt = &revokedAt
+		RevokedAt:      utils.FormatTimestampPtr(uor.RevokedAt),
+		CreatedAt:      utils.FormatTimestamp(uor.CreatedAt),
+		UpdatedAt:      utils.FormatTimestamp(uor.UpdatedAt),
 	}
 
 	if uor.Role != nil {

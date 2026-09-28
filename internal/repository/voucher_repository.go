@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/utils"
 )
 
 var (
@@ -214,7 +215,8 @@ func (r *VoucherRepository) GetAllVouchers(ctx context.Context, limit, offset in
 
 	// Apply filters
 	if keyword != "" {
-		query = query.Where("code ILIKE ? OR name ILIKE ?", "%"+keyword+"%", "%"+keyword+"%")
+		pattern := utils.ContainsLikePattern(keyword)
+		query = query.Where("code ILIKE ? OR name ILIKE ?", pattern, pattern)
 	}
 	if startTime != nil {
 		query = query.Where("start_date >= ?", startTime)

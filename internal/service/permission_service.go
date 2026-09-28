@@ -8,6 +8,7 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 type PermissionServiceInterface interface {
@@ -92,7 +93,7 @@ func toPermissionResponseDTO(permission *model.Permission) *dto.PermissionRespon
 		Name:        permission.Name,
 		Description: desc,
 		Status:      permission.Status,
-		CreatedAt:   permission.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   permission.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:   utils.FormatTimestamp(permission.CreatedAt),
+		UpdatedAt:   utils.FormatTimestamp(permission.UpdatedAt),
 	}
 }

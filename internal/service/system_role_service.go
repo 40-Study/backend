@@ -8,6 +8,7 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 type SystemRoleServiceInterface interface {
@@ -209,8 +210,8 @@ func toSystemRoleResponseDTO(role *model.SystemRole) *dto.SystemRoleResponseDTO 
 		Name:        role.Name,
 		Description: desc,
 		Status:      role.Status,
-		CreatedAt:   role.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   role.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:   utils.FormatTimestamp(role.CreatedAt),
+		UpdatedAt:   utils.FormatTimestamp(role.UpdatedAt),
 	}
 }
 
@@ -231,7 +232,7 @@ func toSystemRoleDetailResponseDTO(role *model.SystemRole) *dto.SystemRoleDetail
 		Description: desc,
 		Status:      role.Status,
 		Permissions: permDTOs,
-		CreatedAt:   role.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   role.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:   utils.FormatTimestamp(role.CreatedAt),
+		UpdatedAt:   utils.FormatTimestamp(role.UpdatedAt),
 	}
 }

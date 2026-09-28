@@ -8,6 +8,7 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 type CartServiceInterface interface {
@@ -124,7 +125,7 @@ func (s *CartService) toCartItemResponseDTO(item *model.CartItem, course *model.
 		ID:        item.ID,
 		CourseID:  item.CourseID,
 		UserID:    item.UserID,
-		CreatedAt: item.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt: utils.FormatTimestamp(item.CreatedAt),
 	}
 
 	if course != nil {

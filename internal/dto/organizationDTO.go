@@ -3,13 +3,13 @@ package dto
 import "github.com/google/uuid"
 
 type CreateOrganizationDTO struct {
-	Name        string `json:"name" binding:"required,min=2,max=100"`
-	Description string `json:"description" binding:"max=500"`
+	Name        string `json:"name" validate:"required,min=2,max=100"`
+	Description string `json:"description" validate:"max=500"`
 }
 
 type UpdateOrganizationDTO struct {
-	Name        *string `json:"name" binding:"omitempty,min=2,max=100"`
-	Description *string `json:"description" binding:"omitempty,max=500"`
+	Name        *string `json:"name" validate:"omitempty,min=2,max=100"`
+	Description *string `json:"description" validate:"omitempty,max=500"`
 }
 
 type OrganizationResponseDTO struct {
