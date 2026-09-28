@@ -65,6 +65,10 @@ type Services struct {
 	Payment            *service.PaymentService
 	TransactionService *service.TransactionService
 	Voucher            *service.VoucherService
+	// AdminOrder/PlatformSetting (tính năng đơn hàng+hoàn tiền+doanh thu, quyết định 27/09/2026):
+	// đơn hàng admin + hoàn tiền + báo cáo doanh thu thật + % phí nền tảng cấu hình được.
+	AdminOrder      service.AdminOrderServiceInterface
+	PlatformSetting service.PlatformSettingServiceInterface
 
 	// ===== Gamification =====
 	Achievement *service.AchievementService
@@ -349,7 +353,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		),
 
 		// ===== Class =====
-		Class:              service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student, repos.ParentStudent),
+		Class: service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student, repos.ParentStudent),
 		// V3-7 (issue #58): repos.Course duoc chen vao de kiem instructor cua khoa chua lop
 		// (class_access.go) — xem NewClassLessonContentService.
 		ClassLessonContent: service.NewClassLessonContentService(repos.ClassLessonContent, repos.Class, repos.Course, repos.Lesson, repos.Enrollment, livestreamSvc),
@@ -360,9 +364,9 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		TeacherProfile: service.NewTeacherProfileService(repos.TeacherProfile),
 
 		// ===== Course Management =====
-		Category:      service.NewCategoryService(repos.Category),
-		Tag:           service.NewTagService(repos.Tag),
-		Cart:          service.NewCartService(repos.CartItem, repos.Course, repos.Enrollment),
+		Category: service.NewCategoryService(repos.Category),
+		Tag:      service.NewTagService(repos.Tag),
+		Cart:     service.NewCartService(repos.CartItem, repos.Course, repos.Enrollment),
 		// C-1 (review vòng 2): toán hạng repos.Enrollment thêm vào để GetCourseByID tính được
 		// locked/lock_reason/progress theo người đang xem (xem service.NewCourseService).
 		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag, repos.Enrollment),
@@ -411,9 +415,17 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 			repos.Enrollment,
 			voucherSvc,
 			transactionSvc,
+			repos.PlatformSetting,
 		),
 		TransactionService: transactionSvc,
 		Voucher:            voucherSvc,
+		AdminOrder: service.NewAdminOrderService(
+			repos.Order,
+			repos.OrderItem,
+			repos.Enrollment,
+			repos.Course,
+		),
+		PlatformSetting: service.NewPlatformSettingService(repos.PlatformSetting),
 
 		// ===== Gamification =====
 		Achievement: service.NewAchievementService(repos.Achievement),

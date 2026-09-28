@@ -46,6 +46,7 @@ func SetupAllRoutes(
 	whiteboardHandler *handler.WhiteboardHandler,
 	analyticsHandler *handler.AnalyticsHandler,
 	orderHandler *handler.OrderHandler,
+	adminOrderHandler *handler.AdminOrderHandler,
 	voucherHandler *handler.VoucherHandler,
 	achievementHandler *handler.AchievementHandler,
 	leaderboardHandler *handler.LeaderboardHandler,
@@ -110,7 +111,7 @@ func SetupAllRoutes(
 	SetupAnalyticsRoutes(api, cfg, analyticsHandler, redis)
 
 	// Order & Payment routes
-	SetupOrderRoutes(api, cfg, orderHandler, redis)
+	SetupOrderRoutes(api, cfg, orderHandler, adminOrderHandler, redis, permChecker)
 	SetupVoucherRoutes(api, cfg, voucherHandler, redis, permChecker)
 
 	// Gamification routes

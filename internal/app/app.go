@@ -212,6 +212,7 @@ func New() (*App, error) {
 
 		// ===== Order & Payment =====
 		handlers.Order,
+		handlers.AdminOrder,
 		handlers.Voucher,
 
 		// ===== Gamification =====

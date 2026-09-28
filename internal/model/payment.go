@@ -49,6 +49,22 @@ type Order struct {
 	PaymentCodeExpiredAt *time.Time `json:"payment_code_expired_at,omitempty"`
 	Notes                *string    `gorm:"type:text" json:"notes,omitempty"`
 
+	// PlatformFeePercent/PlatformFeeAmount (tính năng đơn hàng+hoàn tiền+doanh thu, quyết định
+	// chủ dự án 27/09/2026 #2): tỉ lệ phí nền tảng % CHỐT vào đơn NGAY LÚC đơn chuyển "completed"
+	// (PaymentService.CheckAndProcessPayment) — đổi cấu hình % (PlatformSetting) SAU đó KHÔNG
+	// ảnh hưởng các đơn đã chốt trước đó. Mặc định 0 cho đơn chưa thanh toán và đơn tạo trước khi
+	// có tính năng này (migrate an toàn — không hồi tố).
+	PlatformFeePercent decimal.Decimal `gorm:"type:decimal(5,2);not null;default:0" json:"platform_fee_percent"`
+	PlatformFeeAmount  decimal.Decimal `gorm:"type:decimal(12,2);not null;default:0" json:"platform_fee_amount"`
+
+	// Refund* (quyết định #1: hoàn tiền = admin xác nhận ĐÃ chuyển khoản tay, không qua ví xu).
+	// Chỉ có giá trị khi Status == "refunded"; ghi lại NGAY trong UPDATE chuyển trạng thái (cùng
+	// transaction khoá dòng) để có dấu vết đối soát — xem AdminOrderService.RefundOrder.
+	RefundReason *string    `gorm:"type:text" json:"refund_reason,omitempty"`
+	RefundMethod *string    `gorm:"type:varchar(30)" json:"refund_method,omitempty"`
+	RefundedAt   *time.Time `json:"refunded_at,omitempty"`
+	RefundedBy   *uuid.UUID `gorm:"type:uuid" json:"refunded_by,omitempty"`
+
 	// Relationships
 	User        User         `gorm:"foreignKey:UserID" json:"-"`
 	Coupon      *Coupon      `gorm:"foreignKey:CouponID" json:"-"`
@@ -211,9 +227,9 @@ type Voucher struct {
 
 	// Usage limits — quy ước: 0 (hoặc âm) = KHÔNG giới hạn. Xem VoucherUnlimitedUsage và các
 	// helper HasUsageLimit / HasPerUserLimit / IsUsageLimitReached bên dưới; KHÔNG so sánh tay.
-	UsedCount    int32 `gorm:"type:int;default:0" json:"used_count"`               // số lượt đã dùng (toàn hệ thống)
-	UsageLimit   int32 `gorm:"type:int" json:"usage_limit"`                        // tổng số lượt toàn hệ thống; 0 = không giới hạn
-	UsagePerUser int32 `gorm:"type:int;default:1" json:"usage_per_user"`           // số lượt cho TỪNG user; 0 = không giới hạn
+	UsedCount    int32 `gorm:"type:int;default:0" json:"used_count"`     // số lượt đã dùng (toàn hệ thống)
+	UsageLimit   int32 `gorm:"type:int" json:"usage_limit"`              // tổng số lượt toàn hệ thống; 0 = không giới hạn
+	UsagePerUser int32 `gorm:"type:int;default:1" json:"usage_per_user"` // số lượt cho TỪNG user; 0 = không giới hạn
 
 	// Stacking
 	CanStack bool `gorm:"type:bool;default:false" json:"can_stack"`

@@ -129,6 +129,9 @@ func Migrate(db *gorm.DB) error {
 		&model.InstructorPayout{},
 		&model.OrderStatusHistory{},
 		&model.PaymentEvent{},
+		// PlatformSetting (tính năng đơn hàng+hoàn tiền+doanh thu, quyết định #2): bảng đơn-dòng
+		// lưu % phí nền tảng cấu hình được — xem model.PlatformSetting.
+		&model.PlatformSetting{},
 
 		// ===== 12. Vouchers =====
 		&model.Voucher{},

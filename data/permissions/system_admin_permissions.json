@@ -40,6 +40,10 @@
     "description": "Cấu hình tham số hệ thống (Cổng thanh toán, Email server, Storage)"
   },
   {
+    "name": "PAYMENTS_MANAGE",
+    "description": "Xem toàn bộ đơn hàng và xử lý hoàn tiền (tính năng đơn hàng+hoàn tiền+doanh thu, 27/09/2026)"
+  },
+  {
     "name": "REPORTS_MODERATE",
     "description": "Kiểm duyệt report vi phạm: xem toàn bộ danh sách, đổi trạng thái, xoá report (A-P0-1, QA 260927)"
   }
