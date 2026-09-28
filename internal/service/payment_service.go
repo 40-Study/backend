@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/grpc"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 )
@@ -214,6 +216,16 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 	if order.Status == "expired" {
 		return nil, ErrOrderExpired
 	}
+	// Re-review #76 vòng 2: đơn processing có mã đã hết hạn thì KHÔNG tự chốt expired ở đây (có thể
+	// tiền đã về trong hạn). Đi qua đúng bước đối chiếu gRPC lần cuối của CheckAndProcessPayment:
+	// nếu hoá ra đã thanh toán thì báo đã xử lý, còn lại đều không mở phiên mới.
+	if order.Status == "processing" && order.PaymentCodeExpiredAt != nil && time.Now().After(*order.PaymentCodeExpiredAt) {
+		status, err := s.CheckAndProcessPayment(ctx, orderID, userID, isAdmin)
+		if err == nil && status.Status == "completed" {
+			return nil, ErrPaymentAlreadyDone
+		}
+		return nil, ErrOrderExpired
+	}
 	if expired, err := s.expireIfHoldElapsed(ctx, order); err != nil {
 		return nil, err
 	} else if expired {
@@ -348,24 +360,25 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 		}, nil
 	}
 
-	// M2-02 (review vòng 3): payment_code_expired_at TRƯỚC ĐÂY được LƯU (item 25, vòng 1) nhưng
-	// KHÔNG BAO GIỜ được đọc lại để từ chối — người dùng vẫn có thể bấm "Tôi đã chuyển khoản"
-	// (CheckPayment, gọi thẳng hàm này) hoặc poll GetPaymentStatus sau khi mã đã hết hạn và giao
-	// dịch ngân hàng khớp muộn vẫn được xử lý bình thường. Chặn ngay khi phát hiện quá hạn:
-	// chuyển đơn sang "expired" (hoàn lại used_count đã reserve nếu có voucher — H2-05) thay vì
-	// tiếp tục gọi gRPC check giao dịch. "expired" đã là trạng thái web mong đợi (xem
-	// web/src/services/order.service.ts OrderStatus + use-orders.ts PAYMENT_TERMINAL_STATUSES).
-	// Review #76 MAJOR 2: kiểm TRƯỚC nhánh "không phải processing" và theo cùng mốc
-	// orderHoldExpiresAt, để đơn pending quá hạn giữ cũng chốt "expired" nhất quán với
-	// CreatePaymentIntent thay vì cứ trả "pending" mãi.
-	if expired, err := s.expireIfHoldElapsed(ctx, order); err != nil {
-		return nil, err
-	} else if expired {
+	// Đơn đã chốt "expired": báo thêm nếu từng nhận tiền SAU hạn (history payment_after_expiry)
+	// để web hiện "bộ phận hỗ trợ sẽ hoàn tiền" thay vì mời tạo đơn mới rồi trả lần 2.
+	if order.Status == "expired" {
 		return &dto.PaymentStatusResponse{
-			OrderID: orderID,
-			Status:  "expired",
-			Amount:  order.TotalAmount,
+			OrderID:             orderID,
+			Status:              "expired",
+			Amount:              order.TotalAmount,
+			LatePaymentReceived: s.hasLatePaymentRecord(orderID),
 		}, nil
+	}
+
+	// Đơn "pending" chưa mở phiên thanh toán nên chưa có mã chuyển khoản, không thể có tiền về:
+	// quá hạn giữ (orderHoldExpiresAt, review #76 MAJOR 2) thì chốt "expired" ngay, không cần gRPC.
+	if order.Status == "pending" {
+		if expired, err := s.expireIfHoldElapsed(ctx, order); err != nil {
+			return nil, err
+		} else if expired {
+			return &dto.PaymentStatusResponse{OrderID: orderID, Status: "expired", Amount: order.TotalAmount}, nil
+		}
 	}
 
 	// If not processing, can't check
@@ -387,18 +400,49 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 		return nil, errors.New("payment code not found")
 	}
 
-	// Calculate time range (last 24 hours)
+	// Re-review #76 vòng 2 (MAJOR, tiền): TRƯỚC ĐÂY (M2-02) mã quá hạn là chốt "expired" rồi return
+	// TRƯỚC khi gọi gRPC, nên tiền chuyển TRONG hạn nhưng được đối chiếu lần đầu SAU hạn (ngân hàng
+	// ghi có chậm, học viên đóng tab rồi quay lại) bị bỏ, không dấu vết, trong khi web mời "Tạo đơn
+	// mới" → dễ trả lần 2. Giờ đơn processing có mã LUÔN được đối chiếu gRPC một lần cuối trước khi
+	// quyết định; không bao giờ chốt expired khi chưa xác minh được.
+	codeExpiredAt := order.PaymentCodeExpiredAt
+	codeExpired := codeExpiredAt != nil && time.Now().After(*codeExpiredAt)
+
+	// Cửa sổ tra cứu: 24h gần nhất, nhưng mở rộng về lúc mã có thể đã được cấp (hạn mã - 24h) để
+	// lần đối chiếu muộn (vài ngày sau) vẫn thấy được giao dịch chuyển trong hạn.
 	toTime := time.Now()
 	fromTime := toTime.Add(-24 * time.Hour)
+	if codeExpiredAt != nil {
+		if issuedFloor := codeExpiredAt.Add(-pendingOrderDefaultTTL); issuedFloor.Before(fromTime) {
+			fromTime = issuedFloor
+		}
+	}
 
 	// Call transaction service via gRPC
 	result, err := s.transactionService.CheckTransaction(ctx, paymentCode, fromTime, toTime)
+	// Service Python báo lỗi bằng Found=false + Status="error" (không phải Go error), nên cả hai
+	// đều là "chưa xác minh được".
+	unverified := err != nil || result == nil || result.Status == "error"
+	if unverified && codeExpired {
+		// Không chốt expired khi chưa biết tiền đã về chưa: giữ nguyên trạng thái, lần poll sau thử lại.
+		log.Printf("[PAYMENT-CHECK] order=%s mã đã hết hạn nhưng chưa đối chiếu được giao dịch (err=%v), giữ %q để thử lại", orderID, err, order.Status)
+		return &dto.PaymentStatusResponse{OrderID: orderID, Status: order.Status, Amount: order.TotalAmount}, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to check transaction: %w", err)
 	}
 
 	// If transaction not found
-	if !result.Found {
+	if result == nil || !result.Found {
+		if codeExpired {
+			// Đã đối chiếu, không có tiền: chốt expired (hoàn used_count voucher nếu có).
+			if expired, err := s.expireOrderTx(ctx, order, "Payment code expired (verified: no transaction)"); err != nil {
+				return nil, err
+			} else if !expired {
+				return &dto.PaymentStatusResponse{OrderID: orderID, Status: order.Status, Amount: order.TotalAmount}, nil
+			}
+			return &dto.PaymentStatusResponse{OrderID: orderID, Status: "expired", Amount: order.TotalAmount}, nil
+		}
 		return &dto.PaymentStatusResponse{
 			OrderID: orderID,
 			Status:  "pending",
@@ -408,7 +452,17 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 
 	// Verify amount matches
 	amount, _ := decimal.NewFromString(result.Amount)
-	if amount.Compare(order.TotalAmount) != 0 {
+	amountMatches := amount.Compare(order.TotalAmount) == 0
+	if codeExpired {
+		// Tiền đã về nhưng mã đã hết hạn: chỉ hoàn tất nếu giao dịch khớp tiền VÀ thời điểm ngân
+		// hàng ghi nhận <= hạn mã. Còn lại (về sau hạn, sai số tiền, không đọc được ngày) vẫn chốt
+		// expired nhưng để lại cảnh báo + history cho admin hoàn tiền thủ công.
+		paidAt, dateKnown := parseBankTransactionDate(result.TransactionDate)
+		paidInTime := amountMatches && dateKnown && !paidAt.After(*codeExpiredAt)
+		if !paidInTime {
+			return s.expireWithLatePayment(ctx, order, result, paidAt, dateKnown, amountMatches)
+		}
+	} else if !amountMatches {
 		return nil, ErrPaymentAmountMismatch
 	}
 
@@ -603,7 +657,8 @@ func (s *PaymentService) GetPaymentStatus(ctx context.Context, orderID, actorUse
 	// riêng lỗi quyền/không tìm thấy vẫn trả về như cũ.
 	// Review #76 MAJOR 2: "pending" cũng đi qua CheckAndProcessPayment để đơn quá hạn giữ được chốt
 	// "expired" ngay khi web poll, cùng mốc với CreatePaymentIntent (không gọi gRPC cho pending).
-	if order.Status == "processing" || order.Status == "pending" {
+	// Re-review #76 vòng 2: "expired" cũng đi qua để trả cờ late_payment_received (đọc history).
+	if order.Status == "processing" || order.Status == "pending" || order.Status == "expired" {
 		resp, checkErr := s.CheckAndProcessPayment(ctx, orderID, actorUserID, isAdmin)
 		if checkErr == nil {
 			return resp, nil
@@ -632,26 +687,149 @@ func (s *PaymentService) GetPaymentStatus(ctx context.Context, orderID, actorUse
 // qua releaseOrderAndTransition (UPDATE có điều kiện + hoàn used_count voucher). Trả true cả khi
 // request khác vừa chuyển trạng thái trước (applied=false): mốc đã qua nên đơn không còn dùng được,
 // caller vẫn phải từ chối.
+//
+// Re-review #76 vòng 2: CHỈ áp cho đơn "pending" (chưa có mã chuyển khoản nên không thể có tiền
+// về). Đơn "processing" có mã phải qua đối chiếu gRPC lần cuối trong CheckAndProcessPayment, không
+// bao giờ chốt expired ở đây.
 func (s *PaymentService) expireIfHoldElapsed(ctx context.Context, order *model.Order) (bool, error) {
-	if order.Status != "pending" && order.Status != "processing" {
+	if order.Status != "pending" {
 		return false, nil
 	}
 	expiresAt := orderHoldExpiresAt(order)
 	if expiresAt == nil || !time.Now().After(*expiresAt) {
 		return false, nil
 	}
-	reason := "Payment code expired"
-	if order.Status == "pending" {
-		reason = "Order hold expired before payment was initiated"
-	}
+	return s.expireOrderTx(ctx, order, "Order hold expired before payment was initiated")
+}
+
+// expireOrderTx chuyển order sang "expired" qua releaseOrderAndTransition (UPDATE có điều kiện +
+// hoàn used_count voucher đúng 1 lần). Re-review #76 vòng 2 (MINOR): khi applied=false (request
+// khác vừa đổi trạng thái, vd vừa hoàn tất thanh toán) thì ĐỌC LẠI và cập nhật order.Status theo
+// trạng thái thật, trả expired=true chỉ khi đơn thật sự đang "expired" — trước đây vẫn báo
+// "expired" cho đơn vừa được thanh toán xong.
+func (s *PaymentService) expireOrderTx(ctx context.Context, order *model.Order, reason string) (bool, error) {
+	var applied bool
 	err := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
-		_, txErr := releaseOrderAndTransition(ctx, txRepo, s.voucherService, order, []string{order.Status}, "expired", reason)
+		var txErr error
+		applied, txErr = releaseOrderAndTransition(ctx, txRepo, s.voucherService, order, []string{order.Status}, "expired", reason)
 		return txErr
 	})
 	if err != nil {
 		return false, err
 	}
-	return true, nil
+	if applied {
+		order.Status = "expired"
+		return true, nil
+	}
+	fresh, err := s.orderRepo.GetByID(order.ID)
+	if err != nil {
+		return false, err
+	}
+	order.Status = fresh.Status
+	order.PaidAt = fresh.PaidAt
+	return fresh.Status == "expired", nil
+}
+
+// latePaymentHistoryStatus — to_status của dòng history đánh dấu "đã nhận tiền nhưng không hoàn
+// tất được đơn" (về sau hạn mã / sai số tiền / không đọc được ngày giao dịch). Admin lọc theo giá
+// trị này để hoàn tiền; varchar(20) nên giữ đúng độ dài hiện tại.
+const latePaymentHistoryStatus = "payment_after_expiry"
+
+// expireWithLatePayment (re-review #76 vòng 2): có giao dịch ngân hàng cho mã này nhưng không đủ
+// điều kiện hoàn tất (về SAU hạn mã, sai số tiền, hoặc không đọc được ngày). Vẫn chốt "expired"
+// (quyết định: đơn quá hạn không thanh toán được), nhưng KHÔNG im lặng: log [PAYMENT-ALERT] + ghi
+// history payment_after_expiry CÙNG transaction với lần chuyển trạng thái để admin hoàn tiền.
+func (s *PaymentService) expireWithLatePayment(ctx context.Context, order *model.Order, result *grpc.CheckTransactionResult, paidAt time.Time, dateKnown, amountMatches bool) (*dto.PaymentStatusResponse, error) {
+	when := result.TransactionDate
+	if dateKnown {
+		when = paidAt.Format(time.RFC3339)
+	}
+	codeExpiry := ""
+	if order.PaymentCodeExpiredAt != nil {
+		codeExpiry = order.PaymentCodeExpiredAt.Format(time.RFC3339)
+	}
+	note := fmt.Sprintf("Received bank transaction %s amount %s at %s but payment code expired at %s (amount matches order total %s: %t, date parsed: %t). Refund manually.",
+		result.TransactionID, result.Amount, when, codeExpiry, order.TotalAmount.String(), amountMatches, dateKnown)
+
+	fromStatus := order.Status
+	var applied bool
+	err := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
+		var txErr error
+		applied, txErr = releaseOrderAndTransition(ctx, txRepo, s.voucherService, order, []string{fromStatus}, "expired", "Payment code expired")
+		if txErr != nil || !applied {
+			return txErr
+		}
+		return repository.NewOrderStatusHistoryRepository(txRepo.TxDB()).Create(&model.OrderStatusHistory{
+			ID:         uuid.New(),
+			CreatedAt:  time.Now(),
+			OrderID:    order.ID,
+			FromStatus: "expired",
+			ToStatus:   latePaymentHistoryStatus,
+			Reason:     note,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !applied {
+		// Request khác đã đổi trạng thái trước (vd lần kiểm song song đã ghi cảnh báo này).
+		fresh, rerr := s.orderRepo.GetByID(order.ID)
+		if rerr != nil {
+			return nil, rerr
+		}
+		return &dto.PaymentStatusResponse{
+			OrderID:             order.ID,
+			Status:              fresh.Status,
+			PaidAt:              fresh.PaidAt,
+			Amount:              fresh.TotalAmount,
+			LatePaymentReceived: fresh.Status == "expired" && s.hasLatePaymentRecord(order.ID),
+		}, nil
+	}
+	log.Printf("[PAYMENT-ALERT] order=%s tx=%s amount=%s paid_at=%s code_expired_at=%s: nhận tiền nhưng không hoàn tất được đơn, cần hoàn tiền thủ công",
+		order.ID, result.TransactionID, result.Amount, when, codeExpiry)
+	order.Status = "expired"
+	return &dto.PaymentStatusResponse{OrderID: order.ID, Status: "expired", Amount: order.TotalAmount, LatePaymentReceived: true}, nil
+}
+
+// hasLatePaymentRecord — đơn từng được ghi history payment_after_expiry chưa. nil-safe: một số
+// test dựng PaymentService không có orderHistoryRepo.
+func (s *PaymentService) hasLatePaymentRecord(orderID uuid.UUID) bool {
+	if s.orderHistoryRepo == nil {
+		return false
+	}
+	rows, err := s.orderHistoryRepo.GetByOrderID(orderID)
+	if err != nil {
+		log.Printf("[PAYMENT-STATUS] order=%s không đọc được history: %v", orderID, err)
+		return false
+	}
+	for _, h := range rows {
+		if h.ToStatus == latePaymentHistoryStatus {
+			return true
+		}
+	}
+	return false
+}
+
+// bankTimeZone — MB Bank ghi transactionDate theo giờ Việt Nam, không kèm múi giờ. Dùng
+// FixedZone (VN không có giờ mùa hè) để không phụ thuộc tzdata của máy chạy.
+var bankTimeZone = time.FixedZone("ICT", 7*60*60)
+
+// parseBankTransactionDate đọc transactionDate của service Python (mbbank: "dd/MM/yyyy HH:mm:ss").
+// ok=false khi rỗng/không đọc được: caller KHÔNG được coi là "trong hạn".
+func parseBankTransactionDate(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, true
+	}
+	for _, layout := range []string{"02/01/2006 15:04:05", "02/01/2006 15:04", "2006-01-02 15:04:05", "2006-01-02T15:04:05"} {
+		if t, err := time.ParseInLocation(layout, s, bankTimeZone); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // calculatePlatformFeeAmount (quyết định #2, 27/09/2026) — hàm THUẦN (không side-effect), tách

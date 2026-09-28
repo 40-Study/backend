@@ -94,6 +94,9 @@ type PaymentStatusResponse struct {
 	Status  string          `json:"status"`
 	PaidAt  *time.Time      `json:"paid_at,omitempty"`
 	Amount  decimal.Decimal `json:"amount"`
+	// LatePaymentReceived (re-review #76 vòng 2): đơn "expired" nhưng hệ thống đã nhận tiền cho mã
+	// này sau hạn (hoặc sai số tiền). Web báo "bộ phận hỗ trợ sẽ hoàn tiền", không mời trả lại.
+	LatePaymentReceived bool `json:"late_payment_received,omitempty"`
 }
 
 type PaymentWebhookRequest struct {

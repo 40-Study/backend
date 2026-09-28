@@ -775,6 +775,14 @@ func (s *OrderService) sweepExpiredHeldOrders(ctx context.Context, userID uuid.U
 	}
 	for i := range staleOrders {
 		order := &staleOrders[i]
+		// Re-review #76 vòng 2 (MAJOR, tiền): đơn "processing" đã có mã chuyển khoản có thể đã được
+		// trả TRONG hạn mà chưa ai đối chiếu. OrderService không có gRPC ngân hàng nên KHÔNG tự chốt
+		// expired ở đây (trước đây chốt im lặng, rồi nút "Tạo đơn mới" dẫn tới trả lần 2). Đơn này
+		// được chốt qua PaymentService.CheckAndProcessPayment (đối chiếu lần cuối). Nó không chặn
+		// tạo đơn mới vì findReusableOpenOrder đã bỏ qua đơn quá hạn.
+		if order.Status == "processing" && order.PaymentTransactionID != nil && *order.PaymentTransactionID != "" {
+			continue
+		}
 		if err := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
 			_, txErr := releaseOrderAndTransition(ctx, txRepo, s.voucherService, order, []string{order.Status}, "expired", "Order expired (lazy sweep on new order creation)")
 			return txErr
