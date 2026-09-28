@@ -4,8 +4,8 @@ package service
 //
 // Vì sao không dùng transaction ROLLBACK như payment_service_platform_fee_integration_test.go: test
 // race cần NHIỀU kết nối đồng thời thấy dữ liệu của nhau (khoá dòng chỉ có nghĩa giữa các
-// transaction khác nhau). Nên fixture COMMIT dữ liệu thật (tên/email tiền tố QA-withdrawal-) và xoá
-// sạch trong t.Cleanup. Không có Postgres -> t.Skip (CI không có DB vẫn xanh các test thuần).
+// transaction khác nhau). Nên fixture COMMIT dữ liệu thật, nhưng trong 1 schema TẠM riêng
+// (pgtest.IsolatedSchema) bị DROP khi test xong. Không có Postgres: Skip ở local, FAIL khi CI=true.
 
 import (
 	"context"
@@ -19,6 +19,7 @@ import (
 	"study.com/v1/internal/database"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/testutil/pgtest"
 )
 
 type withdrawalFixture struct {
@@ -34,45 +35,26 @@ type withdrawalFixture struct {
 
 var testMinWithdrawal = decimal.NewFromInt(100000)
 
+// migrateLikeAPIBoot — đúng các bước schema lúc API khởi động (AutoMigrate + RunPostMigrations).
+func migrateLikeAPIBoot(db *gorm.DB) error {
+	if err := database.Migrate(db); err != nil {
+		return err
+	}
+	return database.RunPostMigrations(db)
+}
+
+// newWithdrawalFixture mở 1 schema Postgres TẠM riêng (pgtest.IsolatedSchema), migrate như lúc
+// API khởi động, và DROP schema khi test xong: dữ liệu COMMIT (cần cho test race nhiều kết nối)
+// không bao giờ chạm schema public của DB dev dùng chung.
 func newWithdrawalFixture(t *testing.T) *withdrawalFixture {
 	t.Helper()
-	db := openTestPostgresForPaymentTest(t)
-	// Đảm bảo schema giống lúc API khởi động: cột rejection_reason + CHECK status mới.
-	if err := db.AutoMigrate(&model.InstructorPayout{}); err != nil {
-		t.Fatalf("AutoMigrate InstructorPayout: %v", err)
-	}
-	if err := database.RunPostMigrations(db); err != nil {
-		t.Fatalf("RunPostMigrations: %v", err)
-	}
+	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
 	walletRepo := repository.NewWalletRepository(db)
-	f := &withdrawalFixture{
+	return &withdrawalFixture{
 		t:      t,
 		db:     db,
 		svc:    NewWithdrawalService(repository.NewWithdrawalRepository(db), walletRepo, testMinWithdrawal),
 		wallet: NewWalletService(walletRepo, repository.NewTeacherProfileRepository(db), testMinWithdrawal),
-	}
-	t.Cleanup(f.cleanup)
-	return f
-}
-
-func (f *withdrawalFixture) cleanup() {
-	db := f.db
-	if len(f.teachers) > 0 {
-		db.Unscoped().Where("instructor_id IN ?", f.teachers).Delete(&model.InstructorPayout{})
-		db.Unscoped().Where("user_id IN ?", f.teachers).Delete(&model.TeacherProfile{})
-	}
-	if len(f.orders) > 0 {
-		db.Where("order_id IN ?", f.orders).Delete(&model.OrderItem{})
-		db.Where("id IN ?", f.orders).Delete(&model.Order{})
-	}
-	if len(f.courses) > 0 {
-		db.Unscoped().Where("id IN ?", f.courses).Delete(&model.Course{})
-	}
-	if len(f.users) > 0 {
-		db.Unscoped().Where("id IN ?", f.users).Delete(&model.User{})
-	}
-	if sqlDB, err := db.DB(); err == nil {
-		_ = sqlDB.Close()
 	}
 }
 

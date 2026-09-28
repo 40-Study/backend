@@ -36,6 +36,7 @@ var withdrawalErrorMap = []struct {
 	{service.ErrWithdrawalTeacherProfileRequired, fiber.StatusForbidden, "teacher_profile_required", "Teacher profile required"},
 	{service.ErrWithdrawalNotFound, fiber.StatusNotFound, "withdrawal_not_found", "Withdrawal not found"},
 	{service.ErrWithdrawalInvalidTransition, fiber.StatusConflict, "invalid_status_transition", "Invalid status transition"},
+	{service.ErrWithdrawalPayoutNegativeBalance, fiber.StatusConflict, "negative_balance", "Teacher balance is negative, this withdrawal cannot be approved or paid out"},
 }
 
 func writeWithdrawalError(c *fiber.Ctx, err error) error {

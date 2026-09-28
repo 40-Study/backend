@@ -76,7 +76,12 @@ type TeacherEarningsRow struct {
 // Một đơn có thể chứa khoá của NHIỀU giảng viên, nên phí cấp đơn được phân bổ về từng item theo tỉ
 // lệ final_price / tổng final_price của cả đơn:
 //
-//	phần GV của item = final_price − ROUND(platform_fee_amount × final_price / tổng final_price đơn, 2)
+//	phí của item = ROUND(platform_fee_amount × final_price / tổng final_price đơn, 2)
+//	phần GV của item = final_price − phí của item
+//
+// Làm tròn từng item có thể lệch 1–2 xu so với phí cả đơn, nên item CUỐI của đơn (id lớn nhất, cố
+// định) nhận phần dư: phí của nó = phí đơn − tổng phí đã làm tròn của các item còn lại. Nhờ vậy
+// Σ phần GV + phí đơn = tổng final_price của đơn, đúng tới từng xu (review Phase 4, MINOR).
 //
 // Dùng SỐ TIỀN phí đã chốt (không tính lại từ %) để khớp đúng báo cáo doanh thu admin
 // (teacher_share = gross − platform_fee_amount) với đơn 1 khoá. Đơn tạo trước khi có phí có
@@ -84,12 +89,24 @@ type TeacherEarningsRow struct {
 // `refunded` rơi khỏi tổng (đó là cách "trừ doanh thu giảng viên khi hoàn tiền" của Phase 2).
 const teacherEarningsJoins = `JOIN orders ON orders.id = order_items.order_id
 	JOIN courses ON courses.id = order_items.course_id
-	JOIN (SELECT order_id, SUM(final_price) AS items_total FROM order_items GROUP BY order_id) AS order_totals
-		ON order_totals.order_id = order_items.order_id`
+	JOIN (
+		SELECT r.id,
+			CASE WHEN r.items_total <= 0 THEN 0
+				WHEN r.rn = 1 THEN r.fee - (SUM(r.rounded) OVER (PARTITION BY r.order_id) - r.rounded)
+				ELSE r.rounded END AS fee_share
+		FROM (
+			SELECT oi.id, oi.order_id, o.platform_fee_amount AS fee,
+				SUM(oi.final_price) OVER (PARTITION BY oi.order_id) AS items_total,
+				ROW_NUMBER() OVER (PARTITION BY oi.order_id ORDER BY oi.id DESC) AS rn,
+				CASE WHEN SUM(oi.final_price) OVER (PARTITION BY oi.order_id) > 0
+					THEN ROUND(o.platform_fee_amount * oi.final_price / SUM(oi.final_price) OVER (PARTITION BY oi.order_id), 2)
+					ELSE 0 END AS rounded
+			FROM order_items oi JOIN orders o ON o.id = oi.order_id
+			WHERE o.status = 'completed'
+		) AS r
+	) AS item_fee ON item_fee.id = order_items.id`
 
-const teacherShareExpr = `order_items.final_price - CASE WHEN order_totals.items_total > 0
-	THEN ROUND(orders.platform_fee_amount * order_items.final_price / order_totals.items_total, 2)
-	ELSE 0 END`
+const teacherShareExpr = `order_items.final_price - item_fee.fee_share`
 
 // GetTeacherEarnings trả tổng phần giảng viên (sau phí nền tảng) của các đơn `completed`.
 func (r *WalletRepository) GetTeacherEarnings(teacherID uuid.UUID) (*TeacherEarningsRow, error) {

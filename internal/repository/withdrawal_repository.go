@@ -53,6 +53,22 @@ func (r *WithdrawalRepository) LockTeacherProfile(ctx context.Context, teacherID
 	return &profile, nil
 }
 
+// LockTeacherProfilesOfOrder khoá (FOR UPDATE) dòng teacher_profiles của MỌI giảng viên có khoá học
+// trong đơn, theo thứ tự user_id. Hoàn tiền gọi hàm này trong transaction của nó (sau khi đã khoá
+// đơn) để tuần tự hoá với duyệt/đánh dấu đã chuyển yêu cầu rút: admin duyệt khoá cùng dòng hồ sơ
+// GV, nên hoặc thấy đơn đã hoàn (số dư đã giảm) hoặc hoàn tiền chờ duyệt xong. Thứ tự user_id cố
+// định giúp 2 lần hoàn đơn nhiều giảng viên không khoá chéo nhau.
+func LockTeacherProfilesOfOrder(ctx context.Context, tx *gorm.DB, orderID uuid.UUID) error {
+	var locked []uuid.UUID
+	return tx.WithContext(ctx).Raw(`
+		SELECT tp.user_id FROM teacher_profiles tp
+		WHERE tp.user_id IN (
+			SELECT c.instructor_id FROM order_items oi JOIN courses c ON c.id = oi.course_id
+			WHERE oi.order_id = ?)
+		ORDER BY tp.user_id
+		FOR UPDATE OF tp`, orderID).Scan(&locked).Error
+}
+
 // FindOpenByTeacher trả yêu cầu đang xử lý (pending/approved) mới nhất của giảng viên, nil nếu không có.
 func (r *WithdrawalRepository) FindOpenByTeacher(ctx context.Context, teacherID uuid.UUID) (*model.InstructorPayout, error) {
 	var p model.InstructorPayout
@@ -71,6 +87,21 @@ func (r *WithdrawalRepository) FindOpenByTeacher(ctx context.Context, teacherID 
 
 func (r *WithdrawalRepository) Create(ctx context.Context, p *model.InstructorPayout) error {
 	return r.db.WithContext(ctx).Create(p).Error
+}
+
+// FindInstructorID đọc (KHÔNG khoá) giảng viên sở hữu 1 yêu cầu rút. instructor_id không bao giờ
+// đổi sau khi tạo, nên đọc trước khoá là an toàn; service dùng nó để khoá teacher_profiles TRƯỚC
+// rồi mới khoá chính yêu cầu (cùng thứ tự khoá với Create và hoàn tiền: hồ sơ GV trước).
+func (r *WithdrawalRepository) FindInstructorID(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	var p model.InstructorPayout
+	err := r.db.WithContext(ctx).Select("instructor_id").Where("id = ?", id).First(&p).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return uuid.Nil, ErrWithdrawalRecordNotFound
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return p.InstructorID, nil
 }
 
 // LockByID — SELECT ... FOR UPDATE 1 yêu cầu rút, để 2 admin thao tác cùng lúc trên cùng yêu cầu

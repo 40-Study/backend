@@ -8,88 +8,21 @@ package repository
 // la test tich hop bo sung, khong thay the cac test dry-run/mock o noi khac.
 
 import (
-	"bufio"
 	"context"
-	"fmt"
-	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/testutil/pgtest"
 )
 
-// loadEnvFileForTest doc file .env o repo root theo duong dan TUONG DOI VOI FILE NAY (khong phu
-// thuoc cwd cua `go test`), roi set vao os.Setenv cho NHUNG bien CHUA duoc set san — bien moi
-// truong that su (CI, shell da export) luon thang gia tri trong file. Khong dung them thu vien
-// nao (godotenv) chi de phuc vu MOT test.
-func loadEnvFileForTest(t *testing.T) {
-	t.Helper()
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return
-	}
-	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
-	envPath := filepath.Join(repoRoot, ".env")
-	f, err := os.Open(envPath)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.TrimSpace(parts[0])
-		val := strings.Trim(strings.TrimSpace(parts[1]), `"'`)
-		if _, exists := os.LookupEnv(key); !exists {
-			_ = os.Setenv(key, val)
-		}
-	}
-}
-
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-// openTestPostgres mo mot ket noi Postgres THAT toi DB dev cuc bo (127.0.0.1:5432/study_db —
-// xem CLAUDE.md moi truong worktree). Bo qua test (khong FAIL) neu khong ket noi duoc, de suite
-// khong do gay tren mot may khong co Postgres chay san.
+// openTestPostgres mo ket noi Postgres THAT qua pgtest.Open: bo qua khi chay local khong co DB,
+// nhung FAIL khi CI=true (review Phase 4, B-2). Cac test dung ham nay deu tu ROLLBACK.
 func openTestPostgres(t *testing.T) *gorm.DB {
 	t.Helper()
-	loadEnvFileForTest(t)
-
-	host := envOrDefault("DB_HOST", "localhost")
-	port := envOrDefault("DB_PORT", "5432")
-	user := envOrDefault("DB_USER", "study_user")
-	pass := os.Getenv("DB_PASSWORD")
-	name := envOrDefault("DB_NAME", "study_db")
-
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=Asia/Ho_Chi_Minh",
-		host, user, pass, name, port)
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		t.Skipf("khong ket noi duoc Postgres that (%s:%s/%s) — bo qua test tich hop R5: %v", host, port, name, err)
-	}
-	return db
+	return pgtest.Open(t)
 }
 
 // TestListByCourse_LocTheoSection_KhongLoiAmbiguousColumn (R5): tai san sinh CHINH XAC kich ban

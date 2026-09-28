@@ -2,14 +2,11 @@ package database
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/testutil/pgtest"
 )
 
 // TestBuildStatusCheckConstraintSQL_ListsEverySSOTValue — SQL sinh ra phải chứa đúng các giá trị
@@ -32,24 +29,9 @@ func TestBuildStatusCheckConstraintSQL_ListsEverySSOTValue(t *testing.T) {
 // TestBuildStatusCheckConstraintSQL_Postgres — chạy thật trên Postgres, trong 1 transaction
 // ROLLBACK, trên bảng tạm: constraint cũ (thừa 'processing'/'failed', thiếu 'approved') phải bị
 // thay bằng constraint mới; chạy lần 2 là no-op; giá trị cũ bị từ chối, giá trị mới được nhận.
-// Không có Postgres -> skip.
+// Không có Postgres: skip ở local, FAIL khi CI=true (pgtest.Open).
 func TestBuildStatusCheckConstraintSQL_Postgres(t *testing.T) {
-	get := func(k, def string) string {
-		if v := os.Getenv(k); v != "" {
-			return v
-		}
-		return def
-	}
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
-		get("DB_HOST", "localhost"), get("DB_USER", "study_user"), os.Getenv("DB_PASSWORD"),
-		get("DB_NAME", "study_db"), get("DB_PORT", "5432"))
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		t.Skipf("không kết nối được Postgres: %v", err)
-	}
-	if err := db.Exec("SELECT 1").Error; err != nil {
-		t.Skipf("không kết nối được Postgres: %v", err)
-	}
+	db := pgtest.Open(t)
 	tx := db.Begin()
 	defer tx.Rollback()
 

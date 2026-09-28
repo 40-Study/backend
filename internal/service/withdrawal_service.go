@@ -26,6 +26,10 @@ var (
 	ErrWithdrawalInvalidTransition      = errors.New("invalid status transition")
 	ErrWithdrawalReasonRequired         = errors.New("reason is required")
 	ErrWithdrawalTransactionIDRequired  = errors.New("transaction_id is required")
+	// ErrWithdrawalPayoutNegativeBalance — admin duyệt/đánh dấu đã chuyển khi số dư GV đang âm
+	// (vd đơn bị hoàn sau khi GV gửi yêu cầu). Khác ErrWithdrawalNegativeBalance (GV tạo yêu cầu,
+	// 400): đây là xung đột trạng thái nên trả 409.
+	ErrWithdrawalPayoutNegativeBalance = errors.New("teacher balance is negative, this withdrawal cannot be approved or paid out")
 )
 
 // WithdrawalRuleError gói 1 lỗi nghiệp vụ kèm dữ liệu cho client (số dư, mức tối thiểu, id yêu
@@ -289,11 +293,46 @@ func (s *WithdrawalService) MarkCompleted(ctx context.Context, actorID, id uuid.
 		map[string]interface{}{"transaction_id": transactionID, "processed_at": now})
 }
 
+// requiresNonNegativeBalance — bước chuyển nào đưa tiền ra khỏi nền tảng thì phải chặn khi số dư
+// âm (quyết định #8). Từ chối (rejected) luôn được phép: nó chỉ trả tiền về số dư.
+func requiresNonNegativeBalance(to string) bool {
+	return to == model.PayoutStatusApproved || to == model.PayoutStatusCompleted
+}
+
+// checkPayoutBalance — chạy trong transaction, sau khi đã khoá hồ sơ GV. balance là số dư khả dụng
+// HIỆN TẠI (đã trừ chính yêu cầu này, vì nó đang pending/approved) — đúng con số admin thấy trên
+// danh sách. Âm nghĩa là doanh thu còn lại (sau hoàn tiền) không đủ trả yêu cầu này.
+func checkPayoutBalance(balance, amount decimal.Decimal) error {
+	if balance.IsNegative() {
+		return ruleErr(ErrWithdrawalPayoutNegativeBalance, map[string]interface{}{"available_balance": balance, "amount": amount})
+	}
+	return nil
+}
+
 // transition — khoá dòng yêu cầu, chỉ cho đổi from→to đúng luồng
 // pending→approved→completed / pending→rejected; mọi transition khác trả 409. Ghi admin thao tác
 // vào notes làm dấu vết đối soát (bảng không có cột actor riêng).
+//
+// Duyệt/đánh dấu đã chuyển (review Phase 4, B-1): khoá teacher_profiles của GV TRƯỚC (cùng khoá mà
+// Create và hoàn tiền dùng), rồi mới khoá yêu cầu và tính lại số dư. Nhờ vậy 1 lần hoàn tiền chạy
+// song song hoặc đã commit trước (số dư giảm) hoặc phải chờ bước này xong; không có lúc admin duyệt
+// dựa trên số dư đã cũ.
 func (s *WithdrawalService) transition(ctx context.Context, actorID, id uuid.UUID, from, to string, extra map[string]interface{}) (*dto.WithdrawalStatusResponse, error) {
-	err := s.repo.Transaction(ctx, func(txRepo *repository.WithdrawalRepository, _ *repository.WalletRepository) error {
+	err := s.repo.Transaction(ctx, func(txRepo *repository.WithdrawalRepository, txWallet *repository.WalletRepository) error {
+		checkBalance := requiresNonNegativeBalance(to)
+		if checkBalance {
+			teacherID, err := txRepo.FindInstructorID(ctx, id)
+			if errors.Is(err, repository.ErrWithdrawalRecordNotFound) {
+				return ErrWithdrawalNotFound
+			}
+			if err != nil {
+				return err
+			}
+			if _, err := txRepo.LockTeacherProfile(ctx, teacherID); err != nil && !errors.Is(err, repository.ErrWithdrawalRecordNotFound) {
+				return err
+			}
+		}
+
 		p, err := txRepo.LockByID(ctx, id)
 		if errors.Is(err, repository.ErrWithdrawalRecordNotFound) {
 			return ErrWithdrawalNotFound
@@ -303,6 +342,20 @@ func (s *WithdrawalService) transition(ctx context.Context, actorID, id uuid.UUI
 		}
 		if p.Status != from {
 			return ruleErr(ErrWithdrawalInvalidTransition, map[string]interface{}{"current_status": p.Status})
+		}
+
+		if checkBalance {
+			earnings, err := txWallet.GetTeacherEarnings(p.InstructorID)
+			if err != nil {
+				return err
+			}
+			sums, err := txWallet.GetTeacherPayoutSums(p.InstructorID)
+			if err != nil {
+				return err
+			}
+			if err := checkPayoutBalance(availableBalance(earnings.TotalEarnings, sums), p.Amount); err != nil {
+				return err
+			}
 		}
 
 		fields := map[string]interface{}{"status": to, "notes": appendAuditNote(p.Notes, actorID, to)}

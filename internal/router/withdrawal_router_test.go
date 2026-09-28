@@ -57,6 +57,7 @@ type wdFakeService struct {
 	listMineFor uuid.UUID
 	createdFor  uuid.UUID
 	approved    uuid.UUID
+	payoutErr   error // nếu khác nil: Approve/MarkCompleted trả lỗi này
 }
 
 func (f *wdFakeService) Create(ctx context.Context, teacherID uuid.UUID, amount decimal.Decimal) (*dto.WithdrawalItem, error) {
@@ -79,6 +80,9 @@ func (f *wdFakeService) NegativeBalances(ctx context.Context) (*dto.NegativeBala
 
 func (f *wdFakeService) Approve(ctx context.Context, actorID, id uuid.UUID) (*dto.WithdrawalStatusResponse, error) {
 	f.approved = id
+	if f.payoutErr != nil {
+		return nil, f.payoutErr
+	}
 	return &dto.WithdrawalStatusResponse{ID: id, Status: "approved"}, nil
 }
 
@@ -87,6 +91,9 @@ func (f *wdFakeService) Reject(ctx context.Context, actorID, id uuid.UUID, reaso
 }
 
 func (f *wdFakeService) MarkCompleted(ctx context.Context, actorID, id uuid.UUID, txID string) (*dto.WithdrawalStatusResponse, error) {
+	if f.payoutErr != nil {
+		return nil, f.payoutErr
+	}
 	return &dto.WithdrawalStatusResponse{ID: id, Status: "completed"}, nil
 }
 
@@ -173,6 +180,30 @@ func TestWithdrawalAdminRoutes_RequirePermission(t *testing.T) {
 	}
 	if e.svc.approved.String() != id {
 		t.Fatalf("approve nhận id %s, muốn %s", e.svc.approved, id)
+	}
+}
+
+// Review Phase 4, B-1: số dư GV âm lúc duyệt/đánh dấu đã chuyển -> 409 negative_balance, kèm số dư
+// và số tiền để trang admin giải thích được.
+func TestWithdrawalAdminPayout_NegativeBalanceIs409(t *testing.T) {
+	e := newWithdrawalRouteEnv(t)
+	e.svc.payoutErr = &service.WithdrawalRuleError{
+		Kind: service.ErrWithdrawalPayoutNegativeBalance,
+		Data: map[string]interface{}{"available_balance": decimal.NewFromInt(-200000), "amount": decimal.NewFromInt(400000)},
+	}
+	id := uuid.NewString()
+	for _, r := range []struct{ path, body string }{
+		{"/api/admin/withdrawals/" + id + "/approve", ""},
+		{"/api/admin/withdrawals/" + id + "/mark-completed", `{"transaction_id":"QA-FT"}`},
+	} {
+		code, body := e.do(t, "POST", r.path, e.adminTok, r.body)
+		if code != fiber.StatusConflict || body["error"] != "negative_balance" {
+			t.Fatalf("%s = %d %v, muốn 409 negative_balance", r.path, code, body)
+		}
+		data, _ := body["data"].(map[string]interface{})
+		if data["available_balance"] == nil || data["amount"] == nil {
+			t.Fatalf("%s thiếu data.available_balance/amount: %v", r.path, body)
+		}
 	}
 }
 
