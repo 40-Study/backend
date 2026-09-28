@@ -304,6 +304,72 @@ func RunPostMigrations(db *gorm.DB) error {
 			sql: buildCheckConstraintSQL("instructor_payouts", "chk_instructor_payouts_status",
 				"status", model.PayoutStatuses),
 		},
+		{
+			// QA vòng 2 lane E (Q4): phụ huynh gửi yêu cầu liên kết con. CHECK sinh từ SSOT.
+			name: "chk_parent_link_requests_status (qa-r2 lane E)",
+			sql: buildCheckConstraintSQL("parent_link_requests", "chk_parent_link_requests_status",
+				"status", model.ParentLinkRequestStatuses),
+		},
+		{
+			// DB đã chạy bản đầu của PR #81 (yêu cầu lưu theo student_user_id, chưa có student_email):
+			// điền email từ tài khoản và bỏ unique index theo cặp cũ. Không làm gì trên DB mới.
+			name: "backfill parent_link_requests.student_email (qa-r2 lane E)",
+			sql: `UPDATE parent_link_requests plr SET student_email = LOWER(u.email)
+				FROM users u WHERE plr.student_email = '' AND u.id = plr.student_user_id`,
+		},
+		{
+			name: "drop old uq_parent_link_requests_pending (qa-r2 lane E)",
+			sql:  `DROP INDEX IF EXISTS uq_parent_link_requests_pending`,
+		},
+		{
+			// Chống spam ở tầng DB: mỗi phụ huynh chỉ có TỐI ĐA 1 yêu cầu đang chờ cho một email. Theo
+			// email (không theo student_user_id) vì yêu cầu được lưu cho mọi email, kể cả email không
+			// phải học sinh — xem model.ParentLinkRequest.
+			name: "uq_parent_link_requests_pending_email (qa-r2 lane E)",
+			sql: `CREATE UNIQUE INDEX IF NOT EXISTS uq_parent_link_requests_pending_email
+				ON parent_link_requests (parent_user_id, student_email) WHERE status = 'pending'`,
+		},
+		{
+			// Review PR #81 MINOR-8: DB cũ lỡ có status ngoài SSOT (hoặc NULL) thì ADD CONSTRAINT bên dưới
+			// sẽ lỗi và API không khởi động. Chuẩn hoá trước: giá trị lạ coi như đã huỷ — an toàn hơn
+			// là coi như active (không ai được xem dữ liệu con vì một dòng rác).
+			name: "normalize parent_student_relations.status before CHECK (qa-r2 lane E)",
+			sql:  buildNormalizeStatusSQL("parent_student_relations", "status", model.ParentStudentStatusRevoked, model.ParentStudentRelationStatuses),
+		},
+		{
+			// Huỷ liên kết nay ghi 'revoked' thật — ràng buộc giá trị cột bằng SSOT.
+			name: "chk_parent_student_relations_status (qa-r2 lane E)",
+			sql: buildCheckConstraintSQL("parent_student_relations", "chk_parent_student_relations_status",
+				"status", model.ParentStudentRelationStatuses),
+		},
+		{
+			// Ai huỷ liên kết (NULL = chưa huỷ, CHECK IN cho qua NULL).
+			name: "chk_parent_student_relations_revoked_by (qa-r2 lane E)",
+			sql: buildCheckConstraintSQL("parent_student_relations", "chk_parent_student_relations_revoked_by",
+				"revoked_by", model.RelationRevokedByValues),
+		},
+		{
+			// Mỗi cặp phụ huynh-học sinh chỉ 1 dòng quan hệ: liên kết lại sau khi huỷ phải KÍCH HOẠT
+			// lại dòng cũ, không chèn dòng thứ hai (FindByParentAndStudent lấy First không ORDER, 2 dòng
+			// active/revoked cùng cặp sẽ cho kết quả ngẫu nhiên). Chỉ tạo index khi dữ liệu hiện có
+			// chưa trùng, để DB dev cũ lỡ có bản ghi trùng không làm API chết lúc khởi động; khi đó
+			// log NOTICE để người vận hành dọn tay.
+			name: "uq_parent_student_relations_pair (qa-r2 lane E)",
+			sql: `
+				DO $$
+				BEGIN
+					IF NOT EXISTS (
+						SELECT 1 FROM parent_student_relations
+						GROUP BY parent_user_id, student_user_id HAVING count(*) > 1
+					) THEN
+						CREATE UNIQUE INDEX IF NOT EXISTS uq_parent_student_relations_pair
+							ON parent_student_relations (parent_user_id, student_user_id);
+					ELSE
+						RAISE NOTICE 'parent_student_relations có cặp trùng, bỏ qua uq_parent_student_relations_pair';
+					END IF;
+				END $$;
+			`,
+		},
 	}
 
 	for _, stmt := range statements {

@@ -31,6 +31,7 @@ type ChildCourseDto struct {
 	CourseName      string     `json:"course_name"`
 	CourseThumbnail *string    `json:"course_thumbnail,omitempty"`
 	InstructorName  string     `json:"instructor_name"`
+	InstructorID    string     `json:"instructor_id,omitempty"` // QA vòng 2 E2: để phụ huynh nhắn GV của con (POST /conversations/direct)
 	ProgressPercent float64    `json:"progress_percent"`
 	LastAccessedAt  *time.Time `json:"last_accessed_at,omitempty"`
 	CompletedAt     *time.Time `json:"completed_at,omitempty"`
