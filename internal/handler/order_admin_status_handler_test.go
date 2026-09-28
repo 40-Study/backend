@@ -124,6 +124,68 @@ func TestCreatePaymentIntent_OrderExpiredIsConflict(t *testing.T) {
 	}
 }
 
+// fakePaymentServiceErr / fakeOrderServiceCancelErr — trả đúng lỗi cấu hình sẵn.
+type fakePaymentServiceErr struct {
+	service.PaymentServiceInterface
+	err error
+}
+
+func (f fakePaymentServiceErr) CreatePaymentIntent(ctx context.Context, userID, orderID uuid.UUID, isAdmin bool, paymentMethod string) (*dto.PaymentIntentResponse, error) {
+	return nil, f.err
+}
+
+type fakeOrderServiceCancelErr struct {
+	service.OrderServiceInterface
+	err error
+}
+
+func (f fakeOrderServiceCancelErr) CancelOrder(ctx context.Context, userID, orderID uuid.UUID, isAdmin bool, reason string) error {
+	return f.err
+}
+
+// Review #76 vòng 3: đơn đã thanh toán / đang đối chiếu ngân hàng → 409 với code riêng ở CẢ
+// payment-intent lẫn huỷ đơn, để web hiện đúng thông báo thay vì "tạo đơn mới".
+func TestPaymentStateConflicts_AreMappedFor409(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		code string
+	}{
+		"đã thanh toán":        {service.ErrPaymentAlreadyDone, "ERR_ORDER_ALREADY_PAID"},
+		"đang đối chiếu":       {service.ErrPaymentVerificationPending, "ERR_PAYMENT_VERIFYING"},
+		"hết hạn (giữ nguyên)": {service.ErrOrderExpired, "ERR_ORDER_EXPIRED"},
+	}
+	for name, c := range cases {
+		for _, route := range []string{"payment-intent", "cancel"} {
+			t.Run(name+"/"+route, func(t *testing.T) {
+				h := NewOrderHandler(fakeOrderServiceCancelErr{err: c.err}, fakePaymentServiceErr{err: c.err}, nil)
+				app := fiber.New()
+				app.Post("/orders/:id/payment-intent", func(fc *fiber.Ctx) error {
+					fc.Locals("user_id", uuid.New())
+					return h.CreatePaymentIntent(fc)
+				})
+				app.Post("/orders/:id/cancel", func(fc *fiber.Ctx) error {
+					fc.Locals("user_id", uuid.New())
+					return h.CancelOrder(fc)
+				})
+				req := httptest.NewRequest("POST", "/orders/"+uuid.NewString()+"/"+route, strings.NewReader(`{"payment_method":"qr_transfer","reason":"QA"}`))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				if err != nil {
+					t.Fatalf("app.Test: %v", err)
+				}
+				if resp.StatusCode != fiber.StatusConflict {
+					t.Fatalf("%v trả %d, muốn 409", c.err, resp.StatusCode)
+				}
+				var body map[string]interface{}
+				_ = json.NewDecoder(resp.Body).Decode(&body)
+				if body["code"] != c.code || body["message"] == "" || body["message"] == nil {
+					t.Fatalf("body = %v, muốn code=%s kèm message", body, c.code)
+				}
+			})
+		}
+	}
+}
+
 func TestCreateOrder_OrderInProgressIsConflict(t *testing.T) {
 	h := NewOrderHandler(fakeOrderServiceInProgress{}, nil, nil)
 	app := fiber.New()

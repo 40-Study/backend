@@ -26,6 +26,20 @@ func NewOrderHandler(orderService service.OrderServiceInterface, paymentService 
 	}
 }
 
+// paymentStateConflict (review #76 vòng 3): lỗi nghiệp vụ 409 dùng chung cho payment-intent và huỷ
+// đơn. ok=false khi err không thuộc nhóm này.
+func paymentStateConflict(err error) (fiber.Map, bool) {
+	switch {
+	case errors.Is(err, service.ErrOrderExpired):
+		return fiber.Map{"code": "ERR_ORDER_EXPIRED", "message": err.Error()}, true
+	case errors.Is(err, service.ErrPaymentAlreadyDone):
+		return fiber.Map{"code": "ERR_ORDER_ALREADY_PAID", "message": "Đơn hàng đã được thanh toán, khóa học đã được thêm vào tài khoản của bạn."}, true
+	case errors.Is(err, service.ErrPaymentVerificationPending):
+		return fiber.Map{"code": "ERR_PAYMENT_VERIFYING", "message": err.Error()}, true
+	}
+	return nil, false
+}
+
 // orderErrorStatus ánh xạ lỗi phân quyền (H-06, audit 260909 vòng 2) sang HTTP 403; trả 0 khi
 // không nhận diện được để caller giữ nguyên xử lý hiện có.
 func orderErrorStatus(err error) int {
@@ -182,6 +196,10 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 	err = h.orderService.CancelOrder(c.Context(), userID, orderID, isAdmin, req.Reason)
 	if err != nil {
+		// Review #76 vòng 3 MAJOR 3: đơn có mã đã được thanh toán / đang đối chiếu → 409 kèm câu tiếng Việt.
+		if body, ok := paymentStateConflict(err); ok {
+			return c.Status(fiber.StatusConflict).JSON(body)
+		}
 		if status := orderErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{
 				"code":    "ERR_FORBIDDEN",
@@ -237,13 +255,10 @@ func (h *OrderHandler) CreatePaymentIntent(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 	paymentIntent, err := h.paymentService.CreatePaymentIntent(c.Context(), userID, orderID, isAdmin, req.PaymentMethod)
 	if err != nil {
-		// Review #76 MAJOR 2: đơn quá hạn giữ → 409 lỗi nghiệp vụ có code riêng để web báo "đơn
-		// hết hạn, hãy tạo đơn mới" thay vì lỗi chung "invalid state transition".
-		if errors.Is(err, service.ErrOrderExpired) {
-			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-				"code":    "ERR_ORDER_EXPIRED",
-				"message": err.Error(),
-			})
+		// Review #76 MAJOR 2 / vòng 3: đơn quá hạn giữ, đã thanh toán, hoặc đang đối chiếu → 409 lỗi
+		// nghiệp vụ có code riêng để web báo đúng tình huống thay vì lỗi chung.
+		if body, ok := paymentStateConflict(err); ok {
+			return c.Status(fiber.StatusConflict).JSON(body)
 		}
 		if status := orderErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{

@@ -20,15 +20,33 @@ import (
 	"study.com/v1/internal/repository"
 )
 
-// fakeBankLookup — TransactionServiceInterface giả, trả kết quả/lỗi cấu hình sẵn và đếm số lần gọi.
+// fakeBankLookup — TransactionServiceInterface giả, trả kết quả/lỗi cấu hình sẵn (hoặc lần lượt
+// theo seq, lặp phần tử cuối), đếm số lần gọi và ghi lại cửa sổ from/to + deadline của ctx.
 type fakeBankLookup struct {
 	result *grpc.CheckTransactionResult
 	err    error
+	seq    []*grpc.CheckTransactionResult
 	calls  atomic.Int32
+
+	mu           sync.Mutex
+	lastFrom     time.Time
+	lastTo       time.Time
+	lastDeadline time.Time
+	hadDeadline  bool
 }
 
 func (f *fakeBankLookup) CheckTransaction(ctx context.Context, paymentCode string, fromTime, toTime time.Time) (*grpc.CheckTransactionResult, error) {
-	f.calls.Add(1)
+	n := int(f.calls.Add(1))
+	f.mu.Lock()
+	f.lastFrom, f.lastTo = fromTime, toTime
+	f.lastDeadline, f.hadDeadline = ctx.Deadline()
+	f.mu.Unlock()
+	if len(f.seq) > 0 {
+		if n > len(f.seq) {
+			n = len(f.seq)
+		}
+		return f.seq[n-1], nil
+	}
 	return f.result, f.err
 }
 
@@ -48,13 +66,31 @@ func (f *orderFixture) paymentServiceWith(bank TransactionServiceInterface, vouc
 	)
 }
 
-// processingWithExpiredCode: đơn 499.000đ đã mở phiên thanh toán, mã hết hạn 1 phút trước.
+// processingWithExpiredCode: đơn 499.000đ đã mở phiên thanh toán, mã hết hạn 1 phút trước (còn
+// trong ân hạn đối chiếu).
 func (f *orderFixture) processingWithExpiredCode(student uuid.UUID, title string) (orderID uuid.UUID, codeExpiry time.Time) {
 	f.t.Helper()
-	order := f.createOrder(student, f.course(title))
-	codeExpiry = time.Now().Add(-time.Minute).Truncate(time.Second)
+	id, exp, _ := f.processingWithCodeExpiring(student, title, -time.Minute)
+	return id, exp
+}
+
+// processingWithCodeExpiring: đơn processing có mã, hạn mã = now + offset (âm = đã hết hạn).
+func (f *orderFixture) processingWithCodeExpiring(student uuid.UUID, title string, offset time.Duration) (orderID uuid.UUID, codeExpiry time.Time, courseID uuid.UUID) {
+	f.t.Helper()
+	courseID = f.course(title)
+	order := f.createOrder(student, courseID)
+	codeExpiry = time.Now().Add(offset).Truncate(time.Second)
 	f.exec("UPDATE orders SET status = 'processing', payment_transaction_id = 'PAYQA-FINAL', payment_code_expired_at = ? WHERE id = ?", codeExpiry, order.ID)
-	return order.ID, codeExpiry
+	return order.ID, codeExpiry, courseID
+}
+
+var (
+	bankNotFound = &grpc.CheckTransactionResult{Found: false, Status: "not_found"}
+	bankError    = &grpc.CheckTransactionResult{Found: false, Status: "error", ErrorMessage: "mbbank login failed"}
+)
+
+func bankPaid(at time.Time) *grpc.CheckTransactionResult {
+	return &grpc.CheckTransactionResult{Found: true, Status: "success", TransactionID: "BANK-" + uuid.NewString()[:8], Amount: "499000", TransactionDate: bankDate(at)}
 }
 
 func (f *orderFixture) historyCount(orderID uuid.UUID, toStatus string) int64 {
@@ -160,12 +196,13 @@ func TestCheckAndProcessPayment_UnverifiableLookupNeverExpires(t *testing.T) {
 	}
 }
 
-// Đối chứng: đã đối chiếu, không có giao dịch → chốt expired, không có cờ tiền về muộn.
-func TestCheckAndProcessPayment_VerifiedNoTransactionExpires(t *testing.T) {
+// Quá ân hạn đối chiếu (30 phút sau hạn mã) mà ngân hàng vẫn không có giao dịch → chốt expired,
+// không có cờ tiền về muộn.
+func TestCheckAndProcessPayment_VerifiedNoTransactionAfterGraceExpires(t *testing.T) {
 	f := newOrderFixture(t)
 	student := f.user()
-	orderID, _ := f.processingWithExpiredCode(student, "QA-final không có tiền")
-	bank := &fakeBankLookup{result: &grpc.CheckTransactionResult{Found: false, Status: "not_found"}}
+	orderID, _, _ := f.processingWithCodeExpiring(student, "QA-final không có tiền", -paymentReconcileGracePeriod-time.Minute)
+	bank := &fakeBankLookup{result: bankNotFound}
 
 	resp, err := f.paymentServiceWith(bank, nil).CheckAndProcessPayment(context.Background(), orderID, student, false)
 	if err != nil {
@@ -262,6 +299,178 @@ func TestExpireOrderTx_LostRaceReportsRealStatus(t *testing.T) {
 	}
 	if got := f.loadOrder(created.ID).Status; got != "completed" {
 		t.Fatalf("status DB = %q, muốn completed", got)
+	}
+}
+
+// ===== Review vòng 3 =====
+
+// R1 (MAJOR 1, ân hạn 30 phút): lần poll đầu sau hạn mã ngân hàng chưa ghi có (not_found) → giữ
+// processing + reconciling; ngân hàng ghi có (ngày trước hạn) ở lần poll sau → hoàn tất.
+func TestCheckAndProcessPayment_DelayedBankCreditWithinGraceCompletes(t *testing.T) {
+	f := newOrderFixture(t)
+	student := f.user()
+	orderID, codeExpiry := f.processingWithExpiredCode(student, "QA-r3 ghi có chậm")
+	bank := &fakeBankLookup{seq: []*grpc.CheckTransactionResult{bankNotFound, bankPaid(codeExpiry.Add(-time.Minute))}}
+	svc := f.paymentServiceWith(bank, nil)
+
+	first, err := svc.GetPaymentStatus(context.Background(), orderID, student, false)
+	if err != nil {
+		t.Fatalf("poll 1: %v", err)
+	}
+	if first.Status != "processing" || !first.Reconciling {
+		t.Fatalf("poll 1 = %+v, muốn processing + reconciling (đang trong ân hạn)", first)
+	}
+	if got := f.loadOrder(orderID).Status; got != "processing" {
+		t.Fatalf("status DB sau poll 1 = %q, muốn processing", got)
+	}
+
+	second, err := svc.GetPaymentStatus(context.Background(), orderID, student, false)
+	if err != nil {
+		t.Fatalf("poll 2: %v", err)
+	}
+	if second.Status != "completed" || f.loadOrder(orderID).Status != "completed" {
+		t.Fatalf("poll 2 = %+v (db %q), muốn completed", second, f.loadOrder(orderID).Status)
+	}
+}
+
+// Tiền về SAU cả mốc ân hạn (đơn đã chốt expired) vẫn phải để lại dấu vết để hoàn tiền: hỏi lại
+// đơn đã đóng → tra ngân hàng → history payment_after_expiry đúng 1 lần + cờ late_payment_received.
+func TestClosedOrder_PaymentArrivingAfterGraceIsFlaggedOnce(t *testing.T) {
+	f := newOrderFixture(t)
+	student := f.user()
+	orderID, codeExpiry, _ := f.processingWithCodeExpiring(student, "QA-r3 tiền về sau ân hạn", -paymentReconcileGracePeriod-time.Minute)
+	bank := &fakeBankLookup{seq: []*grpc.CheckTransactionResult{bankNotFound, bankPaid(codeExpiry.Add(paymentReconcileGracePeriod + 30*time.Second))}}
+	svc := f.paymentServiceWith(bank, nil)
+
+	if st, err := svc.GetPaymentStatus(context.Background(), orderID, student, false); err != nil || st.Status != "expired" || st.LatePaymentReceived {
+		t.Fatalf("poll 1 = %+v err=%v, muốn expired chưa có cờ", st, err)
+	}
+	for i := 0; i < 2; i++ {
+		st, err := svc.GetPaymentStatus(context.Background(), orderID, student, false)
+		if err != nil || st.Status != "expired" || !st.LatePaymentReceived {
+			t.Fatalf("hỏi lại lần %d = %+v err=%v, muốn expired + late_payment_received", i+1, st, err)
+		}
+	}
+	if n := f.historyCount(orderID, latePaymentHistoryStatus); n != 1 {
+		t.Fatalf("history %s = %d, muốn đúng 1", latePaymentHistoryStatus, n)
+	}
+}
+
+// R2 (MAJOR 2): cùng khoá đang có đơn processing có mã CHƯA đối chiếu (kể cả mã đã hết hạn, đã quá
+// ân hạn) → CreateOrder trả 409, không mở đơn thứ hai.
+func TestCreateOrder_UnreconciledProcessingOrderBlocksSameCourse(t *testing.T) {
+	for name, offset := range map[string]time.Duration{
+		"mã hết hạn trong ân hạn": -time.Minute,
+		"mã hết hạn quá ân hạn":   -paymentReconcileGracePeriod - time.Hour,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newOrderFixture(t)
+			student := f.user()
+			orderID, _, course := f.processingWithCodeExpiring(student, "QA-r3 chặn đơn trùng", offset)
+
+			_, err := f.svc.CreateOrder(context.Background(), student, buyNow(course))
+			if !errors.Is(err, ErrOrderInProgress) {
+				t.Fatalf("err = %v, muốn ErrOrderInProgress", err)
+			}
+			var n int64
+			f.db.Model(&model.Order{}).Where("user_id = ?", student).Count(&n)
+			if n != 1 || f.loadOrder(orderID).Status != "processing" {
+				t.Fatalf("số đơn = %d, đơn cũ = %q; muốn 1 đơn, vẫn processing", n, f.loadOrder(orderID).Status)
+			}
+		})
+	}
+}
+
+// R6 (MAJOR 3): huỷ đơn processing có mã phải đối chiếu ngân hàng trước.
+func TestCancelOrder_ProcessingReconcilesWithBankFirst(t *testing.T) {
+	type tc struct {
+		offset     time.Duration // hạn mã so với bây giờ
+		bank       func(codeExpiry time.Time) *fakeBankLookup
+		noReconcil bool
+		wantErr    error
+		wantStatus string
+	}
+	cases := map[string]tc{
+		"có tiền khớp → hoàn tất, không huỷ": {offset: time.Hour, bank: func(e time.Time) *fakeBankLookup {
+			return &fakeBankLookup{result: bankPaid(time.Now().Add(-time.Minute))}
+		}, wantErr: ErrPaymentAlreadyDone, wantStatus: "completed"},
+		"ngân hàng lỗi → không huỷ": {offset: time.Hour, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{result: bankError} },
+			wantErr: ErrPaymentVerificationPending, wantStatus: "processing"},
+		"gRPC timeout → không huỷ": {offset: time.Hour, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{err: context.DeadlineExceeded} },
+			wantErr: ErrPaymentVerificationPending, wantStatus: "processing"},
+		"trong ân hạn → không huỷ": {offset: -time.Minute, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{result: bankNotFound} },
+			wantErr: ErrPaymentVerificationPending, wantStatus: "processing"},
+		"không nối bộ đối chiếu → không huỷ": {offset: time.Hour, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{result: bankNotFound} },
+			noReconcil: true, wantErr: ErrPaymentVerificationPending, wantStatus: "processing"},
+		"mã còn hạn, ngân hàng xác nhận chưa có tiền → huỷ được": {offset: time.Hour, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{result: bankNotFound} },
+			wantStatus: "cancelled"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newOrderFixture(t)
+			student := f.user()
+			orderID, exp, _ := f.processingWithCodeExpiring(student, "QA-r3 huỷ "+name, c.offset)
+			bank := c.bank(exp)
+			if !c.noReconcil {
+				f.svc.SetPaymentReconciler(f.paymentServiceWith(bank, nil))
+			}
+
+			err := f.svc.CancelOrder(context.Background(), student, orderID, false, "QA")
+			if c.wantErr == nil && err != nil || c.wantErr != nil && !errors.Is(err, c.wantErr) {
+				t.Fatalf("CancelOrder err = %v, muốn %v", err, c.wantErr)
+			}
+			if got := f.loadOrder(orderID).Status; got != c.wantStatus {
+				t.Fatalf("status DB = %q, muốn %q", got, c.wantStatus)
+			}
+			if !c.noReconcil && bank.calls.Load() != 1 {
+				t.Fatalf("grpcCalls = %d, muốn 1 (phải đối chiếu trước khi huỷ)", bank.calls.Load())
+			}
+		})
+	}
+}
+
+// R3 (MINOR 1): CreatePaymentIntent ánh xạ đúng kết quả đối chiếu thay vì luôn "hết hạn".
+func TestCreatePaymentIntent_MapsReconcileOutcome(t *testing.T) {
+	f := newOrderFixture(t)
+	student := f.user()
+
+	completed := f.createOrder(student, f.course("QA-r3 intent đã trả"))
+	f.exec("UPDATE orders SET status = 'completed', paid_at = now() WHERE id = ?", completed.ID)
+	svc := f.paymentServiceWith(&fakeBankLookup{result: bankNotFound}, nil)
+	if _, err := svc.CreatePaymentIntent(context.Background(), student, completed.ID, false, "qr_transfer"); !errors.Is(err, ErrPaymentAlreadyDone) {
+		t.Fatalf("đơn completed: err = %v, muốn ErrPaymentAlreadyDone", err)
+	}
+
+	reconciling, _ := f.processingWithExpiredCode(student, "QA-r3 intent đang đối chiếu")
+	if _, err := svc.CreatePaymentIntent(context.Background(), student, reconciling, false, "qr_transfer"); !errors.Is(err, ErrPaymentVerificationPending) {
+		t.Fatalf("đơn trong ân hạn: err = %v, muốn ErrPaymentVerificationPending", err)
+	}
+}
+
+// Timeout gRPC + cửa sổ ngày: mỗi lần gọi ngân hàng có deadline bankLookupTimeout, cửa sổ tra
+// cứu nới ±1 ngày (service Python tra theo ngày ở múi giờ máy nó, có thể là UTC).
+func TestBankLookup_HasTimeoutAndTimezoneSafeWindow(t *testing.T) {
+	f := newOrderFixture(t)
+	student := f.user()
+	orderID, codeExpiry := f.processingWithExpiredCode(student, "QA-r3 timeout")
+	bank := &fakeBankLookup{result: bankNotFound}
+	start := time.Now()
+	if _, err := f.paymentServiceWith(bank, nil).CheckAndProcessPayment(context.Background(), orderID, student, false); err != nil {
+		t.Fatalf("CheckAndProcessPayment: %v", err)
+	}
+	bank.mu.Lock()
+	defer bank.mu.Unlock()
+	if !bank.hadDeadline {
+		t.Fatalf("ctx gọi ngân hàng không có deadline (thiếu bankLookupTimeout)")
+	}
+	if d := bank.lastDeadline.Sub(start); d > bankLookupTimeout+time.Second || d < bankLookupTimeout-5*time.Second {
+		t.Fatalf("deadline sau %s, muốn ~%s", d, bankLookupTimeout)
+	}
+	if bank.lastTo.Before(start.Add(23 * time.Hour)) {
+		t.Fatalf("to = %s, muốn nới tới ít nhất now + 23h (chịu được service chạy UTC)", bank.lastTo)
+	}
+	if issued := codeExpiry.Add(-pendingOrderDefaultTTL); bank.lastFrom.After(issued.Add(-23 * time.Hour)) {
+		t.Fatalf("from = %s, muốn trước lúc cấp mã (%s) ít nhất 23h", bank.lastFrom, issued)
 	}
 }
 

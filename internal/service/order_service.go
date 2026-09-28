@@ -77,6 +77,25 @@ type OrderService struct {
 	// voucherService (item 24, review web vòng 1): CreateOrder validate/áp mã giảm giá qua
 	// bảng vouchers thay vì coupons.
 	voucherService VoucherServiceInterface
+	// paymentReconciler (review #76 vòng 3 MAJOR 3): đối chiếu ngân hàng trước khi huỷ đơn
+	// processing có mã chuyển khoản. OrderService không có gRPC nên nhận từ PaymentService qua
+	// SetPaymentReconciler (app/services.go). nil = fail-closed: không cho huỷ đơn có mã.
+	paymentReconciler PaymentReconciler
+}
+
+// PaymentReconciler — phần của PaymentService mà OrderService cần khi huỷ đơn.
+type PaymentReconciler interface {
+	ReconcileBeforeCancel(ctx context.Context, orderID uuid.UUID) error
+}
+
+// SetPaymentReconciler nối bộ đối chiếu thanh toán (gọi 1 lần lúc khởi tạo, app/services.go).
+func (s *OrderService) SetPaymentReconciler(r PaymentReconciler) {
+	s.paymentReconciler = r
+}
+
+// hasPaymentCode — đơn đã mở phiên thanh toán (có mã chuyển khoản) nên có thể đã có tiền về.
+func hasPaymentCode(order *model.Order) bool {
+	return order.PaymentTransactionID != nil && *order.PaymentTransactionID != ""
 }
 
 // M3-09 (review vòng 3b, bổ sung vòng 4): TRƯỚC ĐÂY NewOrderService còn nhận couponRepo/
@@ -599,6 +618,22 @@ func (s *OrderService) CancelOrder(ctx context.Context, userID, orderID uuid.UUI
 		return ErrOrderForbidden
 	}
 
+	// Review #76 vòng 3 MAJOR 3 (quyết định chủ dự án): đơn processing đã có mã chuyển khoản có thể
+	// đã được trả tiền. TRƯỚC ĐÂY huỷ thẳng sang cancelled, tiền mất dấu vết. Giờ đối chiếu ngân hàng
+	// trước: có tiền khớp → đơn hoàn tất, từ chối huỷ; ngân hàng lỗi hoặc đang trong ân hạn → từ
+	// chối (ErrPaymentVerificationPending). Sau đối chiếu đọc lại đơn vì trạng thái có thể đã đổi.
+	if order.Status == "processing" && hasPaymentCode(order) {
+		if s.paymentReconciler == nil {
+			return ErrPaymentVerificationPending
+		}
+		if err := s.paymentReconciler.ReconcileBeforeCancel(ctx, order.ID); err != nil {
+			return err
+		}
+		if order, err = s.orderRepo.GetByID(orderID); err != nil {
+			return ErrOrderNotFound
+		}
+	}
+
 	if !s.isValidTransition(order.Status, "cancelled") {
 		return ErrInvalidStateTransition
 	}
@@ -891,13 +926,17 @@ func orderHoldExpiresAt(order *model.Order) *time.Time {
 //     vừa chọn, nên buộc user tiếp tục hoặc huỷ đơn cũ một cách tường minh.
 //
 // Đơn đã quá hạn (cùng điều kiện với GetExpiredHeldOrdersForUser) không tính, vì lazy-sweep đầu
-// CreateOrder chỉ là best-effort và có thể đã lỗi.
+// CreateOrder chỉ là best-effort và có thể đã lỗi. NGOẠI TRỪ (review #76 vòng 3 MAJOR 2, quyết định
+// chủ dự án): đơn "processing" đã có mã chuyển khoản vẫn tính dù mã đã hết hạn, vì nó CHƯA được đối
+// chiếu ngân hàng (sweep bỏ qua nó) và có thể đã được trả tiền. Tạo đơn mới cùng khoá lúc này dẫn
+// tới trả lần 2 (qua "Mua ngay"/checkout), nên trả ErrOrderInProgress; web dẫn về /orders để đối
+// chiếu. Đơn hết chặn khi đối chiếu xong (completed/expired).
 func findReusableOpenOrder(txDB *gorm.DB, userID uuid.UUID, courseIDs []uuid.UUID, couponCode string, totalAmount, discountAmount decimal.Decimal) (uuid.UUID, *model.Order, error) {
 	now := time.Now()
 	var open []model.Order
 	err := txDB.
 		Where("user_id = ? AND status IN ('pending','processing')", userID).
-		Where("(payment_code_expired_at IS NOT NULL AND payment_code_expired_at >= ?) OR (payment_code_expired_at IS NULL AND created_at >= ?)",
+		Where("(status = 'processing' AND payment_transaction_id IS NOT NULL AND payment_transaction_id <> '') OR (payment_code_expired_at IS NOT NULL AND payment_code_expired_at >= ?) OR (payment_code_expired_at IS NULL AND created_at >= ?)",
 			now, now.Add(-pendingOrderDefaultTTL)).
 		Where("EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND oi.course_id IN ?)", courseIDs).
 		Find(&open).Error

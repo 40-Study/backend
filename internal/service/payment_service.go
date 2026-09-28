@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/grpc"
 	"study.com/v1/internal/model"
@@ -30,7 +31,26 @@ var (
 	ErrProviderSignatureInvalid = errors.New("provider signature invalid")
 	ErrTransactionNotFound      = errors.New("transaction not found")
 	ErrTransactionPending       = errors.New("transaction pending")
+	// ErrPaymentVerificationPending (review #76 vòng 3): đơn có mã chuyển khoản chưa đối chiếu xong
+	// với ngân hàng (đang trong ân hạn, hoặc ngân hàng lỗi/timeout). Không được đổi trạng thái đơn
+	// (huỷ, mở phiên mới) khi chưa biết tiền đã về hay chưa. Handler trả 409 ERR_PAYMENT_VERIFYING.
+	ErrPaymentVerificationPending = errors.New("Đơn hàng đang được đối chiếu thanh toán với ngân hàng. Vui lòng không chuyển khoản lại và thử lại sau ít phút.")
 )
+
+// paymentReconcileGracePeriod (review #76 vòng 3, quyết định chủ dự án 28/09): sau khi mã chuyển
+// khoản hết hạn, ngân hàng có thể ghi có chậm. Trong khoảng này "not_found" CHƯA phải bằng chứng
+// không có tiền: đơn giữ processing (reconciling), không huỷ được, không chốt expired. Nguồn DUY
+// NHẤT của con số này.
+const paymentReconcileGracePeriod = 30 * time.Minute
+
+// bankLookupTimeout (review #76 vòng 3): hạn cho mỗi lần gọi gRPC CheckTransaction. Hết hạn xử lý
+// như ngân hàng lỗi (chưa xác minh được), không treo request/goroutine theo dịch vụ ngân hàng.
+const bankLookupTimeout = 10 * time.Second
+
+// bankLookupDateSlack (review #76 vòng 3): service Python đổi timestamp sang NGÀY theo múi giờ của
+// máy nó chạy (chưa rõ UTC hay giờ VN). Nới cửa sổ tra cứu thêm 1 ngày mỗi phía để giao dịch lúc
+// 0h–7h giờ VN không rơi ra ngoài khi service chạy UTC.
+const bankLookupDateSlack = 24 * time.Hour
 
 type PaymentServiceInterface interface {
 	CreatePaymentIntent(ctx context.Context, userID, orderID uuid.UUID, isAdmin bool, paymentMethod string) (*dto.PaymentIntentResponse, error)
@@ -216,15 +236,27 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 	if order.Status == "expired" {
 		return nil, ErrOrderExpired
 	}
+	// Review vòng 3 MINOR 1: đơn đã thanh toán báo đúng là đã thanh toán (web chuyển màn thành công),
+	// không phải "hết hạn" kèm nút tạo đơn mới.
+	if order.Status == "completed" {
+		return nil, ErrPaymentAlreadyDone
+	}
 	// Re-review #76 vòng 2: đơn processing có mã đã hết hạn thì KHÔNG tự chốt expired ở đây (có thể
-	// tiền đã về trong hạn). Đi qua đúng bước đối chiếu gRPC lần cuối của CheckAndProcessPayment:
-	// nếu hoá ra đã thanh toán thì báo đã xử lý, còn lại đều không mở phiên mới.
+	// tiền đã về trong hạn). Đi qua đúng bước đối chiếu gRPC lần cuối của CheckAndProcessPayment rồi
+	// ánh xạ ĐÚNG kết quả (review vòng 3 MINOR 1): đã thanh toán → ErrPaymentAlreadyDone; chưa đối
+	// chiếu xong (ân hạn / ngân hàng lỗi) → ErrPaymentVerificationPending; chỉ expired → ErrOrderExpired.
 	if order.Status == "processing" && order.PaymentCodeExpiredAt != nil && time.Now().After(*order.PaymentCodeExpiredAt) {
 		status, err := s.CheckAndProcessPayment(ctx, orderID, userID, isAdmin)
-		if err == nil && status.Status == "completed" {
+		if errors.Is(err, ErrPaymentAlreadyDone) || (err == nil && status.Status == "completed") {
 			return nil, ErrPaymentAlreadyDone
 		}
-		return nil, ErrOrderExpired
+		if err != nil {
+			return nil, err
+		}
+		if status.Status == "expired" {
+			return nil, ErrOrderExpired
+		}
+		return nil, ErrPaymentVerificationPending
 	}
 	if expired, err := s.expireIfHoldElapsed(ctx, order); err != nil {
 		return nil, err
@@ -360,14 +392,16 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 		}, nil
 	}
 
-	// Đơn đã chốt "expired": báo thêm nếu từng nhận tiền SAU hạn (history payment_after_expiry)
-	// để web hiện "bộ phận hỗ trợ sẽ hoàn tiền" thay vì mời tạo đơn mới rồi trả lần 2.
-	if order.Status == "expired" {
+	// Đơn đã đóng ("expired"/"cancelled"): báo thêm nếu từng nhận tiền SAU hạn (history
+	// payment_after_expiry) để web hiện "bộ phận hỗ trợ sẽ hoàn tiền" thay vì mời tạo đơn mới rồi
+	// trả lần 2. Review vòng 3 (quyết định chủ dự án): tiền về SAU cả mốc ân hạn (đơn đã chốt) cũng
+	// phải có dấu vết, nên đơn đóng từng có mã được tra ngân hàng lại (ghi cảnh báo đúng 1 lần).
+	if order.Status == "expired" || order.Status == "cancelled" {
 		return &dto.PaymentStatusResponse{
 			OrderID:             orderID,
-			Status:              "expired",
+			Status:              order.Status,
 			Amount:              order.TotalAmount,
-			LatePaymentReceived: s.hasLatePaymentRecord(orderID),
+			LatePaymentReceived: s.detectLatePaymentOnClosedOrder(ctx, order),
 		}, nil
 	}
 
@@ -406,36 +440,30 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 	// mới" → dễ trả lần 2. Giờ đơn processing có mã LUÔN được đối chiếu gRPC một lần cuối trước khi
 	// quyết định; không bao giờ chốt expired khi chưa xác minh được.
 	codeExpiredAt := order.PaymentCodeExpiredAt
-	codeExpired := codeExpiredAt != nil && time.Now().After(*codeExpiredAt)
+	now := time.Now()
+	codeExpired := codeExpiredAt != nil && now.After(*codeExpiredAt)
 
-	// Cửa sổ tra cứu: 24h gần nhất, nhưng mở rộng về lúc mã có thể đã được cấp (hạn mã - 24h) để
-	// lần đối chiếu muộn (vài ngày sau) vẫn thấy được giao dịch chuyển trong hạn.
-	toTime := time.Now()
-	fromTime := toTime.Add(-24 * time.Hour)
-	if codeExpiredAt != nil {
-		if issuedFloor := codeExpiredAt.Add(-pendingOrderDefaultTTL); issuedFloor.Before(fromTime) {
-			fromTime = issuedFloor
-		}
-	}
-
-	// Call transaction service via gRPC
-	result, err := s.transactionService.CheckTransaction(ctx, paymentCode, fromTime, toTime)
-	// Service Python báo lỗi bằng Found=false + Status="error" (không phải Go error), nên cả hai
-	// đều là "chưa xác minh được".
-	unverified := err != nil || result == nil || result.Status == "error"
-	if unverified && codeExpired {
-		// Không chốt expired khi chưa biết tiền đã về chưa: giữ nguyên trạng thái, lần poll sau thử lại.
-		log.Printf("[PAYMENT-CHECK] order=%s mã đã hết hạn nhưng chưa đối chiếu được giao dịch (err=%v), giữ %q để thử lại", orderID, err, order.Status)
-		return &dto.PaymentStatusResponse{OrderID: orderID, Status: order.Status, Amount: order.TotalAmount}, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to check transaction: %w", err)
+	result, err := s.lookupBankTransaction(ctx, paymentCode, codeExpiredAt)
+	// Service Python báo lỗi bằng Found=false + Status="error" (không phải Go error), gRPC có thể
+	// lỗi/timeout (bankLookupTimeout): tất cả đều là "chưa xác minh được". Không bao giờ đổi trạng
+	// thái khi chưa xác minh: giữ nguyên, báo reconciling, lần poll sau thử lại. Review vòng 3: trước
+	// đây còn hạn mã mà Python báo status=error thì rơi xuống nhánh "không có tiền".
+	if err != nil || result == nil || result.Status == "error" {
+		log.Printf("[PAYMENT-CHECK] order=%s chưa đối chiếu được giao dịch (err=%v), giữ %q để thử lại", orderID, err, order.Status)
+		return &dto.PaymentStatusResponse{OrderID: orderID, Status: order.Status, Amount: order.TotalAmount, Reconciling: true}, nil
 	}
 
 	// If transaction not found
-	if result == nil || !result.Found {
+	if !result.Found {
+		if codeExpired && now.Before(codeExpiredAt.Add(paymentReconcileGracePeriod)) {
+			// Review vòng 3 MAJOR 1 (quyết định chủ dự án: ân hạn 30 phút): ngân hàng có thể ghi có
+			// chậm vài phút sau khi học viên chuyển, và web poll 5s/lần nên lần kiểm "cuối" rơi ngay
+			// sau hạn. Trong ân hạn, not_found chưa phải bằng chứng không có tiền: giữ processing.
+			return &dto.PaymentStatusResponse{OrderID: orderID, Status: order.Status, Amount: order.TotalAmount, Reconciling: true}, nil
+		}
 		if codeExpired {
-			// Đã đối chiếu, không có tiền: chốt expired (hoàn used_count voucher nếu có).
+			// Quá ân hạn mà vẫn không có giao dịch: chốt expired (hoàn used_count voucher nếu có).
+			// Tiền về sau mốc này vẫn được phát hiện khi đơn đóng được hỏi lại (detectLatePaymentOnClosedOrder).
 			if expired, err := s.expireOrderTx(ctx, order, "Payment code expired (verified: no transaction)"); err != nil {
 				return nil, err
 			} else if !expired {
@@ -591,11 +619,11 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 		return nil, err
 	}
 
-	now := time.Now()
+	paidNow := time.Now()
 	return &dto.PaymentStatusResponse{
 		OrderID: orderID,
 		Status:  "completed",
-		PaidAt:  &now,
+		PaidAt:  &paidNow,
 		Amount:  order.TotalAmount,
 	}, nil
 }
@@ -657,8 +685,9 @@ func (s *PaymentService) GetPaymentStatus(ctx context.Context, orderID, actorUse
 	// riêng lỗi quyền/không tìm thấy vẫn trả về như cũ.
 	// Review #76 MAJOR 2: "pending" cũng đi qua CheckAndProcessPayment để đơn quá hạn giữ được chốt
 	// "expired" ngay khi web poll, cùng mốc với CreatePaymentIntent (không gọi gRPC cho pending).
-	// Re-review #76 vòng 2: "expired" cũng đi qua để trả cờ late_payment_received (đọc history).
-	if order.Status == "processing" || order.Status == "pending" || order.Status == "expired" {
+	// Re-review #76 vòng 2/3: đơn đã đóng (expired/cancelled) cũng đi qua để trả cờ
+	// late_payment_received (history, hoặc tra ngân hàng lại cho đơn từng có mã).
+	if order.Status == "processing" || order.Status == "pending" || order.Status == "expired" || order.Status == "cancelled" {
 		resp, checkErr := s.CheckAndProcessPayment(ctx, orderID, actorUserID, isAdmin)
 		if checkErr == nil {
 			return resp, nil
@@ -808,6 +837,112 @@ func (s *PaymentService) hasLatePaymentRecord(orderID uuid.UUID) bool {
 		}
 	}
 	return false
+}
+
+// lookupBankTransaction — lời gọi gRPC CheckTransaction DUY NHẤT của PaymentService, có timeout
+// (bankLookupTimeout) và cửa sổ ngày đủ rộng. Cửa sổ: từ lúc mã có thể đã được cấp (hạn mã - 24h,
+// hoặc 24h trước nếu chưa có hạn) tới bây giờ, nới thêm bankLookupDateSlack mỗi phía vì service
+// Python tra theo NGÀY ở múi giờ máy nó chạy. Mã thanh toán là duy nhất nên cửa sổ rộng không làm
+// khớp nhầm giao dịch khác.
+func (s *PaymentService) lookupBankTransaction(ctx context.Context, paymentCode string, codeExpiredAt *time.Time) (*grpc.CheckTransactionResult, error) {
+	if s.transactionService == nil {
+		return nil, errors.New("transaction service unavailable")
+	}
+	now := time.Now()
+	fromTime := now.Add(-24 * time.Hour)
+	if codeExpiredAt != nil {
+		if issuedFloor := codeExpiredAt.Add(-pendingOrderDefaultTTL); issuedFloor.Before(fromTime) {
+			fromTime = issuedFloor
+		}
+	}
+	fromTime = fromTime.Add(-bankLookupDateSlack)
+	toTime := now.Add(bankLookupDateSlack)
+
+	lookupCtx, cancel := context.WithTimeout(ctx, bankLookupTimeout)
+	defer cancel()
+	return s.transactionService.CheckTransaction(lookupCtx, paymentCode, fromTime, toTime)
+}
+
+// detectLatePaymentOnClosedOrder (review #76 vòng 3, quyết định chủ dự án: tiền về sau cả mốc ân
+// hạn xử lý như tiền về muộn). Đơn đã đóng (expired/cancelled) từng có mã chuyển khoản: nếu ngân
+// hàng có giao dịch cho mã đó thì ghi history payment_after_expiry + [PAYMENT-ALERT] đúng 1 lần
+// (khoá dòng order trong transaction rồi mới kiểm history) để admin hoàn tiền. Không đổi trạng
+// thái đơn. Ngân hàng lỗi thì chỉ trả kết quả đã biết, lần hỏi sau thử lại.
+func (s *PaymentService) detectLatePaymentOnClosedOrder(ctx context.Context, order *model.Order) bool {
+	if s.hasLatePaymentRecord(order.ID) {
+		return true
+	}
+	if order.PaymentTransactionID == nil || *order.PaymentTransactionID == "" || order.PaymentCodeExpiredAt == nil {
+		return false // chưa từng có mã chuyển khoản → không thể có tiền cho đơn này
+	}
+	result, err := s.lookupBankTransaction(ctx, *order.PaymentTransactionID, order.PaymentCodeExpiredAt)
+	if err != nil || result == nil || result.Status == "error" || !result.Found {
+		return false
+	}
+	note := fmt.Sprintf("Received bank transaction %s amount %s at %s for order already %s (payment code expired at %s). Refund manually.",
+		result.TransactionID, result.Amount, result.TransactionDate, order.Status, order.PaymentCodeExpiredAt.Format(time.RFC3339))
+	var recorded bool
+	txErr := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
+		txDB := txRepo.TxDB()
+		var locked model.Order
+		if err := txDB.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", order.ID).First(&locked).Error; err != nil {
+			return err
+		}
+		var existing int64
+		if err := txDB.Model(&model.OrderStatusHistory{}).Where("order_id = ? AND to_status = ?", order.ID, latePaymentHistoryStatus).Count(&existing).Error; err != nil {
+			return err
+		}
+		if existing > 0 {
+			return nil
+		}
+		recorded = true
+		return repository.NewOrderStatusHistoryRepository(txDB).Create(&model.OrderStatusHistory{
+			ID:         uuid.New(),
+			CreatedAt:  time.Now(),
+			OrderID:    order.ID,
+			FromStatus: locked.Status,
+			ToStatus:   latePaymentHistoryStatus,
+			Reason:     note,
+		})
+	})
+	if txErr != nil {
+		log.Printf("[PAYMENT-ALERT] order=%s tx=%s: có tiền cho đơn đã đóng nhưng KHÔNG ghi được history: %v", order.ID, result.TransactionID, txErr)
+		return true
+	}
+	if recorded {
+		log.Printf("[PAYMENT-ALERT] order=%s tx=%s amount=%s: nhận tiền cho đơn đã %s, cần hoàn tiền thủ công", order.ID, result.TransactionID, result.Amount, order.Status)
+	}
+	return true
+}
+
+// ReconcileBeforeCancel (review #76 vòng 3 MAJOR 3, quyết định chủ dự án): huỷ đơn processing có mã
+// chuyển khoản phải đối chiếu ngân hàng trước. nil = được phép huỷ (đơn không có mã, hoặc ngân hàng
+// xác nhận không có tiền khi mã còn hạn, hoặc đơn vừa chuyển sang trạng thái khác — caller đọc lại).
+// ErrPaymentAlreadyDone = tiền khớp, đơn đã hoàn tất. ErrPaymentVerificationPending = ngân hàng
+// lỗi/timeout, đang trong ân hạn, hoặc có giao dịch nhưng sai số tiền (cần hỗ trợ xử lý).
+func (s *PaymentService) ReconcileBeforeCancel(ctx context.Context, orderID uuid.UUID) error {
+	order, err := s.orderRepo.GetByID(orderID)
+	if err != nil {
+		return ErrOrderNotFound
+	}
+	if order.Status != "processing" || order.PaymentTransactionID == nil || *order.PaymentTransactionID == "" {
+		return nil
+	}
+	status, err := s.CheckAndProcessPayment(ctx, orderID, order.UserID, true)
+	if errors.Is(err, ErrPaymentAlreadyDone) {
+		return ErrPaymentAlreadyDone
+	}
+	if err != nil {
+		log.Printf("[PAYMENT-CHECK] order=%s không huỷ vì đối chiếu lỗi/có giao dịch bất thường: %v", orderID, err)
+		return ErrPaymentVerificationPending
+	}
+	if status.Status == "completed" {
+		return ErrPaymentAlreadyDone
+	}
+	if status.Reconciling {
+		return ErrPaymentVerificationPending
+	}
+	return nil
 }
 
 // bankTimeZone — MB Bank ghi transactionDate theo giờ Việt Nam, không kèm múi giờ. Dùng
