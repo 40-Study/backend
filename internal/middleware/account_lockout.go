@@ -24,15 +24,31 @@ import (
 )
 
 // Ngưỡng mặc định — hằng có tên, không phải số ma thuật rải rác (theo đúng yêu cầu review vòng
-// 3): 10 lần thất bại (sai mật khẩu / sai OTP / bất kỳ response không phải 2xx nào khác) trong
-// 15 phút thì khoá tài khoản đó thêm 15 phút. Callable riêng cho từng route qua
-// AccountLockoutConfig nếu cần ngưỡng khác nhau (hiện chưa cần).
+// 3): 10 lần XÁC THỰC SAI BÍ MẬT thật (sai mật khẩu/sai OTP — xem AuthCredentialRejectedLocalsKey
+// bên dưới cho định nghĩa chính xác) trong 15 phút thì khoá tài khoản đó thêm 15 phút. Callable
+// riêng cho từng route qua AccountLockoutConfig nếu cần ngưỡng khác nhau (hiện chưa cần).
 const (
 	DefaultAccountLockoutMaxFailures     = 10
 	DefaultAccountLockoutWindow          = 15 * time.Minute
 	DefaultAccountLockoutLockoutDuration = 15 * time.Minute
 	DefaultAccountLockoutMessage         = "Too many failed attempts for this account. Please wait before trying again."
 )
+
+// AuthCredentialRejectedLocalsKey (review vòng 4, PR #69 — sửa lỗ hổng review vòng 3 tự phát
+// hiện): BẢN TRƯỚC đếm MỌI status không phải 2xx là "1 lần thất bại" — bao gồm cả 400 do
+// BodyParser/ValidateStruct (thiếu password/device_info/otp trong body). Hậu quả: gửi
+// `{"email":"victim@x.com"}` (thiếu password) 10 lần là khoá được tài khoản NẠN NHÂN 15 phút mà
+// KHÔNG cần đoán bất kỳ bí mật nào — lặp lại vô hạn lần, biến chính cơ chế chống brute-force
+// thành công cụ DoS tài khoản người khác.
+//
+// Sửa: KHÔNG dựa vào status code nữa. Handler (auth_handler.go) đặt
+// `c.Locals(AuthCredentialRejectedLocalsKey, true)` ĐÚNG tại điểm gọi service xác thực bí mật
+// (so mật khẩu ở Login, so OTP ở Register/ResetPassword) trả về lỗi — nghĩa là request đã vượt
+// qua BodyParser + ValidateStruct (cấu trúc hợp lệ: có đủ password/otp/device_info đúng định
+// dạng) và THỰC SỰ được đem so với bí mật thật, chỉ là so sai. Middleware chỉ tăng bộ đếm khi cờ
+// này được set — request rác/thiếu field không bao giờ chạm tới điểm gọi service đó nên không
+// bao giờ set cờ, do đó không bao giờ được đếm.
+const AuthCredentialRejectedLocalsKey = "auth_credential_rejected"
 
 // AccountLockoutConfig cấu hình 1 instance AccountFailureLockout.
 type AccountLockoutConfig struct {
@@ -49,9 +65,10 @@ type AccountLockoutConfig struct {
 	Message string
 }
 
-// AccountFailureLockout (review vòng 3, PR #69): khoá tạm 1 email sau MaxFailures lần request
-// KHÔNG thành công (bất kỳ status không phải 2xx nào — sai mật khẩu, sai OTP, request không hợp
-// lệ đều tính) trong vòng Window; đăng nhập/xác thực đúng (status 2xx) reset bộ đếm về 0.
+// AccountFailureLockout (review vòng 3+4, PR #69): khoá tạm 1 email sau MaxFailures lần XÁC
+// THỰC SAI BÍ MẬT THẬT (đánh dấu qua AuthCredentialRejectedLocalsKey — KHÔNG dựa status code,
+// xem comment ở hằng đó cho lý do) trong vòng Window; đăng nhập/xác thực đúng (status 2xx) reset
+// bộ đếm về 0.
 //
 // Độc lập HOÀN TOÀN với IP/X-Forwarded-For — key Redis chỉ dựa vào email (chuẩn hoá
 // lowercase+trim) lấy từ JSON body, nên xoay IP/XFF liên tục không né được giới hạn này (khác
@@ -88,6 +105,14 @@ func AccountFailureLockout(rdb *redis.Client, cfg AccountLockoutConfig) fiber.Ha
 		lockKey := cfg.KeyPrefix + ":lock:" + email
 		failKey := cfg.KeyPrefix + ":fail:" + email
 
+		// Fail-open CHỦ Ý ở bước CHECK-LOCK: `err != nil` (Redis down/timeout) rơi vào nhánh
+		// `else` của "err == nil && ttl > 0" nên KHÔNG chặn request — Redis lỗi không được phép
+		// biến thành "mọi tài khoản bị khoá vĩnh viễn"/từ chối toàn bộ đăng nhập thật (DoS diện
+		// rộng do lỗi hạ tầng tạm thời). AuthRateLimiter (theo IP, rate_limiter.go) fail-closed ở
+		// bước tương đương vì đó là bucket dùng chung theo IP — Redis lỗi ở ĐÓ chỉ ảnh hưởng 1
+		// IP; còn khoá theo tài khoản mà fail-closed nghĩa là 1 lần Redis flap có thể tự khoá
+		// NHẦM những tài khoản đang có TTL/gõ email trùng lúc đó — bất cân xứng hơn nhiều so với
+		// rủi ro bỏ lỡ vài request brute-force trong đúng khoảnh khắc Redis flap.
 		if ttl, err := rdb.TTL(ctx, lockKey).Result(); err == nil && ttl > 0 {
 			c.Set("Retry-After", fmt.Sprintf("%d", int(ttl.Seconds())))
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
@@ -101,6 +126,15 @@ func AccountFailureLockout(rdb *redis.Client, cfg AccountLockoutConfig) fiber.Ha
 		status := c.Response().StatusCode()
 		if status >= 200 && status < 300 {
 			rdb.Del(ctx, failKey)
+			return handlerErr
+		}
+
+		// CHỈ đếm khi handler đã tự xác nhận đây là 1 lần so sai bí mật THẬT (request đã qua
+		// BodyParser+ValidateStruct, thực sự chạm tới bước xác thực) — KHÔNG dựa status code.
+		// Không có cờ này (request rác/thiếu field, hoặc route không set cờ) -> không đếm, dù
+		// status vẫn có thể là 400/401 — xem AuthCredentialRejectedLocalsKey.
+		rejected, _ := c.Locals(AuthCredentialRejectedLocalsKey).(bool)
+		if !rejected {
 			return handlerErr
 		}
 

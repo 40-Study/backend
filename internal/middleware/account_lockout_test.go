@@ -26,6 +26,12 @@ func newAccountLockoutTestApp(t *testing.T, cfg AccountLockoutConfig, withIPRate
 	t.Cleanup(func() { _ = rdb.Close() })
 
 	app := fiber.New()
+	// loginHandler mo phong DUNG hanh vi handler that (auth_handler.go#Login): request o day
+	// coi nhu DA qua BodyParser+ValidateStruct (test nay tap trung vao co che dem/khoa/reset cua
+	// chinh middleware, khong phai vao ranh gioi "request rac vs xac thuc sai that" -- ranh gioi
+	// do da co bo test rieng dung handler THAT o internal/handler/account_lockout_real_handler_test.go)
+	// nen luon dat co AuthCredentialRejectedLocalsKey khi sai mat khau, giong het diem handler
+	// that dat co ngay sau khi goi service that va nhan loi.
 	loginHandler := func(c *fiber.Ctx) error {
 		var body struct {
 			Password string `json:"password"`
@@ -34,6 +40,7 @@ func newAccountLockoutTestApp(t *testing.T, cfg AccountLockoutConfig, withIPRate
 		if body.Password == "correct-password" {
 			return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Login successful"})
 		}
+		c.Locals(AuthCredentialRejectedLocalsKey, true)
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Login failed"})
 	}
 
