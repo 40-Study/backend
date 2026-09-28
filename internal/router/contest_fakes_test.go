@@ -19,9 +19,15 @@ import (
 	"study.com/v1/internal/service"
 )
 
-type fakeEngine struct{ db *gorm.DB }
+type fakeEngine struct {
+	db *gorm.DB
+	// createDelay giữ tx start mở lâu hơn (test race): không có FOR UPDATE thì request thứ hai
+	// chắc chắn đọc thấy attempt_id NULL trong cửa sổ này và tạo attempt thứ hai.
+	createDelay time.Duration
+}
 
 func (f *fakeEngine) CreateContestAttemptTx(_ context.Context, tx *gorm.DB, quizID, userID uuid.UUID, startedAt time.Time) (uuid.UUID, error) {
+	time.Sleep(f.createDelay)
 	a := model.QuizAttempt{ID: uuid.New(), UserID: userID, QuizID: quizID, Mode: service.QuizAttemptModeContest, StartedAt: startedAt}
 	return a.ID, tx.Create(&a).Error
 }

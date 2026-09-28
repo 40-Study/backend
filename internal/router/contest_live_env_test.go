@@ -40,6 +40,7 @@ type ctEnv struct {
 	db     *gorm.DB
 	svc    *service.ContestService
 	issuer *fakeIssuer
+	engine *fakeEngine
 	ids    map[string]uuid.UUID // admin, teacherA, teacherB, student1..student5, parent
 	toks   map[string]string
 }
@@ -90,7 +91,8 @@ func newCtEnv(t *testing.T) *ctEnv {
 
 	pc := middleware.NewPermissionChecker(usr, &apvSystemRoleRepo{perms: perms}, nil, nil)
 	e.issuer = &fakeIssuer{db: db}
-	e.svc = service.NewContestService(repository.NewContestRepository(db), &fakeEngine{db: db}, e.issuer,
+	e.engine = &fakeEngine{db: db}
+	e.svc = service.NewContestService(repository.NewContestRepository(db), e.engine, e.issuer,
 		repository.NewEnrollmentRepository(db))
 	app := fiber.New()
 	SetupContestRoutes(app.Group("/api"), cfg, handler.NewContestHandler(e.svc, pc), rdb, pc)

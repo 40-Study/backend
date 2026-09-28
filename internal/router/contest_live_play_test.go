@@ -119,24 +119,36 @@ func TestContestLive_RaceStartSingleAttempt(t *testing.T) {
 	e.setWindow(id, time.Minute, time.Hour)
 	cid := id.String()
 	e.must("join", e.do("POST", "/api/contests/"+cid+"/join", "student1", ""), 201)
+	// Engine giữ tx 300ms khi tạo attempt: không có FOR UPDATE thì các request còn lại chắc chắn
+	// đọc attempt_id NULL trong cửa sổ đó (mutation M9 đã cho thấy cửa sổ tự nhiên quá hẹp).
+	e.engine.createDelay = 300 * time.Millisecond
 	var wg sync.WaitGroup
-	res := make([]ctResp, 2)
+	gate := make(chan struct{})
+	res := make([]ctResp, 6)
 	for i := range res {
 		wg.Add(1)
-		go func(i int) { defer wg.Done(); res[i] = e.do("POST", "/api/contests/"+cid+"/start", "student1", "") }(i)
+		go func(i int) {
+			defer wg.Done()
+			<-gate // barrier: mọi request xuất phát cùng lúc
+			res[i] = e.do("POST", "/api/contests/"+cid+"/start", "student1", "")
+		}(i)
 	}
+	close(gate)
 	wg.Wait()
+	e.engine.createDelay = 0
 	for i, r := range res {
 		if r.status != 200 {
 			t.Fatalf("start %d: %d %s", i, r.status, r.raw)
 		}
+		if r.data()["attempt_id"] != res[0].data()["attempt_id"] {
+			t.Fatalf("start %d tra attempt khac: %v vs %v", i, r.data()["attempt_id"], res[0].data()["attempt_id"])
+		}
 	}
-	a0, a1 := res[0].data()["attempt_id"], res[1].data()["attempt_id"]
 	again := e.must("reload", e.do("POST", "/api/contests/"+cid+"/start", "student1", ""), 200)
 	var n int64
 	e.db.Model(&model.QuizAttempt{}).Where("user_id = ?", e.ids["student1"]).Count(&n)
-	if a0 != a1 || again.data()["attempt_id"] != a0 || n != 1 {
-		t.Fatalf("race start tao nhieu attempt: %v %v %v, so attempt=%d", a0, a1, again.data()["attempt_id"], n)
+	if again.data()["attempt_id"] != res[0].data()["attempt_id"] || n != 1 {
+		t.Fatalf("race start tao nhieu attempt: reload=%v, so attempt=%d", again.data()["attempt_id"], n)
 	}
 }
 
