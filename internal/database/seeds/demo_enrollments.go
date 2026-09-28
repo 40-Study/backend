@@ -1,12 +1,15 @@
 package seeds
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/repository"
 )
 
 type enrollmentSpec struct {
@@ -30,6 +33,11 @@ func (s *Seeder) SeedDemoEnrollments(
 ) error {
 	log.Println("Seeding demo enrollments...")
 
+	// S-P0-3/S-P0-4 (QA 260927): dùng CHUNG repository thật (không viết lại công thức tính %) để
+	// tính lại completed_lessons/total_lessons/progress_percentage sau khi seed lesson_progress —
+	// xem recalcEnrollmentProgress.
+	enrollmentRepo := repository.NewEnrollmentRepository(s.db)
+
 	for _, spec := range demoEnrollments {
 		student, ok := users[spec.StudentEmail]
 		if !ok {
@@ -47,9 +55,43 @@ func (s *Seeder) SeedDemoEnrollments(
 		if err := s.seedLessonProgress(enrollment, course.ID, spec.Progress); err != nil {
 			return err
 		}
+		if err := s.recalcEnrollmentProgress(enrollmentRepo, enrollment); err != nil {
+			return err
+		}
 	}
 
 	log.Printf("Seeded %d enrollments\n", len(demoEnrollments))
+	return nil
+}
+
+// recalcEnrollmentProgress (S-P0-3/S-P0-4, QA 260927): trước đây upsertEnrollment chỉ set thẳng
+// ProgressPercent bằng SQL, KHÔNG đụng tới completed_lessons/total_lessons — 3 cột dẫn xuất này
+// lệch nhau ngay từ lúc seed (vd "Git & GitHub" hiện 100% nhưng "0/0 bài học" — verify-260927-
+// student-admin.md, root cause enrollment_service.go recalculateProgress không hề chạy qua seed).
+// Hàm này gọi ĐÚNG các query đếm mà luồng ghi tiến độ thật dùng
+// (EnrollmentRepository.CountCompletedMandatory/CountTotalMandatory — cùng hàm
+// enrollment_service.go#recalculateProgress gọi nội bộ, không phải bản sao thứ hai của logic đếm)
+// rồi ghi lại qua UpdateEnrollmentProgress, nên 3 số luôn khớp nhau như khi có hành động thật.
+func (s *Seeder) recalcEnrollmentProgress(repo repository.EnrollmentRepositoryInterface, enrollment model.Enrollment) error {
+	ctx := context.Background()
+
+	completed, err := repo.CountCompletedMandatory(ctx, enrollment.ID)
+	if err != nil {
+		return fmt.Errorf("failed to count completed lessons for enrollment %s: %w", enrollment.ID, err)
+	}
+	total, err := repo.CountTotalMandatory(ctx, enrollment.CourseID)
+	if err != nil {
+		return fmt.Errorf("failed to count total lessons for course %s: %w", enrollment.CourseID, err)
+	}
+
+	var percent decimal.Decimal
+	if total > 0 {
+		percent = decimal.NewFromInt(completed).Mul(decimal.NewFromInt(100)).Div(decimal.NewFromInt(total))
+	}
+
+	if err := repo.UpdateEnrollmentProgress(ctx, enrollment.ID, percent, int(completed), int(total), time.Now()); err != nil {
+		return fmt.Errorf("failed to update enrollment progress for %s: %w", enrollment.ID, err)
+	}
 	return nil
 }
 

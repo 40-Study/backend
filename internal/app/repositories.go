@@ -68,6 +68,9 @@ type Repositories struct {
 	PaymentEvent       *repository.PaymentEventRepository
 	IdempotencyKey     *repository.IdempotencyKeyRepository
 	OrderLock          *repository.OrderLockRepository
+	// PlatformSetting (tính năng đơn hàng+hoàn tiền+doanh thu, quyết định #2): % phí nền tảng
+	// cấu hình được — xem model.PlatformSetting.
+	PlatformSetting *repository.PlatformSettingRepository
 
 	// ===== Gamification =====
 	Achievement *repository.AchievementRepository
@@ -196,6 +199,7 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		PaymentEvent:       repository.NewPaymentEventRepository(db),
 		IdempotencyKey:     repository.NewIdempotencyKeyRepository(db),
 		OrderLock:          repository.NewOrderLockRepository(db),
+		PlatformSetting:    repository.NewPlatformSettingRepository(db),
 
 		// ===== Gamification =====
 		Achievement: repository.NewAchievementRepository(db),

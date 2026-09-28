@@ -24,6 +24,11 @@ type RateLimitConfig struct {
 	Message string
 	// Skip rate limiting for certain conditions
 	Skip func(c *fiber.Ctx) bool
+	// TrustedProxies (review vòng 2, PR #69): dùng bởi KeyGenerator mặc định (khi không set
+	// riêng) để suy ra IP client qua ClientIP() thay vì c.IP() mặc định của Fiber — xem
+	// ClientIPFromXFF (client_ip.go) cho lý do đầy đủ. nil/rỗng -> không IP nào được coi là
+	// proxy đáng tin, mọi request dùng thẳng TCP peer, bỏ qua X-Forwarded-For hoàn toàn.
+	TrustedProxies *TrustedProxySet
 }
 
 // RateLimiter creates a rate limiting middleware using Redis
@@ -39,8 +44,9 @@ func RateLimiter(rdb *redis.Client, config RateLimitConfig) fiber.Handler {
 		config.KeyPrefix = "rate_limit"
 	}
 	if config.KeyGenerator == nil {
+		trusted := config.TrustedProxies
 		config.KeyGenerator = func(c *fiber.Ctx) string {
-			return c.IP()
+			return ClientIP(c, trusted)
 		}
 	}
 	if config.Message == "" {
@@ -95,22 +101,52 @@ func RateLimiter(rdb *redis.Client, config RateLimitConfig) fiber.Handler {
 }
 
 // AuthRateLimiter - Strict rate limiting for auth endpoints
-// 5 attempts per minute per IP for login/register
-func AuthRateLimiter(rdb *redis.Client) fiber.Handler {
+// 5 attempts per minute per IP. CHỈ dành cho bề mặt đoán mật khẩu/OTP thật sự:
+// /login, /register, /reset-password (nhận + xác nhận OTP/mật khẩu mới). KHÔNG dùng cho bất kỳ
+// route nào chỉ chạy được SAU KHI đã có credential/pending-token/access-token hợp lệ từ một bước
+// trước đó (select-role, select-org, refresh-token) — xem WideAuthRateLimiter bên dưới, và
+// S-P1-2 (QA 260927) cho lý do đầy đủ.
+func AuthRateLimiter(rdb *redis.Client, trusted *TrustedProxySet) fiber.Handler {
 	return RateLimiter(rdb, RateLimitConfig{
 		Max:       5,
 		Window:    time.Minute,
 		KeyPrefix: "rate:auth",
 		KeyGenerator: func(c *fiber.Ctx) string {
-			return c.IP()
+			return ClientIP(c, trusted)
 		},
 		Message: "Too many authentication attempts. Please wait before trying again.",
 	})
 }
 
+// WideAuthRateLimiter (S-P1-2, QA 260927 — bổ sung theo phản hồi coordinator sau khi PR #69 mở):
+// limiter DÙNG CHUNG, cấu hình được keyPrefix/max, cho các endpoint auth chỉ chạy được SAU KHI
+// đã có credential/pending-token/access-token hợp lệ từ một bước trước đó — không phải bề mặt dò
+// mật khẩu/OTP như /login. Tổng quát hoá thay vì viết thêm một hàm gần giống AuthRateLimiter cho
+// mỗi route thuộc nhóm này (ban đầu chỉ có refresh-token; giờ thêm select-role/select-org).
+//
+// Lý do tách khỏi AuthRateLimiter: /select-role và /select-org (M-03/N5, audit 260909) TRƯỚC ĐÂY
+// dùng chung bucket "rate:auth" (5/phút/IP) với /login — nhưng MỘT lần đăng nhập trọn vẹn đã là
+// login + select-role (+ select-org nếu đổi tổ chức), tức tiêu 2-3 lượt trong CÙNG 1 bucket 5
+// lượt/phút. Một mạng dùng chung IP (trường học, văn phòng) vì vậy chỉ đăng nhập trọn được
+// khoảng 2 lần/phút thay vì 5 — RẤT dễ hiểu nhầm là bug đăng nhập trong khi thực ra là rate-limit
+// tự-chặn-chính-mình. /select-role/select-org không phải bề mặt dò mật khẩu (đã qua bước xác thực
+// mật khẩu ở /login, hoặc đã cầm access token thật) nên xứng đáng một ngưỡng rộng hơn nhiều,
+// tương tự lý do refresh-token đã tách trước đó.
+func WideAuthRateLimiter(rdb *redis.Client, keyPrefix string, max int, trusted *TrustedProxySet) fiber.Handler {
+	return RateLimiter(rdb, RateLimitConfig{
+		Max:       max,
+		Window:    time.Minute,
+		KeyPrefix: keyPrefix,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return ClientIP(c, trusted)
+		},
+		Message: "Too many requests. Please wait before trying again.",
+	})
+}
+
 // OTPRateLimiter - Rate limiting for OTP requests
 // 3 OTP requests per 5 minutes per email
-func OTPRateLimiter(rdb *redis.Client) fiber.Handler {
+func OTPRateLimiter(rdb *redis.Client, trusted *TrustedProxySet) fiber.Handler {
 	return RateLimiter(rdb, RateLimitConfig{
 		Max:       3,
 		Window:    5 * time.Minute,
@@ -123,7 +159,7 @@ func OTPRateLimiter(rdb *redis.Client) fiber.Handler {
 			if err := c.BodyParser(&body); err == nil && body.Email != "" {
 				return body.Email
 			}
-			return c.IP()
+			return ClientIP(c, trusted)
 		},
 		Message: "Too many OTP requests. Please wait 5 minutes before requesting another code.",
 	})

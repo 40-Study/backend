@@ -47,6 +47,7 @@ func SetupAllRoutes(
 	whiteboardHandler *handler.WhiteboardHandler,
 	analyticsHandler *handler.AnalyticsHandler,
 	orderHandler *handler.OrderHandler,
+	adminOrderHandler *handler.AdminOrderHandler,
 	voucherHandler *handler.VoucherHandler,
 	achievementHandler *handler.AchievementHandler,
 	leaderboardHandler *handler.LeaderboardHandler,
@@ -96,7 +97,7 @@ func SetupAllRoutes(
 	SetupTeacherRoutes(api, cfg, teacherHandler, redis, permChecker)
 	SetupTeacherProfileRoutes(api, cfg, teacherProfileHandler, redis)
 	SetupClassRoutes(api, cfg, classHandler, attendanceHandler, redis)
-	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis)
+	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis, permChecker)
 	SetupCartRoutes(api, cfg, cartHandler, redis)
 	SetupCourseRoutes(api, cfg, courseHandler, sectionHandler, lessonHandler, lessonContentHandler, classHandler, classLessonContentHandler, attendanceHandler, redis)
 	SetupEnrollmentRoutes(api, cfg, enrollmentHandler, redis)
@@ -112,7 +113,7 @@ func SetupAllRoutes(
 	SetupAnalyticsRoutes(api, cfg, analyticsHandler, redis)
 
 	// Order & Payment routes
-	SetupOrderRoutes(api, cfg, orderHandler, redis)
+	SetupOrderRoutes(api, cfg, orderHandler, adminOrderHandler, redis, permChecker)
 	SetupVoucherRoutes(api, cfg, voucherHandler, redis, permChecker)
 
 	// Gamification routes
@@ -157,7 +158,7 @@ func SetupAllRoutes(
 	SetupCertificateRoutes(api, cfg, certificateHandler, redis)
 
 	// Report routes
-	SetupReportRoutes(api, cfg, reportHandler, redis)
+	SetupReportRoutes(api, cfg, reportHandler, redis, permChecker)
 
 	// Coin routes
 	SetupCoinRoutes(api, cfg, coinHandler, redis, permChecker)

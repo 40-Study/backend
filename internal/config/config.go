@@ -91,6 +91,11 @@ type Config struct {
 	// CORS
 	AllowedOrigins string `mapstructure:"ALLOWED_ORIGINS"`
 
+	// TrustedProxies (review PR #69 BLOCKER, QA 260927): danh sách IP/CIDR của các hop đứng
+	// TRƯỚC Fiber mà server tin tưởng để đọc header X-Forwarded-For thay vì TCP peer trực tiếp —
+	// xem ResolvedTrustedProxies() để biết vì sao cần field này.
+	TrustedProxies string `mapstructure:"TRUSTED_PROXIES"`
+
 	// Transaction Service (MBBank gRPC)
 	TransactionServiceHost string `mapstructure:"TRANSACTION_SERVICE_HOST"`
 	TransactionServicePort string `mapstructure:"TRANSACTION_SERVICE_PORT"`
@@ -293,4 +298,43 @@ func (c *Config) ResolvedAllowedOrigins() string {
 		log.Printf("[WARN] ALLOWED_ORIGINS=\"*\" — CORS mo hoan toan VA middleware.SameOriginRequired (chan CSRF cho POST /api/progress) bi TAT HOAN TOAN. Chi dung gia tri nay o moi truong dev, khong dung production.")
 	}
 	return c.AllowedOrigins
+}
+
+// DefaultTrustedProxies (review PR #69 BLOCKER, QA 260927): mac dinh khi TRUSTED_PROXIES rong —
+// CHI localhost (nginx/Next.js chay tren cung may trong dev, hoac reverse-proxy tren cung host
+// trong mot so hạ tang). Production dung Next.js server o may/container khac PHAI dat
+// TRUSTED_PROXIES that trong .env, neu khong X-Forwarded-For se bi bo qua va rate-limit quay ve
+// dung TCP peer (dung nhung khong phan biet duoc user that voi nhau qua proxy — xem
+// ResolvedTrustedProxies).
+const DefaultTrustedProxies = "127.0.0.1,::1"
+
+// ResolvedTrustedProxies (review PR #69 BLOCKER, QA 260927): danh sach IP/CIDR "hop cuoi cung
+// truoc Fiber" ma server duoc PHEP tin de doc X-Forwarded-For thay vi TCP peer.
+//
+// Ly do can field nay: web goi backend qua proxy server-side cua Next.js
+// (web/src/app/api/[...path]/route.ts) — trinh duyet luon noi voi Next.js truoc, roi Next.js
+// (khong phai trinh duyet) moi la ben THAT SU mo ket noi TCP toi backend. Neu Fiber khong duoc
+// cau hinh doc X-Forwarded-For, moi request tu MOI nguoi dung that deu bi Fiber nhin thanh CUNG
+// MOT TCP peer (IP cua tien trinh Next.js) — cac rate limiter theo IP (AuthRateLimiter,
+// WideAuthRateLimiter, OTPRateLimiter) vi vay chia se DUY NHAT 1 bucket cho toan bo website,
+// khong phai rieng cho tung nguoi dung/mang nhu PR S-P1-2 (QA 260927) tuong nham.
+//
+// EnableTrustedProxyCheck=true bat buoc Fiber CHI doc X-Forwarded-For khi TCP peer THAT SU nam
+// trong danh sach nay — neu khong, bat ky client nao cung tu xung IP gia qua header de né rate
+// limit hoac mao danh IP nguoi khac. KHONG duoc bat ProxyHeader ma khong co danh sach nay (hoac
+// de rong ma khong xac nhan reverse-proxy that su dung dung dia chi trong danh sach).
+func (c *Config) ResolvedTrustedProxies() []string {
+	raw := DefaultTrustedProxies
+	if c != nil && strings.TrimSpace(c.TrustedProxies) != "" {
+		raw = c.TrustedProxies
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

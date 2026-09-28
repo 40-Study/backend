@@ -40,6 +40,26 @@ type OrderRepositoryInterface interface {
 	// OrderRepository.GetExpiredHeldOrdersForUser (order_repository.go).
 	GetExpiredHeldOrdersForUser(userID uuid.UUID, defaultTTL time.Duration) ([]model.Order, error)
 	CalculateUserSpent(userID uuid.UUID) (decimal.Decimal, error)
+	// SetPlatformFeeSnapshot (tính năng đơn hàng+hoàn tiền+doanh thu, quyết định #2): ghi % và số
+	// tiền phí nền tảng đã CHỐT vào đơn — gọi TRONG transaction ngay sau khi đơn chuyển
+	// "completed" (PaymentService.CheckAndProcessPayment). Xem model.Order.PlatformFeePercent.
+	SetPlatformFeeSnapshot(orderID uuid.UUID, feePercent, feeAmount decimal.Decimal) error
+	// ListAdmin — GET /api/orders/admin: danh sách toàn bộ đơn (mọi user), lọc theo
+	// AdminOrderFilter. Xem OrderRepository.ListAdmin.
+	ListAdmin(filter AdminOrderFilter) ([]model.Order, int64, error)
+	// RefundOrder — xem comment tại OrderRepository.RefundOrder.
+	RefundOrder(orderID uuid.UUID, reason, refundMethod string, refundedAt time.Time, refundedBy uuid.UUID) (applied bool, err error)
+}
+
+// AdminOrderFilter — tham số lọc cho ListAdmin (GET /api/orders/admin). Zero-value = không lọc
+// tiêu chí đó.
+type AdminOrderFilter struct {
+	Status string
+	UserID *uuid.UUID
+	From   *time.Time
+	To     *time.Time
+	Page   int
+	Limit  int
 }
 
 // OrderItemRepositoryInterface defines the interface for OrderItem operations
