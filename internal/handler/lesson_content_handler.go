@@ -106,6 +106,10 @@ func (h *LessonContentHandler) GetContent(c *fiber.Ctx) error {
 				"message": "Lesson does not belong to this course",
 			})
 		}
+		// D4 (review PR #79): khoá chưa xuất bản mà người gọi không được xem -> 404.
+		if err == service.ErrCourseHidden {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "Lesson not found"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve contents", "error": err.Error(),
 		})

@@ -467,6 +467,11 @@ func (s *CourseService) DeleteCourse(ctx context.Context, id, actorUserID uuid.U
 	if course.InstructorID != actorUserID && !isAdmin {
 		return ErrNotCourseOwner
 	}
+	// Q5 (chủ dự án chốt 28/09): khoá đang chờ duyệt cũng không xoá được — giảng viên "Rút yêu
+	// cầu duyệt" trước, tránh admin mở hàng chờ ra một khoá đã biến mất.
+	if err := ensureCourseEditable(course); err != nil {
+		return err
+	}
 	return s.courseRepo.Delete(ctx, id)
 }
 

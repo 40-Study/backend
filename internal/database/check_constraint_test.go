@@ -101,6 +101,12 @@ func TestBuildCheckConstraintSQL_Postgres(t *testing.T) {
 		t.Fatalf("constraint chưa được thay: %s", def)
 	}
 	must(build) // idempotent
+	// Dữ liệu sạch: ADD ... NOT VALID rồi VALIDATE phải để lại constraint VALIDATED đầy đủ.
+	var validated bool
+	tx.Raw("SELECT convalidated FROM pg_constraint WHERE conname = 'chk_qa_payouts_status'").Scan(&validated)
+	if !validated {
+		t.Fatal("dữ liệu sạch nhưng constraint còn NOT VALID — thiếu bước VALIDATE")
+	}
 
 	must("SAVEPOINT sp")
 	if err := exec("INSERT INTO qa_payouts VALUES ('processing')"); err == nil {
@@ -119,5 +125,49 @@ func TestBuildCheckConstraintSQL_Postgres(t *testing.T) {
 	tx.Raw("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'chk_qa_payouts2_status'").Scan(&def)
 	if strings.Contains(def, "processing") {
 		t.Fatalf("constraint tập cha không được thay: %s", def)
+	}
+}
+
+// TestBuildCheckConstraintSQL_PostgresLegacyRowsDoNotBlockBoot (review PR #79, rollback): DB đã có
+// dòng mang giá trị mà danh sách của bản đang boot KHÔNG còn (vd. rollback về bản chưa có
+// 'cancelled'). Post-migration KHÔNG được lỗi (lỗi = backend chết lúc khởi động), nhưng ghi mới giá
+// trị đó vẫn phải bị chặn; dọn dữ liệu xong thì lần chạy sau validate đầy đủ.
+func TestBuildCheckConstraintSQL_PostgresLegacyRowsDoNotBlockBoot(t *testing.T) {
+	db := pgtest.Open(t)
+	tx := db.Begin()
+	defer tx.Rollback()
+
+	exec := func(sql string) error { return tx.Exec(sql).Error }
+	must := func(sql string) {
+		t.Helper()
+		if err := exec(sql); err != nil {
+			t.Fatalf("%v\n%s", err, sql)
+		}
+	}
+	validated := func() bool {
+		var v bool
+		tx.Raw("SELECT convalidated FROM pg_constraint WHERE conname = 'chk_qa_rb_status'").Scan(&v)
+		return v
+	}
+	must(`CREATE TEMP TABLE qa_rb (status varchar(20),
+		CONSTRAINT chk_qa_rb_status CHECK (status IN ('pending','cancelled')))`)
+	must("INSERT INTO qa_rb VALUES ('pending'), ('cancelled')")
+
+	oldList := []string{"pending"} // bản "cũ" không biết 'cancelled'
+	build := buildCheckConstraintSQL("qa_rb", "chk_qa_rb_status", "status", oldList)
+	must(build) // trước bản vá: "violates check constraint" -> backend không boot được
+	if validated() {
+		t.Fatal("còn dòng 'cancelled' mà constraint lại báo validated")
+	}
+	must("SAVEPOINT sp")
+	if err := exec("INSERT INTO qa_rb VALUES ('cancelled')"); err == nil {
+		t.Fatal("constraint NOT VALID vẫn phải chặn ghi MỚI giá trị ngoài danh sách")
+	}
+	must("ROLLBACK TO SAVEPOINT sp")
+
+	must("DELETE FROM qa_rb WHERE status = 'cancelled'")
+	must(build)
+	if !validated() {
+		t.Fatal("dữ liệu đã sạch nhưng lần chạy sau không validate lại constraint")
 	}
 }

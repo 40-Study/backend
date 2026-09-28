@@ -30,6 +30,7 @@ func (r *editLockCourseRepo) GetDetailByID(context.Context, uuid.UUID) (*model.C
 	return r.course, nil
 }
 func (r *editLockCourseRepo) Update(context.Context, *model.Course) error { r.updated = true; return nil }
+func (r *editLockCourseRepo) Delete(context.Context, uuid.UUID) error        { r.updated = true; return nil }
 func (r *editLockCourseRepo) RecalculateLessonStats(context.Context, uuid.UUID) error {
 	return nil
 }
@@ -96,6 +97,7 @@ func (r *editLockLessonRepo) Reorder(context.Context, []repository.ReorderItem) 
 type editLockEnrollmentRepo struct {
 	repository.EnrollmentRepositoryInterface
 	enrolledUser uuid.UUID
+	lessonOrder  []repository.LessonOrderInfo
 }
 
 func (r *editLockEnrollmentRepo) GetByUserAndCourse(_ context.Context, userID, courseID uuid.UUID) (*model.Enrollment, error) {
@@ -105,7 +107,7 @@ func (r *editLockEnrollmentRepo) GetByUserAndCourse(_ context.Context, userID, c
 	return nil, nil
 }
 func (r *editLockEnrollmentRepo) GetLessonOrderInfoByCourseID(context.Context, uuid.UUID) ([]repository.LessonOrderInfo, error) {
-	return nil, nil
+	return r.lessonOrder, nil
 }
 func (r *editLockEnrollmentRepo) GetLessonProgressMapByUserAndCourse(context.Context, uuid.UUID, uuid.UUID) (map[uuid.UUID]*model.LessonProgress, error) {
 	return map[uuid.UUID]*model.LessonProgress{}, nil
@@ -163,6 +165,10 @@ func TestCourseEditLock_PendingReviewBlocksEveryWrite(t *testing.T) {
 			actor = uuid.New()
 		}
 		ops := map[string]func() error{
+			// Chủ dự án chốt 28/09: xoá khoá đang chờ duyệt cũng bị khoá.
+			"DeleteCourse": func() error {
+				return NewCourseService(f.course, nil, nil, nil).DeleteCourse(ctx, f.courseID(), actor, asAdmin)
+			},
 			"UpdateCourse": func() error {
 				_, err := NewCourseService(f.course, nil, nil, nil).UpdateCourse(ctx, f.courseID(), actor, asAdmin, dto.UpdateCourseDTO{Title: title("QA-sua")})
 				return err
@@ -287,6 +293,10 @@ func TestCourseVisibility_DraftHiddenFromOtherTeacher(t *testing.T) {
 	ctx := context.Background()
 	for _, status := range []string{model.CourseStatusDraft, model.CourseStatusPendingReview, model.CourseStatusRejected} {
 		f := newEditLockFixture(status)
+		// Bài preview: trước review PR #79, nhánh preview của GetContentsByLessonID bỏ qua mọi kiểm
+		// tra nên lộ video_url bài preview của khoá nháp.
+		f.lessons.lesson.IsPreview = true
+		f.enrollment.lessonOrder = []repository.LessonOrderInfo{{ID: f.lessonID(), IsPreview: true}}
 		student := uuid.New()
 		f.enrollment.enrolledUser = student
 		reads := func(viewer uuid.UUID, isAdmin bool) map[string]error {
@@ -294,7 +304,10 @@ func TestCourseVisibility_DraftHiddenFromOtherTeacher(t *testing.T) {
 			_, e2 := f.sectionSvc().GetAllSections(ctx, f.courseID(), viewer, isAdmin)
 			_, e3 := f.sectionSvc().GetSectionByID(ctx, f.sectionID(), viewer, isAdmin)
 			_, e4 := f.lessonSvc().GetAllLessons(ctx, f.sectionID(), viewer, isAdmin)
-			return map[string]error{"GetCourseByID": e1, "GetAllSections": e2, "GetSectionByID": e3, "GetAllLessons": e4}
+			_, e5 := f.lessonSvc().GetLessonByID(ctx, f.lessonID(), viewer, isAdmin)
+			_, e6 := NewLessonContentService(f.lessons, f.sections, f.course, f.enrollment, nil).GetContentsByLessonID(ctx, f.lessonID(), viewer, isAdmin)
+			return map[string]error{"GetCourseByID": e1, "GetAllSections": e2, "GetSectionByID": e3, "GetAllLessons": e4,
+				"GetLessonByID": e5, "GetContentsByLessonID(preview)": e6}
 		}
 		for name, err := range reads(uuid.New(), false) {
 			if !errors.Is(err, ErrCourseHidden) {

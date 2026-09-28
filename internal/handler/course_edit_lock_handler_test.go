@@ -24,6 +24,9 @@ type lockedCourseSvc struct{ service.CourseServiceInterface }
 func (lockedCourseSvc) UpdateCourse(context.Context, uuid.UUID, uuid.UUID, bool, dto.UpdateCourseDTO) (*dto.CourseResponseDTO, error) {
 	return nil, service.ErrCourseLockedForReview
 }
+func (lockedCourseSvc) DeleteCourse(context.Context, uuid.UUID, uuid.UUID, bool) error {
+	return service.ErrCourseLockedForReview
+}
 func (lockedCourseSvc) GetCourseByID(context.Context, uuid.UUID, uuid.UUID, bool) (*dto.CourseDetailDTO, error) {
 	return nil, service.ErrCourseHidden
 }
@@ -72,6 +75,9 @@ type lockedContentSvc struct{ service.LessonContentServiceInterface }
 func (lockedContentSvc) CreateContent(context.Context, uuid.UUID, uuid.UUID, bool, dto.CreateLessonContentDTO) (*dto.LessonContentResponseDTO, error) {
 	return nil, service.ErrCourseLockedForReview
 }
+func (lockedContentSvc) GetContentsByLessonID(context.Context, uuid.UUID, uuid.UUID, bool) ([]dto.LessonContentResponseDTO, error) {
+	return nil, service.ErrCourseHidden
+}
 
 func TestCourseEditLockHandlers_StatusMapping(t *testing.T) {
 	app := fiber.New()
@@ -84,6 +90,8 @@ func TestCourseEditLockHandlers_StatusMapping(t *testing.T) {
 	lesson := NewLessonHandler(lockedLessonSvc{}, nil)
 	content := NewLessonContentHandler(lockedContentSvc{}, nil)
 	app.Put("/courses/:id", course.UpdateCourse)
+	app.Delete("/courses/:id", course.DeleteCourse)
+	app.Get("/lessons/:lesson_id/contents", content.GetContent)
 	app.Get("/courses/:id", course.GetCourseByID)
 	app.Post("/courses/:course_id/sections", section.CreateSection)
 	app.Get("/courses/:course_id/sections", section.GetAllSections)
@@ -106,6 +114,8 @@ func TestCourseEditLockHandlers_StatusMapping(t *testing.T) {
 		code               string
 	}{
 		{"PUT", "/courses/" + cid, `{"description":"QA"}`, 409, CourseLockedCode},
+		{"DELETE", "/courses/" + cid, "", 409, CourseLockedCode},
+		{"GET", "/lessons/" + lid + "/contents", "", 404, ""},
 		{"POST", "/courses/" + cid + "/sections", `{"title":"QA-chuong"}`, 409, CourseLockedCode},
 		{"PUT", "/courses/" + cid + "/sections/" + sid, `{"title":"QA"}`, 409, CourseLockedCode},
 		{"DELETE", "/courses/" + cid + "/sections/" + sid, "", 409, CourseLockedCode},

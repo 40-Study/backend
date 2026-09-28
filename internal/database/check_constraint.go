@@ -21,6 +21,17 @@ import (
 //
 // Gộp từ 2 helper song song của Phase 3 (#73, chỉ kiểm thiếu) và Phase 4 (#74, kiểm cả thừa).
 //
+// An toàn khi ROLLBACK (review PR #79): mỗi bản backend khi boot đồng bộ constraint theo danh sách
+// của CHÍNH nó. Nếu bản cũ bỏ bớt 1 giá trị (vd. 'cancelled') mà DB đã có dòng mang giá trị đó,
+// ADD CONSTRAINT thường sẽ kiểm toàn bảng, lỗi, post-migration trả lỗi và backend chết lúc khởi
+// động. Vì vậy constraint luôn được ADD ... NOT VALID (Postgres vẫn kiểm MỌI dòng INSERT/UPDATE
+// mới, tức không nới validate dữ liệu mới), rồi VALIDATE trong khối EXCEPTION riêng:
+//   - dữ liệu sạch (trường hợp bình thường): VALIDATE thành công, constraint validated đầy đủ;
+//   - còn dòng cũ ngoài danh sách: chỉ RAISE WARNING, constraint giữ NOT VALID, backend vẫn lên.
+// Điều kiện "đã đúng" đòi cả convalidated, nên lần boot sau (khi dữ liệu đã được dọn) tự validate
+// lại. KHÔNG chọn "chỉ mở rộng, không bao giờ bỏ giá trị" vì như vậy giá trị đã bỏ khỏi SSOT vẫn
+// ghi mới được, tức là làm yếu validate.
+//
 // table/constraintName/column/values luôn là hằng số compile-time trong code Go (SSOT ở
 // internal/model), không bao giờ là input người dùng — nối chuỗi vào SQL an toàn.
 func buildCheckConstraintSQL(table, constraintName, column string, values []string) string {
@@ -41,17 +52,25 @@ func buildCheckConstraintSQL(table, constraintName, column string, values []stri
 				SELECT 1 FROM pg_constraint
 				WHERE conname = '%s'
 				  AND conrelid = '%s'::regclass
+				  AND convalidated
 				  AND %s
 			) THEN
 				ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;
 				ALTER TABLE %s ADD CONSTRAINT %s
-					CHECK (%s IN (%s));
+					CHECK (%s IN (%s)) NOT VALID;
+				BEGIN
+					ALTER TABLE %s VALIDATE CONSTRAINT %s;
+				EXCEPTION WHEN check_violation THEN
+					RAISE WARNING '%s: con dong cu ngoai danh sach, constraint giu NOT VALID (van chan ghi moi)';
+				END;
 			END IF;
 		END $$;
 	`, constraintName, table, strings.Join(conditions, "\n\t\t\t\t  AND "),
 		table, constraintName,
 		table, constraintName,
-		column, strings.Join(quoted, ", "))
+		column, strings.Join(quoted, ", "),
+		table, constraintName,
+		constraintName)
 }
 
 // buildForeignKeySQL thêm FK `constraintName` (column -> users.id) nếu chưa có. Cần riêng vì
