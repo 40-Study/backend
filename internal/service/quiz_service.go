@@ -1210,13 +1210,14 @@ func (s *QuizService) checkAnswer(question *model.Question, answer dto.SubmitAns
 		return true
 
 	case "fill_blank":
-		// Text-based matching
+		// So khớp sau chuẩn hoá (fill_blank_answer.go): khoảng trắng, hoa thường, NFC; giữ dấu.
+		accepted := []string{}
 		for _, a := range question.Answers {
-			if a.IsCorrect && a.AnswerText == answer.TextAnswer {
-				return true
+			if a.IsCorrect {
+				accepted = append(accepted, a.AnswerText)
 			}
 		}
-		return false
+		return fillBlankMatches(accepted, answer.TextAnswer)
 
 	case "essay":
 		// Essays need manual grading
