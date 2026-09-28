@@ -197,9 +197,11 @@ func (s *WalletService) UpdateBankInfo(ctx context.Context, teacherID uuid.UUID,
 		return fmt.Errorf("teacher profile not found")
 	}
 
-	profile.BankName = &req.BankName
-	profile.BankAccountNumber = &req.BankAccountNumber
-	profile.BankAccountName = &req.BankAccountName
-
-	return s.teacherProfileRepo.Update(ctx, profile)
+	// Review N1: chỉ ghi 3 cột ngân hàng, không Save cả dòng đã đọc (sẽ hoàn tác trạng thái duyệt
+	// nếu admin duyệt/từ chối xen giữa) — xem TeacherProfileRepository.UpdateContentFields.
+	return s.teacherProfileRepo.UpdateContentFields(ctx, profile.ID, map[string]interface{}{
+		"bank_name":           req.BankName,
+		"bank_account_number": req.BankAccountNumber,
+		"bank_account_name":   req.BankAccountName,
+	})
 }

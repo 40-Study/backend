@@ -266,10 +266,27 @@ func (r *TeacherProfileRepository) GetByUserIDIncludingDeleted(ctx context.Conte
 	return &profile, nil
 }
 
-// Restore bỏ deleted_at và ghi nội dung mới; resubmission_count/rejection_reason giữ nguyên.
+// ErrTeacherProfileNotDeleted: dòng đã được khôi phục bởi request khác giữa lúc đọc và lúc ghi.
+var ErrTeacherProfileNotDeleted = errors.New("teacher profile is not soft-deleted")
+
+// Restore bỏ deleted_at và ghi nội dung mới + trạng thái duyệt do service quyết định (kể cả xoá
+// reviewed_* khi về pending, review N3). resubmission_count/rejection_reason KHÔNG nằm trong danh
+// sách cột nên giữ nguyên. Trước đây Save ghi đè cả dòng đã đọc (review N1); giờ chỉ ghi đúng các
+// cột này và chỉ khi dòng CÒN đang xoá mềm, để 2 request tạo lại đồng thời không ghi đè nhau.
 func (r *TeacherProfileRepository) Restore(ctx context.Context, profile *model.TeacherProfile) error {
 	profile.DeletedAt = gorm.DeletedAt{}
-	return r.db.WithContext(ctx).Unscoped().Save(profile).Error
+	result := r.db.WithContext(ctx).Unscoped().Model(profile).
+		Where("deleted_at IS NOT NULL").
+		Select("deleted_at", "specialization", "education", "experience_years", "certificate_info", "department",
+			"approval_status", "reviewed_at", "reviewed_by", "updated_at").
+		Updates(profile)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrTeacherProfileNotDeleted
+	}
+	return nil
 }
 
 // HasActiveSystemRole (TeacherProfileRepository) — dùng khi tạo hồ sơ giáo viên: người ĐÃ giữ
