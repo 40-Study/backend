@@ -149,6 +149,10 @@ func (h *AdminOrderHandler) RefundOrder(c *fiber.Ctx) error {
 			"error":   "invalid_request",
 		})
 	}
+	// Review #76 MINOR: trim TRƯỚC khi validate. Trước đây validate chạy trên chuỗi thô nên
+	// transaction_ref = "   " lọt qua `required` rồi bị lưu thành "" (trái quyết định #1: hoàn tiền
+	// phải kèm mã giao dịch).
+	req.TransactionRef = strings.TrimSpace(req.TransactionRef)
 	if errs := utils.ValidateStruct(req); len(errs) > 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Validation failed",
@@ -156,7 +160,7 @@ func (h *AdminOrderHandler) RefundOrder(c *fiber.Ctx) error {
 		})
 	}
 
-	resp, err := h.adminOrderService.RefundOrder(c.Context(), actorID, orderID, req.Reason, req.RefundMethod, strings.TrimSpace(req.TransactionRef))
+	resp, err := h.adminOrderService.RefundOrder(c.Context(), actorID, orderID, req.Reason, req.RefundMethod, req.TransactionRef)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrOrderNotFound):

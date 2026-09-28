@@ -237,6 +237,14 @@ func (h *OrderHandler) CreatePaymentIntent(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 	paymentIntent, err := h.paymentService.CreatePaymentIntent(c.Context(), userID, orderID, isAdmin, req.PaymentMethod)
 	if err != nil {
+		// Review #76 MAJOR 2: đơn quá hạn giữ → 409 lỗi nghiệp vụ có code riêng để web báo "đơn
+		// hết hạn, hãy tạo đơn mới" thay vì lỗi chung "invalid state transition".
+		if errors.Is(err, service.ErrOrderExpired) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"code":    "ERR_ORDER_EXPIRED",
+				"message": err.Error(),
+			})
+		}
 		if status := orderErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{
 				"code":    "ERR_FORBIDDEN",

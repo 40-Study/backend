@@ -54,6 +54,10 @@ var (
 	// khoá học đang mua mà không trả lại được đơn cũ (đơn đã mở phiên thanh toán, khác tập khoá,
 	// hoặc có mã giảm giá). Handler trả 409; message tiếng Việt vì web hiển thị thẳng.
 	ErrOrderInProgress = errors.New("Bạn đang có đơn hàng chưa thanh toán cho khoá học này. Hãy tiếp tục thanh toán hoặc huỷ đơn đó trong mục Đơn hàng của tôi.")
+	// ErrOrderExpired (review #76 MAJOR 2): đơn đã quá hạn giữ (orderHoldExpiresAt) nên không mở
+	// phiên thanh toán mới được. Handler trả 409 code ERR_ORDER_EXPIRED; message tiếng Việt vì web
+	// hiển thị thẳng và dẫn user tạo đơn mới.
+	ErrOrderExpired = errors.New("Đơn hàng đã hết hạn giữ chỗ. Vui lòng tạo đơn mới để thanh toán theo giá hiện tại.")
 )
 
 type OrderServiceInterface interface {
@@ -364,7 +368,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 		if err := txDB.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "create_order:"+userID.String()).Error; err != nil {
 			return err
 		}
-		reuseID, err := findReusableOpenOrder(txDB, userID, courseIDs, req.CouponCode)
+		reuseID, repriced, err := findReusableOpenOrder(txDB, userID, courseIDs, req.CouponCode, totalAmount, discountAmount)
 		if err != nil {
 			return err
 		}
@@ -375,6 +379,22 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 			// Chưa ghi gì trong transaction này nên return sớm là an toàn (không cần rollback gì).
 			reusedOrderID = reuseID
 			return nil
+		}
+		if repriced != nil {
+			// Review #76 MAJOR 1: đơn pending cũ cùng tập khoá nhưng số tiền đã lệch giá hiện tại
+			// (giảng viên đổi giá/bật khuyến mãi, hoặc khoá chuyển miễn phí). Trả lại đơn cũ thì user
+			// trả sai số tiền, nên huỷ nó NGAY TRONG transaction này (vẫn đang giữ advisory lock) rồi
+			// tạo đơn mới theo giá hiện tại ở bên dưới. Đơn pending chưa có mã chuyển khoản nên huỷ an
+			// toàn. UPDATE có điều kiện status='pending': CreatePaymentIntent không lấy advisory lock
+			// này, nếu nó vừa chuyển đơn sang processing thì applied=false và ta trả 409 như đơn đang
+			// thanh toán, không huỷ nhầm đơn đã có mã.
+			applied, err := releaseOrderAndTransition(ctx, txRepo, s.voucherService, repriced, []string{"pending"}, "cancelled", "Giá khoá học đã thay đổi, đơn được thay bằng đơn mới theo giá hiện tại")
+			if err != nil {
+				return err
+			}
+			if !applied {
+				return ErrOrderInProgress
+			}
 		}
 
 		// C-01 (review vòng 5, phát hiện lại ở review vòng 5→6): khoá voucher + đếm
@@ -852,15 +872,19 @@ func orderHoldExpiresAt(order *model.Order) *time.Time {
 // findReusableOpenOrder (B4) — chạy TRONG transaction tạo đơn, sau khoá advisory theo user.
 // Trả về:
 //   - uuid.Nil, nil: user không có đơn còn hạn nào chứa các khoá này, được tạo đơn mới;
-//   - id, nil: đúng 1 đơn "pending" còn hạn có ĐÚNG tập khoá này và cả đơn cũ lẫn yêu cầu mới
-//     đều không dùng mã giảm giá, nên trả lại đơn đó (giá và số tiền không đổi);
+//   - id, nil, nil: đúng 1 đơn "pending" còn hạn có ĐÚNG tập khoá này, cả đơn cũ lẫn yêu cầu mới
+//     đều không dùng mã giảm giá, VÀ số tiền (total + discount) khớp giá vừa tính, nên trả lại đơn
+//     đó (user trả đúng giá đang thấy);
+//   - uuid.Nil, order, nil: như trên nhưng số tiền đã LỆCH giá hiện tại (review #76 MAJOR 1: giá
+//     đổi, khuyến mãi bật/tắt, khoá chuyển miễn phí). Caller huỷ đơn này trong cùng transaction
+//     rồi tạo đơn mới; không trả lại vì user sẽ trả giá cũ;
 //   - ErrOrderInProgress: các trường hợp còn lại. Đơn "processing" đã có mã chuyển khoản gắn với
 //     số tiền cũ, còn đơn khác tập khoá/có voucher mà trả lại thì user sẽ trả sai số tiền mình
 //     vừa chọn, nên buộc user tiếp tục hoặc huỷ đơn cũ một cách tường minh.
 //
 // Đơn đã quá hạn (cùng điều kiện với GetExpiredHeldOrdersForUser) không tính, vì lazy-sweep đầu
 // CreateOrder chỉ là best-effort và có thể đã lỗi.
-func findReusableOpenOrder(txDB *gorm.DB, userID uuid.UUID, courseIDs []uuid.UUID, couponCode string) (uuid.UUID, error) {
+func findReusableOpenOrder(txDB *gorm.DB, userID uuid.UUID, courseIDs []uuid.UUID, couponCode string, totalAmount, discountAmount decimal.Decimal) (uuid.UUID, *model.Order, error) {
 	now := time.Now()
 	var open []model.Order
 	err := txDB.
@@ -870,26 +894,31 @@ func findReusableOpenOrder(txDB *gorm.DB, userID uuid.UUID, courseIDs []uuid.UUI
 		Where("EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND oi.course_id IN ?)", courseIDs).
 		Find(&open).Error
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, nil, err
 	}
 	if len(open) == 0 {
-		return uuid.Nil, nil
+		return uuid.Nil, nil, nil
 	}
 	if len(open) > 1 {
-		return uuid.Nil, ErrOrderInProgress
+		return uuid.Nil, nil, ErrOrderInProgress
 	}
 	order := open[0]
 	if order.Status != "pending" || order.VoucherID != nil || couponCode != "" {
-		return uuid.Nil, ErrOrderInProgress
+		return uuid.Nil, nil, ErrOrderInProgress
 	}
 	var itemCourseIDs []uuid.UUID
 	if err := txDB.Model(&model.OrderItem{}).Where("order_id = ?", order.ID).Pluck("course_id", &itemCourseIDs).Error; err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, nil, err
 	}
 	if !sameCourseSet(itemCourseIDs, courseIDs) {
-		return uuid.Nil, ErrOrderInProgress
+		return uuid.Nil, nil, ErrOrderInProgress
 	}
-	return order.ID, nil
+	// So bằng Equal (giá trị), không so chuỗi: decimal đọc từ numeric(12,2) có thể mang scale khác
+	// decimal vừa tính (499000.00 vs 499000) dù cùng số tiền.
+	if !order.TotalAmount.Equal(totalAmount) || !order.DiscountAmount.Equal(discountAmount) {
+		return uuid.Nil, &order, nil
+	}
+	return order.ID, nil, nil
 }
 
 func sameCourseSet(a, b []uuid.UUID) bool {

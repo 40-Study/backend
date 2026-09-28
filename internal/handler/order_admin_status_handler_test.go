@@ -58,6 +58,28 @@ func TestAdminRefundOrder_RequiresTransactionRef(t *testing.T) {
 	}
 }
 
+// Review #76 MINOR: transaction_ref chỉ gồm khoảng trắng cũng là "thiếu mã giao dịch" → 400 ở tầng
+// request (service nil: lọt xuống service là panic/đỏ).
+func TestAdminRefundOrder_WhitespaceTransactionRefIsRejected(t *testing.T) {
+	h := NewAdminOrderHandler(nil, nil, nil)
+	app := fiber.New()
+	app.Post("/orders/admin/:id/refund", func(c *fiber.Ctx) error {
+		c.Locals("user_id", uuid.New())
+		return h.RefundOrder(c)
+	})
+
+	req := httptest.NewRequest("POST", "/orders/admin/"+uuid.NewString()+"/refund",
+		strings.NewReader(`{"reason":"QA","refund_method":"manual_bank_transfer","transaction_ref":"  \t "}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Fatalf("transaction_ref toàn khoảng trắng trả %d, muốn 400", resp.StatusCode)
+	}
+}
+
 // fakeOrderServiceInProgress — chỉ CreateOrder được gọi trong test này.
 type fakeOrderServiceInProgress struct {
 	service.OrderServiceInterface
@@ -65,6 +87,41 @@ type fakeOrderServiceInProgress struct {
 
 func (fakeOrderServiceInProgress) CreateOrder(ctx context.Context, userID uuid.UUID, req dto.CreateOrderRequest) (*dto.OrderResponse, error) {
 	return nil, service.ErrOrderInProgress
+}
+
+// fakePaymentServiceExpired — chỉ CreatePaymentIntent được gọi trong test này.
+type fakePaymentServiceExpired struct {
+	service.PaymentServiceInterface
+}
+
+func (fakePaymentServiceExpired) CreatePaymentIntent(ctx context.Context, userID, orderID uuid.UUID, isAdmin bool, paymentMethod string) (*dto.PaymentIntentResponse, error) {
+	return nil, service.ErrOrderExpired
+}
+
+// Review #76 MAJOR 2: đơn quá hạn giữ → 409 {"code":"ERR_ORDER_EXPIRED","message":<tiếng Việt>},
+// không phải 400 ERR_CREATE_PAYMENT chung chung.
+func TestCreatePaymentIntent_OrderExpiredIsConflict(t *testing.T) {
+	h := NewOrderHandler(nil, fakePaymentServiceExpired{}, nil)
+	app := fiber.New()
+	app.Post("/orders/:id/payment-intent", func(c *fiber.Ctx) error {
+		c.Locals("user_id", uuid.New())
+		return h.CreatePaymentIntent(c)
+	})
+
+	req := httptest.NewRequest("POST", "/orders/"+uuid.NewString()+"/payment-intent", strings.NewReader(`{"payment_method":"qr_transfer"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusConflict {
+		t.Fatalf("ErrOrderExpired trả %d, muốn 409", resp.StatusCode)
+	}
+	var body map[string]interface{}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body["code"] != "ERR_ORDER_EXPIRED" || body["message"] != service.ErrOrderExpired.Error() {
+		t.Fatalf("body = %v", body)
+	}
 }
 
 func TestCreateOrder_OrderInProgressIsConflict(t *testing.T) {

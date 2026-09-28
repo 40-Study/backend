@@ -186,6 +186,64 @@ func TestOrderItems_CourseNameIsFilled(t *testing.T) {
 	}
 }
 
+func (f *orderFixture) orderStatus(orderID uuid.UUID) string {
+	f.t.Helper()
+	var o model.Order
+	if err := f.db.Where("id = ?", orderID).First(&o).Error; err != nil {
+		f.t.Fatalf("đọc order: %v", err)
+	}
+	return o.Status
+}
+
+// Review #76 MAJOR 1: giá khoá đổi trong lúc đơn pending còn hạn → KHÔNG trả lại đơn giá cũ; đơn
+// cũ bị huỷ ngay trong transaction tạo đơn, đơn mới theo giá hiện tại, chỉ còn đúng 1 đơn mở.
+func TestCreateOrder_PriceChangeReplacesStalePendingOrder(t *testing.T) {
+	cases := []struct {
+		name       string
+		update     string
+		wantTotal  int64
+		wantStatus string
+	}{
+		{"giá giảm (bật khuyến mãi)", "UPDATE courses SET discount_price = 299000 WHERE id = ?", 299000, "pending"},
+		{"giá tăng", "UPDATE courses SET price = 699000 WHERE id = ?", 699000, "pending"},
+		{"khoá chuyển miễn phí", "UPDATE courses SET price = 0 WHERE id = ?", 0, "completed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newOrderFixture(t)
+			student := f.user()
+			course := f.course("QA-order giá đổi " + tc.name)
+
+			first := f.createOrder(student, course)
+			if !first.TotalAmount.Equal(decimal.NewFromInt(499000)) {
+				t.Fatalf("đơn 1 total = %s, muốn 499000", first.TotalAmount)
+			}
+			f.exec(tc.update, course)
+
+			second := f.createOrder(student, course)
+			if second.ID == first.ID {
+				t.Fatalf("giá đổi mà vẫn trả lại đơn cũ %s (total %s), muốn đơn mới giá %d", first.ID, second.TotalAmount, tc.wantTotal)
+			}
+			if !second.TotalAmount.Equal(decimal.NewFromInt(tc.wantTotal)) {
+				t.Fatalf("đơn mới total = %s, muốn %d", second.TotalAmount, tc.wantTotal)
+			}
+			if second.Status != tc.wantStatus {
+				t.Fatalf("đơn mới status = %q, muốn %q", second.Status, tc.wantStatus)
+			}
+			if got := f.orderStatus(first.ID); got != "cancelled" {
+				t.Fatalf("đơn cũ status = %q, muốn cancelled", got)
+			}
+			wantOpen := int64(1)
+			if tc.wantStatus == "completed" {
+				wantOpen = 0
+			}
+			if n := f.countOpenOrders(student); n != wantOpen {
+				t.Fatalf("số đơn mở = %d, muốn %d", n, wantOpen)
+			}
+		})
+	}
+}
+
 // B4: bấm "Mua ngay" lần 2 cho cùng khoá khi đơn cũ còn pending → trả lại ĐÚNG đơn cũ.
 func TestCreateOrder_DuplicatePendingReturnsExistingOrder(t *testing.T) {
 	f := newOrderFixture(t)

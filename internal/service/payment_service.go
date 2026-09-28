@@ -206,6 +206,20 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 		return s.buildPaymentIntentResponse(order, *order.PaymentTransactionID, *order.PaymentCodeExpiredAt, paymentMethod), nil
 	}
 
+	// Review #76 MAJOR 2: TRƯỚC ĐÂY chỉ kiểm status, nên đơn pending bị bỏ rơi quá hạn giữ vẫn mở
+	// được phiên thanh toán bất cứ lúc nào và còn được cấp thêm 24h (lazy-sweep chỉ chạy khi user
+	// tạo đơn MỚI). Giờ server thực thi đúng mốc đang hiển thị (orderHoldExpiresAt): quá hạn thì
+	// chuyển "expired" (hoàn used_count voucher nếu có) và trả ErrOrderExpired, không cấp mã mới.
+	// Đơn đã "expired" từ trước cũng trả ErrOrderExpired để web báo cùng một câu.
+	if order.Status == "expired" {
+		return nil, ErrOrderExpired
+	}
+	if expired, err := s.expireIfHoldElapsed(ctx, order); err != nil {
+		return nil, err
+	} else if expired {
+		return nil, ErrOrderExpired
+	}
+
 	// Verify order is in correct state — "pending" là nhánh DUY NHẤT còn lại được phép tạo intent
 	// MỚI (processing với code CÒN HẠN đã trả ở nhánh trên; processing với code HẾT HẠN hoặc
 	// KHÔNG có code, cancelled/expired/completed/failed đều rơi vào đây -> lỗi, đúng ý "đã
@@ -328,15 +342,6 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 		}, nil
 	}
 
-	// If not processing, can't check
-	if order.Status != "processing" {
-		return &dto.PaymentStatusResponse{
-			OrderID: orderID,
-			Status:  order.Status,
-			Amount:  order.TotalAmount,
-		}, nil
-	}
-
 	// M2-02 (review vòng 3): payment_code_expired_at TRƯỚC ĐÂY được LƯU (item 25, vòng 1) nhưng
 	// KHÔNG BAO GIỜ được đọc lại để từ chối — người dùng vẫn có thể bấm "Tôi đã chuyển khoản"
 	// (CheckPayment, gọi thẳng hàm này) hoặc poll GetPaymentStatus sau khi mã đã hết hạn và giao
@@ -344,21 +349,24 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 	// chuyển đơn sang "expired" (hoàn lại used_count đã reserve nếu có voucher — H2-05) thay vì
 	// tiếp tục gọi gRPC check giao dịch. "expired" đã là trạng thái web mong đợi (xem
 	// web/src/services/order.service.ts OrderStatus + use-orders.ts PAYMENT_TERMINAL_STATUSES).
-	if order.PaymentCodeExpiredAt != nil && time.Now().After(*order.PaymentCodeExpiredAt) {
-		// M3-02/H3-01c (review vòng 4): dùng chung releaseOrderAndTransition (order_service.go)
-		// thay vì tự UpdateStatus vô điều kiện — UPDATE có điều kiện (WHERE status = order.Status
-		// vừa đọc) + kiểm RowsAffected chặn race 2 request đồng thời (vd 1 tab poll trúng lúc hết
-		// hạn + 1 tab bấm "Hủy đơn") cùng vượt qua guard và cùng gọi ReleaseVoucherUsage.
-		expireErr := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
-			_, txErr := releaseOrderAndTransition(ctx, txRepo, s.voucherService, order, []string{order.Status}, "expired", "Payment code expired")
-			return txErr
-		})
-		if expireErr != nil {
-			return nil, expireErr
-		}
+	// Review #76 MAJOR 2: kiểm TRƯỚC nhánh "không phải processing" và theo cùng mốc
+	// orderHoldExpiresAt, để đơn pending quá hạn giữ cũng chốt "expired" nhất quán với
+	// CreatePaymentIntent thay vì cứ trả "pending" mãi.
+	if expired, err := s.expireIfHoldElapsed(ctx, order); err != nil {
+		return nil, err
+	} else if expired {
 		return &dto.PaymentStatusResponse{
 			OrderID: orderID,
 			Status:  "expired",
+			Amount:  order.TotalAmount,
+		}, nil
+	}
+
+	// If not processing, can't check
+	if order.Status != "processing" {
+		return &dto.PaymentStatusResponse{
+			OrderID: orderID,
+			Status:  order.Status,
 			Amount:  order.TotalAmount,
 		}, nil
 	}
@@ -587,7 +595,9 @@ func (s *PaymentService) GetPaymentStatus(ctx context.Context, orderID, actorUse
 	// vụ gRPC ngân hàng không chạy, route này TRẢ LỖI thay vì trạng thái — web poll 5s/lần sẽ hiện
 	// lỗi liên tục dù đơn vẫn bình thường. Lỗi đối chiếu chỉ ghi log và trả trạng thái hiện tại;
 	// riêng lỗi quyền/không tìm thấy vẫn trả về như cũ.
-	if order.Status == "processing" {
+	// Review #76 MAJOR 2: "pending" cũng đi qua CheckAndProcessPayment để đơn quá hạn giữ được chốt
+	// "expired" ngay khi web poll, cùng mốc với CreatePaymentIntent (không gọi gRPC cho pending).
+	if order.Status == "processing" || order.Status == "pending" {
 		resp, checkErr := s.CheckAndProcessPayment(ctx, orderID, actorUserID, isAdmin)
 		if checkErr == nil {
 			return resp, nil
@@ -607,6 +617,35 @@ func (s *PaymentService) GetPaymentStatus(ctx context.Context, orderID, actorUse
 		PaidAt:  order.PaidAt,
 		Amount:  order.TotalAmount,
 	}, nil
+}
+
+// expireIfHoldElapsed (review #76 MAJOR 2) — nguồn DUY NHẤT cho quyết định "đơn còn mở đã quá hạn
+// giữ chưa", dùng chung cho CreatePaymentIntent, CheckAndProcessPayment (và GetPaymentStatus qua
+// nó). Mốc là orderHoldExpiresAt, tức đúng giá trị expires_at web đang hiển thị: pending chưa mở
+// phiên thì created_at + 24h, đã có mã thì payment_code_expired_at. Quá hạn thì chuyển "expired"
+// qua releaseOrderAndTransition (UPDATE có điều kiện + hoàn used_count voucher). Trả true cả khi
+// request khác vừa chuyển trạng thái trước (applied=false): mốc đã qua nên đơn không còn dùng được,
+// caller vẫn phải từ chối.
+func (s *PaymentService) expireIfHoldElapsed(ctx context.Context, order *model.Order) (bool, error) {
+	if order.Status != "pending" && order.Status != "processing" {
+		return false, nil
+	}
+	expiresAt := orderHoldExpiresAt(order)
+	if expiresAt == nil || !time.Now().After(*expiresAt) {
+		return false, nil
+	}
+	reason := "Payment code expired"
+	if order.Status == "pending" {
+		reason = "Order hold expired before payment was initiated"
+	}
+	err := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
+		_, txErr := releaseOrderAndTransition(ctx, txRepo, s.voucherService, order, []string{order.Status}, "expired", reason)
+		return txErr
+	})
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // calculatePlatformFeeAmount (quyết định #2, 27/09/2026) — hàm THUẦN (không side-effect), tách
