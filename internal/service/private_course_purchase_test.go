@@ -55,6 +55,11 @@ func (privOrderRepo) GetExpiredHeldOrdersForUser(uuid.UUID, time.Duration) ([]mo
 	return nil, nil
 }
 
+// WithTransaction — bước ghi đơn: chỉ tới được khi đã qua cổng trạng thái khoá.
+func (privOrderRepo) WithTransaction(func(*repository.OrderRepository) error) error {
+	return errReachedRepo
+}
+
 func privCourses() (*privCourseRepo, []uuid.UUID, uuid.UUID) {
 	repo := &privCourseRepo{courses: map[uuid.UUID]*model.Course{}}
 	var private []uuid.UUID
@@ -97,13 +102,17 @@ func TestAddToCart_PrivateCourseIsNotFound(t *testing.T) {
 }
 
 func TestCreateOrder_PrivateCourseIsNotFound(t *testing.T) {
-	courses, private, _ := privCourses()
+	courses, private, published := privCourses()
 	svc := NewOrderService(privOrderRepo{}, nil, courses, nil, nil, nil)
 	for _, id := range private {
 		req := dto.CreateOrderRequest{Source: "buy_now", CourseIDs: []string{id.String()}}
 		if _, err := svc.CreateOrder(context.Background(), uuid.New(), req); !errors.Is(err, ErrCourseNotFound) {
 			t.Errorf("CreateOrder khoá %q: muốn ErrCourseNotFound, nhận %v", statusOf(courses, id), err)
 		}
+	}
+	req := dto.CreateOrderRequest{Source: "buy_now", CourseIDs: []string{published.String()}}
+	if _, err := svc.CreateOrder(context.Background(), uuid.New(), req); !errors.Is(err, errReachedRepo) {
+		t.Errorf("khoá published bị chặn nhầm: %v", err)
 	}
 }
 
