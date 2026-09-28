@@ -57,7 +57,9 @@ func (f *orderFixture) course(title string) uuid.UUID {
 	f.t.Helper()
 	teacher := f.user()
 	s := uuid.NewString()
-	c := model.Course{InstructorID: teacher, Title: title, Slug: "qa-order-" + s, Price: decimal.NewFromInt(499000)}
+	// Review vòng 4 B1: #79 chặn mua khoá draft/pending_review/rejected, nên fixture phải là khoá
+	// đã xuất bản (cột status mặc định 'draft').
+	c := model.Course{InstructorID: teacher, Title: title, Slug: "qa-order-" + s, Price: decimal.NewFromInt(499000), Status: model.CourseStatusPublished}
 	if err := f.db.Create(&c).Error; err != nil {
 		f.t.Fatalf("tạo course: %v", err)
 	}

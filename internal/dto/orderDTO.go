@@ -37,6 +37,9 @@ type OrderResponse struct {
 	Items          []OrderItemResponse `json:"items"`
 	CreatedAt      time.Time           `json:"created_at"`
 	ExpiresAt      *time.Time          `json:"expires_at,omitempty"`
+	// PaymentCodeIssued (review #76 vòng 4): đơn chưa hoàn tất đã từng được cấp mã chuyển khoản, nên
+	// có thể đã có tiền về. Web hiện "Kiểm tra thanh toán" cho đơn đã huỷ/hết hạn có cờ này.
+	PaymentCodeIssued bool `json:"payment_code_issued,omitempty"`
 	// Refund* (B6, QA vòng 2): chỉ có khi đơn đã hoàn tiền — trang chi tiết admin hiển thị dấu vết
 	// đối soát (lý do, mã giao dịch chuyển khoản, thời điểm).
 	RefundReason         *string    `json:"refund_reason,omitempty"`

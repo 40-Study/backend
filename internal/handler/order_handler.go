@@ -102,6 +102,11 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 				"message": err.Error(),
 			})
 		}
+		// Review #76 vòng 4: đơn trước cùng khoá đã cấp mã và đang đối chiếu (kể cả vừa huỷ) →
+		// 409 ERR_PAYMENT_VERIFYING kèm câu riêng của ErrPreviousOrderVerifying.
+		if body, ok := paymentStateConflict(err); ok {
+			return c.Status(fiber.StatusConflict).JSON(body)
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"code":    "ERR_CREATE_ORDER",
 			"message": err.Error(),

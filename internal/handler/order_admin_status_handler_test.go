@@ -186,6 +186,40 @@ func TestPaymentStateConflicts_AreMappedFor409(t *testing.T) {
 	}
 }
 
+type fakeOrderServiceCreateErr struct {
+	service.OrderServiceInterface
+	err error
+}
+
+func (f fakeOrderServiceCreateErr) CreateOrder(ctx context.Context, userID uuid.UUID, req dto.CreateOrderRequest) (*dto.OrderResponse, error) {
+	return nil, f.err
+}
+
+// Review #76 vòng 4: đơn trước cùng khoá đã cấp mã, đang đối chiếu (kể cả vừa huỷ) → POST /orders
+// trả 409 ERR_PAYMENT_VERIFYING kèm câu riêng, không phải 400 ERR_CREATE_ORDER.
+func TestCreateOrder_PreviousOrderVerifyingIsConflict(t *testing.T) {
+	h := NewOrderHandler(fakeOrderServiceCreateErr{err: service.ErrPreviousOrderVerifying}, nil, nil)
+	app := fiber.New()
+	app.Post("/orders", func(c *fiber.Ctx) error {
+		c.Locals("user_id", uuid.New())
+		return h.CreateOrder(c)
+	})
+	req := httptest.NewRequest("POST", "/orders", strings.NewReader(`{"source":"buy_now","course_ids":["`+uuid.NewString()+`"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 10_000)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusConflict {
+		t.Fatalf("trả %d, muốn 409", resp.StatusCode)
+	}
+	var body map[string]interface{}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body["code"] != "ERR_PAYMENT_VERIFYING" || body["message"] != service.ErrPreviousOrderVerifying.Error() {
+		t.Fatalf("body = %v", body)
+	}
+}
+
 func TestCreateOrder_OrderInProgressIsConflict(t *testing.T) {
 	h := NewOrderHandler(fakeOrderServiceInProgress{}, nil, nil)
 	app := fiber.New()

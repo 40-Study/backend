@@ -60,6 +60,19 @@ var (
 	ErrOrderExpired = errors.New("Đơn hàng đã hết hạn giữ chỗ. Vui lòng tạo đơn mới để thanh toán theo giá hiện tại.")
 )
 
+// ErrPreviousOrderVerifying (review #76 vòng 4): CreateOrder bị chặn vì một đơn trước cho khoá này
+// đã cấp mã chuyển khoản và đang được đối chiếu (xem paymentVerificationHoldExists). errors.Is với
+// ErrPaymentVerificationPending → handler trả 409 ERR_PAYMENT_VERIFYING; câu riêng cho việc mua lại.
+var ErrPreviousOrderVerifying error = previousOrderVerifyingError{}
+
+type previousOrderVerifyingError struct{}
+
+func (previousOrderVerifyingError) Error() string {
+	return "Đơn trước của bạn cho khoá học này đã được cấp mã chuyển khoản và đang được đối chiếu với ngân hàng. Nếu bạn đã chuyển khoản, đừng chuyển lại; xem kết quả tại Đơn hàng của tôi."
+}
+
+func (previousOrderVerifyingError) Unwrap() error { return ErrPaymentVerificationPending }
+
 type OrderServiceInterface interface {
 	CreateOrder(ctx context.Context, userID uuid.UUID, req dto.CreateOrderRequest) (*dto.OrderResponse, error)
 	GetOrderByID(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool) (*dto.OrderResponse, error)
@@ -638,6 +651,9 @@ func (s *OrderService) CancelOrder(ctx context.Context, userID, orderID uuid.UUI
 		if order, err = s.orderRepo.GetByID(orderID); err != nil {
 			return ErrOrderNotFound
 		}
+		if err := closedOrderCancelError(order.Status); err != nil {
+			return err
+		}
 	}
 
 	if !s.isValidTransition(order.Status, "cancelled") {
@@ -660,9 +676,28 @@ func (s *OrderService) CancelOrder(ctx context.Context, userID, orderID uuid.UUI
 		return err
 	}
 	if !applied {
-		// RowsAffected == 0: trạng thái order đã đổi (bởi request khác) kể từ lúc đọc ở trên —
-		// không còn đúng "order.Status" đã kiểm isValidTransition, coi như transition thất bại.
+		// RowsAffected == 0: trạng thái order đã đổi (bởi request khác) kể từ lúc đọc ở trên.
+		// Review #76 vòng 4 C: đua với hoàn tất thanh toán — đọc lại để báo đúng (đã thanh toán /
+		// hết hạn) thay vì lỗi chung.
+		if fresh, rerr := s.orderRepo.GetByID(orderID); rerr == nil {
+			if err := closedOrderCancelError(fresh.Status); err != nil {
+				return err
+			}
+		}
 		return ErrInvalidStateTransition
+	}
+	return nil
+}
+
+// closedOrderCancelError — huỷ một đơn vừa được đối chiếu sang trạng thái cuối: completed →
+// ErrPaymentAlreadyDone (409 ERR_ORDER_ALREADY_PAID), expired → ErrOrderExpired (409). nil = không
+// thuộc 2 trường hợp này.
+func closedOrderCancelError(status string) error {
+	switch status {
+	case "completed":
+		return ErrPaymentAlreadyDone
+	case "expired":
+		return ErrOrderExpired
 	}
 	return nil
 }
@@ -819,8 +854,8 @@ func (s *OrderService) sweepExpiredHeldOrders(ctx context.Context, userID uuid.U
 		// Re-review #76 vòng 2 (MAJOR, tiền): đơn "processing" đã có mã chuyển khoản có thể đã được
 		// trả TRONG hạn mà chưa ai đối chiếu. OrderService không có gRPC ngân hàng nên KHÔNG tự chốt
 		// expired ở đây (trước đây chốt im lặng, rồi nút "Tạo đơn mới" dẫn tới trả lần 2). Đơn này
-		// được chốt qua PaymentService.CheckAndProcessPayment (đối chiếu lần cuối). Nó không chặn
-		// tạo đơn mới vì findReusableOpenOrder đã bỏ qua đơn quá hạn.
+		// được chốt qua PaymentService.CheckAndProcessPayment (đối chiếu lần cuối). Trong lúc chờ, nó
+		// CHẶN tạo đơn mới cùng khoá (paymentVerificationHoldExists, review vòng 4).
 		if order.Status == "processing" && order.PaymentTransactionID != nil && *order.PaymentTransactionID != "" {
 			continue
 		}
@@ -891,6 +926,7 @@ func (s *OrderService) toOrderResponse(order *model.Order, items []model.OrderIt
 		// B1 (QA vòng 2 N2): trước đây gán time.Now() nên "ngày tạo" đổi theo mỗi lần đọc.
 		CreatedAt:            order.CreatedAt,
 		ExpiresAt:            orderHoldExpiresAt(order),
+		PaymentCodeIssued:    order.Status != "completed" && hasPaymentCode(order),
 		RefundReason:         order.RefundReason,
 		RefundTransactionRef: order.RefundTransactionRef,
 		RefundedAt:           order.RefundedAt,
@@ -935,10 +971,16 @@ func orderHoldExpiresAt(order *model.Order) *time.Time {
 // CreateOrder chỉ là best-effort và có thể đã lỗi. NGOẠI TRỪ (review #76 vòng 3 MAJOR 2, quyết định
 // chủ dự án): đơn "processing" đã có mã chuyển khoản vẫn tính dù mã đã hết hạn, vì nó CHƯA được đối
 // chiếu ngân hàng (sweep bỏ qua nó) và có thể đã được trả tiền. Tạo đơn mới cùng khoá lúc này dẫn
-// tới trả lần 2 (qua "Mua ngay"/checkout), nên trả ErrOrderInProgress; web dẫn về /orders để đối
-// chiếu. Đơn hết chặn khi đối chiếu xong (completed/expired).
+// tới trả lần 2 (qua "Mua ngay"/checkout). Vòng 4: đơn này (và đơn có mã vừa huỷ) bị
+// paymentVerificationHoldExists chặn trước với ErrPreviousOrderVerifying (409 ERR_PAYMENT_VERIFYING);
+// hết chặn khi đối chiếu xong (completed/expired) hoặc hết 30 phút sau khi huỷ.
 func findReusableOpenOrder(txDB *gorm.DB, userID uuid.UUID, courseIDs []uuid.UUID, couponCode string, totalAmount, discountAmount decimal.Decimal) (uuid.UUID, *model.Order, error) {
 	now := time.Now()
+	if held, err := paymentVerificationHoldExists(txDB, userID, courseIDs, now); err != nil {
+		return uuid.Nil, nil, err
+	} else if held {
+		return uuid.Nil, nil, ErrPreviousOrderVerifying
+	}
 	var open []model.Order
 	err := txDB.
 		Where("user_id = ? AND status IN ('pending','processing')", userID).
@@ -972,6 +1014,27 @@ func findReusableOpenOrder(txDB *gorm.DB, userID uuid.UUID, courseIDs []uuid.UUI
 		return uuid.Nil, &order, nil
 	}
 	return order.ID, nil, nil
+}
+
+// paymentVerificationHoldExists (review #76 vòng 4, quyết định chủ dự án) — user có đơn ĐÃ CẤP MÃ
+// chứa một trong các khoá này mà chưa được coi là "chắc chắn không có tiền":
+//   - processing có mã đã hết hạn (đang đối chiếu: ân hạn 30 phút, hoặc ngân hàng lỗi tới khi
+//     reconcileIssuedOrder chốt expired sau unverifiedExpiryAfter);
+//   - cancelled có mã, còn trong paymentReconcileGracePeriod tính từ mốc MUỘN HƠN giữa lúc huỷ và
+//     hạn mã (phương án b: được huỷ, nhưng tiền chuyển ngay trước khi huỷ có thể chưa ghi có).
+// Tạo đơn mới cùng khoá lúc này dẫn tới trả lần 2, nên CreateOrder trả 409 ERR_PAYMENT_VERIFYING.
+// Mốc huỷ lấy từ history to_status='cancelled' (bảng orders không có cột riêng), thiếu thì updated_at.
+func paymentVerificationHoldExists(txDB *gorm.DB, userID uuid.UUID, courseIDs []uuid.UUID, now time.Time) (bool, error) {
+	var n int64
+	err := txDB.Model(&model.Order{}).
+		Where("user_id = ? AND payment_transaction_id IS NOT NULL AND payment_transaction_id <> ''", userID).
+		Where(`(status = 'processing' AND (payment_code_expired_at IS NULL OR payment_code_expired_at < ?))
+			OR (status = 'cancelled' AND payment_code_expired_at IS NOT NULL AND GREATEST(payment_code_expired_at,
+				COALESCE((SELECT MAX(h.created_at) FROM order_status_histories h WHERE h.order_id = orders.id AND h.to_status = 'cancelled'), orders.updated_at)) > ?)`,
+			now, now.Add(-paymentReconcileGracePeriod)).
+		Where("EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND oi.course_id IN ?)", courseIDs).
+		Count(&n).Error
+	return n > 0, err
 }
 
 func sameCourseSet(a, b []uuid.UUID) bool {
