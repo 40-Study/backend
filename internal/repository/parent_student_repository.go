@@ -18,6 +18,8 @@ type ParentStudentRepositoryInterface interface {
 	CreateRelation(ctx context.Context, relation *model.ParentStudentRelation) error
 	// UpdateStatus cập nhật trạng thái quan hệ
 	UpdateStatus(ctx context.Context, id uuid.UUID, status string) error
+	// SaveRelation ghi đè toàn bộ dòng quan hệ đã có (kích hoạt lại với quyền đặt lại từ đầu)
+	SaveRelation(ctx context.Context, relation *model.ParentStudentRelation) error
 	// FindByID tìm quan hệ theo ID
 	FindByID(ctx context.Context, id uuid.UUID) (*model.ParentStudentRelation, error)
 	// FindByParentAndStudent tìm quan hệ theo parent và student
@@ -91,6 +93,11 @@ func (r *ParentStudentRepository) GetPrimaryParentByStudentID(ctx context.Contex
 // CreateRelation tạo quan hệ phụ huynh - học sinh mới
 func (r *ParentStudentRepository) CreateRelation(ctx context.Context, relation *model.ParentStudentRelation) error {
 	return r.db.WithContext(ctx).Create(relation).Error
+}
+
+// SaveRelation ghi đè toàn bộ dòng quan hệ đã có (review PR #81, MINOR-6).
+func (r *ParentStudentRepository) SaveRelation(ctx context.Context, relation *model.ParentStudentRelation) error {
+	return r.db.WithContext(ctx).Save(relation).Error
 }
 
 // UpdateStatus cập nhật trạng thái quan hệ

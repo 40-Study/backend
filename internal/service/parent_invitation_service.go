@@ -275,7 +275,25 @@ func (s *ParentInvitationService) RespondToInvitation(
 	}
 	if existing != nil {
 		if existing.Status != model.ParentStudentStatusActive {
-			if err := s.parentStudentRepo.UpdateStatus(ctx, existing.ID, model.ParentStudentStatusActive); err != nil {
+			// Review PR #81, MAJOR-2: liên kết bị huỷ SAU KHI lời mời được tạo nghĩa là lời mời này đã
+			// mất hiệu lực — chấp nhận nó sẽ liên kết lại mà con không đồng ý lần nữa. (Huỷ liên kết
+			// qua ParentLinkService đã thu hồi lời mời; kiểm này chặn cả dữ liệu cũ và đường huỷ khác.)
+			revokedAt := existing.UpdatedAt
+			if existing.RevokedAt != nil {
+				revokedAt = *existing.RevokedAt
+			}
+			if revokedAt.After(invitation.CreatedAt) {
+				_ = s.invitationRepo.UpdateStatus(ctx, invitation.ID, model.ParentInvitationStatusRevoked, &now)
+				return errors.New("lời mời không còn hiệu lực vì liên kết đã bị huỷ sau khi mời, học sinh cần gửi lời mời mới")
+			}
+			// MINOR-6: kích hoạt lại thì đặt lại đủ quyền như một liên kết mới, không giữ quyền cũ.
+			existing.Relationship = invitation.Relationship
+			existing.Status = model.ParentStudentStatusActive
+			existing.CanViewProgress, existing.CanViewGrades, existing.CanViewAttendance = true, true, true
+			existing.CanContactTeachers, existing.CanMakePayments, existing.CanManageAccount = true, true, false
+			existing.ConfirmedAt, existing.ConfirmedBy = &now, &invitation.Relationship
+			existing.RevokedAt, existing.RevokedBy = nil, nil
+			if err := s.parentStudentRepo.SaveRelation(ctx, existing); err != nil {
 				return err
 			}
 		}

@@ -20,11 +20,15 @@ func TestParentLink_Postgres_ChiThayDuLieuConSauKhiConXacNhan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gửi yêu cầu: %v", err)
 	}
-	if out.Status != model.ParentLinkRequestStatusPending || out.Student == nil || out.Student.ID != child.ID.String() {
+	// Khi còn chờ, phụ huynh chỉ thấy email đã nhập, không thấy tên học sinh (MAJOR-1).
+	if out.Status != model.ParentLinkRequestStatusPending || out.Student != nil || out.StudentEmail != strings.ToLower(child.Email) {
 		t.Fatalf("yêu cầu vừa gửi sai: %+v", out)
 	}
 	if f.canSeeChild(parent.ID, child.ID) {
 		t.Fatal("IDOR: phụ huynh xem được dữ liệu con khi con CHƯA xác nhận")
+	}
+	if sent, err := f.svc.ListSent(f.ctx, parent.ID); err != nil || len(sent) != 1 || sent[0].Student != nil {
+		t.Fatalf("danh sách đã gửi lộ tên học sinh khi còn chờ: %+v, err=%v", sent, err)
 	}
 	if rows := f.relationRows(parent.ID, child.ID); len(rows) != 0 {
 		t.Fatalf("chưa xác nhận mà đã có %d dòng quan hệ", len(rows))
@@ -45,6 +49,11 @@ func TestParentLink_Postgres_ChiThayDuLieuConSauKhiConXacNhan(t *testing.T) {
 	rows := f.relationRows(parent.ID, child.ID)
 	if len(rows) != 1 || rows[0].Status != model.ParentStudentStatusActive || rows[0].ConfirmedBy == nil || *rows[0].ConfirmedBy != "student" {
 		t.Fatalf("quan hệ sau xác nhận sai: %+v", rows)
+	}
+	// Con đã trả lời thì phụ huynh mới thấy tên con trong danh sách đã gửi.
+	if sent, err := f.svc.ListSent(f.ctx, parent.ID); err != nil || len(sent) != 1 || sent[0].Student == nil ||
+		sent[0].Student.ID != child.ID.String() {
+		t.Fatalf("sau xác nhận phụ huynh phải thấy học sinh: %+v, err=%v", sent, err)
 	}
 	// Bấm xác nhận lần 2 không được xử lý lại.
 	wantLinkCode(t, f.svc.Respond(f.ctx, child.ID, reqID, "accept"), "LINK_REQUEST_NOT_PENDING")
@@ -109,13 +118,50 @@ func TestParentLink_Postgres_KiemTraVaiTroVaEmail(t *testing.T) {
 
 	_, err := f.svc.CreateRequest(f.ctx, notParent.ID, linkReq(child.Email))
 	wantLinkCode(t, err, "PARENT_ROLE_REQUIRED")
-	_, err = f.svc.CreateRequest(f.ctx, parent.ID, linkReq("khong-ton-tai-"+uuid.NewString()+"@40study.test"))
-	wantLinkCode(t, err, "STUDENT_NOT_FOUND")
-	// Email có tài khoản nhưng không phải học sinh: cùng thông điệp với không tồn tại.
-	_, err = f.svc.CreateRequest(f.ctx, parent.ID, linkReq(teacher.Email))
-	wantLinkCode(t, err, "STUDENT_NOT_FOUND")
-	_, err = f.svc.CreateRequest(f.ctx, parent.ID, linkReq(parent.Email))
+	_, err = f.svc.CreateRequest(f.ctx, parent.ID, linkReq(strings.ToUpper(parent.Email)))
 	wantLinkCode(t, err, "LINK_SELF")
+	// Email lạ / không phải học sinh: KHÔNG còn lỗi riêng (xem parent_link_enumeration_postgres_test.go).
+	if _, err := f.svc.CreateRequest(f.ctx, parent.ID, linkReq(teacher.Email)); err != nil {
+		t.Fatalf("email giáo viên phải được nhận như mọi email: %v", err)
+	}
+	// Yêu cầu tới email không phải học sinh: không ai trả lời được, kể cả chủ email đó.
+	incoming, err := f.svc.ListIncoming(f.ctx, teacher.ID)
+	if err != nil || len(incoming) != 0 {
+		t.Fatalf("giáo viên không được thấy yêu cầu liên kết: %+v, err=%v", incoming, err)
+	}
+	sent, _ := f.svc.ListSent(f.ctx, parent.ID)
+	wantLinkCode(t, f.svc.Respond(f.ctx, teacher.ID, uuid.MustParse(sent[0].ID), "accept"), "LINK_REQUEST_NOT_FOUND")
+}
+
+// Yêu cầu gửi tới email lúc chưa có tài khoản học sinh: học sinh đăng ký bằng email đó (khác hoa
+// thường) thấy yêu cầu và xác nhận được; yêu cầu được gắn id học sinh.
+func TestParentLink_Postgres_YeuCauTheoEmailChoTaiKhoanDangKySau(t *testing.T) {
+	f := newParentLinkFixture(t)
+	parent := f.user("parent", "PARENT")
+	email := "qa-r2e-later-" + uuid.NewString()[:8] + "@40study.test"
+	out, err := f.svc.CreateRequest(f.ctx, parent.ID, linkReq(email))
+	if err != nil {
+		t.Fatalf("gửi tới email chưa đăng ký: %v", err)
+	}
+	child := f.user("later", "STUDENT")
+	if err := f.db.Model(&model.User{}).Where("id = ?", child.ID).Update("email", strings.ToUpper(email)).Error; err != nil {
+		t.Fatalf("đổi email: %v", err)
+	}
+	incoming, err := f.svc.ListIncoming(f.ctx, child.ID)
+	if err != nil || len(incoming) != 1 || incoming[0].ID != out.ID {
+		t.Fatalf("học sinh đăng ký sau phải thấy yêu cầu: %+v, err=%v", incoming, err)
+	}
+	if err := f.svc.Respond(f.ctx, child.ID, uuid.MustParse(out.ID), "accept"); err != nil {
+		t.Fatalf("xác nhận: %v", err)
+	}
+	if !f.canSeeChild(parent.ID, child.ID) {
+		t.Fatal("đã xác nhận mà phụ huynh không xem được")
+	}
+	var req model.ParentLinkRequest
+	f.db.First(&req, "id = ?", out.ID)
+	if req.StudentUserID == nil || *req.StudentUserID != child.ID {
+		t.Fatalf("yêu cầu phải được gắn id học sinh: %+v", req.StudentUserID)
+	}
 }
 
 // E2: /parent/children/:id/courses trả instructor_id để phụ huynh nhắn giảng viên của con.

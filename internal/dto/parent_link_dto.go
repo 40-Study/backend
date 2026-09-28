@@ -24,13 +24,15 @@ type LinkUserDto struct {
 	Email     string  `json:"email"`
 }
 
-// ParentLinkRequestDto — một yêu cầu liên kết. Danh sách "đã gửi" của phụ huynh có Student,
-// danh sách "đến" của học sinh có Parent.
+// ParentLinkRequestDto — một yêu cầu liên kết. Danh sách "đến" của học sinh có Parent. Danh sách
+// "đã gửi" của phụ huynh luôn có StudentEmail; Student chỉ có sau khi con đã trả lời (khi còn chờ,
+// lộ tên học sinh = lộ email đó là tài khoản học sinh — review PR #81, MAJOR-1).
 type ParentLinkRequestDto struct {
 	ID           string       `json:"id"`
 	Status       string       `json:"status"`
 	Relationship string       `json:"relationship"`
 	Message      *string      `json:"message,omitempty"`
+	StudentEmail string       `json:"student_email"`
 	CreatedAt    string       `json:"created_at"`
 	RespondedAt  *string      `json:"responded_at,omitempty"`
 	Parent       *LinkUserDto `json:"parent,omitempty"`

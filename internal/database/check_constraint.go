@@ -54,6 +54,18 @@ func buildCheckConstraintSQL(table, constraintName, column string, values []stri
 		column, strings.Join(quoted, ", "))
 }
 
+// buildNormalizeStatusSQL đưa mọi giá trị ngoài `values` (kể cả NULL) của `column` về `fallback`,
+// để buildCheckConstraintSQL chạy sau đó không lỗi trên DB cũ có dữ liệu rác (review PR #81,
+// MINOR-8). Cùng điều kiện an toàn như trên: tham số luôn là hằng số trong code Go.
+func buildNormalizeStatusSQL(table, column, fallback string, values []string) string {
+	quoted := make([]string, len(values))
+	for i, v := range values {
+		quoted[i] = "'" + v + "'"
+	}
+	return fmt.Sprintf(`UPDATE %s SET %s = '%s' WHERE %s IS NULL OR %s NOT IN (%s)`,
+		table, column, fallback, column, column, strings.Join(quoted, ", "))
+}
+
 // buildForeignKeySQL thêm FK `constraintName` (column -> users.id) nếu chưa có. Cần riêng vì
 // AutoMigrate đã tự thêm cột reviewed_by (model không khai báo quan hệ) TRƯỚC khi
 // RunPostMigrations chạy, nên khối "IF NOT EXISTS column THEN ADD COLUMN ... REFERENCES" kiểu

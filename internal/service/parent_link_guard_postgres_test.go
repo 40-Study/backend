@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestParentLink_Postgres_KhongGuiTrungVaCoThoiGianChoSauTuChoi(t *testing.T)
 
 	// Hết thời gian chờ thì gửi lại được.
 	realNow := f.svc.now
-	f.svc.now = func() time.Time { return realNow().Add(ParentLinkRejectCooldown + time.Hour) }
+	f.svc.now = func() time.Time { return realNow().Add(ParentLinkCooldown + time.Hour) }
 	if _, err := f.svc.CreateRequest(f.ctx, parent.ID, linkReq(child.Email)); err != nil {
 		t.Fatalf("hết thời gian chờ mà vẫn không gửi lại được: %v", err)
 	}
@@ -85,11 +86,12 @@ func TestParentLink_Postgres_UniqueIndexChanYeuCauChoTrung(t *testing.T) {
 	parent := f.user("parent", "PARENT")
 	child := f.user("child", "STUDENT")
 	f.request(parent, child)
-	dup := model.ParentLinkRequest{ParentUserID: parent.ID, StudentUserID: child.ID, Relationship: "parent", Status: "pending"}
+	email := strings.ToLower(child.Email)
+	dup := model.ParentLinkRequest{ParentUserID: parent.ID, StudentEmail: email, Relationship: "parent", Status: "pending"}
 	if err := f.db.Create(&dup).Error; err == nil {
-		t.Fatal("DB cho chèn 2 yêu cầu pending cùng cặp")
+		t.Fatal("DB cho chèn 2 yêu cầu pending cùng phụ huynh + email")
 	}
-	bogus := model.ParentLinkRequest{ParentUserID: parent.ID, StudentUserID: child.ID, Relationship: "parent", Status: "bogus"}
+	bogus := model.ParentLinkRequest{ParentUserID: parent.ID, StudentEmail: email, Relationship: "parent", Status: "bogus"}
 	if err := f.db.Create(&bogus).Error; err == nil {
 		t.Fatal("CHECK constraint không chặn status lạ của parent_link_requests")
 	}
@@ -149,9 +151,15 @@ func TestParentInvitation_Postgres_LienKetLaiSauKhiHuy(t *testing.T) {
 		t.Fatalf("con huỷ liên kết: %v", err)
 	}
 
+	// Quyền cũ bị thu hẹp trước khi huỷ; liên kết lại phải đặt lại đủ quyền (MINOR-6).
+	if err := f.db.Model(&model.ParentStudentRelation{}).Where("parent_user_id = ? AND student_user_id = ?", parent.ID, child.ID).
+		Update("can_view_grades", false).Error; err != nil {
+		t.Fatalf("thu hẹp quyền: %v", err)
+	}
+	// Lời mời MỚI, tạo sau khi huỷ liên kết — hợp lệ.
 	inv := model.ParentInvitation{StudentUserID: child.ID, InviteeEmail: parent.Email, InviteeUserID: &parent.ID,
 		Relationship: "parent", Status: model.ParentInvitationStatusPending, TokenHash: "qa-r2e-" + uuid.NewString(),
-		ExpiresAt: time.Now().Add(24 * time.Hour)}
+		ExpiresAt: time.Now().Add(24 * time.Hour), CreatedAt: time.Now().Add(time.Second)}
 	if err := f.db.Create(&inv).Error; err != nil {
 		t.Fatalf("tạo lời mời: %v", err)
 	}
@@ -163,7 +171,11 @@ func TestParentInvitation_Postgres_LienKetLaiSauKhiHuy(t *testing.T) {
 	if !f.canSeeChild(parent.ID, child.ID) {
 		t.Fatal("chấp nhận lời mời mà quan hệ không active lại")
 	}
-	if rows := f.relationRows(parent.ID, child.ID); len(rows) != 1 {
+	rows := f.relationRows(parent.ID, child.ID)
+	if len(rows) != 1 {
 		t.Fatalf("muốn đúng 1 dòng quan hệ, nhận %d", len(rows))
+	}
+	if !rows[0].CanViewGrades || rows[0].RevokedAt != nil || rows[0].RevokedBy != nil {
+		t.Fatalf("kích hoạt lại phải đặt lại quyền và xoá dấu huỷ: %+v", rows[0])
 	}
 }
