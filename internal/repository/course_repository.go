@@ -30,6 +30,10 @@ type CourseRepositoryInterface interface {
 	// IncrementTotalStudents (C-06 audit 260909): cộng/trừ courses.total_students bằng
 	// gorm.Expr (không đọc-sửa-ghi) khi enroll/unenroll — method mới, KHÔNG sửa method cũ.
 	IncrementTotalStudents(ctx context.Context, courseID uuid.UUID, delta int) error
+	// RecalculateLessonStats (P2 QA 260927 teacher): ghi lại total_lessons/total_duration_minutes
+	// thật từ bảng lessons — 2 cột đã có sẵn trên courses (không thêm cột mới) nhưng trước bản vá
+	// này không nơi nào cập nhật sau khi tạo, nên khoá có nội dung thật vẫn hiện 0 bài/0 phút.
+	RecalculateLessonStats(ctx context.Context, courseID uuid.UUID) error
 }
 
 type CourseFilterDBParams struct {
@@ -219,6 +223,34 @@ func (r *CourseRepository) IncrementTotalStudents(ctx context.Context, courseID 
 	return r.db.WithContext(ctx).Model(&model.Course{}).
 		Where("id = ?", courseID).
 		Update("total_students", gorm.Expr("total_students + ?", delta)).Error
+}
+
+// RecalculateLessonStats (P2 QA 260927 teacher): 1 câu UPDATE với subquery tương quan, tính
+// thẳng từ bảng lessons (qua sections) — không đọc-sửa-ghi ở tầng Go nên không kẹt race với
+// request tạo/xoá bài khác đang chạy song song trên cùng khoá.
+// Review đối kháng PR #70 (BLOCKER): thiếu "AND sections.deleted_at IS NULL" khiến bài học của
+// chương vừa xoá (SectionRepository.Delete là soft-delete — chỉ set deleted_at, không xoá hàng,
+// nên FK OnDelete:CASCADE giữa sections->lessons không bao giờ kích hoạt) vẫn bị đếm, làm
+// total_lessons/total_duration_minutes KHÔNG giảm sau khi xoá chương. Áp lại đúng convention đã
+// có sẵn ở enrollment_repository.go (GetLessonIDsByCourseID, GetLessonOrderInfoByCourseID,
+// CountTotalMandatory — dòng 309-310/343-344/544-545) cho cả 2 subquery. `lessons` không có cột
+// deleted_at (model.Lesson không embed soft-delete, LessonRepository.Delete xoá hàng thật) nên
+// chỉ cần lọc phía sections.
+func (r *CourseRepository) RecalculateLessonStats(ctx context.Context, courseID uuid.UUID) error {
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE courses SET
+			total_lessons = COALESCE((
+				SELECT COUNT(*) FROM lessons
+				JOIN sections ON sections.id = lessons.section_id
+				WHERE sections.course_id = ? AND sections.deleted_at IS NULL
+			), 0),
+			total_duration_minutes = COALESCE((
+				SELECT SUM(lessons.duration_minutes) FROM lessons
+				JOIN sections ON sections.id = lessons.section_id
+				WHERE sections.course_id = ? AND sections.deleted_at IS NULL
+			), 0)
+		WHERE id = ?
+	`, courseID, courseID, courseID).Error
 }
 
 func (r *CourseRepository) ReplaceTags(ctx context.Context, course *model.Course, tags []model.Tag) error {

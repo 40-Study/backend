@@ -59,10 +59,30 @@ func (h *CourseHandler) CreateCourse(c *fiber.Ctx) error {
 	})
 }
 
+// GetAllCourses handles GET /courses — route CÔNG KHAI, không auth (course_router.go), nên
+// KHÔNG có cách phân biệt người gọi là ai. Vì vậy status LUÔN bị ép "published", bỏ qua bất kỳ
+// giá trị status nào client gửi lên — trước bản vá này (P1 QA 260927 teacher) client truyền
+// thẳng status rỗng/tuỳ ý và repository không lọc gì, nên khoá draft của MỌI giảng viên lộ ra
+// trang /courses công khai. Giáo viên xem khoá (kể cả draft) của chính mình dùng GetMyCourses.
 func (h *CourseHandler) GetAllCourses(c *fiber.Ctx) error {
+	// Review đối kháng PR #70 (MAJOR): trước khi có route `/courses/mine` (mới), web gọi
+	// `GET /courses?mine=true` — tham số `mine` này route công khai KHÔNG BAO GIỜ đọc (route
+	// không có auth middleware nên không có user_id để lọc theo). Nếu chỉ âm thầm bỏ qua như
+	// trước, sau khi PR này ép status="published" thì "Khoá của tôi" phía giáo viên (nếu web
+	// merge sau, còn gọi route cũ) sẽ mất luôn khả năng thấy draft CỦA CHÍNH MÌNH mà không có
+	// bất kỳ thông báo nào (200 OK, danh sách rỗng/chỉ published) — mất dữ liệu im lặng. Trả lỗi
+	// rõ ràng thay vì âm thầm hạ cấp kết quả; client thật (web) đã đổi sang gọi `/courses/mine`
+	// (route có auth, lọc đúng instructor_id) trong PR web đi kèm.
+	if c.Query("mine") == "true" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "GET /courses?mine=true khong con duoc ho tro — goi GET /courses/mine (co xac thuc) thay the",
+			"error":   "deprecated_query_param",
+		})
+	}
+
 	params := dto.CourseFilterParams{
 		Level:    c.Query("level"),
-		Status:   c.Query("status"),
+		Status:   "published",
 		Keyword:  c.Query("keyword"),
 		Page:     c.QueryInt("page", 1),
 		PageSize: c.QueryInt("page_size", 20),
@@ -92,6 +112,41 @@ func (h *CourseHandler) GetAllCourses(c *fiber.Ctx) error {
 		if v, err := strconv.ParseFloat(maxStr, 64); err == nil {
 			params.MaxPrice = &v
 		}
+	}
+
+	courses, err := h.service.GetAllCourses(c.Context(), params)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to retrieve courses",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Courses retrieved successfully",
+		"data":    courses,
+	})
+}
+
+// GetMyCourses handles GET /courses/mine — route CÓ auth (course_router.go), trả khoá của
+// CHÍNH giáo viên đang đăng nhập (mọi status: draft/published/archived), khác GetAllCourses
+// (công khai, luôn ép published). P1 QA 260927 teacher: web trước đây gọi GET /courses?mine=true
+// nhưng handler cũ không đọc "mine" hay "instructor_id" từ query nên trả TOÀN BỘ khoá của MỌI
+// giảng viên — trang "Khóa học của tôi" trộn lẫn khoá người khác dù ghi (write) đã bị chặn đúng.
+func (h *CourseHandler) GetMyCourses(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized",
+		})
+	}
+
+	params := dto.CourseFilterParams{
+		InstructorID: &userID,
+		Status:       c.Query("status"),
+		Keyword:      c.Query("keyword"),
+		Page:         c.QueryInt("page", 1),
+		PageSize:     c.QueryInt("page_size", 20),
 	}
 
 	courses, err := h.service.GetAllCourses(c.Context(), params)

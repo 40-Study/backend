@@ -93,6 +93,9 @@ type EnrollmentRepositoryInterface interface {
 	// accepted) cho MOT nguoi dung trong NHIEU khoa, nhom theo course_id. Tranh N+1 khi liet ke
 	// danh sach ghi danh.
 	GetPendingAssignmentsByCourseIDs(ctx context.Context, userID uuid.UUID, courseIDs []uuid.UUID) (map[uuid.UUID][]PendingAssignmentInfo, error)
+	// GetByInstructor (P1 QA 260927 teacher): 1 dòng/1 lượt ghi danh khoá của instructorID, kèm
+	// tên lớp nếu có — xem TeacherStudentRow.
+	GetByInstructor(ctx context.Context, instructorID uuid.UUID, page, pageSize int) ([]TeacherStudentRow, int64, error)
 }
 
 type EnrollmentRepository struct {
@@ -621,4 +624,67 @@ func (r *EnrollmentRepository) GetPendingAssignmentsByCourseIDs(ctx context.Cont
 	}
 
 	return result, nil
+}
+
+// TeacherStudentRow (P1 QA 260927 teacher): 1 dòng/1 lượt ghi danh khoá học của giáo viên —
+// thay cho cách cũ chỉ đếm học viên đã được xếp vào một LỚP (student_classes), luôn rỗng khi
+// giáo viên chưa tạo lớp nào dù khoá đã có rất nhiều đơn mua thật (enrollments).
+// ClassID/ClassName là con trỏ: chỉ có giá trị khi học viên này CŨNG đã được xếp vào một lớp
+// thuộc chính khoá học đó — không bịa dữ liệu lớp khi chưa có.
+type TeacherStudentRow struct {
+	StudentID       uuid.UUID       `gorm:"column:student_id"`
+	FullName        *string         `gorm:"column:full_name"`
+	UserName        string          `gorm:"column:user_name"`
+	Email           string          `gorm:"column:email"`
+	AvatarURL       *string         `gorm:"column:avatar_url"`
+	EnrolledAt      time.Time       `gorm:"column:enrolled_at"`
+	CompletedAt     *time.Time      `gorm:"column:completed_at"`
+	ProgressPercent decimal.Decimal `gorm:"column:progress_percentage"`
+	CourseID        uuid.UUID       `gorm:"column:course_id"`
+	CourseTitle     string          `gorm:"column:course_title"`
+	ClassID         *uuid.UUID      `gorm:"column:class_id"`
+	ClassName       *string         `gorm:"column:class_name"`
+}
+
+// GetByInstructor trả các lượt ghi danh (enrollment) vào bất kỳ khoá nào của instructorID —
+// đúng nghĩa "học viên của giáo viên" theo dữ liệu mua/enroll thật, kèm tên lớp nếu học viên đó
+// cũng thuộc một lớp của cùng khoá (2 subquery scalar, không JOIN trực tiếp để tránh nhân dòng
+// khi một học viên lỡ thuộc nhiều lớp của cùng khoá).
+func (r *EnrollmentRepository) GetByInstructor(ctx context.Context, instructorID uuid.UUID, page, pageSize int) ([]TeacherStudentRow, int64, error) {
+	var total int64
+	if err := r.db.WithContext(ctx).
+		Table("enrollments e").
+		Joins("JOIN courses co ON co.id = e.course_id").
+		Where("co.instructor_id = ?", instructorID).
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var rows []TeacherStudentRow
+	query := r.db.WithContext(ctx).
+		Table("enrollments e").
+		Select(`
+			u.id AS student_id, u.full_name, u.user_name, u.email, u.avatar_url,
+			e.enrolled_at, e.completed_at, e.progress_percentage,
+			e.course_id, co.title AS course_title,
+			(SELECT sc.class_id FROM student_classes sc
+				JOIN classes cl ON cl.id = sc.class_id
+				WHERE sc.student_id = u.id AND cl.course_id = co.id
+				LIMIT 1) AS class_id,
+			(SELECT cl2.name FROM student_classes sc2
+				JOIN classes cl2 ON cl2.id = sc2.class_id
+				WHERE sc2.student_id = u.id AND cl2.course_id = co.id
+				LIMIT 1) AS class_name
+		`).
+		Joins("JOIN courses co ON co.id = e.course_id").
+		Joins("JOIN users u ON u.id = e.user_id").
+		Where("co.instructor_id = ?", instructorID)
+
+	if err := utils.ApplyPagination(query, page, pageSize).
+		Order("e.enrolled_at DESC").
+		Scan(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return rows, total, nil
 }
