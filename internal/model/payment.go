@@ -143,7 +143,7 @@ type InstructorPayout struct {
 	InstructorID      uuid.UUID       `gorm:"type:uuid;not null;index" json:"instructor_id"`
 	Amount            decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"amount"`
 	Currency          string          `gorm:"type:varchar(3);default:'VND'" json:"currency"`
-	Status            string          `gorm:"type:varchar(20);default:'pending';check:status IN ('pending', 'approved', 'rejected', 'completed')" json:"status"` // phải khớp PayoutStatuses (payout_status.go), pin bằng TestPayoutStatusTagMatchesSSOT
+	Status            string          `gorm:"type:varchar(20);default:'pending';check:status IN ('pending', 'approved', 'rejected', 'completed', 'cancelled')" json:"status"` // phải khớp PayoutStatuses (payout_status.go), pin bằng TestPayoutStatusTagMatchesSSOT
 	PaymentMethod     *string         `gorm:"type:varchar(50)" json:"payment_method,omitempty"`
 	BankName          *string         `gorm:"type:varchar(100)" json:"bank_name,omitempty"`
 	BankAccountNumber *string         `gorm:"type:varchar(50)" json:"bank_account_number,omitempty"`

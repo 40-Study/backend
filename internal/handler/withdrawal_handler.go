@@ -97,7 +97,7 @@ func (h *WithdrawalHandler) ListMyWithdrawals(c *fiber.Ctx) error {
 	}
 	status, ok := parseWithdrawalStatusFilter(c)
 	if !ok {
-		return validationFailed(c, "status must be one of pending, approved, rejected, completed")
+		return validationFailed(c, "status must be one of pending, approved, rejected, completed, cancelled")
 	}
 	page, limit := parsePagination(c)
 	res, err := h.svc.ListMine(c.Context(), userID, status, page, limit)
@@ -107,13 +107,27 @@ func (h *WithdrawalHandler) ListMyWithdrawals(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "OK", "data": res})
 }
 
+// CancelMyWithdrawal - POST /api/wallet/teacher/withdrawals/:id/cancel (Q2, QA vòng 2).
+// Giảng viên lấy từ TOKEN; yêu cầu của người khác -> 404, không còn pending -> 409.
+func (h *WithdrawalHandler) CancelMyWithdrawal(c *fiber.Ctx) error {
+	userID, id, ok, err := h.parseActorAndID(c)
+	if !ok {
+		return err
+	}
+	res, err := h.svc.Cancel(c.Context(), userID, id)
+	if err != nil {
+		return writeWithdrawalError(c, err)
+	}
+	return c.JSON(fiber.Map{"message": "Withdrawal cancelled", "data": res})
+}
+
 // ─── Admin ─────────────────────────────────────────────────────────────────
 
 // AdminListWithdrawals - GET /api/admin/withdrawals?status=&teacher_id=&page=&limit=
 func (h *WithdrawalHandler) AdminListWithdrawals(c *fiber.Ctx) error {
 	status, ok := parseWithdrawalStatusFilter(c)
 	if !ok {
-		return validationFailed(c, "status must be one of pending, approved, rejected, completed")
+		return validationFailed(c, "status must be one of pending, approved, rejected, completed, cancelled")
 	}
 	var teacherID *uuid.UUID
 	if raw := c.Query("teacher_id", ""); raw != "" {

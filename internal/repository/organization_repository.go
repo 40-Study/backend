@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/utils"
 )
 
 type OrganizationRepositoryInterface interface {
@@ -79,7 +80,7 @@ func (r *OrganizationRepository) GetAllOrganizations(ctx context.Context, page, 
 	default: // "active" or empty
 	}
 	if keyword != "" {
-		query = query.Where("name ILIKE ?", "%"+keyword+"%")
+		query = query.Where("name ILIKE ?", utils.ContainsLikePattern(keyword))
 	}
 
 	if err := query.Count(&total).Error; err != nil {

@@ -53,6 +53,7 @@ var DefaultMinWithdrawalAmount = decimal.NewFromInt(100000)
 type WithdrawalServiceInterface interface {
 	Create(ctx context.Context, teacherID uuid.UUID, amount decimal.Decimal) (*dto.WithdrawalItem, error)
 	ListMine(ctx context.Context, teacherID uuid.UUID, status string, page, limit int) (*dto.WithdrawalListResponse, error)
+	Cancel(ctx context.Context, teacherID, id uuid.UUID) (*dto.WithdrawalStatusResponse, error)
 	AdminList(ctx context.Context, teacherID *uuid.UUID, status string, page, limit int) (*dto.AdminWithdrawalListResponse, error)
 	NegativeBalances(ctx context.Context) (*dto.NegativeBalanceListResponse, error)
 	Approve(ctx context.Context, actorID, id uuid.UUID) (*dto.WithdrawalStatusResponse, error)
@@ -190,6 +191,51 @@ func (s *WithdrawalService) ListMine(ctx context.Context, teacherID uuid.UUID, s
 		items = append(items, toWithdrawalItem(&rows[i]))
 	}
 	return &dto.WithdrawalListResponse{Items: items, TotalCount: total, Page: page, Limit: limit, TotalPages: totalPages(total, limit)}, nil
+}
+
+// Cancel — POST /api/wallet/teacher/withdrawals/:id/cancel (Q2, QA vòng 2). Giảng viên tự huỷ yêu
+// cầu CỦA MÌNH khi còn pending; huỷ xong số dư được trả lại ngay (cancelled không thuộc
+// PayoutReservedStatuses) và gửi được yêu cầu mới (không thuộc PayoutOpenStatuses).
+//
+// Chống race với admin duyệt cùng lúc: khoá teacher_profiles TRƯỚC rồi mới khoá dòng yêu cầu —
+// ĐÚNG thứ tự Approve/MarkCompleted dùng (transition), nên 2 bên xếp hàng trên cùng 1 khoá hồ sơ
+// và không khoá chéo nhau. Bên vào sau đọc lại trạng thái đã đổi và nhận 409: admin duyệt trước
+// thì huỷ nhận invalid_status_transition (current_status=approved), huỷ trước thì admin nhận 409.
+// Reject chỉ khoá dòng yêu cầu nên cũng tuần tự hoá được với huỷ mà không deadlock.
+//
+// Yêu cầu của giảng viên khác trả ErrWithdrawalNotFound (404) chứ không 403: không để lộ id nào
+// tồn tại.
+func (s *WithdrawalService) Cancel(ctx context.Context, teacherID, id uuid.UUID) (*dto.WithdrawalStatusResponse, error) {
+	err := s.repo.Transaction(ctx, func(txRepo *repository.WithdrawalRepository, _ *repository.WalletRepository) error {
+		if _, err := txRepo.LockTeacherProfile(ctx, teacherID); err != nil {
+			if errors.Is(err, repository.ErrWithdrawalRecordNotFound) {
+				return ErrWithdrawalNotFound
+			}
+			return err
+		}
+		p, err := txRepo.LockByID(ctx, id)
+		if errors.Is(err, repository.ErrWithdrawalRecordNotFound) {
+			return ErrWithdrawalNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if p.InstructorID != teacherID {
+			return ErrWithdrawalNotFound
+		}
+		if p.Status != model.PayoutStatusPending {
+			return ruleErr(ErrWithdrawalInvalidTransition, map[string]interface{}{"current_status": p.Status})
+		}
+		return txRepo.UpdateFields(ctx, id, map[string]interface{}{
+			"status":       model.PayoutStatusCancelled,
+			"processed_at": time.Now(),
+			"notes":        appendAuditNote(p.Notes, teacherID, model.PayoutStatusCancelled),
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &dto.WithdrawalStatusResponse{ID: id, Status: model.PayoutStatusCancelled}, nil
 }
 
 // ─── Admin ─────────────────────────────────────────────────────────────────

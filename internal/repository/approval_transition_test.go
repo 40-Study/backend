@@ -14,6 +14,8 @@ func TestEvaluateCourseReviewTransition_FullTable(t *testing.T) {
 		CourseActionSubmit:  {model.CourseStatusDraft: model.CourseStatusPendingReview, model.CourseStatusRejected: model.CourseStatusPendingReview},
 		CourseActionApprove: {model.CourseStatusPendingReview: model.CourseStatusPublished},
 		CourseActionReject:  {model.CourseStatusPendingReview: model.CourseStatusRejected},
+		// Q5 (QA vòng 2): rút yêu cầu duyệt chỉ từ pending_review, về draft.
+		CourseActionWithdraw: {model.CourseStatusPendingReview: model.CourseStatusDraft},
 	}
 	for action, allowed := range want {
 		for _, current := range model.CourseStatuses {

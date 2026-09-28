@@ -371,7 +371,10 @@ func TestGetAllQuizzes_LocQuizCuaBaiKhoa(t *testing.T) {
 	// de mo ta dung hanh vi loi luc do (quiz gan course_id luon lot qua bat ke enrollment) — nay
 	// dieu do da duoc sua (xem TestGetAllQuizzes_LocQuizGanCourseID_ChuaEnroll), nen o day chi
 	// con giu vai tro "quiz khong bi gate nao ap dung".
-	openQuiz := model.Quiz{Title: "Quiz mo"}
+	// PR #80 (R2-A): quiz standalone chi nguoi tao/admin thay, nen "quiz mo" la quiz cua chinh
+	// nguoi goi.
+	caller := uuid.New()
+	openQuiz := model.Quiz{Title: "Quiz mo", CreatedBy: &caller}
 	openQuiz.ID = uuid.New()
 
 	quizRepo := &fakeQuizRepoForAccessLock{
@@ -389,7 +392,7 @@ func TestGetAllQuizzes_LocQuizCuaBaiKhoa(t *testing.T) {
 
 	s := NewQuizService(quizRepo, nil, courseRepo, sectionRepo, lessonRepo, nil, enrollmentRepo)
 
-	list, err := s.GetAllQuizzes(context.Background(), nil, nil, nil, uuid.New(), false, 1, 10)
+	list, err := s.GetAllQuizzes(context.Background(), nil, nil, nil, caller, false, 1, 10)
 
 	if err != nil {
 		t.Fatalf("err = %v, muon nil (quiz bi khoa phai bi LOC, khong phai LOI)", err)

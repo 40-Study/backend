@@ -21,10 +21,14 @@ type SectionServiceInterface interface {
 	// tren duong that; xem sectionForbiddenResponse/handler. isAdmin (CAO-4, review vòng 2): chủ
 	// khoá học / admin xem curriculum của chính khoá mình không bị khoá bài nào (BypassLock).
 	GetAllSections(ctx context.Context, courseID, userID uuid.UUID, isAdmin bool) ([]dto.SectionResponseDTO, error)
-	GetSectionByID(ctx context.Context, sectionID uuid.UUID) (*dto.SectionResponseDTO, error)
+	// GetSectionByID (D4, QA vòng 2): viewerID/isAdmin để ẩn chương của khoá chưa xuất bản với
+	// người ngoài (canViewCourse) — trước đây route này trả chương của bất kỳ khoá nào.
+	GetSectionByID(ctx context.Context, sectionID, viewerID uuid.UUID, isAdmin bool) (*dto.SectionResponseDTO, error)
 	UpdateSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateSectionDTO) (*dto.SectionResponseDTO, error)
 	DeleteSection(ctx context.Context, courseID, sectionID, actorUserID uuid.UUID, isAdmin bool) error
-	ReorderSections(ctx context.Context, courseID uuid.UUID, req dto.ReorderDTO) error
+	// ReorderSections (QA vòng 2): trước đây không nhận người gọi nên KHÔNG kiểm chủ sở hữu —
+	// ai đăng nhập cũng sắp lại được chương của khoá người khác.
+	ReorderSections(ctx context.Context, courseID, actorUserID uuid.UUID, isAdmin bool, req dto.ReorderDTO) error
 }
 
 type SectionService struct {
@@ -45,19 +49,8 @@ func NewSectionService(
 	}
 }
 
-func (s *SectionService) validateCourse(ctx context.Context, courseID uuid.UUID) error {
-	exists, err := s.courseRepo.Exists(ctx, courseID)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return errors.New("course not found")
-	}
-	return nil
-}
-
-// validateCourseOwnership giống validateCourse nhưng còn kiểm tra actorUserID có phải
-// giảng viên sở hữu course hay không (C-12) — dùng cho mọi thao tác GHI trên section.
+// validateCourseOwnership kiểm course tồn tại, actorUserID là giảng viên sở hữu course (C-12),
+// và khoá không đang chờ duyệt (Q5 — ensureCourseEditable) — dùng cho mọi thao tác GHI trên section.
 // isAdmin (vòng 2, đã tính sẵn ở handler qua PermissionChecker) cho phép SYSTEM_ADMIN
 // override chủ sở hữu; CreateSection luôn gọi với isAdmin=false (admin không tạo section hộ
 // giảng viên khác, chỉ được sửa/xóa nội dung vi phạm — đúng phạm vi C-12 vòng 2).
@@ -72,7 +65,7 @@ func (s *SectionService) validateCourseOwnership(ctx context.Context, courseID, 
 	if course.InstructorID != actorUserID && !isAdmin {
 		return ErrNotSectionCourseOwner
 	}
-	return nil
+	return ensureCourseEditable(course)
 }
 
 func (s *SectionService) CreateSection(ctx context.Context, courseID, actorUserID uuid.UUID, req dto.CreateSectionDTO) (*dto.SectionResponseDTO, error) {
@@ -113,7 +106,7 @@ func (s *SectionService) GetAllSections(ctx context.Context, courseID, userID uu
 		return nil, err
 	}
 	if course == nil {
-		return nil, errors.New("course not found")
+		return nil, ErrCourseHidden
 	}
 
 	sections, err := s.sectionRepo.GetAllByCourseID(ctx, courseID)
@@ -127,6 +120,9 @@ func (s *SectionService) GetAllSections(ctx context.Context, courseID, userID uu
 	lockInput, err := gatherLessonLockInput(ctx, s.enrollmentRepo, userID, courseID, course.Sequential, bypass)
 	if err != nil {
 		return nil, err
+	}
+	if !canViewCourse(course, userID, isAdmin, lockInput.Enrolled) {
+		return nil, ErrCourseHidden
 	}
 
 	result := make([]dto.SectionResponseDTO, len(sections))
@@ -145,13 +141,27 @@ func (s *SectionService) GetAllSections(ctx context.Context, courseID, userID uu
 	return result, nil
 }
 
-func (s *SectionService) GetSectionByID(ctx context.Context, sectionID uuid.UUID) (*dto.SectionResponseDTO, error) {
+func (s *SectionService) GetSectionByID(ctx context.Context, sectionID, viewerID uuid.UUID, isAdmin bool) (*dto.SectionResponseDTO, error) {
 	section, err := s.sectionRepo.GetByID(ctx, sectionID)
 	if err != nil {
 		return nil, err
 	}
 	if section == nil {
 		return nil, errors.New("section not found")
+	}
+	course, err := s.courseRepo.GetByID(ctx, section.CourseID)
+	if err != nil {
+		return nil, err
+	}
+	if course == nil {
+		return nil, ErrCourseHidden
+	}
+	enrolled, err := isEnrolledInCourse(ctx, s.enrollmentRepo, viewerID, course.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !canViewCourse(course, viewerID, isAdmin, enrolled) {
+		return nil, ErrCourseHidden
 	}
 
 	lessons := make([]dto.LessonResponseDTO, len(section.Lessons))
@@ -227,8 +237,8 @@ func (s *SectionService) DeleteSection(ctx context.Context, courseID, sectionID,
 	return s.courseRepo.RecalculateLessonStats(ctx, courseID)
 }
 
-func (s *SectionService) ReorderSections(ctx context.Context, courseID uuid.UUID, req dto.ReorderDTO) error {
-	if err := s.validateCourse(ctx, courseID); err != nil {
+func (s *SectionService) ReorderSections(ctx context.Context, courseID, actorUserID uuid.UUID, isAdmin bool, req dto.ReorderDTO) error {
+	if err := s.validateCourseOwnership(ctx, courseID, actorUserID, isAdmin); err != nil {
 		return err
 	}
 

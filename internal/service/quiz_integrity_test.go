@@ -58,6 +58,11 @@ func (f *fakeQuizRepoForSubmit) GetAttemptsByUserAndQuiz(ctx context.Context, us
 	return []model.QuizAttempt{a}, nil
 }
 
+// GetQuizByID: SubmitQuiz kiem quyen quiz standalone (PR #80, R2-A) truoc khi cham diem.
+func (f *fakeQuizRepoForSubmit) GetQuizByID(ctx context.Context, quizID uuid.UUID) (*model.Quiz, error) {
+	return f.quiz, nil
+}
+
 func (f *fakeQuizRepoForSubmit) GetQuizWithQuestions(ctx context.Context, quizID uuid.UUID) (*model.Quiz, error) {
 	return f.quiz, nil
 }
@@ -109,6 +114,8 @@ func TestSubmitQuiz_CauKhongTraLoi_TinhTrenTatCaCauHoi(t *testing.T) {
 	quiz := quizMuoiCauMotDiem()
 	attemptID := uuid.New()
 	userID := uuid.New()
+	// Quiz standalone: tu PR #80 (R2-A) chi nguoi tao/admin nop bai duoc, nen nguoi nop la nguoi tao.
+	quiz.CreatedBy = &userID
 
 	repo := &fakeQuizRepoForSubmit{
 		quiz: quiz,
@@ -159,6 +166,8 @@ func TestSubmitQuiz_TraLoiTrungQuestionID_KhongCongDonDiem(t *testing.T) {
 	quiz := quizMuoiCauMotDiem()
 	attemptID := uuid.New()
 	userID := uuid.New()
+	// Quiz standalone: tu PR #80 (R2-A) chi nguoi tao/admin nop bai duoc, nen nguoi nop la nguoi tao.
+	quiz.CreatedBy = &userID
 
 	repo := &fakeQuizRepoForSubmit{
 		quiz: quiz,
@@ -202,6 +211,8 @@ func TestSubmitQuiz_NopHaiLan_LanHaiBiTuChoi(t *testing.T) {
 	quiz := quizMuoiCauMotDiem()
 	attemptID := uuid.New()
 	userID := uuid.New()
+	// Quiz standalone: tu PR #80 (R2-A) chi nguoi tao/admin nop bai duoc, nen nguoi nop la nguoi tao.
+	quiz.CreatedBy = &userID
 
 	repo := &fakeQuizRepoForSubmit{
 		quiz: quiz,
@@ -365,7 +376,9 @@ func TestGetAllQuizzes_LocQuizGanCourseID_ChuaEnroll(t *testing.T) {
 	lockedQuiz := *quizGanCourseID(courseID)
 	lockedQuiz.Title = "Quiz cap khoa chua enroll"
 
-	openQuiz := model.Quiz{Title: "Quiz mo coi"}
+	// PR #80 (R2-A): quiz standalone chi nguoi tao/admin thay, nen "quiz mo coi" la cua nguoi goi.
+	caller := uuid.New()
+	openQuiz := model.Quiz{Title: "Quiz mo coi", CreatedBy: &caller}
 	openQuiz.ID = uuid.New()
 
 	quizRepo := &fakeQuizRepoForAccessLock{quizzes: []model.Quiz{lockedQuiz, openQuiz}, total: 2}
@@ -374,7 +387,7 @@ func TestGetAllQuizzes_LocQuizGanCourseID_ChuaEnroll(t *testing.T) {
 
 	s := NewQuizService(quizRepo, nil, courseRepo, nil, nil, nil, enrollmentRepo)
 
-	list, err := s.GetAllQuizzes(context.Background(), nil, nil, nil, uuid.New(), false, 1, 10)
+	list, err := s.GetAllQuizzes(context.Background(), nil, nil, nil, caller, false, 1, 10)
 	if err != nil {
 		t.Fatalf("err = %v, muon nil (quiz bi khoa phai bi LOC, khong phai LOI)", err)
 	}

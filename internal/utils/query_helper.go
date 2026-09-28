@@ -18,12 +18,31 @@ func ApplyPagination(query *gorm.DB, page, pageSize int) *gorm.DB {
 	return query.Offset(offset).Limit(pageSize)
 }
 
-// ApplyKeywordSearch applies ILIKE search across the given columns.
+// likeKeywordEscaper escape các ký tự wildcard của LIKE/ILIKE (`%`, `_`) và ký tự escape mặc
+// định (`\`) để keyword người dùng nhập được khớp LITERAL — nếu không, keyword "%" khớp mọi dòng,
+// "a_b" khớp cả "axb" (review-260928-users-pr72-pr28.md finding #3, chuyển từ user_repository.go
+// sang đây ở QA vòng 2 G5 để mọi ô tìm kiếm dùng chung). `\` PHẢI đứng đầu vì chính nó là ký tự
+// escape; NewReplacer chạy 1 lượt duy nhất qua chuỗi gốc nên không escape lặp ký tự vừa chèn.
+var likeKeywordEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// EscapeLikeKeyword trả keyword đã escape cho LIKE/ILIKE (dùng với ESCAPE mặc định `\` của Postgres).
+func EscapeLikeKeyword(keyword string) string {
+	return likeKeywordEscaper.Replace(keyword)
+}
+
+// ContainsLikePattern trả pattern "%<keyword đã escape>%" cho điều kiện "cột ILIKE ?" kiểu
+// "chứa chuỗi". Mọi truy vấn tìm theo keyword người dùng phải đi qua hàm này, không tự nối "%".
+func ContainsLikePattern(keyword string) string {
+	return "%" + EscapeLikeKeyword(keyword) + "%"
+}
+
+// ApplyKeywordSearch applies ILIKE search across the given columns (keyword khớp literal).
 func ApplyKeywordSearch(query *gorm.DB, keyword string, columns ...string) *gorm.DB {
 	if keyword == "" || len(columns) == 0 {
 		return query
 	}
 
+	pattern := ContainsLikePattern(keyword)
 	condition := ""
 	args := make([]interface{}, len(columns))
 	for i, col := range columns {
@@ -31,7 +50,7 @@ func ApplyKeywordSearch(query *gorm.DB, keyword string, columns ...string) *gorm
 			condition += " OR "
 		}
 		condition += col + " ILIKE ?"
-		args[i] = "%" + keyword + "%"
+		args[i] = pattern
 	}
 
 	return query.Where(condition, args...)

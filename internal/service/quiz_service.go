@@ -137,10 +137,7 @@ func (s *QuizService) checkQuizOwner(ctx context.Context, quizID, userID uuid.UU
 // mọi route khác, không để lộ trạng thái cuộc thi qua mã 409. (2) Chủ sở hữu. (3) Cuộc thi đang
 // chờ duyệt/đã công bố/đã huỷ thì không ai sửa được, kể cả admin (409).
 func (s *QuizService) checkQuizMutable(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) error {
-	if err := s.checkContestAccess(ctx, quizID, userID, isAdmin); err != nil {
-		return err
-	}
-	if err := s.checkQuizOwner(ctx, quizID, userID, isAdmin); err != nil {
+	if err := s.CheckQuizEditAccess(ctx, quizID, userID, isAdmin); err != nil {
 		return err
 	}
 	if s.contestGate == nil {
@@ -238,17 +235,31 @@ func (s *QuizService) quizCourseID(ctx context.Context, quiz *model.Quiz) (*uuid
 	return &section.CourseID, nil
 }
 
-// isQuizCourseInstructor (re-review vòng 2, R2-C): userID là giảng viên của khoá chứa quiz.
+// isQuizCourseInstructor (re-review vòng 2, R2-C): userID là giảng viên của khoá chứa quiz. Khoá
+// "chuẩn" theo đúng luật #79 (quiz_course_guard.go): khoá suy từ lesson_id nếu có, ngược lại
+// course_id — để luật sửa quiz không lệch với guard tạo quiz khi dữ liệu cũ có hai khoá khác nhau.
 func (s *QuizService) isQuizCourseInstructor(ctx context.Context, quiz *model.Quiz, userID uuid.UUID) (bool, error) {
-	courseID, err := s.quizCourseID(ctx, quiz)
-	if err != nil || courseID == nil {
-		return false, err
-	}
-	course, err := s.courseRepo.GetByID(ctx, *courseID)
+	course, err := s.lessonCourse(ctx, quiz.LessonID)
 	if err != nil {
 		return false, err
 	}
+	if course == nil && quiz.CourseID != nil {
+		if course, err = s.courseRepo.GetByID(ctx, *quiz.CourseID); err != nil {
+			return false, err
+		}
+	}
 	return course != nil && course.InstructorID == userID, nil
+}
+
+// CheckQuizEditAccess: phần "ai được sửa" của checkQuizMutable (khoá cuộc thi 403, rồi chủ sở hữu
+// 403), không gồm các khoá theo trạng thái (409). Middleware CourseEditLock của #79 gọi hàm này
+// TRƯỚC khoá "khoá học đang chờ duyệt", để người ngoài luôn nhận 403 như mọi route quiz khác, không
+// biết được trạng thái khoá học qua mã 409.
+func (s *QuizService) CheckQuizEditAccess(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) error {
+	if err := s.checkContestAccess(ctx, quizID, userID, isAdmin); err != nil {
+		return err
+	}
+	return s.checkQuizOwner(ctx, quizID, userID, isAdmin)
 }
 
 // isStandaloneQuiz: quiz không gắn bài học, khoá học hay buổi live — loại quiz dùng cho cuộc thi.
@@ -398,6 +409,12 @@ func (s *QuizService) checkSessionQuizAccess(ctx context.Context, sessionID, use
 // canView=true (chủ khoá học/giảng viên/admin) bỏ qua hoàn toàn ở TẤT CẢ nhánh — giữ đúng hành
 // vi hiện có. Quiz không gắn lesson/course/session nào (standalone) chỉ người tạo/admin được đọc.
 func (s *QuizService) checkQuizAccess(ctx context.Context, quiz *model.Quiz, userID uuid.UUID, canView bool) error {
+	// D4 (review PR #79): quiz của khoá chưa xuất bản ẩn với người ngoài — xem quiz_course_guard.go.
+	if !canView {
+		if err := s.ensureQuizCourseVisible(ctx, quiz, userID); err != nil {
+			return err
+		}
+	}
 	switch {
 	case quiz.LessonID != nil:
 		return s.checkLessonQuizAccess(ctx, *quiz.LessonID, userID, canView)
@@ -578,8 +595,9 @@ func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, ses
 			return nil, err
 		}
 		if err := s.checkQuizAccess(ctx, q, userID, canView); err != nil {
-			// ErrQuizNotOwner: quiz standalone của người khác (R2-A) — loại khỏi danh sách.
-			if err == ErrLessonLocked || err == ErrLessonNotInCourse || err == ErrQuizNotOwner {
+			// ErrCourseHidden: quiz của khoá chưa xuất bản (#79, D4). ErrQuizNotOwner: quiz standalone
+			// của người khác (PR #80, R2-A). Cả hai đều loại khỏi danh sách, không làm hỏng cả trang.
+			if err == ErrLessonLocked || err == ErrLessonNotInCourse || err == ErrCourseHidden || err == ErrQuizNotOwner {
 				continue
 			}
 			return nil, err

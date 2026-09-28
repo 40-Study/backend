@@ -3,25 +3,18 @@ package repository
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/utils"
 )
 
 // ErrAdminUserNotFound (Phase 1 quản lý người dùng, 2026-09-28) — user không tồn tại, dùng
 // riêng cho các thao tác admin (list/detail/khoá) để handler map đúng 404.
 var ErrAdminUserNotFound = errors.New("user not found")
-
-// adminUserKeywordEscaper escape các ký tự wildcard của ILIKE (`%`, `_`) và ký tự escape mặc
-// định (`\`) trước khi bọc keyword trong "%...%" ở AdminListUsers — nếu không, keyword chứa
-// `%`/`_` bị Postgres hiểu là wildcard thay vì ký tự literal (review-260928-users-pr72-pr28.md
-// finding #3). `\` PHẢI đứng đầu danh sách cặp thay thế vì nó là ký tự escape: NewReplacer chạy
-// 1 lượt duy nhất qua chuỗi gốc nên thứ tự khai báo không gây escape lặp lại ký tự vừa chèn.
-var adminUserKeywordEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // AdminUserListFilter — tham số lọc GET /api/users (contract phase-01-user-management.md).
 type AdminUserListFilter struct {
@@ -153,9 +146,9 @@ func (r *UserRepository) AdminListUsers(ctx context.Context, filter AdminUserLis
 		// input là wildcard thật (Postgres), nên keyword chứa các ký tự này trả kết quả sai
 		// (vd. keyword="%" khớp mọi user). Escape `\` TRƯỚC (chính nó là ký tự escape mặc định
 		// của ILIKE), rồi mới escape `%`/`_` — cả 3 cặp thay thế chạy 1 lượt duy nhất qua
-		// strings.NewReplacer nên không bị escape lặp lại ký tự vừa chèn.
-		escaped := adminUserKeywordEscaper.Replace(filter.Keyword)
-		like := "%" + escaped + "%"
+		// strings.NewReplacer nên không bị escape lặp lại ký tự vừa chèn. Escaper nay nằm ở
+		// utils.ContainsLikePattern (QA vòng 2 G5) để mọi ô tìm kiếm dùng chung một chỗ.
+		like := utils.ContainsLikePattern(filter.Keyword)
 		query = query.Where(
 			"email ILIKE ? OR user_name ILIKE ? OR full_name ILIKE ?",
 			like, like, like,

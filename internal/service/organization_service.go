@@ -11,6 +11,7 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 type OrganizationServiceInterface interface {
@@ -211,8 +212,8 @@ func toOrganizationResponseDTO(org *model.Organization) *dto.OrganizationRespons
 		Name:        org.Name,
 		Description: desc,
 		Status:      org.Status,
-		CreatedAt:   org.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   org.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:   utils.FormatTimestamp(org.CreatedAt),
+		UpdatedAt:   utils.FormatTimestamp(org.UpdatedAt),
 	}
 }
 
@@ -233,7 +234,7 @@ func toOrganizationDetailResponseDTO(org *model.Organization) *dto.OrganizationD
 		Description: desc,
 		Status:      org.Status,
 		Roles:       roleDTOs,
-		CreatedAt:   org.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   org.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:   utils.FormatTimestamp(org.CreatedAt),
+		UpdatedAt:   utils.FormatTimestamp(org.UpdatedAt),
 	}
 }

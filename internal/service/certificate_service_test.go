@@ -54,6 +54,13 @@ func (s *certificateEnrollmentRepoStub) GetByID(context.Context, uuid.UUID) (*mo
 	return s.enrollment, nil
 }
 
+func (s *certificateEnrollmentRepoStub) GetByUserID(context.Context, uuid.UUID, int, int) ([]model.Enrollment, int64, error) {
+	if s.enrollment == nil {
+		return nil, 0, nil
+	}
+	return []model.Enrollment{*s.enrollment}, 1, nil
+}
+
 func TestIssueCertificateRejectsEnrollmentFromAnotherUser(t *testing.T) {
 	userID := uuid.New()
 	courseID := uuid.New()

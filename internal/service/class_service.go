@@ -9,6 +9,7 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 type ClassServiceInterface interface {
@@ -289,7 +290,7 @@ func (s *ClassService) AssignTeacherToClass(ctx context.Context, classID uuid.UU
 		TeacherID:  tc.TeacherID,
 		ClassID:    tc.ClassID,
 		Role:       tc.Role,
-		AssignedAt: tc.AssignedAt.Format("2006-01-02T15:04:05Z"),
+		AssignedAt: utils.FormatTimestamp(tc.AssignedAt),
 	}, nil
 }
 
@@ -349,7 +350,7 @@ func (s *ClassService) AssignTeachersToClass(ctx context.Context, classID uuid.U
 			TeacherID:  tc.TeacherID,
 			ClassID:    tc.ClassID,
 			Role:       tc.Role,
-			AssignedAt: tc.AssignedAt.Format("2006-01-02T15:04:05Z"),
+			AssignedAt: utils.FormatTimestamp(tc.AssignedAt),
 		}
 	}
 
@@ -407,7 +408,7 @@ func (s *ClassService) GetTeachersByClass(ctx context.Context, classID uuid.UUID
 			TeacherID:  tc.TeacherID,
 			ClassID:    tc.ClassID,
 			Role:       tc.Role,
-			AssignedAt: tc.AssignedAt.Format("2006-01-02T15:04:05Z"),
+			AssignedAt: utils.FormatTimestamp(tc.AssignedAt),
 			Teacher: &dto.TeacherResponseDTO{
 				ID:       tc.Teacher.ID,
 				Email:    tc.Teacher.Email,
@@ -475,7 +476,7 @@ func (s *ClassService) EnrollStudentToClass(ctx context.Context, classID, actorU
 		ID:         sc.ID,
 		StudentID:  sc.StudentID,
 		ClassID:    sc.ClassID,
-		EnrolledAt: sc.EnrolledAt.Format("2006-01-02T15:04:05Z"),
+		EnrolledAt: utils.FormatTimestamp(sc.EnrolledAt),
 		Status:     sc.Status,
 	}, nil
 }
@@ -540,7 +541,7 @@ func (s *ClassService) GetStudentsByClass(ctx context.Context, classID, actorUse
 			ID:         sc.ID,
 			StudentID:  sc.StudentID,
 			ClassID:    sc.ClassID,
-			EnrolledAt: sc.EnrolledAt.Format("2006-01-02T15:04:05Z"),
+			EnrolledAt: utils.FormatTimestamp(sc.EnrolledAt),
 			Status:     sc.Status,
 			UserName:   sc.Student.UserName,
 			Email:      sc.Student.Email,
@@ -601,7 +602,7 @@ func (s *ClassService) toClassResponseDTO(ctx context.Context, class *model.Clas
 		EndDate:      class.EndDate,
 		TeacherCount: teacherCount,
 		StudentCount: studentCount,
-		CreatedAt:    class.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:    class.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:    utils.FormatTimestamp(class.CreatedAt),
+		UpdatedAt:    utils.FormatTimestamp(class.UpdatedAt),
 	}
 }
