@@ -45,6 +45,15 @@ const (
 	ParentStudentStatusRevoked = "revoked"
 )
 
+// ParentStudentRelationStatuses — nguồn sự thật cho CHECK constraint của
+// parent_student_relations.status. "revoked" nay được ghi thật khi một bên huỷ liên kết
+// (QA vòng 2 lane E), nên cột cần ràng buộc tường minh thay vì chuỗi tự do.
+var ParentStudentRelationStatuses = []string{
+	ParentStudentStatusPending,
+	ParentStudentStatusActive,
+	ParentStudentStatusRevoked,
+}
+
 // Các hằng số quan hệ
 const (
 	RelationshipParent      = "parent"

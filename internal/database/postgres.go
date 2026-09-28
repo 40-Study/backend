@@ -65,6 +65,7 @@ func Migrate(db *gorm.DB) error {
 		&model.UserOAuthProvider{},
 		&model.ParentStudentRelation{},
 		&model.ParentInvitation{},
+		&model.ParentLinkRequest{},
 
 		// ===== 3. Roles & Permissions (phụ thuộc Organization) =====
 		&model.SystemRole{},

@@ -135,7 +135,9 @@ func (s *ParentInvitationService) InviteParent(
 		if err != nil {
 			return nil, err
 		}
-		if relation != nil {
+		// Chỉ quan hệ ĐANG active mới là "đã liên kết": sau khi một bên huỷ liên kết (dòng
+		// 'revoked', QA vòng 2 lane E) học sinh phải mời lại được.
+		if relation != nil && relation.Status == model.ParentStudentStatusActive {
 			return &dto.InviteParentResponseDto{
 				Status:       "error",
 				Message:      "Phụ huynh đã có tài khoản và đã được liên kết với học sinh này.",
@@ -264,8 +266,26 @@ func (s *ParentInvitationService) RespondToInvitation(
 	if action != "accept" {
 		return errors.New("hành động không hợp lệ, chỉ chấp nhận 'accept' hoặc 'reject'")
 	}
-	// tạo quan hệ học sinh phụ huynh
 	now := time.Now()
+	// Cặp này từng liên kết rồi bị huỷ (hoặc đã liên kết qua yêu cầu của phụ huynh): kích hoạt lại
+	// dòng cũ thay vì chèn dòng thứ hai — uq_parent_student_relations_pair chặn trùng cặp.
+	existing, err := s.parentStudentRepo.FindByParentAndStudent(ctx, parentUserID, invitation.StudentUserID)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		if existing.Status != model.ParentStudentStatusActive {
+			if err := s.parentStudentRepo.UpdateStatus(ctx, existing.ID, model.ParentStudentStatusActive); err != nil {
+				return err
+			}
+		}
+		if err := s.invitationRepo.UpdateStatus(ctx, invitation.ID, model.ParentInvitationStatusAccepted, &now); err != nil {
+			return err
+		}
+		s.publishInvitationEvent(ctx, invitation.ID, invitation.StudentUserID, invitation.InviteeEmail, parentUserID, "accepted")
+		return nil
+	}
+	// tạo quan hệ học sinh phụ huynh
 	relation := &model.ParentStudentRelation{
 		ParentUserID:       parentUserID,
 		StudentUserID:      invitation.StudentUserID,

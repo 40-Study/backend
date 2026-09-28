@@ -304,6 +304,47 @@ func RunPostMigrations(db *gorm.DB) error {
 			sql: buildCheckConstraintSQL("instructor_payouts", "chk_instructor_payouts_status",
 				"status", model.PayoutStatuses),
 		},
+		{
+			// QA vòng 2 lane E (Q4): phụ huynh gửi yêu cầu liên kết con. CHECK sinh từ SSOT.
+			name: "chk_parent_link_requests_status (qa-r2 lane E)",
+			sql: buildCheckConstraintSQL("parent_link_requests", "chk_parent_link_requests_status",
+				"status", model.ParentLinkRequestStatuses),
+		},
+		{
+			// Chống spam ở tầng DB: mỗi cặp phụ huynh-học sinh chỉ có TỐI ĐA 1 yêu cầu đang chờ. Service
+			// đã kiểm trước, index này chặn nốt trường hợp 2 request đồng thời cùng lọt qua bước kiểm.
+			name: "uq_parent_link_requests_pending (qa-r2 lane E)",
+			sql: `CREATE UNIQUE INDEX IF NOT EXISTS uq_parent_link_requests_pending
+				ON parent_link_requests (parent_user_id, student_user_id) WHERE status = 'pending'`,
+		},
+		{
+			// Huỷ liên kết nay ghi 'revoked' thật — ràng buộc giá trị cột bằng SSOT.
+			name: "chk_parent_student_relations_status (qa-r2 lane E)",
+			sql: buildCheckConstraintSQL("parent_student_relations", "chk_parent_student_relations_status",
+				"status", model.ParentStudentRelationStatuses),
+		},
+		{
+			// Mỗi cặp phụ huynh-học sinh chỉ 1 dòng quan hệ: liên kết lại sau khi huỷ phải KÍCH HOẠT
+			// lại dòng cũ, không chèn dòng thứ hai (FindByParentAndStudent lấy First không ORDER, 2 dòng
+			// active/revoked cùng cặp sẽ cho kết quả ngẫu nhiên). Chỉ tạo index khi dữ liệu hiện có
+			// chưa trùng, để DB dev cũ lỡ có bản ghi trùng không làm API chết lúc khởi động; khi đó
+			// log NOTICE để người vận hành dọn tay.
+			name: "uq_parent_student_relations_pair (qa-r2 lane E)",
+			sql: `
+				DO $$
+				BEGIN
+					IF NOT EXISTS (
+						SELECT 1 FROM parent_student_relations
+						GROUP BY parent_user_id, student_user_id HAVING count(*) > 1
+					) THEN
+						CREATE UNIQUE INDEX IF NOT EXISTS uq_parent_student_relations_pair
+							ON parent_student_relations (parent_user_id, student_user_id);
+					ELSE
+						RAISE NOTICE 'parent_student_relations có cặp trùng, bỏ qua uq_parent_student_relations_pair';
+					END IF;
+				END $$;
+			`,
+		},
 	}
 
 	for _, stmt := range statements {
