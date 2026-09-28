@@ -20,6 +20,9 @@ type ParentStudentRepositoryInterface interface {
 	UpdateStatus(ctx context.Context, id uuid.UUID, status string) error
 	// SaveRelation ghi đè toàn bộ dòng quan hệ đã có (kích hoạt lại với quyền đặt lại từ đầu)
 	SaveRelation(ctx context.Context, relation *model.ParentStudentRelation) error
+	// RunLocked chạy fn trong một transaction đã giữ khoá tư vấn `lockKey`; fn nhận repo gắn với
+	// transaction đó. Dùng để hai luồng tạo quan hệ (lời mời cũ và yêu cầu mới) không đua nhau.
+	RunLocked(ctx context.Context, lockKey string, fn func(tx ParentStudentRepositoryInterface) error) error
 	// FindByID tìm quan hệ theo ID
 	FindByID(ctx context.Context, id uuid.UUID) (*model.ParentStudentRelation, error)
 	// FindByParentAndStudent tìm quan hệ theo parent và student
@@ -93,6 +96,18 @@ func (r *ParentStudentRepository) GetPrimaryParentByStudentID(ctx context.Contex
 // CreateRelation tạo quan hệ phụ huynh - học sinh mới
 func (r *ParentStudentRepository) CreateRelation(ctx context.Context, relation *model.ParentStudentRelation) error {
 	return r.db.WithContext(ctx).Create(relation).Error
+}
+
+// RunLocked — review PR #81 vòng 2, B-2: khoá tư vấn cùng chuỗi khoá với
+// ParentLinkRequestRepository.LockKey, nên luồng lời mời cũ và luồng yêu cầu mới tuần tự hoá
+// theo cặp phụ huynh–con (khoá tự nhả khi COMMIT/ROLLBACK).
+func (r *ParentStudentRepository) RunLocked(ctx context.Context, lockKey string, fn func(tx ParentStudentRepositoryInterface) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", lockKey).Error; err != nil {
+			return err
+		}
+		return fn(&ParentStudentRepository{db: tx})
+	})
 }
 
 // SaveRelation ghi đè toàn bộ dòng quan hệ đã có (review PR #81, MINOR-6).

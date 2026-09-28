@@ -48,8 +48,9 @@ func (s *ParentLinkService) Respond(ctx context.Context, studentID, requestID uu
 		} else if !isParent {
 			return errLinkParentNoLonger
 		}
-		// MINOR-4: khoá theo cặp, cùng khoá với ParentInvitationService.RespondToInvitation, để hai
-		// luồng không cùng chèn dòng quan hệ cho một cặp.
+		// MINOR-4: khoá theo cặp. ParentInvitationService.RespondToInvitation lấy CÙNG chuỗi khoá
+		// (pairLockKey) qua ParentStudentRepository.RunLocked, nên hai luồng không cùng chèn dòng
+		// quan hệ cho một cặp (review vòng 2, B-2).
 		if err := r.LockKey(ctx, pairLockKey(req.ParentUserID, studentID)); err != nil {
 			return err
 		}
