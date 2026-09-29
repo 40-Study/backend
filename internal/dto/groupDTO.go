@@ -60,7 +60,6 @@ type GroupMemberResponse struct {
 	ID        uuid.UUID  `json:"id"`
 	UserID    uuid.UUID  `json:"user_id"`
 	UserName  string     `json:"user_name"`
-	Email     string     `json:"email"`
 	AvatarURL *string    `json:"avatar_url,omitempty"`
 	Role      string     `json:"role"`
 	Status    string     `json:"status"`
@@ -77,6 +76,21 @@ type GroupMemberListResponse struct {
 
 type InviteMembersRequest struct {
 	UserIDs []uuid.UUID `json:"user_ids" validate:"required,min=1,max=50"`
+}
+
+// GroupInviteNotAllowedCode - ma loi khi nguoi duoc moi khong co quan he hop le voi nguoi moi.
+const GroupInviteNotAllowedCode = "GROUP_INVITE_NOT_ALLOWED"
+
+// InviteRejection - mot nguoi bi tu choi khi moi vao nhom.
+type InviteRejection struct {
+	UserID uuid.UUID `json:"user_id"`
+	Code   string    `json:"code"`
+}
+
+// InviteMembersResult - ket qua moi thanh vien: ai da vao nhom, ai bi tu choi (kem ma loi).
+type InviteMembersResult struct {
+	Invited  []uuid.UUID       `json:"invited"`
+	Rejected []InviteRejection `json:"rejected"`
 }
 
 type UpdateMemberRoleRequest struct {
@@ -96,7 +110,6 @@ type JoinRequestResponse struct {
 	GroupID         uuid.UUID  `json:"group_id"`
 	UserID          uuid.UUID  `json:"user_id"`
 	UserName        string     `json:"user_name"`
-	Email           string     `json:"email"`
 	AvatarURL       *string    `json:"avatar_url,omitempty"`
 	Message         *string    `json:"message,omitempty"`
 	Status          string     `json:"status"`

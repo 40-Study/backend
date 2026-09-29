@@ -89,7 +89,6 @@ type StudentClassResponseDTO struct {
 	EnrolledAt string    `json:"enrolled_at"`
 	Status     string    `json:"status"`
 	UserName   string    `json:"user_name"`
-	Email      string    `json:"email"`
 	FullName   *string   `json:"full_name,omitempty"`
 	AvatarURL  *string   `json:"avatar_url,omitempty"`
 }

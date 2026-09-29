@@ -320,14 +320,30 @@ func (h *GroupHandler) InviteMembers(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.groupService.InviteMembers(c.Context(), userID, groupID, req.UserIDs); err != nil {
+	result, err := h.groupService.InviteMembers(c.Context(), userID, groupID, req.UserIDs)
+	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": err.Error(),
 		})
 	}
 
+	// Khong ai duoc them va co nguoi bi tu choi -> 403 kem danh sach; them mot phan -> 200 kem
+	// danh sach bi tu choi de web bao ro cho nguoi moi.
+	if len(result.Invited) == 0 && len(result.Rejected) > 0 {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"message": "Bạn chỉ có thể mời người có quan hệ hợp lệ (học viên - giảng viên, phụ huynh - con).",
+			"code":    dto.GroupInviteNotAllowedCode,
+			"data":    result,
+		})
+	}
+
+	message := "Members invited successfully"
+	if len(result.Rejected) > 0 {
+		message = "Một số người không thể được mời do không có quan hệ hợp lệ"
+	}
 	return c.JSON(fiber.Map{
-		"message": "Members invited successfully",
+		"message": message,
+		"data":    result,
 	})
 }
 

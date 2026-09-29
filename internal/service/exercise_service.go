@@ -17,15 +17,18 @@ import (
 )
 
 type ExerciseServiceInterface interface {
-	CreateExercise(ctx context.Context, req dto.CreateExerciseDTO) (*dto.ExerciseResponseDTO, error)
-	GetExerciseByID(ctx context.Context, id uuid.UUID) (*dto.ExerciseDetailDTO, error)
+	CreateExercise(ctx context.Context, creatorID uuid.UUID, req dto.CreateExerciseDTO) (*dto.ExerciseResponseDTO, error)
+	// includeHidden=false (mặc định cho học viên) loại test case ẩn khỏi kết quả — S2.
+	GetExerciseByID(ctx context.Context, id uuid.UUID, includeHidden bool) (*dto.ExerciseDetailDTO, error)
+	// CanManage: người tạo / giảng viên chủ khoá gắn bài tập / admin (S2).
+	CanManage(ctx context.Context, exerciseID, userID uuid.UUID, isAdmin bool) (bool, error)
 	ListExercises(ctx context.Context, page, pageSize int) (*dto.ExerciseListDTO, error)
 	UpdateExercise(ctx context.Context, id uuid.UUID, req dto.UpdateExerciseDTO) (*dto.ExerciseResponseDTO, error)
 	DeleteExercise(ctx context.Context, id uuid.UUID) error
 
 	// TestCase
 	CreateTestCase(ctx context.Context, exerciseID uuid.UUID, req dto.CreateExerciseTestCaseDTO) (*dto.ExerciseTestCaseResponseDTO, error)
-	GetTestCases(ctx context.Context, exerciseID uuid.UUID) ([]dto.ExerciseTestCaseResponseDTO, error)
+	GetTestCases(ctx context.Context, exerciseID uuid.UUID, includeHidden bool) ([]dto.ExerciseTestCaseResponseDTO, error)
 	ImportTestCases(ctx context.Context, exerciseID uuid.UUID, req dto.ImportExerciseTestCasesDTO) ([]dto.ExerciseTestCaseResponseDTO, error)
 	DeleteTestCase(ctx context.Context, exerciseID uuid.UUID, id uuid.UUID) error
 
@@ -33,7 +36,9 @@ type ExerciseServiceInterface interface {
 	SubmitExercise(ctx context.Context, exerciseID, userID uuid.UUID, req dto.SubmitExerciseDTO) (*dto.ExerciseSubmissionResponseDTO, error)
 	GetSubmissions(ctx context.Context, exerciseID uuid.UUID, page, pageSize int) (*dto.ExerciseSubmissionListDTO, error)
 	GetMySubmissions(ctx context.Context, exerciseID, userID uuid.UUID, page, pageSize int) (*dto.ExerciseSubmissionListDTO, error)
-	GetSubmissionByID(ctx context.Context, id uuid.UUID) (*dto.ExerciseSubmissionResponseDTO, error)
+	// GetSubmissionByID trả ErrExerciseSubmissionNotFound cả khi bài nộp không thuộc người gọi và
+	// người gọi không quản lý bài tập, để không dò được sự tồn tại của bài nộp (S2).
+	GetSubmissionByID(ctx context.Context, id, requesterID uuid.UUID, isAdmin bool) (*dto.ExerciseSubmissionResponseDTO, error)
 
 	// Progress
 	UpdateContentProgress(ctx context.Context, userID, lessonContentID uuid.UUID, req dto.UpdateContentProgressDTO) (*dto.ContentProgressResponseDTO, error)
@@ -69,8 +74,12 @@ func (s *ExerciseService) invalidateExerciseCache(ctx context.Context, exerciseI
 // EXERCISE CRUD
 // ============================================================================
 
-func (s *ExerciseService) CreateExercise(ctx context.Context, req dto.CreateExerciseDTO) (*dto.ExerciseResponseDTO, error) {
+// ErrExerciseSubmissionNotFound: bài nộp không tồn tại HOẶC người gọi không được xem (gộp một lỗi).
+var ErrExerciseSubmissionNotFound = errors.New("submission not found")
+
+func (s *ExerciseService) CreateExercise(ctx context.Context, creatorID uuid.UUID, req dto.CreateExerciseDTO) (*dto.ExerciseResponseDTO, error) {
 	exercise := &model.CourseExercise{
+		CreatedBy:      &creatorID,
 		Title:          req.Title,
 		Description:    req.Description,
 		Difficulty:     "medium",
@@ -101,7 +110,41 @@ func (s *ExerciseService) CreateExercise(ctx context.Context, req dto.CreateExer
 	return s.mapExerciseToDTO(exercise, 0), nil
 }
 
-func (s *ExerciseService) GetExerciseByID(ctx context.Context, id uuid.UUID) (*dto.ExerciseDetailDTO, error) {
+// CanManage: admin luôn được; còn lại xem ExerciseRepository.CanManage.
+func (s *ExerciseService) CanManage(ctx context.Context, exerciseID, userID uuid.UUID, isAdmin bool) (bool, error) {
+	if isAdmin {
+		return true, nil
+	}
+	return s.repo.CanManage(ctx, exerciseID, userID)
+}
+
+// withoutHiddenTests trả bản sao của detail đã bỏ test case ẩn. Cache Redis lưu bản ĐẦY ĐỦ (chỉ
+// server đọc), việc lọc theo người gọi diễn ra sau khi lấy cache — nếu lọc trước khi cache thì
+// giảng viên sẽ nhận bản đã lọc từ cache của học viên.
+func withoutHiddenTests(d *dto.ExerciseDetailDTO) *dto.ExerciseDetailDTO {
+	visible := make([]dto.ExerciseTestCaseResponseDTO, 0, len(d.TestCases))
+	for _, tc := range d.TestCases {
+		if !tc.IsHidden {
+			visible = append(visible, tc)
+		}
+	}
+	out := *d
+	out.TestCases = visible
+	return &out
+}
+
+func (s *ExerciseService) GetExerciseByID(ctx context.Context, id uuid.UUID, includeHidden bool) (*dto.ExerciseDetailDTO, error) {
+	full, err := s.getExerciseDetail(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if includeHidden {
+		return full, nil
+	}
+	return withoutHiddenTests(full), nil
+}
+
+func (s *ExerciseService) getExerciseDetail(ctx context.Context, id uuid.UUID) (*dto.ExerciseDetailDTO, error) {
 	// Check cache
 	if s.redis != nil {
 		cacheKey := exerciseCachePrefix + id.String()
@@ -237,15 +280,18 @@ func (s *ExerciseService) CreateTestCase(ctx context.Context, exerciseID uuid.UU
 	return s.mapTestCaseToDTO(tc), nil
 }
 
-func (s *ExerciseService) GetTestCases(ctx context.Context, exerciseID uuid.UUID) ([]dto.ExerciseTestCaseResponseDTO, error) {
+func (s *ExerciseService) GetTestCases(ctx context.Context, exerciseID uuid.UUID, includeHidden bool) ([]dto.ExerciseTestCaseResponseDTO, error) {
 	tcs, err := s.repo.GetTestCasesByExerciseID(ctx, exerciseID)
 	if err != nil {
 		return nil, err
 	}
 
-	result := make([]dto.ExerciseTestCaseResponseDTO, len(tcs))
-	for i, tc := range tcs {
-		result[i] = *s.mapTestCaseToDTO(&tc)
+	result := make([]dto.ExerciseTestCaseResponseDTO, 0, len(tcs))
+	for i := range tcs {
+		if tcs[i].IsHidden && !includeHidden {
+			continue
+		}
+		result = append(result, *s.mapTestCaseToDTO(&tcs[i]))
 	}
 	return result, nil
 }
@@ -276,7 +322,7 @@ func (s *ExerciseService) ImportTestCases(ctx context.Context, exerciseID uuid.U
 }
 
 func (s *ExerciseService) DeleteTestCase(ctx context.Context, exerciseID uuid.UUID, id uuid.UUID) error {
-	if err := s.repo.DeleteTestCase(ctx, id); err != nil {
+	if err := s.repo.DeleteTestCase(ctx, exerciseID, id); err != nil {
 		return err
 	}
 	s.invalidateExerciseCache(ctx, exerciseID)
@@ -407,10 +453,16 @@ func (s *ExerciseService) GetMySubmissions(ctx context.Context, exerciseID, user
 	return &dto.ExerciseSubmissionListDTO{Data: data, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
-func (s *ExerciseService) GetSubmissionByID(ctx context.Context, id uuid.UUID) (*dto.ExerciseSubmissionResponseDTO, error) {
+func (s *ExerciseService) GetSubmissionByID(ctx context.Context, id, requesterID uuid.UUID, isAdmin bool) (*dto.ExerciseSubmissionResponseDTO, error) {
 	sub, err := s.repo.GetSubmissionByID(ctx, id)
 	if err != nil || sub == nil {
-		return nil, errors.New("submission not found")
+		return nil, ErrExerciseSubmissionNotFound
+	}
+	if sub.UserID != requesterID {
+		allowed, err := s.CanManage(ctx, sub.ExerciseID, requesterID, isAdmin)
+		if err != nil || !allowed {
+			return nil, ErrExerciseSubmissionNotFound
+		}
 	}
 	return s.mapSubmissionToDTO(sub), nil
 }

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	"github.com/google/uuid"
@@ -21,6 +22,7 @@ type AssignmentRepositoryInterface interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	Publish(ctx context.Context, id uuid.UUID) error
 	Unpublish(ctx context.Context, id uuid.UUID) error
+	CanManage(ctx context.Context, assignmentID, userID uuid.UUID) (bool, error)
 }
 
 type AssignmentRepository struct {
@@ -136,7 +138,7 @@ type TestCaseRepositoryInterface interface {
 	CreateBatch(ctx context.Context, testCases []model.TestCase) error
 	GetByAssignment(ctx context.Context, assignmentID uuid.UUID) ([]model.TestCase, error)
 	GetNonHiddenByAssignment(ctx context.Context, assignmentID uuid.UUID) ([]model.TestCase, error)
-	Delete(ctx context.Context, id uuid.UUID) error
+	DeleteFromAssignment(ctx context.Context, assignmentID, id uuid.UUID) error
 	DeleteByAssignment(ctx context.Context, assignmentID uuid.UUID) error
 }
 
@@ -177,10 +179,36 @@ func (r *TestCaseRepository) GetNonHiddenByAssignment(ctx context.Context, assig
 	return testCases, err
 }
 
-func (r *TestCaseRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	return r.db.WithContext(ctx).Delete(&model.TestCase{}, "id = ?", id).Error
+// DeleteFromAssignment chỉ xoá test case NẾU nó thuộc đúng assignment (S2): trước đây route
+// DELETE /assignments/:id/testcases/:tcId bỏ qua :id nên xoá được test case của assignment khác.
+func (r *TestCaseRepository) DeleteFromAssignment(ctx context.Context, assignmentID, id uuid.UUID) error {
+	return r.db.WithContext(ctx).Delete(&model.TestCase{}, "id = ? AND assignment_id = ?", id, assignmentID).Error
 }
 
 func (r *TestCaseRepository) DeleteByAssignment(ctx context.Context, assignmentID uuid.UUID) error {
 	return r.db.WithContext(ctx).Where("assignment_id = ?", assignmentID).Delete(&model.TestCase{}).Error
+}
+
+// CanManage (S2): true khi userID là "chủ" của assignment — dùng để quyết định ai được xem test
+// case ẩn và ai được sửa. Chủ = (a) host của phiên livestream gắn assignment, (b) giảng viên
+// được gán vào lớp (teacher_classes) của assignment/phiên, hoặc (c) giảng viên chủ khoá học của
+// lớp/phiên đó. Một câu SQL duy nhất vì assignment có hai nguồn sở hữu loại trừ nhau (SessionID
+// live coding, ClassID bài tập về nhà) và đi qua các bảng khác nhau (livestream_sessions, classes,
+// courses); cố tình KHÔNG dùng ScheduleRepository.TeacherCanManageSession vì hàm đó tra bảng
+// class_sessions còn assignment.session_id trỏ tới livestream_sessions.
+func (r *AssignmentRepository) CanManage(ctx context.Context, assignmentID, userID uuid.UUID) (bool, error) {
+	var ok bool
+	err := r.db.WithContext(ctx).Raw(`
+SELECT EXISTS (
+  SELECT 1
+    FROM assignments a
+    LEFT JOIN livestream_sessions ls ON ls.id = a.session_id AND ls.deleted_at IS NULL
+    LEFT JOIN classes c ON c.id = COALESCE(a.class_id, ls.class_id) AND c.deleted_at IS NULL
+    LEFT JOIN courses co ON co.id = COALESCE(c.course_id, ls.course_id) AND co.deleted_at IS NULL
+   WHERE a.id = @aid AND a.deleted_at IS NULL
+     AND (ls.host_id = @uid
+          OR co.instructor_id = @uid
+          OR EXISTS (SELECT 1 FROM teacher_classes tc WHERE tc.class_id = c.id AND tc.teacher_id = @uid))
+)`, sql.Named("aid", assignmentID), sql.Named("uid", userID)).Scan(&ok).Error
+	return ok, err
 }

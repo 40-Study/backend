@@ -34,7 +34,6 @@ type TeacherListResponseDTO struct {
 type TeacherStudentDTO struct {
 	ID          uuid.UUID  `json:"id"`
 	Name        string     `json:"name"`
-	Email       string     `json:"email"`
 	Avatar      *string    `json:"avatar,omitempty"`
 	StudentID   *string    `json:"student_id,omitempty"`
 	ParentName  *string    `json:"parent_name,omitempty"`

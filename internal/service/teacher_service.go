@@ -117,7 +117,6 @@ func (s *TeacherService) GetMyStudents(ctx context.Context, teacherID uuid.UUID,
 		result[i] = dto.TeacherStudentDTO{
 			ID:          row.StudentID,
 			Name:        name,
-			Email:       row.Email,
 			Avatar:      row.AvatarURL,
 			ParentName:  parentName,
 			ParentPhone: parentPhone,

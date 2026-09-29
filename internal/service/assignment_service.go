@@ -21,10 +21,12 @@ type AssignmentServiceInterface interface {
 	Publish(ctx context.Context, id uuid.UUID, livekitSvc LivekitServiceInterface) (*model.Assignment, error)
 	Unpublish(ctx context.Context, id uuid.UUID) (*model.Assignment, error)
 	AddTestCase(ctx context.Context, assignmentID uuid.UUID, req dto.CreateTestCaseDTO) (*model.TestCase, error)
-	DeleteTestCase(ctx context.Context, testCaseID uuid.UUID) error
+	DeleteTestCase(ctx context.Context, assignmentID, testCaseID uuid.UUID) error
 	ImportTestCases(ctx context.Context, assignmentID uuid.UUID, req dto.ImportTestCasesDTO) ([]model.TestCase, error)
 	GetTestCases(ctx context.Context, assignmentID uuid.UUID, includeHidden bool) ([]model.TestCase, error)
 	GetSandbox(ctx context.Context, assignmentID uuid.UUID, userID uuid.UUID) (*dto.SandboxResponseDTO, error)
+	// CanManage (S2): người được xem test case ẩn và sửa test case — chủ assignment hoặc admin.
+	CanManage(ctx context.Context, assignmentID, userID uuid.UUID, isAdmin bool) (bool, error)
 }
 
 type AssignmentService struct {
@@ -296,8 +298,17 @@ func (s *AssignmentService) AddTestCase(ctx context.Context, assignmentID uuid.U
 	return testCase, nil
 }
 
-func (s *AssignmentService) DeleteTestCase(ctx context.Context, testCaseID uuid.UUID) error {
-	return s.testCaseRepo.Delete(ctx, testCaseID)
+func (s *AssignmentService) DeleteTestCase(ctx context.Context, assignmentID, testCaseID uuid.UUID) error {
+	return s.testCaseRepo.DeleteFromAssignment(ctx, assignmentID, testCaseID)
+}
+
+// CanManage (S2): admin luôn được; còn lại phải là chủ assignment (host phiên / giảng viên lớp /
+// giảng viên chủ khoá) — xem AssignmentRepository.CanManage.
+func (s *AssignmentService) CanManage(ctx context.Context, assignmentID, userID uuid.UUID, isAdmin bool) (bool, error) {
+	if isAdmin {
+		return true, nil
+	}
+	return s.repo.CanManage(ctx, assignmentID, userID)
 }
 
 func (s *AssignmentService) ImportTestCases(ctx context.Context, assignmentID uuid.UUID, req dto.ImportTestCasesDTO) ([]model.TestCase, error) {

@@ -838,6 +838,9 @@ func (h *QuizHandler) GetQuizResults(c *fiber.Ctx) error {
 		if resp, handled := respondQuizGateError(c, err); handled {
 			return resp
 		}
+		if errors.Is(err, service.ErrQuizResultsNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "Quiz not found"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve quiz results",
 			"error":   err.Error(),
@@ -867,6 +870,9 @@ func (h *QuizHandler) GetQuizStatistics(c *fiber.Ctx) error {
 	if err != nil {
 		if resp, handled := respondQuizGateError(c, err); handled {
 			return resp
+		}
+		if errors.Is(err, service.ErrQuizResultsNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "Quiz not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve quiz statistics",
@@ -915,6 +921,9 @@ func (h *QuizHandler) SaveAnswer(c *fiber.Ctx) error {
 	if err := h.service.SaveAnswer(c.Context(), attemptID, userID, isAdmin, req); err != nil {
 		if resp, handled := respondQuizGateError(c, err); handled {
 			return resp
+		}
+		if errors.Is(err, service.ErrQuizAttemptNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "Attempt not found"})
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to save answer",

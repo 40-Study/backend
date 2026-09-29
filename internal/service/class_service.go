@@ -544,7 +544,6 @@ func (s *ClassService) GetStudentsByClass(ctx context.Context, classID, actorUse
 			EnrolledAt: utils.FormatTimestamp(sc.EnrolledAt),
 			Status:     sc.Status,
 			UserName:   sc.Student.UserName,
-			Email:      sc.Student.Email,
 			FullName:   sc.Student.FullName,
 			AvatarURL:  sc.Student.AvatarURL,
 		}

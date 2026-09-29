@@ -8,7 +8,6 @@ type ChildOverviewDto struct {
 	Username     string  `json:"username"`
 	FullName     *string `json:"full_name,omitempty"`
 	AvatarURL    *string `json:"avatar_url,omitempty"`
-	Email        string  `json:"email"`
 	Relationship string  `json:"relationship"`
 
 	// Stats

@@ -148,3 +148,13 @@ func (r *ParentStudentRepository) FindByParentAndStudent(ctx context.Context, pa
 	}
 	return &relation, err
 }
+
+// HasActiveParent (S2): parentID là phụ huynh có liên kết ACTIVE của studentID (quyền xem bài làm
+// quiz của con). Trạng thái khác active (pending/revoked...) không được tính.
+func (r *ParentStudentRepository) HasActiveParent(ctx context.Context, parentID, studentID uuid.UUID) (bool, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Model(&model.ParentStudentRelation{}).
+		Where("parent_user_id = ? AND student_user_id = ? AND status = ?", parentID, studentID, model.ParentStudentRelationStatusActive).
+		Count(&n).Error
+	return n > 0, err
+}

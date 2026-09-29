@@ -543,6 +543,8 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		// ===== Personal Event =====
 		PersonalEvent: service.NewPersonalEventService(repos.PersonalEvent, resources.Queue),
 	}
+	// Lane S2: moi vao nhom dung chung guard nhan tin cua Conversation (Lane G).
+	s.Group.SetInviteGuard(s.Conversation)
 	wireContest(s, repos)
 	return s
 }
@@ -559,6 +561,7 @@ func wireContest(s *Services, repos *Repositories) {
 		repos.Enrollment,
 	)
 	s.Quiz.SetContestGate(s.Contest)
+	s.Quiz.SetParentLinkChecker(repos.ParentStudent)
 }
 
 // initTransactionService creates the transaction gRPC service

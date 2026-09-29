@@ -44,7 +44,6 @@ type ConversationListResponse struct {
 type ParticipantResponse struct {
 	UserID    uuid.UUID  `json:"user_id"`
 	UserName  string     `json:"user_name"`
-	Email     string     `json:"email"`
 	AvatarURL *string    `json:"avatar_url,omitempty"`
 	IsOnline  bool       `json:"is_online"`
 	JoinedAt  time.Time  `json:"joined_at"`

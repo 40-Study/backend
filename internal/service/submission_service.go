@@ -641,7 +641,6 @@ func (s *SubmissionService) toResponseDTO(sub model.Submission) dto.SubmissionRe
 		resp.User = &dto.SubmissionUserDTO{
 			ID:       sub.User.ID,
 			Username: sub.User.UserName,
-			Email:    sub.User.Email,
 		}
 	}
 
