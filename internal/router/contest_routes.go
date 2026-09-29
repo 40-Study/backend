@@ -1,56 +1,75 @@
 package router
 
 import (
+	"time"
+
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
 )
 
-func SetupContestRoutes(api fiber.Router, cfg *config.Config, h *handler.ContestHandler, redis *redis.Client) {
-	contests := api.Group("/contests")
+// contestUserRateLimit — giới hạn theo user_id (contract §2.2), đặt SAU auth nên luôn có user_id.
+func contestUserRateLimit(rdb *redis.Client, prefix string, max int) fiber.Handler {
+	return middleware.RateLimiter(rdb, middleware.RateLimitConfig{
+		Max: max, Window: time.Minute, KeyPrefix: prefix,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			id, _ := c.Locals("user_id").(uuid.UUID)
+			return id.String()
+		},
+	})
+}
 
-	auth := middleware.AuthMiddleware(cfg, redis)
+// SetupContestRoutes — MVP "Cuộc thi" (contract §2.2 + ĐÍNH CHÍNH 28/09).
+//
+// C-02 (review vòng 5, vẫn giữ): KHÔNG dùng group + Use() — Fiber giữ MỘT stack middleware phẳng
+// theo TIỀN TỐ nên Use() lan sang mọi route đăng ký sau ở cùng tiền tố (route công khai bị 401).
+// Middleware gắn TRỰC TIẾP làm tham số của TỪNG route.
+//
+// I-04: các route TĨNH (/me, /manage, /manage/quiz-options, /manage/:id, /manage/:id/participants)
+// PHẢI đăng ký TRƯỚC "/:slug" — Fiber khớp theo thứ tự đăng ký, không tự ưu tiên segment tĩnh.
+//
+// Route cũ đã GỠ (lộ đáp án/không có kiểm quyền): POST /:id/publish, GET|POST /:id/problems,
+// PUT|DELETE /:id/problems/:problemId, POST /:id/problems/:problemId/submit, GET /:id/submissions/me.
+func SetupContestRoutes(api fiber.Router, cfg *config.Config, h *handler.ContestHandler, rdb *redis.Client,
+	permChecker *middleware.PermissionChecker) {
+	auth := middleware.AuthMiddleware(cfg, rdb)
+	optional := middleware.OptionalAuth(cfg, rdb)
+	manage := permChecker.RequirePermissions("CONTESTS_MANAGE_OWN")
+	approve := permChecker.RequirePermissions("CONTESTS_APPROVE_ALL")
 
-	// Public
-	contests.Get("/", h.ListContests)
+	// ── Tĩnh (trước /:slug) ──
+	api.Get("/contests", h.ListContests)
+	api.Get("/contests/me", auth, h.GetMyContests)
+	api.Get("/contests/manage", auth, manage, h.ListManage)
+	api.Get("/contests/manage/quiz-options", auth, manage, h.QuizOptions)
+	api.Get("/contests/manage/:id", auth, manage, h.GetManage)
+	api.Get("/contests/manage/:id/participants", auth, manage, h.ListParticipants)
 
-	// C-02 (review vòng 5→6): TRƯỚC ĐÂY dùng `authed := contests.Group(""); authed.Use(auth)` —
-	// Fiber giữ MỘT stack middleware PHẲNG theo TIỀN TỐ ("/contests"), không theo biến Go dùng để
-	// đăng ký route. `authed.Use(auth)` áp dụng cho MỌI route đăng ký SAU nó ở cùng tiền tố, KỂ CẢ
-	// route đăng ký qua biến `contests` (không phải `authed`) — nên `contests.Get("/:slug", ...)`
-	// dù cố tình đăng ký qua biến "public" vẫn bị auth chặn (public route trả 401). Đo bằng Fiber
-	// thật xác nhận đúng cơ chế này (xem báo cáo review vòng 5). Sửa: KHÔNG dùng group + Use() cho
-	// cặp route công khai/riêng tư xen kẽ này — gắn `auth` TRỰC TIẾP làm middleware tham số cho
-	// TỪNG route cần bảo vệ, "/:slug" không nhận middleware nào nên luôn công khai bất kể thứ tự
-	// đăng ký các route khác.
-	//
-	// I-04 (review vòng 4/5, vẫn giữ nguyên): "/me" PHẢI đăng ký TRƯỚC "/:slug" — cùng tiền tố,
-	// Fiber khớp theo THỨ TỰ ĐĂNG KÝ khi route tham số và route tĩnh cùng độ sâu, không tự ưu
-	// tiên tĩnh trước tham số (đã tự kiểm chứng cùng lớp lỗi ở quiz_router.go/grade_router.go).
-	contests.Get("/me", auth, h.GetMyContests)
+	// ── Công khai theo slug ──
+	api.Get("/contests/:slug", optional, h.GetContest)
 
-	// Public slug lookup — ĐĂNG KÝ SAU "/me" ở trên, KHÔNG có middleware auth (xem comment C-02).
-	contests.Get("/:slug", h.GetContest)
+	// ── Giảng viên ──
+	api.Post("/contests", auth, manage, h.CreateContest)
+	api.Put("/contests/:id", auth, manage, h.UpdateContest)
+	api.Delete("/contests/:id", auth, manage, h.DeleteContest)
+	api.Post("/contests/:id/submit-review", auth, manage, h.SubmitReview)
 
-	// Contest CRUD
-	contests.Post("/", auth, h.CreateContest)
-	contests.Put("/:id", auth, h.UpdateContest)
-	contests.Delete("/:id", auth, h.DeleteContest)
-	contests.Post("/:id/publish", auth, h.PublishContest)
+	// ── Thí sinh ──
+	api.Post("/contests/:id/join", auth, contestUserRateLimit(rdb, "rl:contest:join", 20), h.JoinContest)
+	api.Post("/contests/:id/start", auth, contestUserRateLimit(rdb, "rl:contest:start", 10), h.StartContest)
+	api.Post("/contests/:id/submit", auth, contestUserRateLimit(rdb, "rl:contest:submit", 10), h.SubmitContest)
+	api.Get("/contests/:id/my-result", auth, h.MyResult)
+	api.Get("/contests/:id/leaderboard", optional, h.Leaderboard)
+	api.Get("/contests/:id/certificate", auth, h.Certificate)
 
-	// Problems
-	contests.Get("/:id/problems", auth, h.GetProblems)
-	contests.Post("/:id/problems", auth, h.CreateProblem)
-	contests.Put("/:id/problems/:problemId", auth, h.UpdateProblem)
-	contests.Delete("/:id/problems/:problemId", auth, h.DeleteProblem)
-
-	// Participation
-	contests.Post("/:id/join", auth, h.JoinContest)
-	contests.Get("/:id/leaderboard", auth, h.GetLeaderboard)
-
-	// Submissions
-	contests.Post("/:id/problems/:problemId/submit", auth, h.SubmitAnswer)
-	contests.Get("/:id/submissions/me", auth, h.GetMySubmissions)
+	// ── Admin ──
+	api.Get("/admin/contests", auth, approve, h.AdminListContests)
+	api.Post("/admin/contests/:id/approve", auth, approve, h.ApproveContest)
+	api.Post("/admin/contests/:id/reject", auth, approve, h.RejectContest)
+	api.Post("/admin/contests/:id/cancel", auth, approve, h.CancelContest)
+	api.Put("/admin/contests/:id/prizes", auth, approve, h.UpdatePrizes)
+	api.Post("/admin/contests/:id/finalize", auth, approve, h.FinalizeContest)
 }

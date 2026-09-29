@@ -24,7 +24,8 @@
       "COURSES_CREATE",
       "COURSES_UPDATE_OWN",
       "COURSES_DELETE_OWN",
-      "LESSONS_MANAGE"
+      "LESSONS_MANAGE",
+      "CONTESTS_MANAGE_OWN"
     ]
   },
   {

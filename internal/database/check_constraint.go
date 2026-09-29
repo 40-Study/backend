@@ -97,12 +97,13 @@ func buildForeignKeySQL(table, constraintName, column string) string {
 	return fmt.Sprintf(`
 		DO $$
 		BEGIN
-			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '%s') THEN
+			IF NOT EXISTS (SELECT 1 FROM pg_constraint
+			               WHERE conname = '%s' AND conrelid = '%s'::regclass) THEN
 				ALTER TABLE %s ADD CONSTRAINT %s
 					FOREIGN KEY (%s) REFERENCES users(id);
 			END IF;
 		END $$;
-	`, constraintName, table, constraintName, column)
+	`, constraintName, table, table, constraintName, column)
 }
 
 // notValidCheckConstraints — CHECK constraint (của bảng nhìn thấy được trong search_path) đang

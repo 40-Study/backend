@@ -228,6 +228,8 @@ func Migrate(db *gorm.DB) error {
 		&model.ContestProblem{},
 		&model.ContestParticipant{},
 		&model.ContestSubmission{},
+		&model.ContestPrize{},
+		&model.ContestAward{},
 
 		// ===== 27. Personal Calendar Events (phụ thuộc User) =====
 		&model.PersonalEvent{},

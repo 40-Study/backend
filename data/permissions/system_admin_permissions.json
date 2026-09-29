@@ -50,5 +50,9 @@
   {
     "name": "WALLET_WITHDRAWALS_MANAGE",
     "description": "Xem và xử lý yêu cầu rút tiền của giảng viên: duyệt, từ chối, xác nhận đã chuyển khoản (Phase 4, 28/09/2026)"
+  },
+  {
+    "name": "CONTESTS_APPROVE_ALL",
+    "description": "Duyệt, từ chối, huỷ cuộc thi, gắn giải voucher và chốt kết quả mọi cuộc thi"
   }
 ]

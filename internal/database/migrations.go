@@ -371,6 +371,7 @@ func RunPostMigrations(db *gorm.DB) error {
 			`,
 		},
 	}
+	statements = append(statements, contestPostMigrations()...)
 
 	for _, stmt := range statements {
 		if err := db.Exec(stmt.sql).Error; err != nil {

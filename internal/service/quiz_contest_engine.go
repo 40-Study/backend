@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -205,16 +206,22 @@ func (s *QuizService) GetContestAttemptReview(ctx context.Context, attemptID uui
 				correctIDs = append(correctIDs, a.ID.String())
 			}
 		}
+		options, accepted := reviewAnswerTexts(q)
 		item := dto.QuizAttemptAnswerDTO{
 			QuestionID:        q.ID,
 			QuestionText:      q.QuestionText,
+			QuestionType:      q.QuestionType,
+			Options:           &options,
+			AcceptedAnswers:   &accepted,
 			SelectedAnswerIDs: []string{},
 			CorrectAnswerIDs:  correctIDs,
 			Explanation:       q.Explanation,
 		}
 		if aa, ok := answered[q.ID]; ok {
 			item.ID = aa.ID
-			item.SelectedAnswerIDs = aa.SelectedAnswerIDs
+			if aa.SelectedAnswerIDs != nil {
+				item.SelectedAnswerIDs = aa.SelectedAnswerIDs
+			}
 			item.TextAnswer = aa.TextAnswer
 			item.IsCorrect = aa.IsCorrect
 			item.PointsEarned = aa.PointsEarned
@@ -225,4 +232,24 @@ func (s *QuizService) GetContestAttemptReview(ctx context.Context, attemptID uui
 		review[i] = item
 	}
 	return review, nil
+}
+
+// reviewAnswerTexts (contract ĐÍNH CHÍNH 3) trả chữ đáp án cho phần xem lại, CHỈ gọi sau giờ mở đáp
+// án (B1 chặn trước mốc đó). Câu có lựa chọn → options đủ mọi lựa chọn theo display_order; câu mà
+// lựa chọn chính là đáp án (answerOptionsRevealKey: fill_blank) → options rỗng, accepted_answers là
+// các đáp án được chấp nhận. Luôn trả slice khác nil để JSON ra "[]".
+func reviewAnswerTexts(q *model.Question) ([]dto.ReviewAnswerOptionDTO, []string) {
+	answers := append([]model.QuestionAnswer(nil), q.Answers...)
+	sort.SliceStable(answers, func(i, j int) bool { return answers[i].DisplayOrder < answers[j].DisplayOrder })
+	options, accepted := []dto.ReviewAnswerOptionDTO{}, []string{}
+	for _, a := range answers {
+		if answerOptionsRevealKey(q.QuestionType) {
+			if a.IsCorrect {
+				accepted = append(accepted, a.AnswerText)
+			}
+			continue
+		}
+		options = append(options, dto.ReviewAnswerOptionDTO{ID: a.ID, AnswerText: a.AnswerText, DisplayOrder: a.DisplayOrder})
+	}
+	return options, accepted
 }

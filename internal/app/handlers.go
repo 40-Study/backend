@@ -243,7 +243,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		Message: handler.NewMessageHandler(services.Conversation),
 
 		// ===== Contest =====
-		Contest: handler.NewContestHandler(services.Contest),
+		Contest: handler.NewContestHandler(services.Contest, permChecker),
 
 		// ===== Personal Event =====
 		PersonalEvent: handler.NewPersonalEventHandler(services.PersonalEvent),

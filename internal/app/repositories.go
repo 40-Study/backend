@@ -140,10 +140,7 @@ type Repositories struct {
 	Report *repository.ReportRepository
 
 	// ===== Contest =====
-	Contest            *repository.ContestRepository
-	ContestProblem     *repository.ContestProblemRepository
-	ContestParticipant *repository.ContestParticipantRepository
-	ContestSubmission  *repository.ContestSubmissionRepository
+	Contest *repository.ContestRepository
 
 	// ===== Personal Event =====
 	PersonalEvent *repository.PersonalEventRepository
@@ -274,10 +271,7 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		Report: repository.NewReportRepository(db),
 
 		// ===== Contest =====
-		Contest:            repository.NewContestRepository(db),
-		ContestProblem:     repository.NewContestProblemRepository(db),
-		ContestParticipant: repository.NewContestParticipantRepository(db),
-		ContestSubmission:  repository.NewContestSubmissionRepository(db),
+		Contest: repository.NewContestRepository(db),
 
 		// ===== Personal Event =====
 		PersonalEvent: repository.NewPersonalEventRepository(db),

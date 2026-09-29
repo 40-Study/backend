@@ -225,6 +225,18 @@ type QuizAttemptAnswerDTO struct {
 	PointsEarned      decimal.Decimal `json:"points_earned"`
 	CorrectAnswerIDs  []string        `json:"correct_answer_ids,omitempty"`
 	Explanation       *string         `json:"explanation,omitempty"`
+	// Chỉ review bài thi cuộc thi điền (contract ĐÍNH CHÍNH 3); review quiz thường để nil nên vắng.
+	// Con trỏ để với cuộc thi, mảng rỗng vẫn ra "[]" thay vì bị omitempty bỏ đi.
+	QuestionType    string                   `json:"question_type,omitempty"`
+	Options         *[]ReviewAnswerOptionDTO `json:"options,omitempty"`
+	AcceptedAnswers *[]string                `json:"accepted_answers,omitempty"`
+}
+
+// ReviewAnswerOptionDTO — một lựa chọn của câu hỏi trong phần xem lại bài (đã qua giờ mở đáp án).
+type ReviewAnswerOptionDTO struct {
+	ID           uuid.UUID `json:"id"`
+	AnswerText   string    `json:"answer_text"`
+	DisplayOrder int       `json:"display_order"`
 }
 
 type QuizResultsDTO struct {
