@@ -559,6 +559,7 @@ func wireContest(s *Services, repos *Repositories) {
 		repos.Enrollment,
 	)
 	s.Quiz.SetContestGate(s.Contest)
+	s.Quiz.SetParentLinkChecker(repos.ParentStudent)
 }
 
 // initTransactionService creates the transaction gRPC service

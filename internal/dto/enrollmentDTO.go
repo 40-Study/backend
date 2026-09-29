@@ -185,7 +185,6 @@ type LessonProgressResponseDTO struct {
 type CourseEnrollmentItemDTO struct {
 	ID              uuid.UUID       `json:"id"`
 	UserID          uuid.UUID       `json:"user_id"`
-	UserEmail       string          `json:"user_email"`
 	UserName        string          `json:"user_name"`
 	EnrolledAt      string          `json:"enrolled_at"`
 	ProgressPercent decimal.Decimal `json:"progress_percentage"`
@@ -204,7 +203,6 @@ type CourseEnrollmentListDTO struct {
 type DebugEnrollmentDTO struct {
 	ID         uuid.UUID `json:"id"`
 	UserID     uuid.UUID `json:"user_id"`
-	UserEmail  string    `json:"user_email"`
 	CourseID   uuid.UUID `json:"course_id"`
 	EnrolledAt string    `json:"enrolled_at"`
 	IsDeleted  bool      `json:"is_deleted"`

@@ -134,7 +134,7 @@ func (s *ParentDashboardService) GetChildOverview(ctx context.Context, parentID,
 		Username:          child.UserName,
 		FullName:          child.FullName,
 		AvatarURL:         child.AvatarURL,
-		Email:             child.Email,
+
 		Relationship:      relation.Relationship,
 		TotalXP:           totalXP,
 		CurrentStreak:     currentStreak,

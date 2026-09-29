@@ -4,16 +4,59 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
 
 type ExerciseHandler struct {
-	service service.ExerciseServiceInterface
+	service     service.ExerciseServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewExerciseHandler(service service.ExerciseServiceInterface) *ExerciseHandler {
-	return &ExerciseHandler{service: service}
+func NewExerciseHandler(service service.ExerciseServiceInterface, permChecker *middleware.PermissionChecker) *ExerciseHandler {
+	return &ExerciseHandler{service: service, permChecker: permChecker}
+}
+
+// canManageExercise (S2): người gọi là admin, người tạo hoặc giảng viên chủ khoá đang gắn bài tập.
+// Quyết định ai được đọc test case ẩn / bài nộp của người khác / sửa bài tập. Lỗi tra cứu quyền
+// coi như KHÔNG có quyền (fail-closed).
+func (h *ExerciseHandler) canManageExercise(c *fiber.Ctx, exerciseID uuid.UUID) bool {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return false
+	}
+	allowed, err := h.service.CanManage(c.Context(), exerciseID, userID, isAdminActor(c, h.permChecker, userID))
+	return err == nil && allowed
+}
+
+// requireExerciseManager ghi 403 và trả ok=false khi người gọi không quản lý bài tập; caller chỉ
+// cần `return err` (nil sau khi đã ghi response).
+func (h *ExerciseHandler) requireExerciseManager(c *fiber.Ctx, exerciseID uuid.UUID) (bool, error) {
+	if h.canManageExercise(c, exerciseID) {
+		return true, nil
+	}
+	return false, c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+		"message": "Forbidden",
+		"error":   "only the exercise owner can perform this action",
+	})
+}
+
+// canAuthorExercise: tạo bài tập mới chỉ dành cho admin hoặc người có quyền sửa khoá học của mình
+// (giảng viên). Học viên không được tạo bài tập/test case.
+func (h *ExerciseHandler) canAuthorExercise(c *fiber.Ctx, userID uuid.UUID) bool {
+	if isAdminActor(c, h.permChecker, userID) {
+		return true
+	}
+	if h.permChecker == nil {
+		return false
+	}
+	var activeOrgID *uuid.UUID
+	if orgID, ok := c.Locals("active_org_id").(uuid.UUID); ok {
+		activeOrgID = &orgID
+	}
+	ok, err := h.permChecker.HasPermission(c.Context(), userID, activeOrgID, "COURSES_UPDATE_OWN")
+	return err == nil && ok
 }
 
 // ============================================================================
@@ -21,6 +64,17 @@ func NewExerciseHandler(service service.ExerciseServiceInterface) *ExerciseHandl
 // ============================================================================
 
 func (h *ExerciseHandler) CreateExercise(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+	if !h.canAuthorExercise(c, userID) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"message": "Forbidden",
+			"error":   "only teachers and admins can create exercises",
+		})
+	}
+
 	var req dto.CreateExerciseDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -36,7 +90,7 @@ func (h *ExerciseHandler) CreateExercise(c *fiber.Ctx) error {
 		})
 	}
 
-	exercise, err := h.service.CreateExercise(c.Context(), req)
+	exercise, err := h.service.CreateExercise(c.Context(), userID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create exercise",
@@ -59,7 +113,8 @@ func (h *ExerciseHandler) GetExerciseByID(c *fiber.Ctx) error {
 		})
 	}
 
-	exercise, err := h.service.GetExerciseByID(c.Context(), id)
+	// S2: test case ẩn chỉ trả cho người quản lý bài tập; học viên chỉ nhận test mẫu.
+	exercise, err := h.service.GetExerciseByID(c.Context(), id, h.canManageExercise(c, id))
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Exercise not found",
@@ -100,6 +155,10 @@ func (h *ExerciseHandler) UpdateExercise(c *fiber.Ctx) error {
 		})
 	}
 
+	if ok, err := h.requireExerciseManager(c, id); !ok {
+		return err
+	}
+
 	var req dto.UpdateExerciseDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -138,6 +197,10 @@ func (h *ExerciseHandler) DeleteExercise(c *fiber.Ctx) error {
 		})
 	}
 
+	if ok, err := h.requireExerciseManager(c, id); !ok {
+		return err
+	}
+
 	if err := h.service.DeleteExercise(c.Context(), id); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete exercise",
@@ -161,6 +224,10 @@ func (h *ExerciseHandler) CreateTestCase(c *fiber.Ctx) error {
 			"message": "Invalid exercise ID",
 			"error":   err.Error(),
 		})
+	}
+
+	if ok, err := h.requireExerciseManager(c, exerciseID); !ok {
+		return err
 	}
 
 	var req dto.CreateExerciseTestCaseDTO
@@ -201,7 +268,7 @@ func (h *ExerciseHandler) GetTestCases(c *fiber.Ctx) error {
 		})
 	}
 
-	testCases, err := h.service.GetTestCases(c.Context(), exerciseID)
+	testCases, err := h.service.GetTestCases(c.Context(), exerciseID, h.canManageExercise(c, exerciseID))
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve test cases",
@@ -222,6 +289,10 @@ func (h *ExerciseHandler) ImportTestCases(c *fiber.Ctx) error {
 			"message": "Invalid exercise ID",
 			"error":   err.Error(),
 		})
+	}
+
+	if ok, err := h.requireExerciseManager(c, exerciseID); !ok {
+		return err
 	}
 
 	var req dto.ImportExerciseTestCasesDTO
@@ -260,6 +331,10 @@ func (h *ExerciseHandler) DeleteTestCase(c *fiber.Ctx) error {
 			"message": "Invalid exercise ID",
 			"error":   err.Error(),
 		})
+	}
+
+	if ok, err := h.requireExerciseManager(c, exerciseID); !ok {
+		return err
 	}
 
 	testCaseID, err := uuid.Parse(c.Params("testCaseId"))
@@ -340,6 +415,11 @@ func (h *ExerciseHandler) GetSubmissions(c *fiber.Ctx) error {
 		})
 	}
 
+	// S2: danh sách bài nộp của TẤT CẢ học viên (kèm mã nguồn) chỉ dành cho người quản lý bài tập.
+	if ok, err := h.requireExerciseManager(c, exerciseID); !ok {
+		return err
+	}
+
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 
@@ -399,7 +479,13 @@ func (h *ExerciseHandler) GetSubmissionByID(c *fiber.Ctx) error {
 		})
 	}
 
-	submission, err := h.service.GetSubmissionByID(c.Context(), submissionID)
+	requesterID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+
+	// S2: chỉ chủ bài nộp hoặc người quản lý bài tập; còn lại nhận 404 như bài nộp không tồn tại.
+	submission, err := h.service.GetSubmissionByID(c.Context(), submissionID, requesterID, isAdminActor(c, h.permChecker, requesterID))
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Submission not found",

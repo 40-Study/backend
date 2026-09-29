@@ -73,6 +73,7 @@ func Migrate(db *gorm.DB) error {
 		&model.Permission{},
 		&model.Role{},
 		&model.SystemRolePermission{},
+		&model.SystemRolePermissionSeed{},
 		&model.RolePermission{},
 
 		// ===== 4. User Roles (phụ thuộc User, Organization, Role, SystemRole) =====

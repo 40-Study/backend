@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	"github.com/google/uuid"
@@ -17,12 +18,13 @@ type ExerciseRepositoryInterface interface {
 	ListExercises(ctx context.Context, page, pageSize int) ([]model.CourseExercise, int64, error)
 	UpdateExercise(ctx context.Context, exercise *model.CourseExercise) error
 	DeleteExercise(ctx context.Context, id uuid.UUID) error
+	CanManage(ctx context.Context, exerciseID, userID uuid.UUID) (bool, error)
 
 	// ExerciseTestCase
 	CreateTestCase(ctx context.Context, tc *model.ExerciseTestCase) error
 	BulkCreateTestCases(ctx context.Context, tcs []model.ExerciseTestCase) error
 	GetTestCasesByExerciseID(ctx context.Context, exerciseID uuid.UUID) ([]model.ExerciseTestCase, error)
-	DeleteTestCase(ctx context.Context, id uuid.UUID) error
+	DeleteTestCase(ctx context.Context, exerciseID, id uuid.UUID) error
 	DeleteTestCasesByExerciseID(ctx context.Context, exerciseID uuid.UUID) error
 
 	// ExerciseSubmission
@@ -129,8 +131,9 @@ func (r *ExerciseRepository) GetTestCasesByExerciseID(ctx context.Context, exerc
 	return tcs, err
 }
 
-func (r *ExerciseRepository) DeleteTestCase(ctx context.Context, id uuid.UUID) error {
-	return r.db.WithContext(ctx).Delete(&model.ExerciseTestCase{}, "id = ?", id).Error
+// DeleteTestCase chỉ xoá test case thuộc đúng bài tập (S2), tránh xoá chéo bài tập khác qua :id giả.
+func (r *ExerciseRepository) DeleteTestCase(ctx context.Context, exerciseID, id uuid.UUID) error {
+	return r.db.WithContext(ctx).Delete(&model.ExerciseTestCase{}, "id = ? AND exercise_id = ?", id, exerciseID).Error
 }
 
 func (r *ExerciseRepository) DeleteTestCasesByExerciseID(ctx context.Context, exerciseID uuid.UUID) error {
@@ -233,4 +236,25 @@ func (r *ExerciseRepository) UpsertContentProgress(ctx context.Context, progress
 		Where("user_id = ? AND lesson_content_id = ?", progress.UserID, progress.LessonContentID).
 		Assign(*progress).
 		FirstOrCreate(progress).Error
+}
+
+// CanManage (S2): true khi userID là người tạo bài tập (created_by) hoặc giảng viên chủ của MỘT
+// khoá học đang gắn bài tập đó vào bài học (lesson_contents.exercise_id). Bài tập tạo trước khi có
+// cột created_by và chưa gắn vào khoá nào thì chỉ admin quản lý được — chấp nhận, vì không có dữ
+// liệu nào chứng minh ai là chủ.
+func (r *ExerciseRepository) CanManage(ctx context.Context, exerciseID, userID uuid.UUID) (bool, error) {
+	var ok bool
+	err := r.db.WithContext(ctx).Raw(`
+SELECT EXISTS (
+  SELECT 1 FROM course_exercises e
+   WHERE e.id = @eid AND e.deleted_at IS NULL
+     AND (e.created_by = @uid
+          OR EXISTS (SELECT 1
+                       FROM lesson_contents lc
+                       JOIN lessons l ON l.id = lc.lesson_id
+                       JOIN sections s ON s.id = l.section_id AND s.deleted_at IS NULL
+                       JOIN courses co ON co.id = s.course_id AND co.deleted_at IS NULL
+                      WHERE lc.exercise_id = e.id AND co.instructor_id = @uid))
+)`, sql.Named("eid", exerciseID), sql.Named("uid", userID)).Scan(&ok).Error
+	return ok, err
 }

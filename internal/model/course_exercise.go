@@ -22,6 +22,10 @@ type CourseExercise struct {
 	// Pass criteria
 	PassPercentage int `gorm:"default:100" json:"pass_percentage"` // % test cases cần pass
 
+	// CreatedBy (S2): người tạo bài tập, cơ sở để biết ai được xem test case ẩn khi bài tập chưa
+	// gắn vào khoá nào. Nullable vì dữ liệu cũ không có; json:"-" để không lộ ra API.
+	CreatedBy *uuid.UUID `gorm:"type:uuid;index" json:"-"`
+
 	// Relations
 	TestCases   []ExerciseTestCase   `gorm:"foreignKey:ExerciseID;constraint:OnDelete:CASCADE" json:"test_cases,omitempty"`
 	Submissions []ExerciseSubmission `gorm:"foreignKey:ExerciseID;constraint:OnDelete:CASCADE" json:"-"`

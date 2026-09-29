@@ -1021,9 +1021,7 @@ func (s *EnrollmentService) GetCourseEnrollments(ctx context.Context, courseID u
 			EnrolledAt:      e.EnrolledAt.UTC().Format(time.RFC3339),
 			ProgressPercent: e.ProgressPercent,
 		}
-		if e.User.Email != "" {
-			items[i].UserEmail = e.User.Email
-		}
+
 		if e.User.FullName != nil {
 			items[i].UserName = *e.User.FullName
 		}
@@ -1057,9 +1055,7 @@ func (s *EnrollmentService) DebugGetCourseEnrollments(ctx context.Context, cours
 			EnrolledAt: e.EnrolledAt.UTC().Format(time.RFC3339),
 			IsDeleted:  e.DeletedAt.Valid,
 		}
-		if e.User.Email != "" {
-			result[i].UserEmail = e.User.Email
-		}
+
 		if e.DeletedAt.Valid {
 			formatted := e.DeletedAt.Time.UTC().Format(time.RFC3339)
 			result[i].DeletedAt = &formatted

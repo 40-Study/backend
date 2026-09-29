@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 )
 
@@ -23,12 +24,34 @@ type AssignmentHandlerInterface interface {
 }
 
 type AssignmentHandler struct {
-	svc        service.AssignmentServiceInterface
-	livekitSvc service.LivekitServiceInterface
+	svc         service.AssignmentServiceInterface
+	livekitSvc  service.LivekitServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewAssignmentHandler(svc service.AssignmentServiceInterface, livekitSvc service.LivekitServiceInterface) *AssignmentHandler {
-	return &AssignmentHandler{svc: svc, livekitSvc: livekitSvc}
+func NewAssignmentHandler(svc service.AssignmentServiceInterface, livekitSvc service.LivekitServiceInterface, permChecker *middleware.PermissionChecker) *AssignmentHandler {
+	return &AssignmentHandler{svc: svc, livekitSvc: livekitSvc, permChecker: permChecker}
+}
+
+// canSeeHiddenTests (S2): trả true khi người gọi là chủ assignment hoặc admin. Trước đây
+// ?include_hidden=true do CLIENT tự bật nên học viên nào cũng đọc được input/expected_output của
+// test case ẩn. Lỗi tra cứu quyền coi như KHÔNG có quyền (fail-closed).
+func (h *AssignmentHandler) canSeeHiddenTests(c *fiber.Ctx, assignmentID uuid.UUID) bool {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return false
+	}
+	allowed, err := h.svc.CanManage(c.Context(), assignmentID, userID, isAdminActor(c, h.permChecker, userID))
+	return err == nil && allowed
+}
+
+// requireTestCaseManager chặn thao tác GHI test case với người không phải chủ assignment/admin.
+// Trả (true, nil) khi được phép; ngược lại đã ghi response 403 và trả (false, err) để caller return.
+func (h *AssignmentHandler) requireTestCaseManager(c *fiber.Ctx, assignmentID uuid.UUID) (bool, error) {
+	if h.canSeeHiddenTests(c, assignmentID) {
+		return true, nil
+	}
+	return false, c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden: only the assignment owner can manage test cases"})
 }
 
 func (h *AssignmentHandler) Create(c *fiber.Ctx) error {
@@ -54,7 +77,9 @@ func (h *AssignmentHandler) GetByID(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	includeHidden := c.QueryBool("include_hidden", false)
+	// S2: include_hidden chỉ có hiệu lực với chủ assignment/admin; người khác bị hạ về false
+	// (vẫn nhận bài, chỉ không có test case ẩn) thay vì báo lỗi để không lộ sự tồn tại của test ẩn.
+	includeHidden := c.QueryBool("include_hidden", false) && h.canSeeHiddenTests(c, id)
 
 	assignment, err := h.svc.GetByID(c.Context(), id, includeHidden)
 	if err != nil {
@@ -154,6 +179,10 @@ func (h *AssignmentHandler) AddTestCase(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
+	if ok, err := h.requireTestCaseManager(c, id); !ok {
+		return err
+	}
+
 	var req dto.CreateTestCaseDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -171,12 +200,19 @@ func (h *AssignmentHandler) AddTestCase(c *fiber.Ctx) error {
 }
 
 func (h *AssignmentHandler) DeleteTestCase(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+	}
 	tcID, err := uuid.Parse(c.Params("tcId"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid test case id"})
 	}
+	if ok, err := h.requireTestCaseManager(c, id); !ok {
+		return err
+	}
 
-	if err := h.svc.DeleteTestCase(c.Context(), tcID); err != nil {
+	if err := h.svc.DeleteTestCase(c.Context(), id, tcID); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
@@ -187,6 +223,10 @@ func (h *AssignmentHandler) ImportTestCases(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+	}
+
+	if ok, err := h.requireTestCaseManager(c, id); !ok {
+		return err
 	}
 
 	var req dto.ImportTestCasesDTO
@@ -212,7 +252,7 @@ func (h *AssignmentHandler) GetTestCases(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	includeHidden := c.QueryBool("include_hidden", false)
+	includeHidden := c.QueryBool("include_hidden", false) && h.canSeeHiddenTests(c, id)
 
 	testCases, err := h.svc.GetTestCases(c.Context(), id, includeHidden)
 	if err != nil {

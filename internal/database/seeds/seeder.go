@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"study.com/v1/internal/model"
 )
 
@@ -65,7 +67,20 @@ func (s *Seeder) SeedPermissions(filePath string) error {
 	return nil
 }
 
+// SeedRoles đồng bộ role + quyền từ roles.json trong MỘT transaction (S2): hoặc mọi role được xử
+// lý, hoặc không role nào bị đụng — không còn khoảng thời gian role trống quyền giữa "xoá" và
+// "chèn lại" mà request đang chạy có thể chạm phải.
+//
+// Nguyên tắc: seed chỉ THÊM cái còn thiếu, KHÔNG BAO GIỜ gỡ. Quyền admin đã chỉnh tay (gỡ bớt
+// quyền của một role) phải sống qua mọi lần khởi động lại; muốn gỡ quyền khỏi role thì làm ở DB/
+// API quản trị chứ không phải bằng cách xoá dòng khỏi roles.json.
 func (s *Seeder) SeedRoles(filePath string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		return (&Seeder{db: tx}).seedRoles(filePath)
+	})
+}
+
+func (s *Seeder) seedRoles(filePath string) error {
 	log.Println("Seeding roles...")
 
 	data, err := os.ReadFile(filePath)
@@ -102,11 +117,9 @@ func (s *Seeder) SeedRoles(filePath string) error {
 			return fmt.Errorf("failed to seed role %s: %w", r.Role, result.Error)
 		}
 
-		// Always update description
-		if err := s.db.Model(&role).Updates(map[string]interface{}{
-			"description": r.Description,
-			"status":      "active",
-		}).Error; err != nil {
+		// Chỉ làm mới description. KHÔNG ép status = active nữa (S2): role tạo mới đã mang
+		// status "active" từ struct ở trên, còn role admin đã khoá/tắt thì phải giữ nguyên.
+		if err := s.db.Model(&role).Update("description", r.Description).Error; err != nil {
 			return fmt.Errorf("failed to update role %s: %w", r.Role, err)
 		}
 
@@ -129,21 +142,37 @@ func (s *Seeder) SeedRoles(filePath string) error {
 			}
 		}
 
-		// Replace permissions for this role via junction table system_role_permissions
+		// Chỉ cấp cặp (role, quyền) CHƯA TỪNG được seeder cấp (xem SystemRolePermissionSeed), rồi
+		// đánh dấu. Cặp đã đánh dấu mà dòng system_role_permissions không còn = admin gỡ tay, giữ
+		// nguyên. ON CONFLICT DO NOTHING vì khoá chính kép nên dòng đã có (cấp từ trước khi có bảng
+		// dấu) không lỗi. Lỗi được trả về để cả transaction rollback — trong transaction Postgres
+		// một câu lỗi đã làm hỏng cả phiên, nên nuốt lỗi bằng log.Printf như trước là sai.
 		if len(rolePermissions) > 0 {
-			// Delete existing permissions for this role
-			if err := s.db.Where("system_role_id = ?", role.ID).Delete(&model.SystemRolePermission{}).Error; err != nil {
-				log.Printf("Warning: could not clear permissions for role %s: %v\n", r.Role, err)
+			var seeded []model.SystemRolePermissionSeed
+			if err := s.db.Where("system_role_id = ?", role.ID).Find(&seeded).Error; err != nil {
+				return fmt.Errorf("failed to load seeded permissions of role %s: %w", r.Role, err)
 			}
-			// Insert new permissions
+			alreadySeeded := make(map[uuid.UUID]bool, len(seeded))
+			for _, m := range seeded {
+				alreadySeeded[m.PermissionID] = true
+			}
+
+			var grants []model.SystemRolePermission
+			var marks []model.SystemRolePermissionSeed
 			for _, perm := range rolePermissions {
-				rp := model.SystemRolePermission{
-					SystemRoleID: role.ID,
-					PermissionID: perm.ID,
+				if alreadySeeded[perm.ID] {
+					continue
 				}
-				if err := s.db.Where("system_role_id = ? AND permission_id = ?", role.ID, perm.ID).
-					FirstOrCreate(&rp).Error; err != nil {
-					log.Printf("Warning: could not assign permission %s to role %s: %v\n", perm.Name, r.Role, err)
+				grants = append(grants, model.SystemRolePermission{SystemRoleID: role.ID, PermissionID: perm.ID})
+				marks = append(marks, model.SystemRolePermissionSeed{SystemRoleID: role.ID, PermissionID: perm.ID})
+			}
+			if len(grants) > 0 {
+				onConflict := clause.OnConflict{DoNothing: true}
+				if err := s.db.Omit(clause.Associations).Clauses(onConflict).Create(&grants).Error; err != nil {
+					return fmt.Errorf("failed to assign permissions to role %s: %w", r.Role, err)
+				}
+				if err := s.db.Clauses(onConflict).Create(&marks).Error; err != nil {
+					return fmt.Errorf("failed to mark seeded permissions of role %s: %w", r.Role, err)
 				}
 			}
 		}
@@ -155,7 +184,15 @@ func (s *Seeder) SeedRoles(filePath string) error {
 	return nil
 }
 
+// SeedAll chạy toàn bộ seed quyền + role trong MỘT transaction (S2). Idempotent và additive: chạy
+// bao nhiêu lần cũng không xoá quyền admin đã chỉnh tay (xem SeedRoles).
 func (s *Seeder) SeedAll(dataDir string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		return (&Seeder{db: tx}).seedAll(dataDir)
+	})
+}
+
+func (s *Seeder) seedAll(dataDir string) error {
 	// Seed all permission files from permissions folder
 	permissionsDir := filepath.Join(dataDir, "permissions")
 	files, err := ioutil.ReadDir(permissionsDir)
@@ -174,7 +211,7 @@ func (s *Seeder) SeedAll(dataDir string) error {
 
 	// Seed roles
 	rolesFilePath := filepath.Join(dataDir, "roles.json")
-	if err := s.SeedRoles(rolesFilePath); err != nil {
+	if err := s.seedRoles(rolesFilePath); err != nil {
 		return err
 	}
 

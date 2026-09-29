@@ -8,7 +8,10 @@ import (
 
 type User struct {
 	BaseModel
-	Email        string     `gorm:"type:varchar(255);uniqueIndex:idx_users_email;not null"`
+	// Email: json:"-" (S2) — model.User được serialize thẳng ở nhiều quan hệ (Sender, Inviter, Student,
+	// Parent...) nên nếu không chặn ở đây thì email lộ ra dưới khoá "Email" cho mọi người xem. Chỗ nào
+	// thật sự cần trả email (tài khoản của chính mình, màn admin) dùng DTO riêng có trường email.
+	Email        string     `gorm:"type:varchar(255);uniqueIndex:idx_users_email;not null" json:"-"`
 	PasswordHash string     `gorm:"type:varchar(255);not null;column:password_hash" json:"-"`
 	UserName     string     `gorm:"type:varchar(100);not null;column:user_name" json:"user_name"`
 	FullName     *string    `gorm:"type:varchar(255);column:full_name" json:"full_name,omitempty"`

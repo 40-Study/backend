@@ -81,6 +81,52 @@ type QuizService struct {
 	enrollmentRepo repository.EnrollmentRepositoryInterface
 	// contestGate (contract "Cuộc thi" §3.2): ContestService của lane B1, nối qua SetContestGate.
 	contestGate ContestQuizGate
+	// parentLinks (S2): cho phụ huynh đã liên kết active xem bài làm của con. nil = không phụ huynh
+	// nào được xem (fail-closed) — nối qua SetParentLinkChecker.
+	parentLinks AttemptParentLinkChecker
+}
+
+// AttemptParentLinkChecker trả true khi parentID đang là phụ huynh có liên kết ACTIVE của studentID.
+type AttemptParentLinkChecker interface {
+	HasActiveParent(ctx context.Context, parentID, studentID uuid.UUID) (bool, error)
+}
+
+// SetParentLinkChecker nối kiểm tra liên kết phụ huynh-học viên (S2).
+func (s *QuizService) SetParentLinkChecker(c AttemptParentLinkChecker) {
+	s.parentLinks = c
+}
+
+// ErrQuizAttemptNotFound gộp "bài làm không tồn tại" và "người gọi không được xem" thành MỘT lỗi
+// để handler trả 404 cho cả hai — không cho dò được sự tồn tại của bài làm người khác (S2).
+var ErrQuizAttemptNotFound = errors.New("attempt not found")
+
+// ErrQuizResultsNotFound: người gọi không quản lý quiz nên không được xem kết quả/thống kê của cả
+// quiz; handler trả 404 để không lộ quiz có bài làm hay không (S2).
+var ErrQuizResultsNotFound = errors.New("quiz not found")
+
+// canViewOthersAttempt (S2): ai được xem bài làm CỦA NGƯỜI KHÁC — admin, người quản lý quiz (người
+// tạo hoặc giảng viên chủ khoá chứa quiz), hoặc phụ huynh đã liên kết active với chủ bài làm.
+// Chính chủ bài làm không đi qua hàm này. Lỗi tra cứu coi như không có quyền (fail-closed).
+func (s *QuizService) canViewOthersAttempt(ctx context.Context, quizID, ownerID, viewerID uuid.UUID, isAdmin bool) bool {
+	if isAdmin {
+		return true
+	}
+	if err := s.checkQuizOwner(ctx, quizID, viewerID, false); err == nil {
+		return true
+	}
+	if s.parentLinks != nil {
+		linked, err := s.parentLinks.HasActiveParent(ctx, viewerID, ownerID)
+		return err == nil && linked
+	}
+	return false
+}
+
+// checkQuizResultsManager: kết quả/thống kê của CẢ quiz chỉ dành cho người quản lý quiz và admin.
+func (s *QuizService) checkQuizResultsManager(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) error {
+	if err := s.checkQuizOwner(ctx, quizID, userID, isAdmin); err != nil {
+		return ErrQuizResultsNotFound
+	}
+	return nil
 }
 
 // SetContestGate nối cổng khoá quiz theo cuộc thi. Setter thay vì tham số constructor vì
@@ -1335,18 +1381,27 @@ func (s *QuizService) GetMyAttempts(ctx context.Context, quizID, userID uuid.UUI
 func (s *QuizService) GetAttemptByID(ctx context.Context, attemptID, userID uuid.UUID, isAdmin bool) (*dto.QuizAttemptDetailDTO, error) {
 	attempt, err := s.repo.GetAttemptWithAnswers(ctx, attemptID)
 	if err != nil || attempt == nil {
-		return nil, errors.New("attempt not found")
-	}
-	// Bài thi đã nộp sẽ có correct_answer_ids/explanation bên dưới — thí sinh chỉ được xem qua
-	// GET /contests/:id/my-result sau khi cuộc thi đóng (contract §4.3), không phải ở đây.
-	if err := s.checkContestAccess(ctx, attempt.QuizID, userID, isAdmin); err != nil {
-		return nil, err
-	}
-	if err := s.checkStandaloneQuizReader(ctx, attempt.QuizID, userID, isAdmin); err != nil {
-		return nil, err
+		return nil, ErrQuizAttemptNotFound
 	}
 	if attempt.UserID != userID {
-		return nil, errors.New("forbidden")
+		// S2: bài làm của người khác. Quiz gắn cuộc thi giữ nguyên hợp đồng "Cuộc thi" §3.2: người
+		// ngoài nhận 403 QUIZ_LOCKED_BY_CONTEST (cùng mã mọi route quiz cuộc thi khác đã trả, nên
+		// không lộ thêm gì). Còn lại, "không tồn tại" và "không được xem" cho CÙNG một lỗi (404).
+		if err := s.checkContestAccess(ctx, attempt.QuizID, userID, isAdmin); err != nil {
+			return nil, err
+		}
+		if !s.canViewOthersAttempt(ctx, attempt.QuizID, attempt.UserID, userID, isAdmin) {
+			return nil, ErrQuizAttemptNotFound
+		}
+	} else {
+		// Bài thi đã nộp sẽ có correct_answer_ids/explanation bên dưới — thí sinh chỉ được xem qua
+		// GET /contests/:id/my-result sau khi cuộc thi đóng (contract §4.3), không phải ở đây.
+		if err := s.checkContestAccess(ctx, attempt.QuizID, userID, isAdmin); err != nil {
+			return nil, err
+		}
+		if err := s.checkStandaloneQuizReader(ctx, attempt.QuizID, userID, isAdmin); err != nil {
+			return nil, err
+		}
 	}
 
 	// Phase 1 §6: "explanation chỉ trả sau khi nộp" — gate CẢ correct_answer_ids theo cùng điều
@@ -1390,6 +1445,10 @@ func (s *QuizService) GetQuizResults(ctx context.Context, quizID, userID uuid.UU
 	if err := s.checkStandaloneQuizReader(ctx, quizID, userID, isAdmin); err != nil {
 		return nil, err
 	}
+	// S2: trước đây bất kỳ tài khoản nào cũng đọc được điểm của MỌI học viên qua route này.
+	if err := s.checkQuizResultsManager(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	quiz, err := s.repo.GetQuizByID(ctx, quizID)
 	if err != nil || quiz == nil {
 		return nil, errors.New("quiz not found")
@@ -1418,6 +1477,9 @@ func (s *QuizService) GetQuizStatistics(ctx context.Context, quizID, userID uuid
 		return nil, err
 	}
 	if err := s.checkStandaloneQuizReader(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
+	if err := s.checkQuizResultsManager(ctx, quizID, userID, isAdmin); err != nil {
 		return nil, err
 	}
 	quiz, err := s.repo.GetQuizByID(ctx, quizID)

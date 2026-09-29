@@ -174,7 +174,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 
 		// ===== Livestream Learning Platform =====
 		Livestream: handler.NewLivestreamHandler(services.Livestream, permChecker),
-		Assignment: handler.NewAssignmentHandler(services.Assignment, services.Livekit),
+		Assignment: handler.NewAssignmentHandler(services.Assignment, services.Livekit, permChecker),
 		Submission: handler.NewSubmissionHandler(services.Submission, permChecker),
 		Chat:       handler.NewChatHandler(services.Chat),
 		Whiteboard: handler.NewWhiteboardHandler(services.Whiteboard, services.Livekit),
@@ -224,7 +224,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		Grade: handler.NewGradeHandler(services.Grade),
 
 		// ===== Exercise =====
-		Exercise: handler.NewExerciseHandler(services.Exercise),
+		Exercise: handler.NewExerciseHandler(services.Exercise, permChecker),
 
 		// ===== Review =====
 		Review: handler.NewReviewHandler(services.Review),

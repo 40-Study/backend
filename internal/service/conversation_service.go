@@ -609,7 +609,7 @@ func (s *ConversationService) toConversationResponse(conv *model.Conversation, u
 		}
 		if p.User.ID != uuid.Nil {
 			pr.UserName = p.User.UserName
-			pr.Email = p.User.Email
+
 			pr.AvatarURL = p.User.AvatarURL
 			pr.IsOnline = s.notifier.IsUserOnline(p.UserID)
 		}

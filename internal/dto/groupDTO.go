@@ -60,7 +60,6 @@ type GroupMemberResponse struct {
 	ID        uuid.UUID  `json:"id"`
 	UserID    uuid.UUID  `json:"user_id"`
 	UserName  string     `json:"user_name"`
-	Email     string     `json:"email"`
 	AvatarURL *string    `json:"avatar_url,omitempty"`
 	Role      string     `json:"role"`
 	Status    string     `json:"status"`
@@ -96,7 +95,6 @@ type JoinRequestResponse struct {
 	GroupID         uuid.UUID  `json:"group_id"`
 	UserID          uuid.UUID  `json:"user_id"`
 	UserName        string     `json:"user_name"`
-	Email           string     `json:"email"`
 	AvatarURL       *string    `json:"avatar_url,omitempty"`
 	Message         *string    `json:"message,omitempty"`
 	Status          string     `json:"status"`
