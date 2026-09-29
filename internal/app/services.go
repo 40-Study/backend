@@ -534,6 +534,10 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 			repos.Message,
 			repos.MessageReaction,
 			notifier,
+			// Lane G (QA 260927): giới hạn tạo cuộc trò chuyện trực tiếp mới theo quan hệ.
+			repos.Enrollment,
+			repos.ParentStudent,
+			repos.UserSystemRole,
 		),
 
 		// ===== Personal Event =====

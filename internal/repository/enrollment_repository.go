@@ -54,6 +54,11 @@ type EnrollmentRepositoryInterface interface {
 	// curriculum trong MOT lan doc, tranh N+1 (moi lesson mot query rieng).
 	GetLessonProgressMapByUserAndCourse(ctx context.Context, userID, courseID uuid.UUID) (map[uuid.UUID]*model.LessonProgress, error)
 	GetEnrolledUserIDsByCourseID(ctx context.Context, courseID uuid.UUID) ([]uuid.UUID, error)
+	// HasActiveEnrollmentWithInstructor (Lane G, guard direct-conversation, QA 260927): true nếu
+	// studentID đang ghi danh (chưa soft-delete) một khoá học mà instructorID là giảng viên phụ
+	// trách. Dùng để cho phép mở cuộc trò chuyện trực tiếp học viên<->giảng viên — không quan tâm
+	// khoá đã hết hạn (expires_at) hay chưa, quan hệ "đã từng học" vẫn đủ để nhắn tin hỏi bài cũ.
+	HasActiveEnrollmentWithInstructor(ctx context.Context, studentID, instructorID uuid.UUID) (bool, error)
 
 	// LessonProgress
 	// InsertLessonProgressIfAbsent (F2, review 260917): INSERT ... ON CONFLICT (user_id, lesson_id)
@@ -380,6 +385,21 @@ func (r *EnrollmentRepository) GetEnrolledUserIDsByCourseID(ctx context.Context,
 		Where("course_id = ?", courseID).
 		Pluck("user_id", &userIDs).Error
 	return userIDs, err
+}
+
+// HasActiveEnrollmentWithInstructor xem EnrollmentRepositoryInterface.
+func (r *EnrollmentRepository) HasActiveEnrollmentWithInstructor(ctx context.Context, studentID, instructorID uuid.UUID) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&model.Enrollment{}).
+		Joins("JOIN courses ON courses.id = enrollments.course_id").
+		Where("enrollments.user_id = ? AND courses.instructor_id = ? AND enrollments.deleted_at IS NULL AND courses.deleted_at IS NULL",
+			studentID, instructorID).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // GetByCourseID returns all enrollments for a course (for instructor view)

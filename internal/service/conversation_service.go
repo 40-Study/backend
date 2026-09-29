@@ -39,12 +39,21 @@ type ConversationServiceInterface interface {
 	GetUnreadCount(ctx context.Context, userID uuid.UUID) (*dto.UnreadCountResponse, error)
 }
 
+// ErrConversationNotAllowed (Lane G, QA 260927): trả về khi 2 người dùng KHÔNG có quan hệ hợp lệ
+// nào để mở cuộc trò chuyện trực tiếp MỚI — xem canCreateDirectConversation. Handler
+// (message_handler.go) nhận diện lỗi này qua errors.Is để trả 403 kèm code CONVERSATION_NOT_ALLOWED
+// thay vì 400 mặc định như các lỗi khác của CreateDirectConversation.
+var ErrConversationNotAllowed = errors.New("Bạn và người này chưa có quan hệ (học viên-giảng viên, phụ huynh-con đã xác nhận, hoặc bạn bè) nên chưa thể nhắn tin trực tiếp")
+
 type ConversationService struct {
-	convRepo        *repository.ConversationRepository
-	participantRepo *repository.ConversationParticipantRepository
-	messageRepo     *repository.MessageRepository
-	reactionRepo    *repository.MessageReactionRepository
-	notifier        *socket.Notifier
+	convRepo           *repository.ConversationRepository
+	participantRepo    *repository.ConversationParticipantRepository
+	messageRepo        *repository.MessageRepository
+	reactionRepo       *repository.MessageReactionRepository
+	notifier           *socket.Notifier
+	enrollmentRepo     repository.EnrollmentRepositoryInterface
+	parentStudentRepo  repository.ParentStudentRepositoryInterface
+	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface
 }
 
 func NewConversationService(
@@ -53,13 +62,19 @@ func NewConversationService(
 	messageRepo *repository.MessageRepository,
 	reactionRepo *repository.MessageReactionRepository,
 	notifier *socket.Notifier,
+	enrollmentRepo repository.EnrollmentRepositoryInterface,
+	parentStudentRepo repository.ParentStudentRepositoryInterface,
+	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface,
 ) *ConversationService {
 	return &ConversationService{
-		convRepo:        convRepo,
-		participantRepo: participantRepo,
-		messageRepo:     messageRepo,
-		reactionRepo:    reactionRepo,
-		notifier:        notifier,
+		convRepo:           convRepo,
+		participantRepo:    participantRepo,
+		messageRepo:        messageRepo,
+		reactionRepo:       reactionRepo,
+		notifier:           notifier,
+		enrollmentRepo:     enrollmentRepo,
+		parentStudentRepo:  parentStudentRepo,
+		userSystemRoleRepo: userSystemRoleRepo,
 	}
 }
 
@@ -99,6 +114,17 @@ func (s *ConversationService) CreateDirectConversation(ctx context.Context, user
 	if existing != nil {
 		resp := s.toConversationResponse(existing, userID)
 		return &resp, nil
+	}
+
+	// Lane G (QA 260927, giới hạn nhắn tin theo quan hệ): cuộc trò chuyện CHƯA tồn tại — chỉ cho
+	// TẠO MỚI khi 2 người có quan hệ hợp lệ. Cuộc trò chuyện đã có từ trước (nhánh existing != nil
+	// ở trên) không bị chặn bởi guard này — vẫn đọc/gửi tin như cũ dù quan hệ sau đó có thay đổi.
+	allowed, err := s.canCreateDirectConversation(ctx, userID, targetUserID)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrConversationNotAllowed
 	}
 
 	conv := &model.Conversation{
@@ -458,6 +484,94 @@ func (s *ConversationService) GetUnreadCount(ctx context.Context, userID uuid.UU
 // ============================================================================
 // HELPERS
 // ============================================================================
+
+// canCreateDirectConversation (Lane G, QA 260927) quyết định có cho phép TẠO MỚI một cuộc trò
+// chuyện trực tiếp giữa userA và userB hay không. Cho phép khi có ÍT NHẤT MỘT trong các quan hệ:
+//
+//   - (a) học viên<->giảng viên: một bên đang ghi danh (chưa soft-delete) một khoá mà bên kia là
+//     giảng viên phụ trách — thử cả 2 chiều, vì API không biết trước ai là học viên/giảng viên.
+//   - (b) phụ huynh<->con: parent_student_relations.status = active (đã xác nhận — pending/revoked
+//     không tính).
+//   - (c) bạn bè đã chấp nhận kết bạn: dự án CHƯA CÓ bảng dữ liệu nào cho "bạn bè" — trang
+//     web/src/app/(app)/friends/page.tsx là placeholder "Sắp có" web-only (QA-260927 S-P1-4), do
+//     lane khác sở hữu, backend không có router/model friendship nào (grep "friend" toàn backend/
+//     = 0 kết quả ngoài 1 trùng khớp tình cờ trong utils/slug.go). Không có cách nào kiểm tra quan
+//     hệ này nên nhánh này LUÔN trả false cho tới khi có bảng friendship thật — xem báo cáo bàn
+//     giao, đây là giới hạn đã biết, không phải thiếu sót của guard.
+//   - (d) một trong hai là SYSTEM_ADMIN.
+func (s *ConversationService) canCreateDirectConversation(ctx context.Context, userA, userB uuid.UUID) (bool, error) {
+	isAdminA, err := s.isSystemAdmin(ctx, userA)
+	if err != nil {
+		return false, err
+	}
+	if isAdminA {
+		return true, nil
+	}
+	isAdminB, err := s.isSystemAdmin(ctx, userB)
+	if err != nil {
+		return false, err
+	}
+	if isAdminB {
+		return true, nil
+	}
+
+	abIsStudentTeacher, err := s.enrollmentRepo.HasActiveEnrollmentWithInstructor(ctx, userA, userB)
+	if err != nil {
+		return false, err
+	}
+	if abIsStudentTeacher {
+		return true, nil
+	}
+	baIsStudentTeacher, err := s.enrollmentRepo.HasActiveEnrollmentWithInstructor(ctx, userB, userA)
+	if err != nil {
+		return false, err
+	}
+	if baIsStudentTeacher {
+		return true, nil
+	}
+
+	hasParentChild, err := s.hasConfirmedParentChildRelation(ctx, userA, userB)
+	if err != nil {
+		return false, err
+	}
+	if hasParentChild {
+		return true, nil
+	}
+
+	// (c) bạn bè — xem docstring ở trên: chưa có bảng dữ liệu, không thể kiểm tra thật.
+	return false, nil
+}
+
+// isSystemAdmin — true nếu userID đang giữ (active) system role có tên "SYSTEM_ADMIN".
+func (s *ConversationService) isSystemAdmin(ctx context.Context, userID uuid.UUID) (bool, error) {
+	roles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, model.UserSystemRoleStatusActive)
+	if err != nil {
+		return false, err
+	}
+	for _, r := range roles {
+		if r.SystemRole != nil && r.SystemRole.Name == "SYSTEM_ADMIN" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// hasConfirmedParentChildRelation — true nếu tồn tại một quan hệ phụ huynh-con ĐÃ XÁC NHẬN
+// (status = active) giữa userA và userB, bất kể ai là phụ huynh trong cặp truyền vào.
+func (s *ConversationService) hasConfirmedParentChildRelation(ctx context.Context, userA, userB uuid.UUID) (bool, error) {
+	rel, err := s.parentStudentRepo.FindByParentAndStudent(ctx, userA, userB)
+	if err != nil {
+		return false, err
+	}
+	if rel != nil && rel.Status == model.ParentStudentStatusActive {
+		return true, nil
+	}
+	rel, err = s.parentStudentRepo.FindByParentAndStudent(ctx, userB, userA)
+	if err != nil {
+		return false, err
+	}
+	return rel != nil && rel.Status == model.ParentStudentStatusActive, nil
+}
 
 func (s *ConversationService) requireParticipant(ctx context.Context, convID, userID uuid.UUID) error {
 	p, err := s.participantRepo.GetByConvAndUser(ctx, convID, userID)
