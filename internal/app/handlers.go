@@ -39,6 +39,7 @@ type Handlers struct {
 	Section       *handler.SectionHandler
 	Lesson        *handler.LessonHandler
 	LessonContent *handler.LessonContentHandler
+	LessonPreview *handler.LessonPreviewHandler
 	Enrollment    *handler.EnrollmentHandler
 
 	// ===== Upload & Video =====
@@ -163,6 +164,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		Section:       handler.NewSectionHandler(services.Section, permChecker),
 		Lesson:        handler.NewLessonHandler(services.Lesson, permChecker),
 		LessonContent: handler.NewLessonContentHandler(services.LessonContent, permChecker),
+		LessonPreview: handler.NewLessonPreviewHandler(services.LessonContent),
 		Enrollment:    handler.NewEnrollmentHandler(services.Enrollment, permChecker),
 
 		// ===== Upload & Video =====
