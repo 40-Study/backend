@@ -1384,14 +1384,16 @@ func (s *QuizService) GetAttemptByID(ctx context.Context, attemptID, userID uuid
 		return nil, ErrQuizAttemptNotFound
 	}
 	if attempt.UserID != userID {
-		// S2: bài làm của người khác. Quiz gắn cuộc thi giữ nguyên hợp đồng "Cuộc thi" §3.2: người
-		// ngoài nhận 403 QUIZ_LOCKED_BY_CONTEST (cùng mã mọi route quiz cuộc thi khác đã trả, nên
-		// không lộ thêm gì). Còn lại, "không tồn tại" và "không được xem" cho CÙNG một lỗi (404).
-		if err := s.checkContestAccess(ctx, attempt.QuizID, userID, isAdmin); err != nil {
-			return nil, err
-		}
+		// S2: bài làm của người khác. "Không tồn tại" và "không được xem" cho CÙNG một lỗi (404), kể cả
+		// quiz gắn cuộc thi: nếu trả 403 cho attempt thật mà 404 cho id bịa thì dò được attempt có
+		// tồn tại hay không. 403 QUIZ_LOCKED_BY_CONTEST chỉ còn cho CHÍNH CHỦ attempt (nhánh else).
 		if !s.canViewOthersAttempt(ctx, attempt.QuizID, attempt.UserID, userID, isAdmin) {
 			return nil, ErrQuizAttemptNotFound
+		}
+		// Người được phép xem (giảng viên chủ khoá, phụ huynh, admin) vẫn qua khoá cuộc thi để đáp án
+		// không lộ trước giờ mở.
+		if err := s.checkContestAccess(ctx, attempt.QuizID, userID, isAdmin); err != nil {
+			return nil, err
 		}
 	} else {
 		// Bài thi đã nộp sẽ có correct_answer_ids/explanation bên dưới — thí sinh chỉ được xem qua
@@ -1512,11 +1514,12 @@ func (s *QuizService) GetQuizStatistics(ctx context.Context, quizID, userID uuid
 func (s *QuizService) SaveAnswer(ctx context.Context, attemptID, userID uuid.UUID, isAdmin bool, req dto.SaveAnswerDTO) error {
 	// Route chỉ có attemptId, nên phải tra attempt để biết quiz nào mà hỏi khoá cuộc thi.
 	attempt, err := s.repo.GetAttemptByID(ctx, attemptID)
-	if err != nil {
-		return err
+	if err != nil || attempt == nil {
+		return ErrQuizAttemptNotFound
 	}
-	if attempt == nil {
-		return errors.New("attempt not found")
+	// S2/m4: lưu đáp án là việc của CHÍNH CHỦ attempt; attempt của người khác trả cùng lỗi với id bịa.
+	if attempt.UserID != userID {
+		return ErrQuizAttemptNotFound
 	}
 	if err := s.checkContestAccess(ctx, attempt.QuizID, userID, isAdmin); err != nil {
 		return err

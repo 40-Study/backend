@@ -171,3 +171,30 @@ func TestS2_SeedAll_NguyenTuKhiMotFileLoi(t *testing.T) {
 		t.Fatalf("quyền của file đầu vẫn còn (%d) dù seed lỗi ở file sau: SeedAll không nằm trong transaction", n)
 	}
 }
+
+// m1 (review S2): quyền cuộc thi TEACHER đã bị admin gỡ phải sống qua khởi động lại. Trước đây
+// migration riêng của Lane G chèn lại CONTESTS_MANAGE_OWN ở mỗi lần boot (RunPostMigrations chạy
+// TRƯỚC SeedAll), phá cam kết "quyền đã gỡ thì giữ nguyên". Boot ở đây = đúng thứ tự của app.go.
+func TestS2_Boot_QuyenCuocThiDaGoKhongBiChenLai(t *testing.T) {
+	db := pgtest.IsolatedSchema(t, database.Migrate)
+	s := NewSeeder(db)
+	boot := func() {
+		t.Helper()
+		if err := database.RunPostMigrations(db); err != nil {
+			t.Fatalf("RunPostMigrations: %v", err)
+		}
+		if err := s.SeedAll(s2DataDir); err != nil {
+			t.Fatalf("SeedAll: %v", err)
+		}
+	}
+	boot()
+	if !s2RolePerms(t, db, "TEACHER")["CONTESTS_MANAGE_OWN"] {
+		t.Fatal("sau lần boot đầu TEACHER phải có CONTESTS_MANAGE_OWN (roles.json)")
+	}
+
+	s2AdminRemove(t, db, "TEACHER", "CONTESTS_MANAGE_OWN")
+	boot()
+	if s2RolePerms(t, db, "TEACHER")["CONTESTS_MANAGE_OWN"] {
+		t.Error("CONTESTS_MANAGE_OWN admin đã gỡ khỏi TEACHER bị cấp lại sau khi boot")
+	}
+}

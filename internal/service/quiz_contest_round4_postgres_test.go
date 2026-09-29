@@ -99,8 +99,8 @@ func TestStandaloneQuiz_NguoiLaKhongLamBai_QuizVanGanDuoc(t *testing.T) {
 	if _, err := f.quiz.GetAttemptProgress(ctx, started.AttemptID, stranger, false); !errors.Is(err, ErrQuizAttemptNotFound) {
 		t.Errorf("GetAttemptProgress bởi người lạ: muốn ErrQuizAttemptNotFound, nhận %v", err)
 	}
-	if err := f.quiz.SaveAnswer(ctx, started.AttemptID, stranger, false, dto.SaveAnswerDTO{QuestionID: cq.SingleQ.String()}); !errors.Is(err, ErrQuizNotOwner) {
-		t.Errorf("SaveAnswer bởi người lạ: muốn ErrQuizNotOwner, nhận %v", err)
+	if err := f.quiz.SaveAnswer(ctx, started.AttemptID, stranger, false, dto.SaveAnswerDTO{QuestionID: cq.SingleQ.String()}); !errors.Is(err, ErrQuizAttemptNotFound) {
+		t.Errorf("SaveAnswer bởi người lạ: muốn ErrQuizAttemptNotFound, nhận %v", err)
 	}
 	aid := started.AttemptID.String()
 	if _, err := f.quiz.SubmitQuiz(ctx, cq.ID, owner, false, dto.SubmitQuizDTO{AttemptID: &aid,

@@ -109,16 +109,16 @@ func TestContestGate_DocQuiz_HocVienBiKhoa_ChuVaAdminDuoc(t *testing.T) {
 	}
 
 	// Các đường theo attempt_id (GET /quizzes/:id/attempts/:attemptId, /attempts/:id/progress,
-	// /attempts/:id/save-answer): học viên bị khoá TRƯỚC cả kiểm "attempt của ai".
-	if _, err := f.quiz.GetAttemptByID(ctx, attemptID, student, false); !errors.Is(err, ErrQuizLockedByContest) {
-		t.Errorf("GetAttemptByID với học viên: muốn ErrQuizLockedByContest, nhận %v", err)
+	// /attempts/:id/save-answer): học viên nhận 404 (không lộ attempt có tồn tại, S2/m4).
+	if _, err := f.quiz.GetAttemptByID(ctx, attemptID, student, false); !errors.Is(err, ErrQuizAttemptNotFound) {
+		t.Errorf("GetAttemptByID với học viên: muốn ErrQuizAttemptNotFound (S2/m4), nhận %v", err)
 	}
-	if _, err := f.quiz.GetAttemptProgress(ctx, attemptID, student, false); !errors.Is(err, ErrQuizLockedByContest) {
-		t.Errorf("GetAttemptProgress với học viên: muốn ErrQuizLockedByContest, nhận %v", err)
+	if _, err := f.quiz.GetAttemptProgress(ctx, attemptID, student, false); !errors.Is(err, ErrQuizAttemptNotFound) {
+		t.Errorf("GetAttemptProgress với học viên: muốn ErrQuizAttemptNotFound (S2/m4), nhận %v", err)
 	}
 	save := dto.SaveAnswerDTO{QuestionID: cq.SingleQ.String()}
-	if err := f.quiz.SaveAnswer(ctx, attemptID, student, false, save); !errors.Is(err, ErrQuizLockedByContest) {
-		t.Errorf("SaveAnswer với học viên: muốn ErrQuizLockedByContest, nhận %v", err)
+	if err := f.quiz.SaveAnswer(ctx, attemptID, student, false, save); !errors.Is(err, ErrQuizAttemptNotFound) {
+		t.Errorf("SaveAnswer với học viên: muốn ErrQuizAttemptNotFound, nhận %v", err)
 	}
 	if _, err := f.quiz.GetAttemptByID(ctx, attemptID, owner, false); err != nil {
 		t.Errorf("GetAttemptByID với người tạo: %v", err)

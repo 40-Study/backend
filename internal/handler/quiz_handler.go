@@ -922,6 +922,9 @@ func (h *QuizHandler) SaveAnswer(c *fiber.Ctx) error {
 		if resp, handled := respondQuizGateError(c, err); handled {
 			return resp
 		}
+		if errors.Is(err, service.ErrQuizAttemptNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "Attempt not found"})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to save answer",
 			"error":   err.Error(),

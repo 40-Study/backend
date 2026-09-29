@@ -137,6 +137,14 @@ func TestQuizRoutes_QuizGanCuocThi_HocVien403_Chu200_Sua409(t *testing.T) {
 	}
 	for _, r := range reads {
 		code, body := callAs(t, app, student, r.method, r.path, r.body)
+		// S2/m4: route theo attempt_id của NGƯỜI KHÁC trả 404 (giống id bịa) để không dò được attempt
+		// có tồn tại hay không; 403 QUIZ_LOCKED_BY_CONTEST chỉ còn cho các route theo quiz.
+		if strings.Contains(r.path, attemptID) {
+			if code != 404 {
+				t.Errorf("học viên %s %s: muốn 404, nhận %d %v", r.method, r.path, code, body)
+			}
+			continue
+		}
 		if code != 403 || body["code"] != "QUIZ_LOCKED_BY_CONTEST" {
 			t.Errorf("học viên %s %s: muốn 403 QUIZ_LOCKED_BY_CONTEST, nhận %d %v", r.method, r.path, code, body)
 		}
