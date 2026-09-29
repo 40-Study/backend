@@ -40,7 +40,7 @@ func TestS2_Assignment_CanManage(t *testing.T) {
 		}
 	}
 
-	svc := NewAssignmentService(repository.NewAssignmentRepository(f.db), repository.NewTestCaseRepository(f.db), nil)
+	svc := NewAssignmentService(repository.NewAssignmentRepository(f.db), repository.NewTestCaseRepository(f.db), nil, nil, nil)
 	check := func(name string, a model.Assignment, u model.User, isAdmin, want bool) {
 		t.Helper()
 		got, err := svc.CanManage(ctx, a.ID, u.ID, isAdmin)

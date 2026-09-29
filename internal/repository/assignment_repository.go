@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -16,13 +17,14 @@ type AssignmentRepositoryInterface interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Assignment, error)
 	GetByIDWithSession(ctx context.Context, id uuid.UUID) (*model.Assignment, error)
 	GetByIDWithTestCases(ctx context.Context, id uuid.UUID) (*model.Assignment, error)
-	GetBySession(ctx context.Context, sessionID uuid.UUID, page, pageSize int) ([]model.Assignment, int64, error)
+	GetBySession(ctx context.Context, sessionID uuid.UUID, page, pageSize int, publishedOnly bool) ([]model.Assignment, int64, error)
 	GetPublishedBySession(ctx context.Context, sessionID uuid.UUID) ([]model.Assignment, error)
 	Update(ctx context.Context, assignment *model.Assignment) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	Publish(ctx context.Context, id uuid.UUID) error
 	Unpublish(ctx context.Context, id uuid.UUID) error
 	CanManage(ctx context.Context, assignmentID, userID uuid.UUID) (bool, error)
+	CanManageTarget(ctx context.Context, sessionID, classID *uuid.UUID, userID uuid.UUID) (bool, error)
 }
 
 type AssignmentRepository struct {
@@ -79,11 +81,15 @@ func (r *AssignmentRepository) GetByIDWithTestCases(ctx context.Context, id uuid
 	return &assignment, nil
 }
 
-func (r *AssignmentRepository) GetBySession(ctx context.Context, sessionID uuid.UUID, page, pageSize int) ([]model.Assignment, int64, error) {
+// publishedOnly (S3): người không quản lý phiên chỉ được thấy assignment đã publish, bản nháp là của giảng viên.
+func (r *AssignmentRepository) GetBySession(ctx context.Context, sessionID uuid.UUID, page, pageSize int, publishedOnly bool) ([]model.Assignment, int64, error) {
 	var assignments []model.Assignment
 	var total int64
 
 	query := r.db.WithContext(ctx).Model(&model.Assignment{}).Where("session_id = ?", sessionID)
+	if publishedOnly {
+		query = query.Where("is_published = ?", true)
+	}
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -189,6 +195,21 @@ func (r *TestCaseRepository) DeleteByAssignment(ctx context.Context, assignmentI
 	return r.db.WithContext(ctx).Where("assignment_id = ?", assignmentID).Delete(&model.TestCase{}).Error
 }
 
+// assignmentOwnerJoinsAndCheck là phần SQL DÙNG CHUNG cho "ai là chủ": CanManage (assignment đã
+// tồn tại, nguồn = bảng assignments) và CanManageTarget (assignment CHƯA tồn tại, nguồn = cặp
+// session_id/class_id người gọi định gắn vào). Tách chung để hai đường không thể lệch định nghĩa
+// "chủ" — lệch chính là cách một người tạo được assignment mà sau đó không sửa được, hoặc ngược
+// lại tạo được assignment vào phiên của người khác.
+// Nguồn phải có hai cột a.session_id và a.class_id.
+const assignmentOwnerJoinsAndCheck = `
+    LEFT JOIN livestream_sessions ls ON ls.id = a.session_id AND ls.deleted_at IS NULL
+    LEFT JOIN classes c ON c.id = COALESCE(a.class_id, ls.class_id) AND c.deleted_at IS NULL
+    LEFT JOIN courses co ON co.id = COALESCE(c.course_id, ls.course_id) AND co.deleted_at IS NULL
+   WHERE %s
+     AND (ls.host_id = @uid
+          OR co.instructor_id = @uid
+          OR EXISTS (SELECT 1 FROM teacher_classes tc WHERE tc.class_id = c.id AND tc.teacher_id = @uid))`
+
 // CanManage (S2): true khi userID là "chủ" của assignment — dùng để quyết định ai được xem test
 // case ẩn và ai được sửa. Chủ = (a) host của phiên livestream gắn assignment, (b) giảng viên
 // được gán vào lớp (teacher_classes) của assignment/phiên, hoặc (c) giảng viên chủ khoá học của
@@ -198,17 +219,22 @@ func (r *TestCaseRepository) DeleteByAssignment(ctx context.Context, assignmentI
 // class_sessions còn assignment.session_id trỏ tới livestream_sessions.
 func (r *AssignmentRepository) CanManage(ctx context.Context, assignmentID, userID uuid.UUID) (bool, error) {
 	var ok bool
-	err := r.db.WithContext(ctx).Raw(`
-SELECT EXISTS (
-  SELECT 1
-    FROM assignments a
-    LEFT JOIN livestream_sessions ls ON ls.id = a.session_id AND ls.deleted_at IS NULL
-    LEFT JOIN classes c ON c.id = COALESCE(a.class_id, ls.class_id) AND c.deleted_at IS NULL
-    LEFT JOIN courses co ON co.id = COALESCE(c.course_id, ls.course_id) AND co.deleted_at IS NULL
-   WHERE a.id = @aid AND a.deleted_at IS NULL
-     AND (ls.host_id = @uid
-          OR co.instructor_id = @uid
-          OR EXISTS (SELECT 1 FROM teacher_classes tc WHERE tc.class_id = c.id AND tc.teacher_id = @uid))
-)`, sql.Named("aid", assignmentID), sql.Named("uid", userID)).Scan(&ok).Error
+	err := r.db.WithContext(ctx).Raw(
+		"SELECT EXISTS (SELECT 1 FROM assignments a"+
+			fmt.Sprintf(assignmentOwnerJoinsAndCheck, "a.id = @aid AND a.deleted_at IS NULL")+")",
+		sql.Named("aid", assignmentID), sql.Named("uid", userID)).Scan(&ok).Error
+	return ok, err
+}
+
+// CanManageTarget (S3): userID có phải chủ của MỘT nơi (phiên hoặc lớp) mà assignment mới định
+// gắn vào không. Chỉ truyền một trong hai; nil nghĩa là "không gắn vào đó". Create gọi hàm này
+// riêng cho từng nơi được nêu để không thể lách bằng cách trộn lớp của mình với phiên của người
+// khác (COALESCE ở trên ưu tiên lớp, nên truyền cả hai vào một lần kiểm sẽ chỉ xét lớp).
+func (r *AssignmentRepository) CanManageTarget(ctx context.Context, sessionID, classID *uuid.UUID, userID uuid.UUID) (bool, error) {
+	var ok bool
+	err := r.db.WithContext(ctx).Raw(
+		"SELECT EXISTS (SELECT 1 FROM (SELECT CAST(@sid AS uuid) AS session_id, CAST(@cid AS uuid) AS class_id) a"+
+			fmt.Sprintf(assignmentOwnerJoinsAndCheck, "(a.session_id IS NOT NULL OR a.class_id IS NOT NULL)")+")",
+		sql.Named("sid", sessionID), sql.Named("cid", classID), sql.Named("uid", userID)).Scan(&ok).Error
 	return ok, err
 }

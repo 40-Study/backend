@@ -411,7 +411,6 @@ func (s *ClassService) GetTeachersByClass(ctx context.Context, classID uuid.UUID
 			AssignedAt: utils.FormatTimestamp(tc.AssignedAt),
 			Teacher: &dto.TeacherResponseDTO{
 				ID:       tc.Teacher.ID,
-				Email:    tc.Teacher.Email,
 				UserName: tc.Teacher.UserName,
 				FullName: tc.Teacher.FullName,
 			},
