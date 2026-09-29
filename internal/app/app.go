@@ -197,6 +197,7 @@ func New() (*App, error) {
 		handlers.Section,
 		handlers.Lesson,
 		handlers.LessonContent,
+		handlers.LessonPreview,
 		handlers.Enrollment,
 
 		// ===== Upload & Video =====

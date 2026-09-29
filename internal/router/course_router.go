@@ -15,6 +15,7 @@ func SetupCourseRoutes(
 	sectionHandler *handler.SectionHandler,
 	lessonHandler *handler.LessonHandler,
 	lessonContentHandler *handler.LessonContentHandler,
+	lessonPreviewHandler *handler.LessonPreviewHandler,
 	classHandler *handler.ClassHandler,
 	classLessonContentHandler *handler.ClassLessonContentHandler,
 	attendanceHandler *handler.AttendanceHandler,
@@ -28,6 +29,10 @@ func SetupCourseRoutes(
 		// Public routes
 		courses.Get("/", courseHandler.GetAllCourses)
 		courses.Get("/slug/:slug", courseHandler.GetCourseBySlug)
+		// F1 (QA vòng 2 260929): công khai, KHÔNG qua `auth` — khách xem thử bài is_preview của
+		// khoá đã published. Điều kiện published/preview tự kiểm trong service, xem
+		// lesson_preview_handler.go.
+		courses.Get("/:slug/preview-lessons/:lesson_id/contents", lessonPreviewHandler.GetPreviewContents)
 		// "/mine" phải đăng ký TRƯỚC "/:id" — segment tĩnh cần thắng segment tham số cùng cấp
 		// (P1 QA 260927 teacher: xem GetMyCourses).
 		courses.Get("/mine", auth, courseHandler.GetMyCourses)

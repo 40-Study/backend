@@ -186,6 +186,57 @@ func (s *LessonContentService) GetContentsByLessonID(ctx context.Context, lesson
 	return result, nil
 }
 
+// ErrLessonNotPreview: bài không phải preview/miễn phí — route công khai từ chối, không phân
+// biệt với "khoá chưa published" (cả hai đều 404 ở handler) để tránh dò xem khoá nào tồn tại.
+var ErrLessonNotPreview = errors.New("lesson is not a free preview")
+
+// GetPreviewContentsByLessonID (F1, QA vòng 2 260929): route CÔNG KHAI cho khách CHƯA đăng nhập
+// xem thử bài preview — trước đây `GET /lessons/:lesson_id/contents` (GetContentsByLessonID) là
+// route DUY NHẤT, luôn nằm sau `auth` middleware, nên khách luôn nhận 401 kể cả với bài đã đánh
+// dấu `is_preview=true` trên khoá đã published. Hàm này KHÔNG nhận userID/isAdmin (khách không có)
+// nên không tái dùng gatherLessonLockInput/canViewCourse (cả hai đọc enrollment theo user) — tự
+// đối chiếu course qua slug trên URL (không suy ngược từ lessonID, tránh nhầm giữa 2 khoá có
+// lesson id trùng) và đòi hỏi CẢ HAI: course.Status == published VÀ lesson.IsPreview == true.
+// Thiếu 1 trong 2 -> ErrCourseHidden/ErrLessonNotPreview, handler ánh xạ cả hai sang 404 như nhau
+// để không lộ khoá nháp đang tồn tại nhưng bị từ chối vì lý do nào.
+func (s *LessonContentService) GetPreviewContentsByLessonID(ctx context.Context, courseSlug string, lessonID uuid.UUID) ([]dto.LessonContentResponseDTO, error) {
+	course, err := s.courseRepo.GetDetailBySlug(ctx, courseSlug)
+	if err != nil {
+		return nil, err
+	}
+	if course == nil || course.Status != model.CourseStatusPublished {
+		return nil, ErrCourseHidden
+	}
+
+	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	if lesson == nil || !lesson.IsPreview {
+		return nil, ErrLessonNotPreview
+	}
+
+	section, err := s.sectionRepo.GetByID(ctx, lesson.SectionID)
+	if err != nil {
+		return nil, err
+	}
+	if section == nil || section.CourseID != course.ID {
+		return nil, ErrLessonNotInCourse
+	}
+
+	contents, err := s.lessonRepo.GetContentsByLessonID(ctx, lessonID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]dto.LessonContentResponseDTO, len(contents))
+	for i, c := range contents {
+		result[i] = *s.toContentResponseDTO(&c)
+	}
+
+	return result, nil
+}
+
 func (s *LessonContentService) UpdateContent(ctx context.Context, contentID, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateLessonContentDTO) (*dto.LessonContentResponseDTO, error) {
 	content, err := s.lessonRepo.GetContentByID(ctx, contentID)
 	if err != nil {
