@@ -26,7 +26,7 @@ var (
 // hoàn tiền + báo cáo doanh thu nền tảng thật).
 type AdminOrderServiceInterface interface {
 	ListOrders(ctx context.Context, filter repository.AdminOrderFilter) (*dto.AdminOrderListResponse, error)
-	RefundOrder(ctx context.Context, actorID, orderID uuid.UUID, reason, refundMethod string) (*dto.RefundOrderResponse, error)
+	RefundOrder(ctx context.Context, actorID, orderID uuid.UUID, reason, refundMethod, transactionRef string) (*dto.RefundOrderResponse, error)
 	GetRevenueReport(ctx context.Context, from, to time.Time) (*dto.RevenueReportResponse, error)
 }
 
@@ -88,6 +88,7 @@ func (s *AdminOrderService) ListOrders(ctx context.Context, filter repository.Ad
 			CreatedAt:     order.CreatedAt,
 			PaidAt:        order.PaidAt,
 			Items:         itemBriefs,
+			RefundNeeded:  refundNeeded(s.orderRepo.TxDB(), &order),
 		})
 	}
 
@@ -117,7 +118,7 @@ func (s *AdminOrderService) ListOrders(ctx context.Context, filter repository.Ad
 // 2 request hoàn cùng lúc cho CÙNG đơn tuần tự hoá qua khoá hàng: request thắng commit trước,
 // request thua chờ khoá nhả rồi đọc lại status ĐÃ LÀ "refunded" -> ErrOrderAlreadyRefunded (409),
 // không có khoảng hở đọc-trước-ghi-sau giữa 2 transaction như UPDATE-có-điều-kiện-không-khoá.
-func (s *AdminOrderService) RefundOrder(ctx context.Context, actorID, orderID uuid.UUID, reason, refundMethod string) (*dto.RefundOrderResponse, error) {
+func (s *AdminOrderService) RefundOrder(ctx context.Context, actorID, orderID uuid.UUID, reason, refundMethod, transactionRef string) (*dto.RefundOrderResponse, error) {
 	var result *dto.RefundOrderResponse
 
 	err := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
@@ -145,7 +146,7 @@ func (s *AdminOrderService) RefundOrder(ctx context.Context, actorID, orderID uu
 		}
 
 		now := time.Now()
-		applied, err := txRepo.RefundOrder(order.ID, reason, refundMethod, now, actorID)
+		applied, err := txRepo.RefundOrder(order.ID, reason, refundMethod, transactionRef, now, actorID)
 		if err != nil {
 			return err
 		}
@@ -159,7 +160,7 @@ func (s *AdminOrderService) RefundOrder(ctx context.Context, actorID, orderID uu
 			OrderID:    order.ID,
 			FromStatus: "completed",
 			ToStatus:   "refunded",
-			Reason:     fmt.Sprintf("Refund by admin %s (method=%s): %s", actorID, refundMethod, reason),
+			Reason:     fmt.Sprintf("Refund by admin %s (method=%s, ref=%s): %s", actorID, refundMethod, transactionRef, reason),
 		}
 		if err := repository.NewOrderStatusHistoryRepository(txDB).Create(history); err != nil {
 			return err

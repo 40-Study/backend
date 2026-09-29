@@ -23,7 +23,7 @@ func (f *withdrawalFixture) orderService() *AdminOrderService {
 }
 
 func (f *withdrawalFixture) refund(orderID uuid.UUID) error {
-	_, err := f.orderService().RefundOrder(context.Background(), uuid.New(), orderID, "QA-hoàn tiền", "manual_bank_transfer")
+	_, err := f.orderService().RefundOrder(context.Background(), uuid.New(), orderID, "QA-hoàn tiền", "manual_bank_transfer", "FT-QA-1")
 	return err
 }
 

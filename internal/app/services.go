@@ -312,6 +312,34 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 	)
 	oauthSvc.SetParentInvitationService(parentInvitationSvc)
 
+	// ===== Order & Payment =====
+	// M3-09 (review vòng 3b, bổ sung vòng 4): NewOrderService/NewPaymentService không còn nhận
+	// couponRepo/enrollmentRepo/orderHistoryRepo (Order) hay courseRepo/orderItemRepo/couponRepo
+	// (Payment) — cả 2 hàm dựng bản tx-bound của các repo này tại chỗ (từ txRepo.TxDB()) mỗi khi
+	// cần. paymentEventRepo (Minor, review vòng 4b/5): xóa hẳn khỏi tham số NewPaymentService.
+	orderSvc := service.NewOrderService(
+		repos.Order,
+		repos.OrderItem,
+		repos.Course,
+		repos.CartItem,
+		repos.IdempotencyKey,
+		voucherSvc,
+	)
+	// Review #76 vòng 3: transactionService đi qua coinTransactionServiceOrNil để gRPC khởi tạo lỗi
+	// cho ra nil thật (không phải typed nil) — PaymentService coi nil là "chưa xác minh được" thay vì
+	// panic khi đối chiếu.
+	paymentSvc := service.NewPaymentService(
+		repos.Order,
+		repos.OrderStatusHistory,
+		repos.Enrollment,
+		voucherSvc,
+		coinTransactionServiceOrNil(transactionSvc),
+		repos.PlatformSetting,
+	)
+	// Review #76 vòng 3 MAJOR 3: huỷ đơn processing phải đối chiếu ngân hàng trước (OrderService
+	// không có gRPC, nên dùng PaymentService làm bộ đối chiếu).
+	orderSvc.SetPaymentReconciler(paymentSvc)
+
 	// ================= Return Services =================
 	s := &Services{
 		// ===== Auth =====
@@ -414,31 +442,9 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Analytics:  analyticsSvc,
 
 		// ===== Order & Payment =====
-		// M3-09 (review vòng 3b, bổ sung vòng 4): NewOrderService/NewPaymentService không còn
-		// nhận couponRepo/enrollmentRepo/orderHistoryRepo (Order) hay courseRepo/orderItemRepo/
-		// couponRepo (Payment) — cả 2 hàm dựng bản tx-bound của các repo này tại chỗ (từ
-		// txRepo.TxDB()) mỗi khi cần, không đọc field ambient nữa. Xem comment tại
-		// NewOrderService/NewPaymentService (order_service.go/payment_service.go).
-		Order: service.NewOrderService(
-			repos.Order,
-			repos.OrderItem,
-			repos.Course,
-			repos.CartItem,
-			repos.IdempotencyKey,
-			voucherSvc,
-		),
-		// paymentEventRepo (Minor, review vòng 4b/5): xóa hẳn khỏi tham số NewPaymentService —
-		// grep xác nhận 0 lần đọc, quyết định team-lead. repos.PaymentEvent vẫn tồn tại trong
-		// Repositories (có thể dùng cho tính năng khác sau này), chỉ không còn truyền vào
-		// PaymentService nữa.
-		Payment: service.NewPaymentService(
-			repos.Order,
-			repos.OrderStatusHistory,
-			repos.Enrollment,
-			voucherSvc,
-			transactionSvc,
-			repos.PlatformSetting,
-		),
+		// Dựng ở trên (khối "Order & Payment") để nối bộ đối chiếu thanh toán vào OrderService.
+		Order:   orderSvc,
+		Payment: paymentSvc,
 		TransactionService: transactionSvc,
 		Voucher:            voucherSvc,
 		AdminOrder: service.NewAdminOrderService(

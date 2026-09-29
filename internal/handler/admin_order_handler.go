@@ -2,12 +2,15 @@ package handler
 
 import (
 	"errors"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
@@ -40,8 +43,18 @@ func (h *AdminOrderHandler) ListOrders(c *fiber.Ctx) error {
 	page, _ := strconv.Atoi(c.Query("page", "1"))
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 
+	status := c.Query("status", "")
+	// B7 (QA vòng 2 N-06): status lạ (vd "bogus") trước đây lọt xuống WHERE và trả 200 rỗng, khiến
+	// client tưởng "không có đơn". Kiểm theo OrderStatuses (SSOT của CHECK constraint).
+	if status != "" && !slices.Contains(model.OrderStatuses, status) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Trạng thái đơn hàng không hợp lệ",
+			"error":   "invalid_status",
+		})
+	}
+
 	filter := repository.AdminOrderFilter{
-		Status: c.Query("status", ""),
+		Status: status,
 		Page:   page,
 		Limit:  limit,
 	}
@@ -136,6 +149,10 @@ func (h *AdminOrderHandler) RefundOrder(c *fiber.Ctx) error {
 			"error":   "invalid_request",
 		})
 	}
+	// Review #76 MINOR: trim TRƯỚC khi validate. Trước đây validate chạy trên chuỗi thô nên
+	// transaction_ref = "   " lọt qua `required` rồi bị lưu thành "" (trái quyết định #1: hoàn tiền
+	// phải kèm mã giao dịch).
+	req.TransactionRef = strings.TrimSpace(req.TransactionRef)
 	if errs := utils.ValidateStruct(req); len(errs) > 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Validation failed",
@@ -143,7 +160,7 @@ func (h *AdminOrderHandler) RefundOrder(c *fiber.Ctx) error {
 		})
 	}
 
-	resp, err := h.adminOrderService.RefundOrder(c.Context(), actorID, orderID, req.Reason, req.RefundMethod)
+	resp, err := h.adminOrderService.RefundOrder(c.Context(), actorID, orderID, req.Reason, req.RefundMethod, req.TransactionRef)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrOrderNotFound):
