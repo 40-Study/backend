@@ -191,6 +191,10 @@ func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
 		if lessonForbiddenResponse(c, err) {
 			return nil
 		}
+		// Review S1 M1: file phụ đề (subtitle_url) không do người gọi tải lên -> 403 UPLOAD_NOT_OWNED.
+		if writeUploadOwnership(c, err) {
+			return nil
+		}
 		// Phase 1 §4 (bổ sung từ review web #17): message CỐ ĐỊNH, không phải câu tự do —
 		// web so khớp đúng chuỗi này để hiện thông báo "bài chưa có video".
 		if err == service.ErrLessonHasNoVideo {

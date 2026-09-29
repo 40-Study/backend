@@ -421,7 +421,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		// locked/lock_reason/progress theo người đang xem (xem service.NewCourseService).
 		CourseService: service.NewCourseService(repos.Course, repos.Category, repos.Tag, repos.Enrollment),
 		Section:       service.NewSectionService(repos.Section, repos.Course, repos.Enrollment),
-		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, repos.Course, repos.Enrollment),
+		Lesson:        service.NewLessonService(repos.Lesson, repos.Section, repos.Course, repos.Enrollment).WithUploadOwnership(uploadSvc),
 		LessonContent: service.NewLessonContentService(repos.Lesson, repos.Section, repos.Course, repos.Enrollment, uploadSvc),
 		Enrollment:    service.NewEnrollmentService(repos.Enrollment, repos.Course, repos.Lesson, repos.VideoUpload),
 

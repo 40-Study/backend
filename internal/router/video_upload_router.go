@@ -62,8 +62,14 @@ func SetupVideoUploadRoutes(api fiber.Router, videoHandler *handler.VideoUploadH
 }
 
 func SetupHLSRoutes(api fiber.Router, hlsHandler *handler.HLSHandler) {
-	// HLS streaming routes (public access)
+	// HLS streaming routes. KHÔNG dùng middleware auth vì <video>/hls.js không gửi được header
+	// Authorization — thay vào đó MỌI route ở đây đòi URL KÝ ngắn hạn (query exp/uid/sig, xem
+	// package hlsauth) do API nội dung bài học cấp sau khi đã kiểm ghi danh/chủ khoá/admin, hoặc
+	// route xem thử công khai. Thiếu/sai/hết hạn chữ ký -> 403 (kiểm trong handler).
 	hlsGroup := api.Group("/hls")
+
+	// File phụ đề .vtt trong bucket video (private) — URL ký scope "obj", chỉ .vtt.
+	hlsGroup.Get("/object", hlsHandler.GetObject)
 
 	// Get video info and available qualities
 	hlsGroup.Get("/:upload_id/info", hlsHandler.GetVideoInfo)

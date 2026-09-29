@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"path"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/minio/minio-go/v7"
+	"study.com/v1/internal/hlsauth"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/storage"
 )
@@ -16,9 +19,24 @@ import (
 // Rate limit: 10 MB/s for video streaming
 const streamRateLimitBytesPerSec = 10 * 1024 * 1024
 
+// maxPlaylistBytes chặn đọc playlist quá lớn vào bộ nhớ — playlist HLS thật chỉ vài KB.
+const maxPlaylistBytes = 1 << 20
+
+// Toàn bộ /api/hls/* đòi URL KÝ (hlsauth). Handler KHÔNG bao giờ redirect sang URL presigned của
+// MinIO cho playlist: playlist con/segment trong đó là URI tương đối sẽ trỏ thẳng MinIO, thoát
+// khỏi kiểm chữ ký. Playlist luôn đi qua backend và được viết lại để mang chữ ký xuống từng URI.
 type HLSHandler struct {
-	minioClient *storage.MinioClient
+	minioClient hlsObjectStore
 	uploadRepo  repository.VideoUploadRepositoryInterface
+}
+
+// hlsObjectStore là phần của storage.MinioClient mà handler HLS dùng — tách interface để test
+// được đường 200 (playlist viết lại, segment) mà không cần MinIO thật.
+type hlsObjectStore interface {
+	GetDefaultBucket() string
+	StatObject(ctx context.Context, bucket, objectKey string) (minio.ObjectInfo, error)
+	GetObject(ctx context.Context, bucket, objectKey string) (io.ReadCloser, error)
+	ListObjectsWithPrefix(prefix string) ([]minio.ObjectInfo, error)
 }
 
 func buildHLSKeyCandidates(uploadID string, parts ...string) []string {
@@ -51,35 +69,108 @@ func NewHLSHandler(minioClient *storage.MinioClient, uploadRepo repository.Video
 	return &HLSHandler{minioClient: minioClient, uploadRepo: uploadRepo}
 }
 
-// getOriginalVideoURL returns relative API URL for streaming original video
-func (h *HLSHandler) getOriginalVideoURL(c *fiber.Ctx, uploadID string) (string, error) {
-	uid, err := uuid.Parse(uploadID)
-	if err != nil {
-		return "", err
-	}
-	// Verify upload exists
-	_, err = h.uploadRepo.GetUploadByID(c.Context(), uid)
-	if err != nil {
-		return "", err
-	}
-	// Return relative URL - will be served by StreamOriginalVideo endpoint
-	return "/api/hls/" + uploadID + "/video.mp4", nil
+// newHLSHandlerWithStore dùng cho test: thay kho MinIO bằng bản giả.
+func newHLSHandlerWithStore(store hlsObjectStore, uploadRepo repository.VideoUploadRepositoryInterface) *HLSHandler {
+	return &HLSHandler{minioClient: store, uploadRepo: uploadRepo}
 }
 
-// StreamOriginalVideo streams the original video file (fallback when HLS not ready)
+// authorize kiểm upload_id trên path + chữ ký trên query theo scope. Trả ok=true khi hợp lệ;
+// ngược lại response lỗi (400/403/500) ĐÃ được ghi và handler chỉ việc `return nil`.
+// (Không trả response dưới dạng error: c.JSON(...) trả nil khi ghi thành công nên sẽ thành "cho qua".)
+//
+// 403 (không phải 401): người gọi không có danh tính để xác thực, chỉ thiếu/sai/hết hạn quyền
+// truy cập URL này — web dựa vào 403 để xin URL ký mới đúng một lần.
+func (h *HLSHandler) authorize(c *fiber.Ctx, scope string) (uploadID uuid.UUID, tok hlsauth.Token, ok bool) {
+	uploadID, err := uuid.Parse(c.Params("upload_id"))
+	if err != nil {
+		_ = c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "upload_id không hợp lệ"})
+		return uuid.Nil, hlsauth.Token{}, false
+	}
+	tok, err = hlsauth.Verify(scope, uploadID, c.Query("exp"), c.Query("uid"), c.Query("sig"), time.Now())
+	switch err {
+	case nil:
+		return uploadID, tok, true
+	case hlsauth.ErrExpired:
+		_ = c.Status(http.StatusForbidden).JSON(fiber.Map{
+			"error": "Liên kết video đã hết hạn. Vui lòng tải lại trang để tiếp tục xem.",
+			"code":  "HLS_URL_EXPIRED",
+		})
+	case hlsauth.ErrInvalid:
+		_ = c.Status(http.StatusForbidden).JSON(fiber.Map{
+			"error": "Bạn không có quyền xem video này.",
+			"code":  "HLS_URL_INVALID",
+		})
+	default:
+		// Chưa cấu hình secret: InitResources đã chặn khởi động nên đây là lỗi hiếm; báo lỗi rõ.
+		_ = c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Dịch vụ video chưa được cấu hình"})
+	}
+	return uuid.Nil, hlsauth.Token{}, false
+}
+
+// maxSubtitleBytes chặn đọc file phụ đề quá lớn vào bộ nhớ — file .vtt thật chỉ vài chục KB.
+const maxSubtitleBytes = 5 << 20
+
+// GetObject phục vụ file phụ đề .vtt nằm trong bucket video (private) qua URL ký scope "obj".
+// Chữ ký phủ cả khoá object, và khoá phải qua hlsauth.AllowedObjectKey (chỉ .vtt) nên URL này không
+// bao giờ đọc được video gốc / segment HLS dù có chữ ký hợp lệ của tài nguyên khác.
+// Route: GET /hls/object?key=...&exp=..&uid=..&sig=..
+func (h *HLSHandler) GetObject(c *fiber.Ctx) error {
+	key := c.Query("key")
+	if !hlsauth.AllowedObjectKey(key) {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{
+			"error": "Bạn không có quyền xem tệp này.",
+			"code":  "HLS_URL_INVALID",
+		})
+	}
+	if _, err := hlsauth.VerifyResource(hlsauth.ScopeObject, key, c.Query("exp"), c.Query("uid"), c.Query("sig"), time.Now()); err != nil {
+		switch err {
+		case hlsauth.ErrExpired:
+			return c.Status(http.StatusForbidden).JSON(fiber.Map{
+				"error": "Liên kết đã hết hạn. Vui lòng tải lại trang.",
+				"code":  "HLS_URL_EXPIRED",
+			})
+		case hlsauth.ErrInvalid:
+			return c.Status(http.StatusForbidden).JSON(fiber.Map{
+				"error": "Bạn không có quyền xem tệp này.",
+				"code":  "HLS_URL_INVALID",
+			})
+		default:
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Dịch vụ video chưa được cấu hình"})
+		}
+	}
+
+	bucket := h.minioClient.GetDefaultBucket()
+	info, err := h.minioClient.StatObject(c.Context(), bucket, key)
+	if err != nil {
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "Không tìm thấy tệp"})
+	}
+	if info.Size > maxSubtitleBytes {
+		return c.Status(http.StatusRequestEntityTooLarge).JSON(fiber.Map{"error": "Tệp quá lớn"})
+	}
+	reader, err := h.minioClient.GetObject(c.Context(), bucket, key)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Không đọc được tệp"})
+	}
+	defer reader.Close()
+	body, err := io.ReadAll(io.LimitReader(reader, maxSubtitleBytes+1))
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Không đọc được tệp"})
+	}
+	c.Set("Content-Type", "text/vtt; charset=utf-8")
+	c.Set("Cache-Control", "private, max-age=3600")
+	return c.Status(http.StatusOK).Send(body)
+}
+
+// StreamOriginalVideo streams the original video file. CHỈ phục vụ URL scope "src" — loại URL
+// mà API chỉ cấp cho chủ khoá học / admin; URL HLS của học viên không mở được file gốc.
 // Route: GET /hls/:upload_id/video.mp4
 func (h *HLSHandler) StreamOriginalVideo(c *fiber.Ctx) error {
-	uploadID := c.Params("upload_id")
-	if uploadID == "" {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "upload_id is required"})
+	uploadID, _, ok := h.authorize(c, hlsauth.ScopeOriginal)
+	if !ok {
+		return nil
 	}
 
-	uid, err := uuid.Parse(uploadID)
-	if err != nil {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "invalid upload_id"})
-	}
-
-	upload, err := h.uploadRepo.GetUploadByID(c.Context(), uid)
+	upload, err := h.uploadRepo.GetUploadByID(c.Context(), uploadID)
 	if err != nil || upload == nil {
 		return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "Video not found"})
 	}
@@ -94,44 +185,55 @@ func (h *HLSHandler) StreamOriginalVideo(c *fiber.Ctx) error {
 	// Set headers for video streaming
 	c.Set("Content-Type", "video/mp4")
 	c.Set("Accept-Ranges", "bytes")
-	c.Set("Cache-Control", "public, max-age=86400")
+	// private: đây là nội dung có kiểm quyền, không để proxy/CDN dùng chung lưu.
+	c.Set("Cache-Control", "private, max-age=3600")
 
 	// Stream with rate limiting
 	return streamWithRateLimit(c, reader, streamRateLimitBytesPerSec)
 }
 
+// servePlaylist đọc playlist từ MinIO, gắn chữ ký vào mọi URI con rồi trả về.
+func (h *HLSHandler) servePlaylist(c *fiber.Ctx, tok hlsauth.Token, objectKey string) error {
+	bucket := h.minioClient.GetDefaultBucket()
+	reader, err := h.minioClient.GetObject(c.Context(), bucket, objectKey)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to get playlist"})
+	}
+	defer reader.Close()
+
+	body, err := io.ReadAll(io.LimitReader(reader, maxPlaylistBytes))
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to read playlist"})
+	}
+
+	c.Set("Content-Type", "application/vnd.apple.mpegurl")
+	// no-store: playlist mang chữ ký hết hạn, không được cache dùng lại sau khi hết hạn.
+	c.Set("Cache-Control", "private, no-store")
+	return c.Send(hlsauth.RewritePlaylist(body, tok))
+}
+
 // GetMasterPlaylist phục vụ master.m3u8
 // Route: GET /hls/:upload_id/master.m3u8
 // Object key: videos/{upload_id}/master.m3u8
-// Nếu HLS chưa sẵn sàng, trả về thông tin fallback để client dùng video gốc
+// HLS chưa sẵn sàng -> 202 kèm hls_ready=false. KHÔNG trả URL video gốc: học viên/khách không
+// được xem file gốc (chủ khoá/admin nhận URL gốc riêng từ API nội dung bài học).
 func (h *HLSHandler) GetMasterPlaylist(c *fiber.Ctx) error {
-	uploadID := c.Params("upload_id")
-	if uploadID == "" {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "upload_id is required"})
+	uploadID, tok, ok := h.authorize(c, hlsauth.ScopeStream)
+	if !ok {
+		return nil
 	}
 
-	bucket := h.minioClient.GetDefaultBucket()
-	objectKey, err := h.resolveExistingHLSObjectKey(c, buildHLSKeyCandidates(uploadID, "master.m3u8"))
+	objectKey, err := h.resolveExistingHLSObjectKey(c, buildHLSKeyCandidates(uploadID.String(), "master.m3u8"))
 	if err != nil {
-		// HLS chưa sẵn sàng - trả về fallback URL của video gốc
-		originalURL, fallbackErr := h.getOriginalVideoURL(c, uploadID)
-		if fallbackErr != nil {
-			return c.Status(http.StatusNotFound).JSON(fiber.Map{
-				"error": "Video not found",
-			})
+		if up, upErr := h.uploadRepo.GetUploadByID(c.Context(), uploadID); upErr != nil || up == nil {
+			return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "Video not found"})
 		}
 		return c.Status(http.StatusAccepted).JSON(fiber.Map{
-			"hls_ready":    false,
-			"fallback_url": originalURL,
-			"message":      "HLS đang xử lý, sử dụng video gốc tạm thời",
+			"hls_ready": false,
+			"message":   "Video đang được xử lý, vui lòng quay lại sau ít phút",
 		})
 	}
-
-	url, err := h.minioClient.GetPresignedDownloadURL(c.Context(), bucket, objectKey, time.Hour)
-	if err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate HLS URL"})
-	}
-	return c.Redirect(url, http.StatusFound)
+	return h.servePlaylist(c, tok, objectKey)
 }
 
 // GetPlaylist phục vụ playlist của từng quality
@@ -139,10 +241,13 @@ func (h *HLSHandler) GetMasterPlaylist(c *fiber.Ctx) error {
 // :quality là "v0" (480p), "v1" (720p), "v2" (1080p)
 // Object key: videos/{upload_id}/{quality}/index.m3u8
 func (h *HLSHandler) GetPlaylist(c *fiber.Ctx) error {
-	uploadID := c.Params("upload_id")
+	uploadID, tok, ok := h.authorize(c, hlsauth.ScopeStream)
+	if !ok {
+		return nil
+	}
 	quality := c.Params("quality") // "v0", "v1", "v2"
 
-	if uploadID == "" || quality == "" {
+	if quality == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "upload_id and quality are required"})
 	}
 
@@ -151,19 +256,13 @@ func (h *HLSHandler) GetPlaylist(c *fiber.Ctx) error {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "quality must be v0, v1, or v2"})
 	}
 
-	bucket := h.minioClient.GetDefaultBucket()
-	objectKey, err := h.resolveExistingHLSObjectKey(c, buildHLSKeyCandidates(uploadID, quality, "index.m3u8"))
+	objectKey, err := h.resolveExistingHLSObjectKey(c, buildHLSKeyCandidates(uploadID.String(), quality, "index.m3u8"))
 	if err != nil {
 		return c.Status(http.StatusNotFound).JSON(fiber.Map{
 			"error": "Playlist not found. Video may still be processing.",
 		})
 	}
-
-	url, err := h.minioClient.GetPresignedDownloadURL(c.Context(), bucket, objectKey, time.Hour)
-	if err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate playlist URL"})
-	}
-	return c.Redirect(url, http.StatusFound)
+	return h.servePlaylist(c, tok, objectKey)
 }
 
 // GetSegment phục vụ từng .ts segment với rate limiting
@@ -171,11 +270,14 @@ func (h *HLSHandler) GetPlaylist(c *fiber.Ctx) error {
 // :quality là "v0"/"v1"/"v2", :segment là "seg_00001.ts"
 // Object key: videos/{upload_id}/{quality}/{segment}
 func (h *HLSHandler) GetSegment(c *fiber.Ctx) error {
-	uploadID := c.Params("upload_id")
+	uploadID, _, ok := h.authorize(c, hlsauth.ScopeStream)
+	if !ok {
+		return nil
+	}
 	quality := c.Params("quality")
 	segment := c.Params("segment")
 
-	if uploadID == "" || quality == "" || segment == "" {
+	if quality == "" || segment == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "upload_id, quality and segment are required"})
 	}
 
@@ -194,7 +296,7 @@ func (h *HLSHandler) GetSegment(c *fiber.Ctx) error {
 	}
 
 	bucket := h.minioClient.GetDefaultBucket()
-	objectKey, err := h.resolveExistingHLSObjectKey(c, buildHLSKeyCandidates(uploadID, quality, segment))
+	objectKey, err := h.resolveExistingHLSObjectKey(c, buildHLSKeyCandidates(uploadID.String(), quality, segment))
 	if err != nil {
 		return c.Status(http.StatusNotFound).JSON(fiber.Map{
 			"error": "Segment not found. Video may still be processing.",
@@ -209,7 +311,8 @@ func (h *HLSHandler) GetSegment(c *fiber.Ctx) error {
 	defer reader.Close()
 
 	c.Set("Content-Type", "video/mp2t")
-	c.Set("Cache-Control", "public, max-age=31536000") // Cache 1 year
+	// private: segment có kiểm quyền — không cho cache dùng chung (CDN/proxy) lưu 1 năm như trước.
+	c.Set("Cache-Control", "private, max-age=3600")
 
 	// Rate-limited streaming
 	return streamWithRateLimit(c, reader, streamRateLimitBytesPerSec)
@@ -247,18 +350,19 @@ func streamWithRateLimit(c *fiber.Ctx, reader io.Reader, bytesPerSec int) error 
 	return nil
 }
 
-// GetVideoInfo trả về thông tin về các HLS stream có sẵn cho video
-// Route: GET /hls/:upload_id/info
-// Nếu HLS chưa sẵn sàng, trả về fallback_url để client dùng video gốc
+// GetVideoInfo trả về trạng thái HLS của video (đã sẵn sàng hay đang xử lý).
+// Route: GET /hls/:upload_id/info — đòi URL ký scope "hls" như các route còn lại.
+// KHÔNG trả URL video gốc (fallback_url đã bị bỏ): trước đây field này lộ file gốc cho bất kỳ ai.
 func (h *HLSHandler) GetVideoInfo(c *fiber.Ctx) error {
-	uploadID := c.Params("upload_id")
-	if uploadID == "" {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "upload_id is required"})
+	uploadID, tok, ok := h.authorize(c, hlsauth.ScopeStream)
+	if !ok {
+		return nil
 	}
+	id := uploadID.String()
 
 	prefixes := []string{
-		path.Join("videos", uploadID) + "/",
-		path.Join(uploadID) + "/",
+		path.Join("videos", id) + "/",
+		id + "/",
 	}
 
 	allObjects := make([]struct{ Key string }, 0)
@@ -281,6 +385,7 @@ func (h *HLSHandler) GetVideoInfo(c *fiber.Ctx) error {
 	// v0=480p, v1=720p, v2=1080p
 	qualityMap := map[string]string{"v0": "480p", "v1": "720p", "v2": "1080p"}
 	availableQualities := []fiber.Map{}
+	q := tok.Query()
 
 	for _, obj := range allObjects {
 		if path.Base(obj.Key) == "master.m3u8" {
@@ -291,33 +396,31 @@ func (h *HLSHandler) GetVideoInfo(c *fiber.Ctx) error {
 				availableQualities = append(availableQualities, fiber.Map{
 					"id":       dir,
 					"label":    label,
-					"playlist": "/api/hls/" + uploadID + "/" + dir + "/index.m3u8",
+					"playlist": "/api/hls/" + id + "/" + dir + "/index.m3u8?" + q,
 				})
 			}
 		}
 	}
 
-	// HLS chưa sẵn sàng - trả về fallback URL của video gốc
+	// HLS chưa sẵn sàng
 	if !hasMaster {
-		originalURL, fallbackErr := h.getOriginalVideoURL(c, uploadID)
-		if fallbackErr != nil {
+		if up, upErr := h.uploadRepo.GetUploadByID(c.Context(), uploadID); upErr != nil || up == nil {
 			return c.Status(http.StatusNotFound).JSON(fiber.Map{
 				"error": "Video not found",
 			})
 		}
 		return c.JSON(fiber.Map{
-			"upload_id":    uploadID,
-			"hls_ready":    false,
-			"fallback_url": originalURL,
-			"status":       "processing",
-			"message":      "HLS đang xử lý, sử dụng video gốc tạm thời",
+			"upload_id": id,
+			"hls_ready": false,
+			"status":    "processing",
+			"message":   "Video đang được xử lý, vui lòng quay lại sau ít phút",
 		})
 	}
 
 	return c.JSON(fiber.Map{
-		"upload_id":  uploadID,
+		"upload_id":  id,
 		"hls_ready":  true,
-		"master_url": "/api/hls/" + uploadID + "/master.m3u8",
+		"master_url": "/api/hls/" + id + "/master.m3u8?" + q,
 		"qualities":  availableQualities,
 		"status":     "ready",
 	})

@@ -10,6 +10,7 @@ import (
 	"study.com/v1/internal/cache"
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/database"
+	"study.com/v1/internal/hlsauth"
 	asynq_queue "study.com/v1/internal/queue/asynq"
 	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/storage"
@@ -31,6 +32,19 @@ func InitResources() (*Resources, error) {
 		log.Fatalf("Failed to load config: %v", err)
 		return nil, err
 	}
+
+	// Fail-fast: thiếu/yếu HLS_SIGNING_SECRET thì KHÔNG khởi động — không có chế độ "không ký".
+	if err := hlsauth.ValidateSecret(cfg.HLSSigningSecret, ".env"); err != nil {
+		log.Fatalf("Invalid config: %v", err)
+		return nil, err
+	}
+	if err := hlsauth.Configure(cfg.HLSSigningSecret); err != nil {
+		log.Fatalf("Invalid config: %v", err)
+		return nil, err
+	}
+	// Bucket video là private: URL phụ đề .vtt lưu trong DB (URL MinIO trực tiếp) chỉ hợp lệ khi trỏ
+	// vào bucket này, và được ký lại thành /api/hls/object khi trả cho người xem.
+	hlsauth.ConfigureObjectBucket(cfg.MinIOBucketName)
 
 	db, err := database.Connect(cfg)
 	if err != nil {
@@ -55,11 +69,15 @@ func InitResources() (*Resources, error) {
 
 	minioWrapper, err := storage.NewMinioClient(cfg)
 	if err != nil {
-		log.Printf("Warning: Failed to create minio wrapper client: %v", err)
-	} else if minioWrapper != nil {
-		if err := minioWrapper.EnsureBuckets(context.Background()); err != nil {
-			log.Printf("Warning: Failed to ensure MinIO buckets: %v", err)
-		}
+		// Không có client thì không đặt được bucket video private -> không được chạy tiếp.
+		log.Fatalf("Failed to create minio wrapper client: %v", err)
+		return nil, err
+	}
+	// Review S1 F1: bucket video PHẢI private trước khi phục vụ request. Lỗi (gồm cấu hình trùng bucket
+	// ảnh, gỡ policy thất bại, MinIO không với tới) là lỗi khởi động, không phải warning.
+	if err := ensureVideoBucketsPrivate(context.Background(), minioWrapper); err != nil {
+		log.Fatalf("Invalid MinIO setup: %v", err)
+		return nil, err
 	}
 
 	rabbitMQ, err := rabbitmq_queue.NewRabbitMQService(cfg)

@@ -51,6 +51,14 @@ type VideoUploadServiceInterface interface {
 	// upload do CHINH ownerUserID so huu; nguoc lai bo qua (khong loi) de khong lam hong luong
 	// xoa content. Xem chu thich tai implementation.
 	DeleteUpload(ctx context.Context, uploadID, ownerUserID uuid.UUID) error // Xóa upload và tất cả files liên quan (original, HLS, thumbnail) — chỉ khi ownerUserID sở hữu upload đó
+
+	// RequireUploadUsableBy: upload phải tồn tại (ErrUploadNotFound) và do chính actor tải lên hoặc
+	// actor là admin (ErrUploadNotOwned). Dùng khi gắn một upload_id vào nội dung bài học.
+	RequireUploadUsableBy(ctx context.Context, uploadID, actorUserID uuid.UUID, isAdmin bool) error
+
+	// RequireObjectUsableBy: như RequireUploadUsableBy nhưng tra theo object_key (file phụ đề .vtt
+	// cũng đi qua luồng upload nên có bản ghi upload với chủ sở hữu).
+	RequireObjectUsableBy(ctx context.Context, objectKey string, actorUserID uuid.UUID, isAdmin bool) error
 }
 
 type VideoUploadService struct {
@@ -79,6 +87,51 @@ func NewVideoUploadService(
 
 // ErrUploadNotOwned: nguoi goi khong phai chu cua upload_id dang thao tac. Handler anh xa sang 403.
 var ErrUploadNotOwned = errors.New("forbidden: not the owner of this upload")
+
+// ErrUploadNotFound: upload_id khong ton tai. Handler noi dung bai hoc anh xa sang 404.
+var ErrUploadNotFound = errors.New("upload not found")
+
+// RequireUploadUsableBy: truoc day CreateContent/UpdateContent nhan bat ky video_url nao — giang vien B
+// gan upload_id cua giang vien A vao bai cua minh roi nhan URL ky xem/tai duoc video cua A (URL ky
+// duoc cap theo upload_id trong video_url, khong theo chu upload). Nay upload phai do chinh actor tai
+// len, hoac actor la admin.
+func (s *VideoUploadService) RequireUploadUsableBy(ctx context.Context, uploadID, actorUserID uuid.UUID, isAdmin bool) error {
+	upload, err := s.uploadRepo.GetUploadByID(ctx, uploadID)
+	if err != nil {
+		if errors.Is(err, repository.ErrVideoUploadNotFound) {
+			return ErrUploadNotFound
+		}
+		return fmt.Errorf("failed to find upload: %w", err)
+	}
+	if upload == nil {
+		return ErrUploadNotFound
+	}
+	if !isAdmin && upload.UserID != actorUserID {
+		return ErrUploadNotOwned
+	}
+	return nil
+}
+
+// RequireObjectUsableBy (review S1 M1): subtitle_url do giang vien nhap tu do, ma backend ky moi .vtt
+// trong bucket video — GV B tro subtitle_url sang file .vtt cua GV A la nhan URL ky doc duoc phu de cua A.
+// File .vtt di qua cung luong upload nen co ban ghi video_uploads (object_key + user_id): chi cho gan khi
+// chinh actor da tai file do len, hoac actor la admin.
+func (s *VideoUploadService) RequireObjectUsableBy(ctx context.Context, objectKey string, actorUserID uuid.UUID, isAdmin bool) error {
+	upload, err := s.uploadRepo.GetUploadByObjectKey(ctx, objectKey)
+	if err != nil {
+		if errors.Is(err, repository.ErrVideoUploadNotFound) {
+			return ErrUploadNotFound
+		}
+		return fmt.Errorf("failed to find upload: %w", err)
+	}
+	if upload == nil {
+		return ErrUploadNotFound
+	}
+	if !isAdmin && upload.UserID != actorUserID {
+		return ErrUploadNotOwned
+	}
+	return nil
+}
 
 // getOwnedUpload doc upload theo ID va CHI tra ve khi nguoi goi la chu so huu.
 //

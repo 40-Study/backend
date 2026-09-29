@@ -16,6 +16,9 @@ type VideoUploadRepositoryInterface interface {
 	// CRUD cho Video Upload
 	CreateUpload(ctx context.Context, upload *model.VideoUpload) error
 	GetUploadByID(ctx context.Context, uploadID uuid.UUID) (*model.VideoUpload, error)
+	// GetUploadByObjectKey tìm upload theo object_key (vd file phụ đề .vtt đi qua luồng upload có sẵn);
+	// không có thì trả ErrVideoUploadNotFound.
+	GetUploadByObjectKey(ctx context.Context, objectKey string) (*model.VideoUpload, error)
 	GetUploadByUploadKey(ctx context.Context, uploadKey string) (*model.VideoUpload, error)
 	FindUploadsByFilename(ctx context.Context, userID uuid.UUID, filename string, fileSize int64) ([]*model.VideoUpload, error)
 	UpdateUpload(ctx context.Context, upload *model.VideoUpload) error
@@ -62,6 +65,10 @@ func (r *VideoUploadRepository) CreateUpload(ctx context.Context, upload *model.
 	return nil
 }
 
+// ErrVideoUploadNotFound: upload_id không có trong DB. Bọc bằng %w để service phân biệt "không tồn
+// tại" (404) với lỗi hạ tầng (500); nội dung thông báo giữ nguyên "video upload not found: <id>".
+var ErrVideoUploadNotFound = errors.New("video upload not found")
+
 // GetUploadByID retrieves upload by UUID
 func (r *VideoUploadRepository) GetUploadByID(ctx context.Context, uploadID uuid.UUID) (*model.VideoUpload, error) {
 	var upload model.VideoUpload
@@ -69,7 +76,7 @@ func (r *VideoUploadRepository) GetUploadByID(ctx context.Context, uploadID uuid
 	result := r.db.WithContext(ctx).Where("id = ?", uploadID).First(&upload)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("video upload not found: %s", uploadID.String())
+			return nil, fmt.Errorf("%w: %s", ErrVideoUploadNotFound, uploadID.String())
 		}
 		return nil, fmt.Errorf("failed to get video upload: %w", result.Error)
 	}
@@ -87,6 +94,21 @@ func (r *VideoUploadRepository) GetUploadByUploadKey(ctx context.Context, upload
 			return nil, fmt.Errorf("video upload not found for key: %s", uploadKey)
 		}
 		return nil, fmt.Errorf("failed to get video upload by key: %w", result.Error)
+	}
+
+	return &upload, nil
+}
+
+// GetUploadByObjectKey retrieves upload by its MinIO object key.
+func (r *VideoUploadRepository) GetUploadByObjectKey(ctx context.Context, objectKey string) (*model.VideoUpload, error) {
+	var upload model.VideoUpload
+
+	result := r.db.WithContext(ctx).Where("object_key = ?", objectKey).Order("created_at ASC").First(&upload)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: object_key=%s", ErrVideoUploadNotFound, objectKey)
+		}
+		return nil, fmt.Errorf("failed to get video upload by object key: %w", result.Error)
 	}
 
 	return &upload, nil
