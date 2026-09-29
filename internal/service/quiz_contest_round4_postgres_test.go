@@ -93,11 +93,11 @@ func TestStandaloneQuiz_NguoiLaKhongLamBai_QuizVanGanDuoc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("người tạo phải start được: %v", err)
 	}
-	if _, err := f.quiz.GetAttemptByID(ctx, started.AttemptID, stranger, false); !errors.Is(err, ErrQuizNotOwner) {
-		t.Errorf("GetAttemptByID bởi người lạ: muốn ErrQuizNotOwner, nhận %v", err)
+	if _, err := f.quiz.GetAttemptByID(ctx, started.AttemptID, stranger, false); !errors.Is(err, ErrQuizAttemptNotFound) {
+		t.Errorf("GetAttemptByID bởi người lạ: muốn ErrQuizAttemptNotFound, nhận %v", err)
 	}
-	if _, err := f.quiz.GetAttemptProgress(ctx, started.AttemptID, stranger, false); !errors.Is(err, ErrQuizNotOwner) {
-		t.Errorf("GetAttemptProgress bởi người lạ: muốn ErrQuizNotOwner, nhận %v", err)
+	if _, err := f.quiz.GetAttemptProgress(ctx, started.AttemptID, stranger, false); !errors.Is(err, ErrQuizAttemptNotFound) {
+		t.Errorf("GetAttemptProgress bởi người lạ: muốn ErrQuizAttemptNotFound, nhận %v", err)
 	}
 	if err := f.quiz.SaveAnswer(ctx, started.AttemptID, stranger, false, dto.SaveAnswerDTO{QuestionID: cq.SingleQ.String()}); !errors.Is(err, ErrQuizNotOwner) {
 		t.Errorf("SaveAnswer bởi người lạ: muốn ErrQuizNotOwner, nhận %v", err)

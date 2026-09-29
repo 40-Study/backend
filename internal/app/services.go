@@ -543,6 +543,8 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		// ===== Personal Event =====
 		PersonalEvent: service.NewPersonalEventService(repos.PersonalEvent, resources.Queue),
 	}
+	// Lane S2: moi vao nhom dung chung guard nhan tin cua Conversation (Lane G).
+	s.Group.SetInviteGuard(s.Conversation)
 	wireContest(s, repos)
 	return s
 }

@@ -25,7 +25,7 @@ type GroupServiceInterface interface {
 	LeaveGroup(ctx context.Context, userID, groupID uuid.UUID) error
 
 	ListMembers(ctx context.Context, groupID uuid.UUID, page, pageSize int) (*dto.GroupMemberListResponse, error)
-	InviteMembers(ctx context.Context, inviterID, groupID uuid.UUID, userIDs []uuid.UUID) error
+	InviteMembers(ctx context.Context, inviterID, groupID uuid.UUID, userIDs []uuid.UUID) (*dto.InviteMembersResult, error)
 	UpdateMemberRole(ctx context.Context, requesterID, groupID, targetUserID uuid.UUID, role string) error
 	RemoveMember(ctx context.Context, requesterID, groupID, targetUserID uuid.UUID) error
 	BanMember(ctx context.Context, requesterID, groupID, targetUserID uuid.UUID) error
@@ -36,7 +36,18 @@ type GroupServiceInterface interface {
 	RejectRequest(ctx context.Context, requesterID, groupID, requestID uuid.UUID, reason *string) error
 }
 
+// GroupInviteGuard quyet dinh nguoi moi co duoc phep them vao nhom hay khong. Dung chung quy tac
+// "gioi han nhan tin theo quan he" cua ConversationService (Lane G) - nhom co hoi thoai chung nen
+// moi vao nhom la mot cach mo duong nhan tin, khong duoc lach guard.
+type GroupInviteGuard interface {
+	CanStartDirectConversation(ctx context.Context, userA, userB uuid.UUID) (bool, error)
+}
+
+// ErrGroupInviteGuardMissing - loi cau hinh: chua gan guard thi tu choi moi, khong mo cua.
+var ErrGroupInviteGuardMissing = errors.New("group invite guard is not configured")
+
 type GroupService struct {
+	inviteGuard     GroupInviteGuard
 	groupRepo       *repository.GroupRepository
 	memberRepo      *repository.GroupMemberRepository
 	joinRequestRepo *repository.GroupJoinRequestRepository
@@ -59,6 +70,9 @@ func NewGroupService(
 		participantRepo: participantRepo,
 	}
 }
+
+// SetInviteGuard gan guard moi thanh vien (xem GroupInviteGuard).
+func (s *GroupService) SetInviteGuard(g GroupInviteGuard) { s.inviteGuard = g }
 
 func (s *GroupService) CreateGroup(ctx context.Context, userID uuid.UUID, req dto.CreateGroupRequest) (*dto.GroupResponse, error) {
 	slug, err := utils.GenerateUniqueSlug(req.Name, func(slug string) (bool, error) {
@@ -421,20 +435,35 @@ func (s *GroupService) ListMembers(ctx context.Context, groupID uuid.UUID, page,
 	}, nil
 }
 
-func (s *GroupService) InviteMembers(ctx context.Context, inviterID, groupID uuid.UUID, userIDs []uuid.UUID) error {
+func (s *GroupService) InviteMembers(ctx context.Context, inviterID, groupID uuid.UUID, userIDs []uuid.UUID) (*dto.InviteMembersResult, error) {
 	if err := s.requireRole(ctx, groupID, inviterID, model.GroupRoleOwner, model.GroupRoleAdmin, model.GroupRoleModerator); err != nil {
-		return err
+		return nil, err
 	}
 
 	group, err := s.groupRepo.GetByID(ctx, groupID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if group == nil {
-		return errors.New("group not found")
+		return nil, errors.New("group not found")
+	}
+	if s.inviteGuard == nil {
+		return nil, ErrGroupInviteGuardMissing
 	}
 
+	result := &dto.InviteMembersResult{Invited: []uuid.UUID{}, Rejected: []dto.InviteRejection{}}
 	for _, uid := range userIDs {
+		// Guard nhan tin (Lane G): nguoi moi phai co quan he hop le voi nguoi moi; admin di qua.
+		// Loi ha tang -> tra loi, khong duoc coi la "cho phep".
+		allowed, gerr := s.inviteGuard.CanStartDirectConversation(ctx, inviterID, uid)
+		if gerr != nil {
+			return nil, gerr
+		}
+		if !allowed {
+			result.Rejected = append(result.Rejected, dto.InviteRejection{UserID: uid, Code: dto.GroupInviteNotAllowedCode})
+			continue
+		}
+
 		existing, err := s.memberRepo.GetByGroupAndUser(ctx, groupID, uid)
 		if err != nil {
 			continue
@@ -457,9 +486,10 @@ func (s *GroupService) InviteMembers(ctx context.Context, inviterID, groupID uui
 		}
 		_ = s.groupRepo.IncrementMemberCount(ctx, groupID)
 		s.addToGroupConversation(ctx, groupID, uid)
+		result.Invited = append(result.Invited, uid)
 	}
 
-	return nil
+	return result, nil
 }
 
 func (s *GroupService) UpdateMemberRole(ctx context.Context, requesterID, groupID, targetUserID uuid.UUID, role string) error {

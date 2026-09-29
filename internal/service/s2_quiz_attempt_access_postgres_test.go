@@ -66,10 +66,10 @@ func TestS2_QuizAttempt_ChiNguoiCoQuyenXemDuoc(t *testing.T) {
 		id      model.User
 		isAdmin bool
 	}{
-		"chính chủ":              {w.student, false},
-		"giảng viên chủ khoá":    {w.teacher, false},
-		"phụ huynh active":       {w.activeParent, false},
-		"admin":                  {w.admin, true},
+		"chính chủ":           {w.student, false},
+		"giảng viên chủ khoá": {w.teacher, false},
+		"phụ huynh active":    {w.activeParent, false},
+		"admin":               {w.admin, true},
 	}
 	for name, who := range allowed {
 		if _, err := w.svc.GetAttemptByID(ctx, w.attempt.ID, who.id.ID, who.isAdmin); err != nil {
@@ -78,9 +78,9 @@ func TestS2_QuizAttempt_ChiNguoiCoQuyenXemDuoc(t *testing.T) {
 	}
 
 	denied := map[string]model.User{
-		"học viên khác":             w.otherStudent,
-		"giảng viên khác":           w.otherTeacher,
-		"phụ huynh chưa xác nhận":   w.pendingParent,
+		"học viên khác":               w.otherStudent,
+		"giảng viên khác":             w.otherTeacher,
+		"phụ huynh chưa xác nhận":     w.pendingParent,
 		"phụ huynh đã bị gỡ liên kết": w.revokedParent,
 	}
 	for name, u := range denied {

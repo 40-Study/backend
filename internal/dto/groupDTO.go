@@ -78,6 +78,21 @@ type InviteMembersRequest struct {
 	UserIDs []uuid.UUID `json:"user_ids" validate:"required,min=1,max=50"`
 }
 
+// GroupInviteNotAllowedCode - ma loi khi nguoi duoc moi khong co quan he hop le voi nguoi moi.
+const GroupInviteNotAllowedCode = "GROUP_INVITE_NOT_ALLOWED"
+
+// InviteRejection - mot nguoi bi tu choi khi moi vao nhom.
+type InviteRejection struct {
+	UserID uuid.UUID `json:"user_id"`
+	Code   string    `json:"code"`
+}
+
+// InviteMembersResult - ket qua moi thanh vien: ai da vao nhom, ai bi tu choi (kem ma loi).
+type InviteMembersResult struct {
+	Invited  []uuid.UUID       `json:"invited"`
+	Rejected []InviteRejection `json:"rejected"`
+}
+
 type UpdateMemberRoleRequest struct {
 	Role string `json:"role" validate:"required,oneof=ADMIN MODERATOR MEMBER"`
 }

@@ -44,15 +44,15 @@ func jsonEmailKeys(typ reflect.Type, path string, seen map[reflect.Type]bool) []
 func TestS2_DTOGuiChoNguoiKhacKhongCoEmailHocVien(t *testing.T) {
 	for name, typ := range map[string]reflect.Type{
 		"CourseEnrollmentListDTO (giảng viên xem học viên của khoá)": reflect.TypeOf(CourseEnrollmentListDTO{}),
-		"DebugEnrollmentDTO":                                          reflect.TypeOf(DebugEnrollmentDTO{}),
-		"StudentClassListResponseDTO (học viên của lớp)":              reflect.TypeOf(StudentClassListResponseDTO{}),
-		"TeacherStudentListResponseDTO (học viên của giảng viên)":     reflect.TypeOf(TeacherStudentListResponseDTO{}),
-		"GroupMemberListResponse (thành viên nhóm)":                   reflect.TypeOf(GroupMemberListResponse{}),
-		"JoinRequestListResponse (yêu cầu vào nhóm)":                  reflect.TypeOf(JoinRequestListResponse{}),
-		"ParticipantResponse (người tham gia hội thoại)":              reflect.TypeOf(ParticipantResponse{}),
-		"SubmissionListDTO (bài nộp, giảng viên xem)":                 reflect.TypeOf(SubmissionListDTO{}),
-		"SubmissionResponseDTO":                                       reflect.TypeOf(SubmissionResponseDTO{}),
-		"ChildOverviewDto (phụ huynh xem con)":                        reflect.TypeOf(ChildOverviewDto{}),
+		"DebugEnrollmentDTO": reflect.TypeOf(DebugEnrollmentDTO{}),
+		"StudentClassListResponseDTO (học viên của lớp)":          reflect.TypeOf(StudentClassListResponseDTO{}),
+		"TeacherStudentListResponseDTO (học viên của giảng viên)": reflect.TypeOf(TeacherStudentListResponseDTO{}),
+		"GroupMemberListResponse (thành viên nhóm)":               reflect.TypeOf(GroupMemberListResponse{}),
+		"JoinRequestListResponse (yêu cầu vào nhóm)":              reflect.TypeOf(JoinRequestListResponse{}),
+		"ParticipantResponse (người tham gia hội thoại)":          reflect.TypeOf(ParticipantResponse{}),
+		"SubmissionListDTO (bài nộp, giảng viên xem)":             reflect.TypeOf(SubmissionListDTO{}),
+		"SubmissionResponseDTO":                                   reflect.TypeOf(SubmissionResponseDTO{}),
+		"ChildOverviewDto (phụ huynh xem con)":                    reflect.TypeOf(ChildOverviewDto{}),
 	} {
 		if keys := jsonEmailKeys(typ, "", map[reflect.Type]bool{}); len(keys) > 0 {
 			t.Errorf("%s có khoá JSON email: %v", name, keys)

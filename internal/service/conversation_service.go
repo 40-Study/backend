@@ -542,6 +542,12 @@ func (s *ConversationService) canCreateDirectConversation(ctx context.Context, u
 	return false, nil
 }
 
+// CanStartDirectConversation la cua vao cong khai cho guard nhan tin cua Lane G, de cac luong
+// khac (moi vao nhom - Lane S2) tai dung DUNG mot quy tac, khong viet lai.
+func (s *ConversationService) CanStartDirectConversation(ctx context.Context, userA, userB uuid.UUID) (bool, error) {
+	return s.canCreateDirectConversation(ctx, userA, userB)
+}
+
 // isSystemAdmin — true nếu userID đang giữ (active) system role có tên "SYSTEM_ADMIN".
 func (s *ConversationService) isSystemAdmin(ctx context.Context, userID uuid.UUID) (bool, error) {
 	roles, err := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, userID, model.UserSystemRoleStatusActive)
