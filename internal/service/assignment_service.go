@@ -12,10 +12,31 @@ import (
 	"study.com/v1/internal/repository"
 )
 
+// Lỗi uỷ quyền của assignment (S3). Handler ánh xạ: ErrAssignmentNotFound -> 404 (người gọi không
+// có quyền xem thì không được biết assignment có tồn tại), ErrAssignmentForbidden -> 403 (người
+// gọi thấy được assignment nhưng không phải chủ), ErrAssignmentTargetRequired -> 400.
+var (
+	ErrAssignmentNotFound       = errors.New("assignment not found")
+	ErrAssignmentForbidden      = errors.New("forbidden: only the owning teacher or an admin can modify this assignment")
+	ErrAssignmentTargetRequired = errors.New("session_id or class_id is required")
+)
+
+// assignmentClassAccess / assignmentSessionGate: hai phép kiểm "thành viên" có sẵn ở nơi khác
+// (ClassRepository, LivestreamService) — tái dùng đúng định nghĩa thành viên của chat/bảng trắng
+// thay vì tự viết lại, để một học viên bị kick hay đã rời lớp mất quyền xem đề cùng lúc mất quyền chat.
+type assignmentClassAccess interface {
+	IsUserRelatedToClass(ctx context.Context, classID, userID uuid.UUID) (bool, error)
+}
+type assignmentSessionGate interface {
+	EnsureSessionMember(ctx context.Context, sessionID, userID uuid.UUID) error
+}
+
 type AssignmentServiceInterface interface {
-	Create(ctx context.Context, req dto.CreateAssignmentDTO) (*model.Assignment, error)
+	// Create (S3): chỉ chủ của phiên/lớp mà assignment gắn vào (hoặc admin) mới tạo được.
+	Create(ctx context.Context, actorID uuid.UUID, isAdmin bool, req dto.CreateAssignmentDTO) (*model.Assignment, error)
 	GetByID(ctx context.Context, id uuid.UUID, includeHidden bool) (*model.Assignment, error)
-	GetBySession(ctx context.Context, sessionID uuid.UUID, page, pageSize int) (*dto.AssignmentListDTO, error)
+	// GetBySession (S3): chỉ thành viên phiên hoặc chủ phiên mới liệt kê được; thành viên chỉ thấy bản đã publish.
+	GetBySession(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID uuid.UUID, page, pageSize int) (*dto.AssignmentListDTO, error)
 	Update(ctx context.Context, id uuid.UUID, req dto.UpdateAssignmentDTO) (*model.Assignment, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	Publish(ctx context.Context, id uuid.UUID, livekitSvc LivekitServiceInterface) (*model.Assignment, error)
@@ -27,27 +48,35 @@ type AssignmentServiceInterface interface {
 	GetSandbox(ctx context.Context, assignmentID uuid.UUID, userID uuid.UUID) (*dto.SandboxResponseDTO, error)
 	// CanManage (S2): người được xem test case ẩn và sửa test case — chủ assignment hoặc admin.
 	CanManage(ctx context.Context, assignmentID, userID uuid.UUID, isAdmin bool) (bool, error)
+	// CanView (S3): chủ/admin, hoặc thành viên phiên/lớp của assignment ĐÃ publish.
+	CanView(ctx context.Context, assignmentID, userID uuid.UUID, isAdmin bool) (bool, error)
 }
 
 type AssignmentService struct {
 	repo           repository.AssignmentRepositoryInterface
 	testCaseRepo   repository.TestCaseRepositoryInterface
 	submissionRepo repository.SubmissionRepositoryInterface
+	classAccess    assignmentClassAccess
+	sessionGate    assignmentSessionGate
 }
 
 func NewAssignmentService(
 	repo repository.AssignmentRepositoryInterface,
 	testCaseRepo repository.TestCaseRepositoryInterface,
 	submissionRepo repository.SubmissionRepositoryInterface,
+	classAccess assignmentClassAccess,
+	sessionGate assignmentSessionGate,
 ) *AssignmentService {
 	return &AssignmentService{
 		repo:           repo,
 		testCaseRepo:   testCaseRepo,
 		submissionRepo: submissionRepo,
+		classAccess:    classAccess,
+		sessionGate:    sessionGate,
 	}
 }
 
-func (s *AssignmentService) Create(ctx context.Context, req dto.CreateAssignmentDTO) (*model.Assignment, error) {
+func (s *AssignmentService) Create(ctx context.Context, actorID uuid.UUID, isAdmin bool, req dto.CreateAssignmentDTO) (*model.Assignment, error) {
 	var sessionID *uuid.UUID
 	if req.SessionID != "" {
 		parsed, err := uuid.Parse(req.SessionID)
@@ -83,6 +112,27 @@ func (s *AssignmentService) Create(ctx context.Context, req dto.CreateAssignment
 			return nil, errors.New("invalid class_id")
 		}
 		classID = &parsed
+	}
+
+	// S3: assignment không có cột người tạo — "chủ" được suy ra từ phiên/lớp nó gắn vào. Không gắn
+	// vào đâu thì sẽ không ai (ngoài admin) quản lý được, nên không cho non-admin tạo. Mỗi nơi được
+	// nêu phải qua kiểm riêng, không gộp: nếu gộp, lớp của chính mình che được phiên của người khác.
+	if !isAdmin {
+		if sessionID == nil && classID == nil {
+			return nil, ErrAssignmentTargetRequired
+		}
+		for _, target := range []struct{ session, class *uuid.UUID }{{sessionID, nil}, {nil, classID}} {
+			if target.session == nil && target.class == nil {
+				continue
+			}
+			ok, err := s.repo.CanManageTarget(ctx, target.session, target.class, actorID)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, ErrAssignmentForbidden
+			}
+		}
 	}
 
 	// Default type
@@ -148,8 +198,27 @@ func (s *AssignmentService) GetByID(ctx context.Context, id uuid.UUID, includeHi
 	return assignment, nil
 }
 
-func (s *AssignmentService) GetBySession(ctx context.Context, sessionID uuid.UUID, page, pageSize int) (*dto.AssignmentListDTO, error) {
-	assignments, total, err := s.repo.GetBySession(ctx, sessionID, page, pageSize)
+func (s *AssignmentService) GetBySession(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID uuid.UUID, page, pageSize int) (*dto.AssignmentListDTO, error) {
+	// Chủ phiên/admin thấy cả bản nháp; thành viên phiên chỉ thấy bản đã publish; người ngoài
+	// nhận 404 (không lộ phiên có tồn tại hay không).
+	canManage := isAdmin
+	if !canManage {
+		var err error
+		if canManage, err = s.repo.CanManageTarget(ctx, &sessionID, nil, actorID); err != nil {
+			return nil, err
+		}
+	}
+	if !canManage {
+		member, err := s.isSessionMember(ctx, sessionID, actorID)
+		if err != nil {
+			return nil, err
+		}
+		if !member {
+			return nil, ErrAssignmentNotFound
+		}
+	}
+
+	assignments, total, err := s.repo.GetBySession(ctx, sessionID, page, pageSize, !canManage)
 	if err != nil {
 		return nil, err
 	}
@@ -309,6 +378,59 @@ func (s *AssignmentService) CanManage(ctx context.Context, assignmentID, userID 
 		return true, nil
 	}
 	return s.repo.CanManage(ctx, assignmentID, userID)
+}
+
+// isSessionMember: true khi userID là thành viên phiên theo đúng định nghĩa của chat/bảng trắng.
+// Không phải thành viên, bị kick hay phiên không còn thì là "không"; lỗi hạ tầng thì trả lỗi để
+// handler báo 500 thay vì âm thầm từ chối. Thiếu dependency thì từ chối (fail-closed).
+func (s *AssignmentService) isSessionMember(ctx context.Context, sessionID, userID uuid.UUID) (bool, error) {
+	if s.sessionGate == nil {
+		return false, nil
+	}
+	err := s.sessionGate.EnsureSessionMember(ctx, sessionID, userID)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, ErrNotSessionMember), errors.Is(err, ErrParticipantKicked), err.Error() == "session not found":
+		return false, nil
+	default:
+		return false, err
+	}
+}
+
+// CanView (S3): admin và chủ luôn xem được (kể cả bản nháp). Người khác chỉ xem được assignment
+// ĐÃ publish và chỉ khi là thành viên lớp hoặc phiên mà nó gắn vào — trước đây mọi tài khoản đăng
+// nhập đọc được đề, starter_code và test mẫu của bất kỳ assignment nào biết id.
+func (s *AssignmentService) CanView(ctx context.Context, assignmentID, userID uuid.UUID, isAdmin bool) (bool, error) {
+	assignment, err := s.repo.GetByID(ctx, assignmentID)
+	if err != nil {
+		return false, err
+	}
+	if assignment == nil {
+		return false, nil
+	}
+	if isAdmin {
+		return true, nil
+	}
+	if manage, err := s.repo.CanManage(ctx, assignmentID, userID); err != nil || manage {
+		return manage, err
+	}
+	if !assignment.IsPublished {
+		return false, nil
+	}
+	if assignment.ClassID != nil && s.classAccess != nil {
+		related, err := s.classAccess.IsUserRelatedToClass(ctx, *assignment.ClassID, userID)
+		if err != nil {
+			return false, err
+		}
+		if related {
+			return true, nil
+		}
+	}
+	if assignment.SessionID != nil {
+		return s.isSessionMember(ctx, *assignment.SessionID, userID)
+	}
+	return false, nil
 }
 
 func (s *AssignmentService) ImportTestCases(ctx context.Context, assignmentID uuid.UUID, req dto.ImportTestCasesDTO) ([]model.TestCase, error) {

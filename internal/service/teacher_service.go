@@ -157,13 +157,10 @@ func (s *TeacherService) DeleteTeacher(ctx context.Context, id uuid.UUID, hardDe
 func toTeacherResponseDTO(user *model.User) *dto.TeacherResponseDTO {
 	return &dto.TeacherResponseDTO{
 		ID:          user.ID,
-		Email:       user.Email,
 		UserName:    user.UserName,
 		FullName:    user.FullName,
 		AvatarURL:   user.AvatarURL,
-		Phone:       user.Phone,
 		Bio:         user.Bio,
-		DateOfBirth: user.DateOfBirth,
 		IsVerified:  user.IsVerified,
 		IsActive:    user.IsActive,
 		CreatedAt:   utils.FormatTimestamp(user.CreatedAt),

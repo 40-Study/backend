@@ -20,13 +20,14 @@ import (
 )
 
 type SubmissionServiceInterface interface {
-	Submit(ctx context.Context, req dto.CreateSubmissionDTO) (*model.Submission, error)
+	// Submit/RunCode/RunCustomCode (S3): người gọi phải XEM được assignment (AssignmentService.CanView), không thì ErrAssignmentNotFound.
+	Submit(ctx context.Context, isAdmin bool, req dto.CreateSubmissionDTO) (*model.Submission, error)
 	GetByID(ctx context.Context, id, requesterID uuid.UUID) (*model.Submission, error)
 	GetByAssignment(ctx context.Context, assignmentID, requesterID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.SubmissionListDTO, error)
 	GetByUser(ctx context.Context, userID, requesterID uuid.UUID, page, pageSize int) (*dto.SubmissionListDTO, error)
 	GetUserSubmissionsForAssignment(ctx context.Context, assignmentID, userID uuid.UUID) ([]model.Submission, error)
-	RunCode(ctx context.Context, req dto.RunCodeDTO) (*dto.RunCodeResponseDTO, error)
-	RunCustomCode(ctx context.Context, req dto.RunCustomCodeDTO) (*dto.RunCodeResponseDTO, error)
+	RunCode(ctx context.Context, requesterID uuid.UUID, isAdmin bool, req dto.RunCodeDTO) (*dto.RunCodeResponseDTO, error)
+	RunCustomCode(ctx context.Context, requesterID uuid.UUID, isAdmin bool, req dto.RunCustomCodeDTO) (*dto.RunCodeResponseDTO, error)
 	ExecuteCode(ctx context.Context, req dto.ExecuteCodeDTO) (*dto.ExecuteCodeResponseDTO, error)
 	ProcessSubmission(ctx context.Context, submissionID uuid.UUID) error
 }
@@ -206,7 +207,21 @@ func (s *SubmissionService) canAccessSubmission(ctx context.Context, sub *model.
 	return s.canManageAssignment(ctx, assignment, requesterID, false)
 }
 
-func (s *SubmissionService) Submit(ctx context.Context, req dto.CreateSubmissionDTO) (*model.Submission, error) {
+// requireViewable (S3): chặn nộp/chạy thử code vào assignment mà người gọi không xem được (chưa publish,
+// không thuộc lớp/phiên, hoặc không tồn tại). Dùng đúng AssignmentService.CanView để việc nộp bài và việc
+// đọc đề không thể lệch nhau; không xem được thì ErrAssignmentNotFound (handler trả 404, không lộ id).
+func (s *SubmissionService) requireViewable(ctx context.Context, assignmentID, userID uuid.UUID, isAdmin bool) error {
+	ok, err := s.assignmentSvc.CanView(ctx, assignmentID, userID, isAdmin)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrAssignmentNotFound
+	}
+	return nil
+}
+
+func (s *SubmissionService) Submit(ctx context.Context, isAdmin bool, req dto.CreateSubmissionDTO) (*model.Submission, error) {
 	assignmentID, err := uuid.Parse(req.AssignmentID)
 	if err != nil {
 		return nil, errors.New("invalid assignment_id")
@@ -217,12 +232,16 @@ func (s *SubmissionService) Submit(ctx context.Context, req dto.CreateSubmission
 		return nil, errors.New("invalid user_id")
 	}
 
+	if err := s.requireViewable(ctx, assignmentID, userID, isAdmin); err != nil {
+		return nil, err
+	}
+
 	assignment, err := s.assignmentSvc.GetByID(ctx, assignmentID, false)
 	if err != nil {
 		return nil, err
 	}
 	if assignment == nil {
-		return nil, errors.New("assignment not found")
+		return nil, ErrAssignmentNotFound
 	}
 
 	if !assignment.IsPublished {
@@ -499,10 +518,13 @@ func (s *SubmissionService) GetUserSubmissionsForAssignment(ctx context.Context,
 	return s.repo.GetByAssignmentAndUser(ctx, assignmentID, userID)
 }
 
-func (s *SubmissionService) RunCode(ctx context.Context, req dto.RunCodeDTO) (*dto.RunCodeResponseDTO, error) {
+func (s *SubmissionService) RunCode(ctx context.Context, requesterID uuid.UUID, isAdmin bool, req dto.RunCodeDTO) (*dto.RunCodeResponseDTO, error) {
 	assignmentID, err := uuid.Parse(req.AssignmentID)
 	if err != nil {
 		return nil, errors.New("invalid assignment_id")
+	}
+	if err := s.requireViewable(ctx, assignmentID, requesterID, isAdmin); err != nil {
+		return nil, err
 	}
 
 	assignment, err := s.assignmentSvc.GetByID(ctx, assignmentID, false)
@@ -647,10 +669,13 @@ func (s *SubmissionService) toResponseDTO(sub model.Submission) dto.SubmissionRe
 	return resp
 }
 
-func (s *SubmissionService) RunCustomCode(ctx context.Context, req dto.RunCustomCodeDTO) (*dto.RunCodeResponseDTO, error) {
+func (s *SubmissionService) RunCustomCode(ctx context.Context, requesterID uuid.UUID, isAdmin bool, req dto.RunCustomCodeDTO) (*dto.RunCodeResponseDTO, error) {
 	assignmentID, err := uuid.Parse(req.AssignmentID)
 	if err != nil {
 		return nil, errors.New("invalid assignment_id")
+	}
+	if err := s.requireViewable(ctx, assignmentID, requesterID, isAdmin); err != nil {
+		return nil, err
 	}
 
 	assignment, err := s.assignmentSvc.GetByID(ctx, assignmentID, false)

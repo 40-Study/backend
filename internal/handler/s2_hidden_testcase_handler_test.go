@@ -28,6 +28,11 @@ type s2AssignmentSvc struct {
 func (s *s2AssignmentSvc) CanManage(context.Context, uuid.UUID, uuid.UUID, bool) (bool, error) {
 	return s.canManage, nil
 }
+// CanView: S3 thêm cổng xem đề trước include_hidden; các test S2 chỉ quan tâm include_hidden nên
+// coi người gọi là người xem hợp lệ (quyền xem/ghi được kiểm riêng ở s3_assignment_authz_handler_test.go).
+func (s *s2AssignmentSvc) CanView(context.Context, uuid.UUID, uuid.UUID, bool) (bool, error) {
+	return true, nil
+}
 func (s *s2AssignmentSvc) GetByID(_ context.Context, id uuid.UUID, includeHidden bool) (*model.Assignment, error) {
 	s.gotIncludeHidden = append(s.gotIncludeHidden, includeHidden)
 	return &model.Assignment{BaseModel: model.BaseModel{ID: id}}, nil

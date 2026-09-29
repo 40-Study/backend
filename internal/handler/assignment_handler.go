@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -45,13 +47,48 @@ func (h *AssignmentHandler) canSeeHiddenTests(c *fiber.Ctx, assignmentID uuid.UU
 	return err == nil && allowed
 }
 
-// requireTestCaseManager chặn thao tác GHI test case với người không phải chủ assignment/admin.
-// Trả (true, nil) khi được phép; ngược lại đã ghi response 403 và trả (false, err) để caller return.
-func (h *AssignmentHandler) requireTestCaseManager(c *fiber.Ctx, assignmentID uuid.UUID) (bool, error) {
-	if h.canSeeHiddenTests(c, assignmentID) {
+// requireAssignmentManager chặn thao tác GHI (sửa/xoá/publish/test case) với người không phải chủ
+// assignment/admin. Trả (true, nil) khi được phép; ngược lại đã ghi response và trả (false, err)
+// để caller return. Người không xem được assignment (chưa vào lớp/phiên, hoặc bản nháp của người
+// khác, hoặc id không tồn tại) nhận 404 giống hệt nhau để không dò được id; người xem được mà
+// không phải chủ nhận 403 (cùng quy ước với quiz và exercise sau S2).
+func (h *AssignmentHandler) requireAssignmentManager(c *fiber.Ctx, assignmentID uuid.UUID) (bool, error) {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return false, c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	manage, err := h.svc.CanManage(c.Context(), assignmentID, userID, isAdmin)
+	if err != nil {
+		return false, c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if manage {
 		return true, nil
 	}
-	return false, c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden: only the assignment owner can manage test cases"})
+	view, err := h.svc.CanView(c.Context(), assignmentID, userID, isAdmin)
+	if err != nil {
+		return false, c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if !view {
+		return false, c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assignment not found"})
+	}
+	return false, c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": service.ErrAssignmentForbidden.Error()})
+}
+
+// requireAssignmentViewer chặn ĐỌC assignment với người không xem được: trả 404 (xem ở trên).
+func (h *AssignmentHandler) requireAssignmentViewer(c *fiber.Ctx, assignmentID uuid.UUID) (bool, error) {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return false, c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+	view, err := h.svc.CanView(c.Context(), assignmentID, userID, isAdminActor(c, h.permChecker, userID))
+	if err != nil {
+		return false, c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if !view {
+		return false, c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assignment not found"})
+	}
+	return true, nil
 }
 
 func (h *AssignmentHandler) Create(c *fiber.Ctx) error {
@@ -60,8 +97,19 @@ func (h *AssignmentHandler) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	assignment, err := h.svc.Create(c.Context(), req)
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	assignment, err := h.svc.Create(c.Context(), userID, isAdminActor(c, h.permChecker, userID), req)
 	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrAssignmentForbidden):
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+		case errors.Is(err, service.ErrAssignmentTargetRequired):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
@@ -75,6 +123,11 @@ func (h *AssignmentHandler) GetByID(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+	}
+
+	// S3: người không xem được assignment (chưa vào lớp/phiên, bản nháp của người khác) nhận 404.
+	if ok, err := h.requireAssignmentViewer(c, id); !ok {
+		return err
 	}
 
 	// S2: include_hidden chỉ có hiệu lực với chủ assignment/admin; người khác bị hạ về false
@@ -105,8 +158,16 @@ func (h *AssignmentHandler) GetBySession(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 
-	result, err := h.svc.GetBySession(c.Context(), sessionID, page, pageSize)
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	result, err := h.svc.GetBySession(c.Context(), userID, isAdminActor(c, h.permChecker, userID), sessionID, page, pageSize)
 	if err != nil {
+		if errors.Is(err, service.ErrAssignmentNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "session not found"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
@@ -117,6 +178,10 @@ func (h *AssignmentHandler) Update(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+	}
+
+	if ok, err := h.requireAssignmentManager(c, id); !ok {
+		return err
 	}
 
 	var req dto.UpdateAssignmentDTO
@@ -138,6 +203,10 @@ func (h *AssignmentHandler) Delete(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
+	if ok, err := h.requireAssignmentManager(c, id); !ok {
+		return err
+	}
+
 	if err := h.svc.Delete(c.Context(), id); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -149,6 +218,10 @@ func (h *AssignmentHandler) Publish(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+	}
+
+	if ok, err := h.requireAssignmentManager(c, id); !ok {
+		return err
 	}
 
 	assignment, err := h.svc.Publish(c.Context(), id, h.livekitSvc)
@@ -165,6 +238,10 @@ func (h *AssignmentHandler) Unpublish(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
+	if ok, err := h.requireAssignmentManager(c, id); !ok {
+		return err
+	}
+
 	assignment, err := h.svc.Unpublish(c.Context(), id)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
@@ -179,7 +256,7 @@ func (h *AssignmentHandler) AddTestCase(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	if ok, err := h.requireTestCaseManager(c, id); !ok {
+	if ok, err := h.requireAssignmentManager(c, id); !ok {
 		return err
 	}
 
@@ -208,7 +285,7 @@ func (h *AssignmentHandler) DeleteTestCase(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid test case id"})
 	}
-	if ok, err := h.requireTestCaseManager(c, id); !ok {
+	if ok, err := h.requireAssignmentManager(c, id); !ok {
 		return err
 	}
 
@@ -225,7 +302,7 @@ func (h *AssignmentHandler) ImportTestCases(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	if ok, err := h.requireTestCaseManager(c, id); !ok {
+	if ok, err := h.requireAssignmentManager(c, id); !ok {
 		return err
 	}
 
@@ -252,6 +329,10 @@ func (h *AssignmentHandler) GetTestCases(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
+	if ok, err := h.requireAssignmentViewer(c, id); !ok {
+		return err
+	}
+
 	includeHidden := c.QueryBool("include_hidden", false) && h.canSeeHiddenTests(c, id)
 
 	testCases, err := h.svc.GetTestCases(c.Context(), id, includeHidden)
@@ -273,6 +354,10 @@ func (h *AssignmentHandler) GetSandbox(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
 	}
 	userID := userIDVal.(uuid.UUID)
+
+	if ok, err := h.requireAssignmentViewer(c, id); !ok {
+		return err
+	}
 
 	result, err := h.svc.GetSandbox(c.Context(), id, userID)
 	if err != nil {

@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -56,8 +58,11 @@ func (h *SubmissionHandler) Submit(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "validation failed", "errors": errs})
 	}
 
-	submission, err := h.svc.Submit(c.Context(), req)
+	submission, err := h.svc.Submit(c.Context(), isAdminActor(c, h.permChecker, userID), req)
 	if err != nil {
+		if errors.Is(err, service.ErrAssignmentNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assignment not found"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
@@ -157,8 +162,16 @@ func (h *SubmissionHandler) RunCode(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	result, err := h.svc.RunCode(c.Context(), req)
+	requesterID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	result, err := h.svc.RunCode(c.Context(), requesterID, isAdminActor(c, h.permChecker, requesterID), req)
 	if err != nil {
+		if errors.Is(err, service.ErrAssignmentNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assignment not found"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
@@ -171,8 +184,16 @@ func (h *SubmissionHandler) RunCustomCode(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	result, err := h.svc.RunCustomCode(c.Context(), req)
+	requesterID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	result, err := h.svc.RunCustomCode(c.Context(), requesterID, isAdminActor(c, h.permChecker, requesterID), req)
 	if err != nil {
+		if errors.Is(err, service.ErrAssignmentNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assignment not found"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 

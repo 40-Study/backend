@@ -203,6 +203,9 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		repos.Assignment,
 		repos.TestCase,
 		repos.Submission,
+		// S3: đọc đề chỉ cho thành viên lớp/phiên — dùng đúng định nghĩa thành viên của chat/bảng trắng.
+		repos.Class,
+		livestreamSvc,
 	)
 
 	submissionSvc := service.NewSubmissionService(
