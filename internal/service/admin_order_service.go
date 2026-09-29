@@ -88,6 +88,7 @@ func (s *AdminOrderService) ListOrders(ctx context.Context, filter repository.Ad
 			CreatedAt:     order.CreatedAt,
 			PaidAt:        order.PaidAt,
 			Items:         itemBriefs,
+			RefundNeeded:  refundNeeded(s.orderRepo.TxDB(), &order),
 		})
 	}
 

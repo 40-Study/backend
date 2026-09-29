@@ -53,7 +53,7 @@ func (f *fakeBankLookup) CheckTransaction(ctx context.Context, paymentCode strin
 func (f *fakeBankLookup) IsHealthy(ctx context.Context) (bool, error) { return true, nil }
 
 // bankDate định dạng như mbbank ("dd/MM/yyyy HH:mm:ss", giờ Việt Nam).
-func bankDate(t time.Time) string { return t.In(bankTimeZone).Format("02/01/2006 15:04:05") }
+func bankDate(t time.Time) string { return t.In(bankTimeZone()).Format("02/01/2006 15:04:05") }
 
 func (f *orderFixture) paymentServiceWith(bank TransactionServiceInterface, vouchers VoucherServiceInterface) *PaymentService {
 	return NewPaymentService(
@@ -237,7 +237,8 @@ func TestCreatePaymentIntent_ExpiredCodeGoesThroughFinalCheck(t *testing.T) {
 }
 
 // Đường phụ: lazy-sweep lúc tạo đơn mới KHÔNG được tự chốt expired đơn processing đã có mã (chưa
-// đối chiếu ngân hàng); đơn đó cũng không chặn việc tạo đơn mới.
+// đối chiếu ngân hàng). Test dùng khoá khác nên đơn mới tạo được; cùng khoá thì đơn này chặn (vòng
+// 4, TestCreateOrder_UnreconciledProcessingOrderBlocksSameCourse).
 func TestCreateOrder_SweepLeavesUnverifiedProcessingOrder(t *testing.T) {
 	f := newOrderFixture(t)
 	student := f.user()
@@ -413,6 +414,10 @@ func TestCancelOrder_ProcessingReconcilesWithBankFirst(t *testing.T) {
 		// "đơn đã hết hạn" (409 ERR_ORDER_EXPIRED) thay vì 400 invalid state transition.
 		"quá ân hạn, không có tiền → báo hết hạn": {offset: -paymentReconcileGracePeriod - time.Hour, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{result: bankNotFound} },
 			wantErr: ErrOrderExpired, wantStatus: "expired"},
+		// Review final MINOR 3: huỷ đơn quá hạn mã 24h khi ngân hàng vẫn lỗi → đối chiếu chốt expired
+		// (unverified_expiry) rồi huỷ báo hết hạn.
+		"quá 24h, ngân hàng lỗi → chốt expired, báo hết hạn": {offset: -25 * time.Hour, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{result: bankError} },
+			wantErr: ErrOrderExpired, wantStatus: "expired"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -483,18 +488,28 @@ func TestBankLookup_HasTimeoutAndFixedWindow(t *testing.T) {
 			if d := bank.lastDeadline.Sub(start); d > bankLookupTimeout+time.Second || d < bankLookupTimeout-5*time.Second {
 				t.Fatalf("deadline sau %s, muốn ~%s", d, bankLookupTimeout)
 			}
-			if bank.lastTo.After(end) {
-				t.Fatalf("to = %s ở tương lai (bây giờ %s): không bao giờ gửi ngày tương lai cho ngân hàng", bank.lastTo, end)
+			// Quyết định 2: to là CUỐI NGÀY giờ VN (23:59:59 +07), không phải now, để server gRPC chạy UTC
+			// hay giờ VN đều đổi ra cùng một ngày; không bao giờ là ngày tương lai theo giờ VN.
+			vn := bankTimeZone()
+			toVN := bank.lastTo.In(vn)
+			if toVN.Hour() != 23 || toVN.Minute() != 59 || toVN.Second() != 59 {
+				t.Fatalf("to = %s, muốn 23:59:59 giờ VN", toVN)
+			}
+			if toVN.Format("2006-01-02") != bank.lastTo.UTC().Format("2006-01-02") {
+				t.Fatalf("to theo UTC (%s) khác ngày theo giờ VN (%s): server gRPC chạy UTC sẽ tra lệch ngày", bank.lastTo.UTC(), toVN)
+			}
+			if toVN.Format("2006-01-02") > end.In(vn).Format("2006-01-02") {
+				t.Fatalf("to = %s là ngày tương lai theo giờ VN", toVN)
 			}
 			fixedTo := codeExpiry.Add(paymentReconcileGracePeriod + 24*time.Hour)
-			if fixedTo.Before(start) && !bank.lastTo.Equal(fixedTo) {
-				t.Fatalf("to = %s, muốn cố định hạn mã + 30 phút + 1 ngày = %s", bank.lastTo, fixedTo)
+			if fixedTo.Before(start) && !bank.lastTo.Equal(endOfBankDay(fixedTo)) {
+				t.Fatalf("to = %s, muốn cố định cuối ngày VN của hạn mã + 30 phút + 1 ngày = %s", bank.lastTo, endOfBankDay(fixedTo))
 			}
-			// Fixture: created_at = hạn mã - 23h (lúc cấp mã >= created_at) → from = created_at - 1 ngày.
-			if wantFrom := codeExpiry.Add(-23 * time.Hour).Add(-24 * time.Hour); !bank.lastFrom.Equal(wantFrom) {
-				t.Fatalf("from = %s, muốn lúc cấp mã - 1 ngày = %s", bank.lastFrom, wantFrom)
-			}
-		})
+			// Fixture: created_at = hạn mã - 23h (lúc cấp mã >= created_at) → from = đầu ngày VN của
+			// (created_at - 1 ngày).
+			if wantFrom := startOfBankDay(codeExpiry.Add(-23 * time.Hour).Add(-24 * time.Hour)); !bank.lastFrom.Equal(wantFrom) {
+				t.Fatalf("from = %s, muốn đầu ngày VN của lúc cấp mã - 1 ngày = %s", bank.lastFrom, wantFrom)
+			}		})
 	}
 }
 

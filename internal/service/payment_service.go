@@ -594,8 +594,8 @@ func (s *PaymentService) expireWithLatePayment(ctx context.Context, order *model
 			LatePaymentReceived: fresh.Status == "expired" && s.hasLatePaymentRecord(order.ID),
 		}, nil
 	}
-	log.Printf("[PAYMENT-ALERT] order=%s tx=%s amount=%s paid_at=%s code_expired_at=%s: nhận tiền nhưng không hoàn tất được đơn, cần hoàn tiền thủ công",
-		order.ID, result.TransactionID, result.Amount, when, codeExpiry)
+	log.Printf("[PAYMENT-LATE-REFUND-NEEDED] order=%s amount=%s tx=%s paid_at=%s code_expired_at=%s: nhận tiền nhưng không hoàn tất được đơn, cần hoàn tiền thủ công",
+		order.ID, result.Amount, result.TransactionID, when, codeExpiry)
 	order.Status = "expired"
 	return &dto.PaymentStatusResponse{OrderID: order.ID, Status: "expired", Amount: order.TotalAmount, LatePaymentReceived: true}, nil
 }
@@ -649,10 +649,6 @@ func (s *PaymentService) ReconcileBeforeCancel(ctx context.Context, orderID uuid
 	return nil
 }
 
-// bankTimeZone — MB Bank ghi transactionDate theo giờ Việt Nam, không kèm múi giờ. Dùng
-// FixedZone (VN không có giờ mùa hè) để không phụ thuộc tzdata của máy chạy.
-var bankTimeZone = time.FixedZone("ICT", 7*60*60)
-
 // parseBankTransactionDate đọc transactionDate của service Python (mbbank: "dd/MM/yyyy HH:mm:ss").
 // ok=false khi rỗng/không đọc được: caller KHÔNG được coi là "trong hạn".
 func parseBankTransactionDate(s string) (time.Time, bool) {
@@ -664,7 +660,8 @@ func parseBankTransactionDate(s string) (time.Time, bool) {
 		return t, true
 	}
 	for _, layout := range []string{"02/01/2006 15:04:05", "02/01/2006 15:04", "2006-01-02 15:04:05", "2006-01-02T15:04:05"} {
-		if t, err := time.ParseInLocation(layout, s, bankTimeZone); err == nil {
+		// MB ghi transactionDate theo giờ Việt Nam, không kèm múi giờ (bankTimeZone, payment_reconcile.go).
+		if t, err := time.ParseInLocation(layout, s, bankTimeZone()); err == nil {
 			return t, true
 		}
 	}

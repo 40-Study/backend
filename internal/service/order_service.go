@@ -927,6 +927,7 @@ func (s *OrderService) toOrderResponse(order *model.Order, items []model.OrderIt
 		CreatedAt:            order.CreatedAt,
 		ExpiresAt:            orderHoldExpiresAt(order),
 		PaymentCodeIssued:    order.Status != "completed" && hasPaymentCode(order),
+		RefundNeeded:         refundNeeded(s.orderRepo.TxDB(), order),
 		RefundReason:         order.RefundReason,
 		RefundTransactionRef: order.RefundTransactionRef,
 		RefundedAt:           order.RefundedAt,

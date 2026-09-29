@@ -40,6 +40,9 @@ type OrderResponse struct {
 	// PaymentCodeIssued (review #76 vòng 4): đơn chưa hoàn tất đã từng được cấp mã chuyển khoản, nên
 	// có thể đã có tiền về. Web hiện "Kiểm tra thanh toán" cho đơn đã huỷ/hết hạn có cờ này.
 	PaymentCodeIssued bool `json:"payment_code_issued,omitempty"`
+	// RefundNeeded (review #76 final, quyết định 1): đơn đã đóng nhận được tiền (không khôi phục) —
+	// cần hoàn tiền thủ công. Nguồn: history payment_after_expiry.
+	RefundNeeded bool `json:"refund_needed,omitempty"`
 	// Refund* (B6, QA vòng 2): chỉ có khi đơn đã hoàn tiền — trang chi tiết admin hiển thị dấu vết
 	// đối soát (lý do, mã giao dịch chuyển khoản, thời điểm).
 	RefundReason         *string    `json:"refund_reason,omitempty"`
@@ -103,6 +106,9 @@ type PaymentStatusResponse struct {
 	// Reconciling (review #76 vòng 3): đơn có mã chuyển khoản chưa đối chiếu xong với ngân hàng
 	// (đang trong ân hạn 30 phút sau hạn mã, hoặc ngân hàng lỗi/timeout). Không phải kết quả cuối.
 	Reconciling bool `json:"reconciling,omitempty"`
+	// BankUnavailable (review #76 final): lần kiểm này KHÔNG tra được ngân hàng (lỗi, timeout, service
+	// chưa chạy). Web phân biệt "ngân hàng lỗi, thử lại sau" với "chưa có giao dịch".
+	BankUnavailable bool `json:"bank_unavailable,omitempty"`
 }
 
 type PaymentWebhookRequest struct {
@@ -180,6 +186,8 @@ type AdminOrderListItem struct {
 	CreatedAt     time.Time             `json:"created_at"`
 	PaidAt        *time.Time            `json:"paid_at,omitempty"`
 	Items         []AdminOrderItemBrief `json:"items"`
+	// RefundNeeded (review #76 final): đơn đã đóng nhận được tiền, admin cần hoàn tiền thủ công.
+	RefundNeeded bool `json:"refund_needed,omitempty"`
 }
 
 // AdminOrderListResponse — envelope phân trang (mẫu OrderListResponse chuẩn mới của 4 phase).
