@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -25,6 +27,29 @@ func lessonContentErrorStatus(err error) int {
 		return fiber.StatusForbidden
 	}
 	return 0
+}
+
+// writeUploadOwnership ánh xạ lỗi kiểm chủ upload khi gắn video vào nội dung bài học:
+// 403 UPLOAD_NOT_OWNED (upload của người khác) / 404 UPLOAD_NOT_FOUND (upload không tồn tại).
+// Trả true nếu đã ghi response.
+func writeUploadOwnership(c *fiber.Ctx, err error) bool {
+	switch {
+	case errors.Is(err, service.ErrUploadNotOwned):
+		_ = c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"message": "Forbidden",
+			"code":    "UPLOAD_NOT_OWNED",
+			"error":   "Video này không phải do bạn tải lên.",
+		})
+		return true
+	case errors.Is(err, service.ErrUploadNotFound):
+		_ = c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"message": "Not found",
+			"code":    "UPLOAD_NOT_FOUND",
+			"error":   "Không tìm thấy video đã tải lên.",
+		})
+		return true
+	}
+	return false
 }
 
 func (h *LessonContentHandler) CreateContent(c *fiber.Ctx) error {
@@ -60,6 +85,9 @@ func (h *LessonContentHandler) CreateContent(c *fiber.Ctx) error {
 	content, err := h.service.CreateContent(c.Context(), lessonID, userID, isAdmin, req)
 	if err != nil {
 		if writeCourseLocked(c, err) {
+			return nil
+		}
+		if writeUploadOwnership(c, err) {
 			return nil
 		}
 		if status := lessonContentErrorStatus(err); status != 0 {
@@ -153,6 +181,9 @@ func (h *LessonContentHandler) UpdateContent(c *fiber.Ctx) error {
 	content, err := h.service.UpdateContent(c.Context(), contentID, userID, isAdmin, req)
 	if err != nil {
 		if writeCourseLocked(c, err) {
+			return nil
+		}
+		if writeUploadOwnership(c, err) {
 			return nil
 		}
 		if status := lessonContentErrorStatus(err); status != 0 {

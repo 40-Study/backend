@@ -42,6 +42,9 @@ func InitResources() (*Resources, error) {
 		log.Fatalf("Invalid config: %v", err)
 		return nil, err
 	}
+	// Bucket video là private: URL phụ đề .vtt lưu trong DB (URL MinIO trực tiếp) chỉ hợp lệ khi trỏ
+	// vào bucket này, và được ký lại thành /api/hls/object khi trả cho người xem.
+	hlsauth.ConfigureObjectBucket(cfg.MinIOBucketName)
 
 	db, err := database.Connect(cfg)
 	if err != nil {
@@ -69,7 +72,8 @@ func InitResources() (*Resources, error) {
 		log.Printf("Warning: Failed to create minio wrapper client: %v", err)
 	} else if minioWrapper != nil {
 		if err := minioWrapper.EnsureBuckets(context.Background()); err != nil {
-			log.Printf("Warning: Failed to ensure MinIO buckets: %v", err)
+			// Có thể nghĩa là bucket video CHƯA được đặt private — kiểm tra MinIO trước khi mở ra ngoài.
+			log.Printf("Warning: Failed to ensure MinIO buckets (video bucket private policy may not be applied): %v", err)
 		}
 	}
 

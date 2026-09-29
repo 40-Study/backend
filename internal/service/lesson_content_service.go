@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/hlsauth"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 )
@@ -70,6 +71,33 @@ func (s *LessonContentService) requireContentLessonOwnerOrAdmin(ctx context.Cont
 	return requireLessonCourseOwnerOrAdmin(ctx, s.sectionRepo, s.courseRepo, lesson, actorUserID, isAdmin)
 }
 
+// requireVideoUploadUsable: video_url trỏ vào một upload nội bộ (/hls/{upload_id}) thì upload đó phải
+// do chính actor tải lên (hoặc actor là admin). Trước đây API cấp URL ký theo upload_id trong
+// video_url mà không hỏi ai là chủ upload, nên giảng viên B gắn upload_id của A vào bài của mình là
+// xem/tải được video của A. Lỗi: ErrUploadNotOwned (403) / ErrUploadNotFound (404).
+//
+// Giữ nguyên upload_id đang có trên content (currentURL) thì không kiểm lại: form sửa nội dung
+// thường gửi lại nguyên video_url cũ, và dữ liệu có sẵn (kể cả seed) không được vì thế mà hỏng.
+// video_url ngoài hệ thống (không có /hls/{uuid}) không phải tài nguyên của ta, bỏ qua.
+func (s *LessonContentService) requireVideoUploadUsable(ctx context.Context, newURL, currentURL *string, actorUserID uuid.UUID, isAdmin bool) error {
+	if newURL == nil || *newURL == "" {
+		return nil
+	}
+	uploadID, ok := hlsauth.ExtractUploadID(*newURL)
+	if !ok {
+		return nil
+	}
+	if currentURL != nil {
+		if cur, ok := hlsauth.ExtractUploadID(*currentURL); ok && cur == uploadID {
+			return nil
+		}
+	}
+	if s.videoUploadService == nil {
+		return errors.New("cannot verify upload ownership: upload service unavailable")
+	}
+	return s.videoUploadService.RequireUploadUsableBy(ctx, uploadID, actorUserID, isAdmin)
+}
+
 func (s *LessonContentService) CreateContent(ctx context.Context, lessonID uuid.UUID, actorUserID uuid.UUID, isAdmin bool, req dto.CreateLessonContentDTO) (*dto.LessonContentResponseDTO, error) {
 	lesson, err := s.lessonRepo.GetByID(ctx, lessonID)
 	if err != nil {
@@ -79,6 +107,9 @@ func (s *LessonContentService) CreateContent(ctx context.Context, lessonID uuid.
 		return nil, errors.New("lesson not found")
 	}
 	if err := requireLessonCourseOwnerOrAdmin(ctx, s.sectionRepo, s.courseRepo, lesson, actorUserID, isAdmin); err != nil {
+		return nil, err
+	}
+	if err := s.requireVideoUploadUsable(ctx, req.VideoURL, nil, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 
@@ -251,6 +282,9 @@ func (s *LessonContentService) UpdateContent(ctx context.Context, contentID, act
 		return nil, errors.New("content not found")
 	}
 	if err := s.requireContentLessonOwnerOrAdmin(ctx, content, actorUserID, isAdmin); err != nil {
+		return nil, err
+	}
+	if err := s.requireVideoUploadUsable(ctx, req.VideoURL, content.VideoURL, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 

@@ -28,6 +28,29 @@ var guestVideoViewer = videoViewer{}
 // withheldVideoViewer: không cấp URL video nội bộ.
 var withheldVideoViewer = videoViewer{withheld: true}
 
+// signSubtitleURL: bucket video là private nên URL phụ đề .vtt đã lưu (URL MinIO trực tiếp) không
+// còn tải được. Thay bằng URL ký của /api/hls/object cho người xem đã qua kiểm quyền. URL không
+// trỏ vào bucket video (vd URL ngoài) được giữ nguyên. Không ký được -> bỏ URL, không lộ URL thô.
+func signSubtitleURL(stored *string, v videoViewer) *string {
+	if stored == nil || *stored == "" {
+		return stored
+	}
+	key, ok := hlsauth.ObjectKey(*stored)
+	if !ok {
+		return stored
+	}
+	if v.withheld {
+		return nil
+	}
+	tok, err := hlsauth.SignResource(hlsauth.ScopeObject, key, v.userID, time.Now())
+	if err != nil {
+		log.Printf("[ERROR] Khong ky duoc URL phu de %s: %v", key, err)
+		return nil
+	}
+	signed := hlsauth.ObjectURL(key, tok)
+	return &signed
+}
+
 // applyVideoAccess điền các field video của một content: thay URL HLS/gốc đã lưu bằng URL KÝ.
 //
 // Chỉ gọi ở đường ĐÃ kiểm quyền (ghi danh / chủ khoá / admin / route xem thử đã kiểm published+
@@ -35,6 +58,7 @@ var withheldVideoViewer = videoViewer{withheld: true}
 // nhánh nào quên ký. URL video ngoài hệ thống (không có /hls/{uuid}, vd video mẫu của seed) giữ
 // nguyên vì không phải tài nguyên của ta.
 func applyVideoAccess(resp *dto.LessonContentResponseDTO, storedURL *string, v videoViewer) {
+	resp.SubtitleURL = signSubtitleURL(resp.SubtitleURL, v)
 	resp.VideoURL = storedURL
 	if storedURL == nil || *storedURL == "" {
 		return

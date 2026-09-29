@@ -30,6 +30,9 @@ const (
 	ScopeStream = "hls"
 	// ScopeOriginal: file video gốc (video.mp4) — CHỈ chủ khoá / admin.
 	ScopeOriginal = "src"
+	// ScopeObject: file phụ trợ nằm trong bucket video (phụ đề .vtt) — bucket video là private nên
+	// các file này cũng đi qua backend bằng URL ký thay vì URL MinIO công khai.
+	ScopeObject = "obj"
 
 	// TTL là thời hạn URL ký. Player gặp 403 giữa chừng thì xin lại URL mới một lần (web lo).
 	TTL = 2 * time.Hour
@@ -112,17 +115,27 @@ func mac(sec []byte, scope, uploadID string, exp int64, uid uuid.UUID) string {
 
 // Sign cấp token cho (scope, upload). Lỗi khi chưa Configure — không bao giờ trả URL không ký.
 func Sign(scope string, uploadID uuid.UUID, uid uuid.UUID, now time.Time) (Token, error) {
+	return SignResource(scope, uploadID.String(), uid, now)
+}
+
+// SignResource ký một tài nguyên bất kỳ theo tên (upload id, hoặc khoá object cho ScopeObject).
+func SignResource(scope, resource string, uid uuid.UUID, now time.Time) (Token, error) {
 	sec, err := currentSecret()
 	if err != nil {
 		return Token{}, err
 	}
 	exp := now.Add(TTL).Unix()
-	return Token{Exp: exp, UID: uid, Sig: mac(sec, scope, uploadID.String(), exp, uid)}, nil
+	return Token{Exp: exp, UID: uid, Sig: mac(sec, scope, resource, exp, uid)}, nil
 }
 
 // Verify kiểm chữ ký từ các tham số query thô (exp, uid, sig). Trả Token đã kiểm để handler dựng
 // lại query cho playlist con từ giá trị ĐÃ PARSE, không bao giờ nhúng nguyên chuỗi client gửi.
 func Verify(scope string, uploadID uuid.UUID, expRaw, uidRaw, sigRaw string, now time.Time) (Token, error) {
+	return VerifyResource(scope, uploadID.String(), expRaw, uidRaw, sigRaw, now)
+}
+
+// VerifyResource là Verify cho tài nguyên đặt tên tuỳ ý (xem SignResource).
+func VerifyResource(scope, resource string, expRaw, uidRaw, sigRaw string, now time.Time) (Token, error) {
 	sec, err := currentSecret()
 	if err != nil {
 		return Token{}, err
@@ -137,7 +150,7 @@ func Verify(scope string, uploadID uuid.UUID, expRaw, uidRaw, sigRaw string, now
 			return Token{}, ErrInvalid
 		}
 	}
-	want := mac(sec, scope, uploadID.String(), exp, uid)
+	want := mac(sec, scope, resource, exp, uid)
 	// So sánh hằng thời gian; sai chữ ký được báo TRƯỚC hết hạn để không lộ token nào từng hợp lệ.
 	if !hmac.Equal([]byte(want), []byte(sigRaw)) {
 		return Token{}, ErrInvalid

@@ -515,11 +515,12 @@ func (s *LessonService) toLessonResponseDTO(lesson *model.Lesson, contents []mod
 			// Phase 1 §4: web doc subtitle_url AUTHORITATIVE tu chinh lesson content (item o
 			// tren); truong resp.SubtitleURL o cap lesson chi la BAN DU PHONG (web tu ghi chu
 			// "giu field nay lam du phong neu curriculum cung tra kem") — gan tu content video.
-			if c.Type == "video" && c.SubtitleURL != nil {
-				resp.SubtitleURL = c.SubtitleURL
-			}
 			// URL video ký (video_hls_url); URL file gốc chỉ cho chủ khoá/admin — xem applyVideoAccess.
 			applyVideoAccess(&item, c.VideoURL, viewer)
+			// Dùng bản ĐÃ KÝ của item (bucket video private), không phải URL thô đã lưu.
+			if c.Type == "video" && item.SubtitleURL != nil {
+				resp.SubtitleURL = item.SubtitleURL
+			}
 			resp.Contents[i] = item
 		}
 	}

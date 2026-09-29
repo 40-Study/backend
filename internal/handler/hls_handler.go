@@ -107,6 +107,60 @@ func (h *HLSHandler) authorize(c *fiber.Ctx, scope string) (uploadID uuid.UUID, 
 	return uuid.Nil, hlsauth.Token{}, false
 }
 
+// maxSubtitleBytes chặn đọc file phụ đề quá lớn vào bộ nhớ — file .vtt thật chỉ vài chục KB.
+const maxSubtitleBytes = 5 << 20
+
+// GetObject phục vụ file phụ đề .vtt nằm trong bucket video (private) qua URL ký scope "obj".
+// Chữ ký phủ cả khoá object, và khoá phải qua hlsauth.AllowedObjectKey (chỉ .vtt) nên URL này không
+// bao giờ đọc được video gốc / segment HLS dù có chữ ký hợp lệ của tài nguyên khác.
+// Route: GET /hls/object?key=...&exp=..&uid=..&sig=..
+func (h *HLSHandler) GetObject(c *fiber.Ctx) error {
+	key := c.Query("key")
+	if !hlsauth.AllowedObjectKey(key) {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{
+			"error": "Bạn không có quyền xem tệp này.",
+			"code":  "HLS_URL_INVALID",
+		})
+	}
+	if _, err := hlsauth.VerifyResource(hlsauth.ScopeObject, key, c.Query("exp"), c.Query("uid"), c.Query("sig"), time.Now()); err != nil {
+		switch err {
+		case hlsauth.ErrExpired:
+			return c.Status(http.StatusForbidden).JSON(fiber.Map{
+				"error": "Liên kết đã hết hạn. Vui lòng tải lại trang.",
+				"code":  "HLS_URL_EXPIRED",
+			})
+		case hlsauth.ErrInvalid:
+			return c.Status(http.StatusForbidden).JSON(fiber.Map{
+				"error": "Bạn không có quyền xem tệp này.",
+				"code":  "HLS_URL_INVALID",
+			})
+		default:
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Dịch vụ video chưa được cấu hình"})
+		}
+	}
+
+	bucket := h.minioClient.GetDefaultBucket()
+	info, err := h.minioClient.StatObject(c.Context(), bucket, key)
+	if err != nil {
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "Không tìm thấy tệp"})
+	}
+	if info.Size > maxSubtitleBytes {
+		return c.Status(http.StatusRequestEntityTooLarge).JSON(fiber.Map{"error": "Tệp quá lớn"})
+	}
+	reader, err := h.minioClient.GetObject(c.Context(), bucket, key)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Không đọc được tệp"})
+	}
+	defer reader.Close()
+	body, err := io.ReadAll(io.LimitReader(reader, maxSubtitleBytes+1))
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Không đọc được tệp"})
+	}
+	c.Set("Content-Type", "text/vtt; charset=utf-8")
+	c.Set("Cache-Control", "private, max-age=3600")
+	return c.Status(http.StatusOK).Send(body)
+}
+
 // StreamOriginalVideo streams the original video file. CHỈ phục vụ URL scope "src" — loại URL
 // mà API chỉ cấp cho chủ khoá học / admin; URL HLS của học viên không mở được file gốc.
 // Route: GET /hls/:upload_id/video.mp4

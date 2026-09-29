@@ -68,6 +68,9 @@ func SetupHLSRoutes(api fiber.Router, hlsHandler *handler.HLSHandler) {
 	// route xem thử công khai. Thiếu/sai/hết hạn chữ ký -> 403 (kiểm trong handler).
 	hlsGroup := api.Group("/hls")
 
+	// File phụ đề .vtt trong bucket video (private) — URL ký scope "obj", chỉ .vtt.
+	hlsGroup.Get("/object", hlsHandler.GetObject)
+
 	// Get video info and available qualities
 	hlsGroup.Get("/:upload_id/info", hlsHandler.GetVideoInfo)
 

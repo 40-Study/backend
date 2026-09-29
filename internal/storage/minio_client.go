@@ -447,17 +447,43 @@ func (m *MinioClient) GetDefaultBucket() string {
 
 // EnsureBuckets tạo các bucket cần thiết nếu chưa tồn tại
 // Gọi 1 lần khi khởi động app
+//
+// Bucket VIDEO là PRIVATE: MINIO_BUCKET_NAME (nơi upload video, HLS, thumbnail, phụ đề — mọi thứ
+// /api/hls/* đọc) luôn private; MINIO_BUCKET_VIDEOS cũng private trừ khi nó TRÙNG bucket ảnh. Mọi
+// lần khởi động đều GỠ policy public-read nếu có, nên bucket cũ đã được tạo public trên server cũng
+// được vá. Video chỉ xem được qua /api/hls/* (chữ ký HMAC, backend đọc MinIO bằng credential của
+// mình). Các bucket còn lại (ảnh, avatar, ...) vẫn public-read như trước.
 func (m *MinioClient) EnsureBuckets(ctx context.Context) error {
+	private := map[string]bool{}
+	if m.cfg.MinIOBucketName != "" {
+		private[m.cfg.MinIOBucketName] = true
+	}
+	// Nhiều môi trường đặt MINIO_BUCKET_VIDEOS == MINIO_BUCKET_IMAGES (vd cùng một bucket "study-media"):
+	// bucket dùng chung đó chứa ảnh nên phải public, còn video HLS nằm ở MINIO_BUCKET_NAME.
+	if v := m.cfg.MinioBucketVideos; v != "" {
+		if v == m.cfg.MinioBucketImages {
+			log.Printf("[MinIO] MINIO_BUCKET_VIDEOS trùng MINIO_BUCKET_IMAGES (%s): giữ public-read cho ảnh; video HLS nằm ở MINIO_BUCKET_NAME (%s)", v, m.cfg.MinIOBucketName)
+		} else {
+			private[v] = true
+		}
+	}
+	// Bucket ảnh không thể vừa private vừa public: fail to thay vì âm thầm chọn một bên.
+	if m.cfg.MinioBucketImages != "" && private[m.cfg.MinioBucketImages] {
+		return fmt.Errorf("MINIO_BUCKET_NAME (%s) trùng bucket ảnh — bucket video phải private, ảnh phải public: đặt MINIO_BUCKET_NAME sang bucket riêng", m.cfg.MinioBucketImages)
+	}
+
 	buckets := []string{
 		m.cfg.MinioBucketVideos,
 		m.cfg.MinioBucketImages,
 		m.cfg.MinIOBucketName,
 	}
 
+	seen := map[string]bool{}
 	for _, bucket := range buckets {
-		if bucket == "" {
+		if bucket == "" || seen[bucket] {
 			continue
 		}
+		seen[bucket] = true
 		exists, err := m.client.BucketExists(ctx, bucket)
 		if err != nil {
 			return fmt.Errorf("failed to check bucket %s: %w", bucket, err)
@@ -471,11 +497,30 @@ func (m *MinioClient) EnsureBuckets(ctx context.Context) error {
 			log.Printf("[MinIO] Bucket already exists: %s", bucket)
 		}
 
+		if private[bucket] {
+			// Bảo mật: KHÔNG được nuốt lỗi — bucket video còn public nghĩa là ai biết đường dẫn
+			// object đều tải được video mà không cần chữ ký.
+			if err := m.SetBucketPrivate(ctx, bucket); err != nil {
+				return fmt.Errorf("failed to make bucket %s private: %w", bucket, err)
+			}
+			continue
+		}
+
 		// Set bucket policy to allow public read (for images)
 		if err := m.SetBucketPublicRead(ctx, bucket); err != nil {
 			log.Printf("[MinIO] Warning: Failed to set public policy for bucket %s: %v", bucket, err)
 		}
 	}
+	return nil
+}
+
+// SetBucketPrivate gỡ policy của bucket (mặc định của MinIO là chỉ credential có quyền mới đọc được).
+// Idempotent: bucket chưa có policy thì minio-go coi là thành công.
+func (m *MinioClient) SetBucketPrivate(ctx context.Context, bucket string) error {
+	if err := m.client.SetBucketPolicy(ctx, bucket, ""); err != nil {
+		return fmt.Errorf("failed to remove bucket policy: %w", err)
+	}
+	log.Printf("[MinIO] Bucket is private (no public policy): %s", bucket)
 	return nil
 }
 
