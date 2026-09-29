@@ -15,6 +15,9 @@ type Class struct {
 	MaxStudents *int       `gorm:"column:max_students" json:"max_students,omitempty"`
 	StartDate   *time.Time `gorm:"type:date;column:start_date" json:"start_date,omitempty"`
 	EndDate     *time.Time `gorm:"type:date;column:end_date" json:"end_date,omitempty"`
+	// CreatedBy (S4): người tạo lớp — một trong hai "chủ lớp" (cùng giảng viên chủ khoá) được gán/gỡ
+	// giảng viên. Lớp tạo trước S4 là NULL: chỉ chủ khoá và admin gán/gỡ được, không suy ngược ra người tạo.
+	CreatedBy *uuid.UUID `gorm:"type:uuid;index;column:created_by" json:"-"`
 
 	// Relationships
 	Course   *Course        `gorm:"foreignKey:CourseID" json:"-"`

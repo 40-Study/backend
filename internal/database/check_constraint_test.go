@@ -184,7 +184,7 @@ func TestBuildCheckConstraintSQL_PostgresLegacyRowsDoNotBlockBoot(t *testing.T) 
 // Postgres, nên RunPostMigrations phải tự ghi vào log BACKEND mỗi CHECK constraint còn NOT VALID.
 // Chạy trong transaction ROLLBACK trên DB đã migrate.
 func TestRunPostMigrations_LogsNotValidConstraint(t *testing.T) {
-	db := pgtest.Open(t)
+	db := pgtest.IsolatedSchema(t, Migrate) // schema tạm đã Migrate: không phụ thuộc DB dùng chung đã AutoMigrate cột mới
 	tx := db.Begin()
 	defer tx.Rollback()
 	for _, sql := range []string{

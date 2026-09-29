@@ -382,6 +382,10 @@ func RunPostMigrations(db *gorm.DB) error {
 	if err := runQuizCreatedByBackfill(db); err != nil {
 		return err
 	}
+	// Gán chủ cho lớp cũ (classes.created_by), xem class_created_by_backfill.go.
+	if err := runClassCreatedByBackfill(db); err != nil {
+		return err
+	}
 
 	logNotValidCheckConstraints(db)
 

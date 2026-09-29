@@ -120,6 +120,11 @@ var ErrCannotKickHost = errors.New("forbidden: cannot kick the host of this sess
 // nen resolveJoinRole van cho qua va cap token moi.
 var ErrParticipantKicked = errors.New("forbidden: kicked from this session")
 
+// ErrSessionNotFound (S4): EnsureSessionMember trả sentinel này khi phiên không tồn tại, để nơi gọi
+// (AssignmentService.isSessionMember) phân biệt bằng errors.Is thay vì so chuỗi thông điệp — đổi câu
+// chữ lỗi trước đây làm học viên nhận 500 thay vì 404. Giữ nguyên thông điệp "session not found".
+var ErrSessionNotFound = errors.New("session not found")
+
 // ErrWhiteboardLocked (F-4, issue #58 review vong 2): bang trang dang bi khoa va nguoi goi khong
 // phai nguoi quan tri phien — dung cho SaveSnapshot (truoc day khong kiem khoa bang, hoc sinh ghi
 // de duoc snapshot ca khi GV da khoa).
@@ -177,7 +182,7 @@ func (s *LivestreamService) canManageClass(ctx context.Context, userID, classID 
 // khong phai host van co quyen day du nhung hanh dong cua ho de lai dau vet.
 func (s *LivestreamService) canManageSession(ctx context.Context, userID uuid.UUID, isAdmin bool, session *model.LivestreamSession) error {
 	if session == nil {
-		return errors.New("session not found")
+		return ErrSessionNotFound
 	}
 	if userID == session.HostID {
 		return nil
@@ -564,7 +569,7 @@ func (s *LivestreamService) EnsureSessionMember(ctx context.Context, sessionID, 
 		return err
 	}
 	if session == nil {
-		return errors.New("session not found")
+		return ErrSessionNotFound
 	}
 	if userID == session.HostID {
 		return nil

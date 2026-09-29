@@ -28,6 +28,9 @@ func NewAnalyticsHandler(svc service.AnalyticsServiceInterface, permChecker *mid
 // LỚP/GIÁO VIÊN KHÁC. Nay đòi user_id thật (route đã có AuthMiddleware nên luôn có mặt) và ánh
 // xạ lỗi uỷ quyền từ service (ErrNotAnalyticsOwner/ErrNotClassTeacher) sang 403 thay vì 500.
 func requireAnalyticsAuthErr(c *fiber.Ctx, err error) error {
+	if errors.Is(err, service.ErrAssignmentNotFound) {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "assignment not found"})
+	}
 	if errors.Is(err, service.ErrNotAnalyticsOwner) || errors.Is(err, service.ErrNotClassTeacher) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"message": "You are not authorized to view analytics for this resource",
