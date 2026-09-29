@@ -1,0 +1,47 @@
+# Bản tin tuần lên Discord: tổng hợp PR đã merge ở web/backend/mobile, Claude tóm tắt.
+# Đặt ở repo backend vì repo này hoạt động thường xuyên (GitHub tự tắt cron ở repo public
+# không có hoạt động 60 ngày).
+# Secret: DISCORD_WEBHOOK_URL (dùng chung với Discord Notify),
+#         CLAUDE_CODE_OAUTH_TOKEN (lấy bằng `claude setup-token`, dùng hạn mức gói Claude).
+name: Weekly Digest
+
+on:
+  schedule:
+    # 13:00 UTC Chủ nhật = 20:00 giờ Việt Nam
+    - cron: "0 13 * * 0"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Số ngày gom PR"
+        default: "7"
+      dry_run:
+        description: "Chỉ in payload, không gửi Discord"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Build and send digest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          DIGEST_DAYS: ${{ inputs.days || '7' }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: bash .github/scripts/weekly-digest.sh
