@@ -478,7 +478,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		UserPreference: service.NewUserPreferenceService(repos.UserPreference),
 
 		// ===== Schedule (Asynq for reminders + Redis cache) =====
-		Schedule: service.NewScheduleService(repos.Schedule, resources.Redis, resources.Queue),
+		Schedule: service.NewScheduleService(repos.Schedule, repos.Class, repos.Course, resources.Redis, resources.Queue),
 
 		// ===== Quiz (Redis cache) =====
 		// enrollmentRepo (SEC-1, vá lộ nội dung quiz): cần cho checkLessonQuizAccess dùng chung

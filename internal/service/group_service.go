@@ -24,7 +24,7 @@ type GroupServiceInterface interface {
 	JoinGroup(ctx context.Context, userID, groupID uuid.UUID, message *string) (interface{}, error)
 	LeaveGroup(ctx context.Context, userID, groupID uuid.UUID) error
 
-	ListMembers(ctx context.Context, groupID uuid.UUID, page, pageSize int) (*dto.GroupMemberListResponse, error)
+	ListMembers(ctx context.Context, requesterID, groupID uuid.UUID, page, pageSize int) (*dto.GroupMemberListResponse, error)
 	InviteMembers(ctx context.Context, inviterID, groupID uuid.UUID, userIDs []uuid.UUID) (*dto.InviteMembersResult, error)
 	UpdateMemberRole(ctx context.Context, requesterID, groupID, targetUserID uuid.UUID, role string) error
 	RemoveMember(ctx context.Context, requesterID, groupID, targetUserID uuid.UUID) error
@@ -407,7 +407,28 @@ func (s *GroupService) LeaveGroup(ctx context.Context, userID, groupID uuid.UUID
 // MEMBER MANAGEMENT
 // ============================================================================
 
-func (s *GroupService) ListMembers(ctx context.Context, groupID uuid.UUID, page, pageSize int) (*dto.GroupMemberListResponse, error) {
+// ErrGroupNotFound (S5): nhóm không tồn tại HOẶC là nhóm SECRET mà người gọi không phải thành viên (404, không phân biệt).
+var ErrGroupNotFound = errors.New("group not found")
+
+func (s *GroupService) ListMembers(ctx context.Context, requesterID, groupID uuid.UUID, page, pageSize int) (*dto.GroupMemberListResponse, error) {
+	// S5: nhóm SECRET bị ẩn khỏi danh sách nhóm (group_repository.go) nên danh sách thành viên cũng chỉ thành viên xem được;
+	// trước đây mọi tài khoản đăng nhập liệt kê được tên và avatar thành viên của nhóm SECRET bằng id.
+	group, err := s.groupRepo.GetByID(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	if group == nil {
+		return nil, ErrGroupNotFound
+	}
+	if group.Privacy == model.GroupPrivacySecret {
+		member, err := s.memberRepo.GetActiveByGroupAndUser(ctx, groupID, requesterID)
+		if err != nil {
+			return nil, err
+		}
+		if member == nil {
+			return nil, ErrGroupNotFound
+		}
+	}
 	members, total, err := s.memberRepo.ListByGroupID(ctx, groupID, page, pageSize)
 	if err != nil {
 		return nil, err

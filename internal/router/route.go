@@ -121,7 +121,7 @@ func SetupAllRoutes(
 	SetupVoucherRoutes(api, cfg, voucherHandler, redis, permChecker)
 
 	// Gamification routes
-	SetupAchievementRoutes(api, cfg, achievementHandler, redis)
+	SetupAchievementRoutes(api, cfg, achievementHandler, redis, permChecker)
 	SetupLeaderboardRoutes(api, cfg, leaderboardHandler, redis)
 	SetupUserStatsRoutes(api, userStatsHandler)
 	// Wallet routes
@@ -138,7 +138,7 @@ func SetupAllRoutes(
 	SetupNoteRoutes(api, cfg, noteHandler, redis)
 
 	// Notification routes
-	SetupNotificationRoutes(api, cfg, notificationHandler, redis)
+	SetupNotificationRoutes(api, cfg, notificationHandler, redis, permChecker)
 
 	// User Preference routes
 	SetupUserPreferenceRoutes(api, cfg, userPreferenceHandler, redis)

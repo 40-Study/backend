@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
@@ -279,8 +280,15 @@ func (h *GroupHandler) ListMembers(c *fiber.Ctx) error {
 	page, _ := strconv.Atoi(c.Query("page", "1"))
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 
-	result, err := h.groupService.ListMembers(c.Context(), groupID, page, limit)
+	requesterID, err := parseUserID(c)
 	if err != nil {
+		return err
+	}
+	result, err := h.groupService.ListMembers(c.Context(), requesterID, groupID, page, limit)
+	if err != nil {
+		if errors.Is(err, service.ErrGroupNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": err.Error(),
 		})

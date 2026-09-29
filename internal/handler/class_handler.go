@@ -387,8 +387,15 @@ func (h *ClassHandler) GetTeachersByClass(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 
-	teachers, err := h.service.GetTeachersByClass(c.Context(), classID, page, pageSize)
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+	teachers, err := h.service.GetTeachersByClass(c.Context(), classID, actorUserID, isAdminActor(c, h.permChecker, actorUserID), page, pageSize)
 	if err != nil {
+		if status := classErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve teachers",
 			"error":   err.Error(),

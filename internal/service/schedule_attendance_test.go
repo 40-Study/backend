@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -26,14 +27,12 @@ type stubScheduleRepo struct {
 
 	createdCount     int
 	updatedCount     int
-	teacherCanManage bool
 	studentCanAttend bool
 }
 
 func newStubRepo() *stubScheduleRepo {
 	return &stubScheduleRepo{
 		existing:         map[string]*model.SessionAttendance{},
-		teacherCanManage: true,
 		studentCanAttend: true,
 	}
 }
@@ -80,8 +79,10 @@ func (r *stubScheduleRepo) GetAttendanceByID(ctx context.Context, id uuid.UUID) 
 	return nil, nil
 }
 
-func (r *stubScheduleRepo) TeacherCanManageSession(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
-	return r.teacherCanManage, nil
+// S5: quyền quản lý buổi đi qua ensureClassManage trên lớp của buổi (test Postgres s5_schedule_authz_postgres_test.go);
+// ở đây actor là admin nên chỉ cần buổi tồn tại, để test này giữ đúng phạm vi luật nghiệp vụ điểm danh.
+func (r *stubScheduleRepo) GetSessionByID(_ context.Context, id uuid.UUID) (*model.ClassSession, error) {
+	return &model.ClassSession{ClassID: uuid.New()}, nil
 }
 
 func (r *stubScheduleRepo) StudentCanAttendSession(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
@@ -105,7 +106,7 @@ func TestMarkAttendance_CreatesNewRecord(t *testing.T) {
 	got, err := svc.MarkAttendance(context.Background(), sessionID, dto.MarkAttendanceDTO{
 		StudentID: studentID.String(),
 		Status:    "present",
-	}, teacherID)
+	}, teacherID, true)
 
 	if err != nil {
 		t.Fatalf("loi khong mong doi: %v", err)
@@ -129,7 +130,7 @@ func TestMarkAttendance_RejectsDuplicate(t *testing.T) {
 	_, err := svc.MarkAttendance(context.Background(), sessionID, dto.MarkAttendanceDTO{
 		StudentID: studentID.String(),
 		Status:    "present",
-	}, teacherID)
+	}, teacherID, true)
 
 	if err == nil {
 		t.Fatal("muon loi khi hoc sinh da co ban ghi, nhung err = nil")
@@ -145,26 +146,43 @@ func TestMarkAttendance_InvalidStudentID(t *testing.T) {
 	_, err := svc.MarkAttendance(context.Background(), uuid.New(), dto.MarkAttendanceDTO{
 		StudentID: "khong-phai-uuid",
 		Status:    "present",
-	}, uuid.New())
+	}, uuid.New(), true)
 
 	if err == nil {
 		t.Fatal("muon loi khi student_id khong phai UUID")
 	}
 }
 
-func TestMarkAttendance_RejectsTeacherOutsideSessionClass(t *testing.T) {
+// S5 (cùng lỗi M-4 của điểm danh lớp): chỉ ghi điểm danh cho học viên đang học lớp của buổi; bỏ
+// requireStudentInSession thì hai test dưới ĐỎ.
+func TestMarkAttendance_RejectsStudentOutsideSessionClass(t *testing.T) {
 	repo := newStubRepo()
-	repo.teacherCanManage = false
+	repo.studentCanAttend = false
 
 	_, err := newTestService(repo).MarkAttendance(context.Background(), uuid.New(), dto.MarkAttendanceDTO{
 		StudentID: uuid.New().String(),
 		Status:    "present",
-	}, uuid.New())
-	if err == nil {
-		t.Fatal("muon tu choi teacher khong duoc gan vao lop cua session")
+	}, uuid.New(), true)
+	if !errors.Is(err, ErrStudentNotInSession) {
+		t.Fatalf("err=%v, muon ErrStudentNotInSession", err)
 	}
 	if repo.createdCount != 0 {
-		t.Fatal("khong duoc ghi attendance khi teacher khong co quyen")
+		t.Fatal("khong duoc ghi attendance cho hoc vien ngoai lop")
+	}
+}
+
+func TestBulkMarkAttendance_RejectsBatchWithStudentOutsideSessionClass(t *testing.T) {
+	repo := newStubRepo()
+	repo.studentCanAttend = false
+
+	_, err := newTestService(repo).BulkMarkAttendance(context.Background(), uuid.New(), dto.BulkMarkAttendanceDTO{
+		Attendances: []dto.MarkAttendanceDTO{{StudentID: uuid.New().String(), Status: "present"}},
+	}, uuid.New(), true)
+	if !errors.Is(err, ErrStudentNotInSession) {
+		t.Fatalf("err=%v, muon ErrStudentNotInSession", err)
+	}
+	if repo.createdCount != 0 {
+		t.Fatal("khong duoc ghi attendance cho hoc vien ngoai lop")
 	}
 }
 
@@ -188,7 +206,7 @@ func TestBulkMarkAttendance_RejectsWholeBatchWhenRecordExists(t *testing.T) {
 			{StudentID: studentA.String(), Status: "present"},
 			{StudentID: studentB.String(), Status: "present"},
 		},
-	}, teacherID)
+	}, teacherID, true)
 
 	if err == nil {
 		t.Fatal("muon bulk bao loi khi mot ban ghi da ton tai")
@@ -215,7 +233,7 @@ func TestBulkMarkAttendance_AllNewRecords(t *testing.T) {
 			{StudentID: uuid.New().String(), Status: "late"},
 			{StudentID: uuid.New().String(), Status: "absent"},
 		},
-	}, teacherID)
+	}, teacherID, true)
 
 	if err != nil {
 		t.Fatalf("loi khong mong doi: %v", err)

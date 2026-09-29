@@ -20,31 +20,31 @@ import (
 
 type ScheduleServiceInterface interface {
 	// ClassSchedule
-	CreateSchedule(ctx context.Context, classID uuid.UUID, req dto.CreateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error)
-	GetSchedulesByClass(ctx context.Context, classID uuid.UUID) ([]dto.ClassScheduleResponseDTO, error)
-	GetScheduleByID(ctx context.Context, id uuid.UUID) (*dto.ClassScheduleResponseDTO, error)
-	UpdateSchedule(ctx context.Context, id uuid.UUID, req dto.UpdateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error)
-	DeleteSchedule(ctx context.Context, id uuid.UUID) error
+	CreateSchedule(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, req dto.CreateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error)
+	GetSchedulesByClass(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool) ([]dto.ClassScheduleResponseDTO, error)
+	GetScheduleByID(ctx context.Context, id, actorID uuid.UUID, isAdmin bool) (*dto.ClassScheduleResponseDTO, error)
+	UpdateSchedule(ctx context.Context, id, actorID uuid.UUID, isAdmin bool, req dto.UpdateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error)
+	DeleteSchedule(ctx context.Context, id, actorID uuid.UUID, isAdmin bool) error
 
 	// ClassSession
-	CreateSession(ctx context.Context, classID uuid.UUID, req dto.CreateClassSessionDTO) (*dto.ClassSessionResponseDTO, error)
-	GetSessionsByClass(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.ClassSessionListDTO, error)
-	GetSessionByID(ctx context.Context, id uuid.UUID) (*dto.ClassSessionResponseDTO, error)
-	UpdateSession(ctx context.Context, id uuid.UUID, req dto.UpdateClassSessionDTO) (*dto.ClassSessionResponseDTO, error)
-	CancelSession(ctx context.Context, id uuid.UUID, reason string) error
-	GenerateSessions(ctx context.Context, classID uuid.UUID, req dto.GenerateSessionsDTO) ([]dto.ClassSessionResponseDTO, error)
+	CreateSession(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, req dto.CreateClassSessionDTO) (*dto.ClassSessionResponseDTO, error)
+	GetSessionsByClass(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.ClassSessionListDTO, error)
+	GetSessionByID(ctx context.Context, id, actorID uuid.UUID, isAdmin bool) (*dto.ClassSessionResponseDTO, error)
+	UpdateSession(ctx context.Context, id, actorID uuid.UUID, isAdmin bool, req dto.UpdateClassSessionDTO) (*dto.ClassSessionResponseDTO, error)
+	CancelSession(ctx context.Context, id, actorID uuid.UUID, isAdmin bool, reason string) error
+	GenerateSessions(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, req dto.GenerateSessionsDTO) ([]dto.ClassSessionResponseDTO, error)
 
 	// SessionAttendance
-	GetSessionAttendances(ctx context.Context, sessionID, requesterID uuid.UUID) ([]dto.SessionAttendanceResponseDTO, error)
-	MarkAttendance(ctx context.Context, sessionID uuid.UUID, req dto.MarkAttendanceDTO, verifiedBy uuid.UUID) (*dto.SessionAttendanceResponseDTO, error)
-	BulkMarkAttendance(ctx context.Context, sessionID uuid.UUID, req dto.BulkMarkAttendanceDTO, verifiedBy uuid.UUID) ([]dto.SessionAttendanceResponseDTO, error)
-	UpdateAttendance(ctx context.Context, sessionID, id uuid.UUID, req dto.UpdateSessionAttendanceDTO, verifiedBy uuid.UUID) (*dto.SessionAttendanceResponseDTO, error)
+	GetSessionAttendances(ctx context.Context, sessionID, requesterID uuid.UUID, isAdmin bool) ([]dto.SessionAttendanceResponseDTO, error)
+	MarkAttendance(ctx context.Context, sessionID uuid.UUID, req dto.MarkAttendanceDTO, verifiedBy uuid.UUID, isAdmin bool) (*dto.SessionAttendanceResponseDTO, error)
+	BulkMarkAttendance(ctx context.Context, sessionID uuid.UUID, req dto.BulkMarkAttendanceDTO, verifiedBy uuid.UUID, isAdmin bool) ([]dto.SessionAttendanceResponseDTO, error)
+	UpdateAttendance(ctx context.Context, sessionID, id uuid.UUID, req dto.UpdateSessionAttendanceDTO, verifiedBy uuid.UUID, isAdmin bool) (*dto.SessionAttendanceResponseDTO, error)
 	StudentCheckIn(ctx context.Context, sessionID, studentID uuid.UUID) (*dto.SessionAttendanceResponseDTO, error)
 	StudentCheckOut(ctx context.Context, sessionID, studentID uuid.UUID) (*dto.SessionAttendanceResponseDTO, error)
 	GetMyAttendances(ctx context.Context, studentID uuid.UUID, page, pageSize int) ([]dto.SessionAttendanceResponseDTO, int64, error)
 
 	// Timetable
-	GetClassTimetable(ctx context.Context, classID uuid.UUID) (*dto.TimetableResponseDTO, error)
+	GetClassTimetable(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool) (*dto.TimetableResponseDTO, error)
 	GetMyTimetable(ctx context.Context, userID uuid.UUID, role string) (*dto.TimetableResponseDTO, error)
 
 	// Reminder
@@ -53,19 +53,79 @@ type ScheduleServiceInterface interface {
 }
 
 type ScheduleService struct {
-	repo  repository.ScheduleRepositoryInterface
-	redis *redis.Client
-	queue *asynq_queue.Queue
+	repo       repository.ScheduleRepositoryInterface
+	classRepo  repository.ClassRepositoryInterface
+	courseRepo repository.CourseRepositoryInterface
+	redis      *redis.Client
+	queue      *asynq_queue.Queue
 }
 
 func NewScheduleService(
 	repo repository.ScheduleRepositoryInterface,
+	classRepo repository.ClassRepositoryInterface,
+	courseRepo repository.CourseRepositoryInterface,
 	redis *redis.Client,
 	queue *asynq_queue.Queue,
 ) *ScheduleService {
-	return &ScheduleService{repo: repo, redis: redis, queue: queue}
+	return &ScheduleService{repo: repo, classRepo: classRepo, courseRepo: courseRepo, redis: redis, queue: queue}
 }
 
+// ============================================================================
+// AUTHZ (S5): lịch học và buổi học của lớp. Trước đây không kiểm gì: học viên bất kỳ tạo, sửa, xoá,
+// huỷ buổi và đọc lịch của lớp bất kỳ. Dùng lại helper của lớp (class_access.go), không định nghĩa quyền mới:
+//   - ghi (lịch, buổi, điểm danh buổi): người quản lý lớp (giảng viên lớp, chủ khoá, người tạo) và admin;
+//     người xem được lớp nhưng không quản lý -> 403; người không xem được -> 404.
+//   - đọc lịch, buổi, thời khoá biểu: thành viên lớp, người quản lý lớp và admin; người khác -> 404.
+// ============================================================================
+
+// ErrScheduleNotFound / ErrClassSessionNotFound: bản ghi không tồn tại (404). Không dùng ErrSessionNotFound
+// vì đó là buổi livestream, tài nguyên khác.
+var (
+	ErrScheduleNotFound     = errors.New("schedule not found")
+	ErrClassSessionNotFound = errors.New("class session not found")
+)
+
+// requireClassWrite: người quản lý lớp và admin qua; người xem được lớp mà không quản lý nhận
+// ErrNotClassTeacher (403); người không xem được nhận ErrClassNotFound (404).
+func (s *ScheduleService) requireClassWrite(ctx context.Context, actorID uuid.UUID, isAdmin bool, classID uuid.UUID) error {
+	err := ensureClassManage(ctx, s.classRepo, s.courseRepo, actorID, classID, isAdmin)
+	if !errors.Is(err, ErrNotClassTeacher) {
+		return err
+	}
+	if visibleErr := ensureClassVisible(ctx, s.classRepo, s.courseRepo, actorID, classID, isAdmin); visibleErr != nil {
+		return visibleErr
+	}
+	return ErrNotClassTeacher
+}
+
+// requireClassRead: thành viên lớp, người quản lý lớp, admin; người khác 404.
+func (s *ScheduleService) requireClassRead(ctx context.Context, actorID uuid.UUID, isAdmin bool, classID uuid.UUID) error {
+	return ensureClassVisible(ctx, s.classRepo, s.courseRepo, actorID, classID, isAdmin)
+}
+
+// scheduleClass / sessionClass: lớp của bản ghi (quyền xét trên lớp THẬT của bản ghi, không tin :classId
+// trên URL, nên đặt id lịch/buổi của lớp khác vào URL lớp mình không đi qua được).
+func (s *ScheduleService) scheduleClass(ctx context.Context, id uuid.UUID) (*model.ClassSchedule, error) {
+	schedule, err := s.repo.GetScheduleByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if schedule == nil {
+		return nil, ErrScheduleNotFound
+	}
+	return schedule, nil
+}
+
+func (s *ScheduleService) sessionClass(ctx context.Context, id uuid.UUID) (*model.ClassSession, error) {
+	session, err := s.repo.GetSessionByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if session == nil {
+		return nil, ErrClassSessionNotFound
+	}
+	return session, nil
+}
 // ============================================================================
 // CACHE HELPERS
 // ============================================================================
@@ -94,7 +154,10 @@ func (s *ScheduleService) invalidateSessionCache(ctx context.Context, classID uu
 // CLASS SCHEDULE
 // ============================================================================
 
-func (s *ScheduleService) CreateSchedule(ctx context.Context, classID uuid.UUID, req dto.CreateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error) {
+func (s *ScheduleService) CreateSchedule(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, req dto.CreateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error) {
+	if err := s.requireClassWrite(ctx, actorID, isAdmin, classID); err != nil {
+		return nil, err
+	}
 	effectiveFrom, err := time.Parse("2006-01-02", req.EffectiveFrom)
 	if err != nil {
 		return nil, errors.New("invalid effective_from date format, use YYYY-MM-DD")
@@ -128,7 +191,10 @@ func (s *ScheduleService) CreateSchedule(ctx context.Context, classID uuid.UUID,
 	return s.mapScheduleToDTO(schedule), nil
 }
 
-func (s *ScheduleService) GetSchedulesByClass(ctx context.Context, classID uuid.UUID) ([]dto.ClassScheduleResponseDTO, error) {
+func (s *ScheduleService) GetSchedulesByClass(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool) ([]dto.ClassScheduleResponseDTO, error) {
+	if err := s.requireClassRead(ctx, actorID, isAdmin, classID); err != nil {
+		return nil, err
+	}
 	// Check cache
 	if s.redis != nil {
 		cacheKey := schedulesCachePrefix + classID.String()
@@ -161,24 +227,24 @@ func (s *ScheduleService) GetSchedulesByClass(ctx context.Context, classID uuid.
 	return result, nil
 }
 
-func (s *ScheduleService) GetScheduleByID(ctx context.Context, id uuid.UUID) (*dto.ClassScheduleResponseDTO, error) {
-	schedule, err := s.repo.GetScheduleByID(ctx, id)
+func (s *ScheduleService) GetScheduleByID(ctx context.Context, id, actorID uuid.UUID, isAdmin bool) (*dto.ClassScheduleResponseDTO, error) {
+	schedule, err := s.scheduleClass(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if schedule == nil {
-		return nil, errors.New("schedule not found")
+	if err := s.requireClassRead(ctx, actorID, isAdmin, schedule.ClassID); err != nil {
+		return nil, err
 	}
 	return s.mapScheduleToDTO(schedule), nil
 }
 
-func (s *ScheduleService) UpdateSchedule(ctx context.Context, id uuid.UUID, req dto.UpdateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error) {
-	schedule, err := s.repo.GetScheduleByID(ctx, id)
+func (s *ScheduleService) UpdateSchedule(ctx context.Context, id, actorID uuid.UUID, isAdmin bool, req dto.UpdateClassScheduleDTO) (*dto.ClassScheduleResponseDTO, error) {
+	schedule, err := s.scheduleClass(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if schedule == nil {
-		return nil, errors.New("schedule not found")
+	if err := s.requireClassWrite(ctx, actorID, isAdmin, schedule.ClassID); err != nil {
+		return nil, err
 	}
 
 	if req.DayOfWeek != nil {
@@ -219,13 +285,13 @@ func (s *ScheduleService) UpdateSchedule(ctx context.Context, id uuid.UUID, req 
 	return s.mapScheduleToDTO(schedule), nil
 }
 
-func (s *ScheduleService) DeleteSchedule(ctx context.Context, id uuid.UUID) error {
-	schedule, err := s.repo.GetScheduleByID(ctx, id)
+func (s *ScheduleService) DeleteSchedule(ctx context.Context, id, actorID uuid.UUID, isAdmin bool) error {
+	schedule, err := s.scheduleClass(ctx, id)
 	if err != nil {
 		return err
 	}
-	if schedule == nil {
-		return errors.New("schedule not found")
+	if err := s.requireClassWrite(ctx, actorID, isAdmin, schedule.ClassID); err != nil {
+		return err
 	}
 
 	if err := s.repo.DeleteSchedule(ctx, id); err != nil {
@@ -240,7 +306,10 @@ func (s *ScheduleService) DeleteSchedule(ctx context.Context, id uuid.UUID) erro
 // CLASS SESSION
 // ============================================================================
 
-func (s *ScheduleService) CreateSession(ctx context.Context, classID uuid.UUID, req dto.CreateClassSessionDTO) (*dto.ClassSessionResponseDTO, error) {
+func (s *ScheduleService) CreateSession(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, req dto.CreateClassSessionDTO) (*dto.ClassSessionResponseDTO, error) {
+	if err := s.requireClassWrite(ctx, actorID, isAdmin, classID); err != nil {
+		return nil, err
+	}
 	date, err := time.Parse("2006-01-02", req.Date)
 	if err != nil {
 		return nil, errors.New("invalid date format, use YYYY-MM-DD")
@@ -278,7 +347,10 @@ func (s *ScheduleService) CreateSession(ctx context.Context, classID uuid.UUID, 
 	return s.mapSessionToDTO(session), nil
 }
 
-func (s *ScheduleService) GetSessionsByClass(ctx context.Context, classID uuid.UUID, page, pageSize int) (*dto.ClassSessionListDTO, error) {
+func (s *ScheduleService) GetSessionsByClass(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.ClassSessionListDTO, error) {
+	if err := s.requireClassRead(ctx, actorID, isAdmin, classID); err != nil {
+		return nil, err
+	}
 	if page < 1 {
 		page = 1
 	}
@@ -304,24 +376,24 @@ func (s *ScheduleService) GetSessionsByClass(ctx context.Context, classID uuid.U
 	}, nil
 }
 
-func (s *ScheduleService) GetSessionByID(ctx context.Context, id uuid.UUID) (*dto.ClassSessionResponseDTO, error) {
-	session, err := s.repo.GetSessionByID(ctx, id)
+func (s *ScheduleService) GetSessionByID(ctx context.Context, id, actorID uuid.UUID, isAdmin bool) (*dto.ClassSessionResponseDTO, error) {
+	session, err := s.sessionClass(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if session == nil {
-		return nil, errors.New("session not found")
+	if err := s.requireClassRead(ctx, actorID, isAdmin, session.ClassID); err != nil {
+		return nil, err
 	}
 	return s.mapSessionToDTO(session), nil
 }
 
-func (s *ScheduleService) UpdateSession(ctx context.Context, id uuid.UUID, req dto.UpdateClassSessionDTO) (*dto.ClassSessionResponseDTO, error) {
-	session, err := s.repo.GetSessionByID(ctx, id)
+func (s *ScheduleService) UpdateSession(ctx context.Context, id, actorID uuid.UUID, isAdmin bool, req dto.UpdateClassSessionDTO) (*dto.ClassSessionResponseDTO, error) {
+	session, err := s.sessionClass(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if session == nil {
-		return nil, errors.New("session not found")
+	if err := s.requireClassWrite(ctx, actorID, isAdmin, session.ClassID); err != nil {
+		return nil, err
 	}
 
 	if req.Date != nil {
@@ -355,13 +427,13 @@ func (s *ScheduleService) UpdateSession(ctx context.Context, id uuid.UUID, req d
 	return s.mapSessionToDTO(session), nil
 }
 
-func (s *ScheduleService) CancelSession(ctx context.Context, id uuid.UUID, reason string) error {
-	session, err := s.repo.GetSessionByID(ctx, id)
+func (s *ScheduleService) CancelSession(ctx context.Context, id, actorID uuid.UUID, isAdmin bool, reason string) error {
+	session, err := s.sessionClass(ctx, id)
 	if err != nil {
 		return err
 	}
-	if session == nil {
-		return errors.New("session not found")
+	if err := s.requireClassWrite(ctx, actorID, isAdmin, session.ClassID); err != nil {
+		return err
 	}
 
 	now := time.Now()
@@ -379,7 +451,10 @@ func (s *ScheduleService) CancelSession(ctx context.Context, id uuid.UUID, reaso
 	return nil
 }
 
-func (s *ScheduleService) GenerateSessions(ctx context.Context, classID uuid.UUID, req dto.GenerateSessionsDTO) ([]dto.ClassSessionResponseDTO, error) {
+func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, req dto.GenerateSessionsDTO) ([]dto.ClassSessionResponseDTO, error) {
+	if err := s.requireClassWrite(ctx, actorID, isAdmin, classID); err != nil {
+		return nil, err
+	}
 	startDate, err := time.Parse("2006-01-02", req.StartDate)
 	if err != nil {
 		return nil, errors.New("invalid start_date format")
@@ -459,13 +534,32 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID uuid.UUI
 // SESSION ATTENDANCE
 // ============================================================================
 
-func (s *ScheduleService) requireTeacherSessionAccess(ctx context.Context, sessionID, teacherID uuid.UUID) error {
-	allowed, err := s.repo.TeacherCanManageSession(ctx, sessionID, teacherID)
+// requireSessionManage (S5): quyền quản lý buổi = quyền quản lý LỚP của buổi (giảng viên lớp, chủ khoá,
+// người tạo, admin), dùng lại ensureClassManage thay cho TeacherCanManageSession (chỉ tra teacher_classes,
+// nên chủ khoá và người tạo lớp bị từ chối oan). viewerNotFound=true (đọc danh sách điểm danh): người
+// không quản lý nhận 404 kể cả thành viên lớp; false (ghi): thành viên lớp nhận 403, người ngoài 404.
+func (s *ScheduleService) requireSessionManage(ctx context.Context, sessionID, actorID uuid.UUID, isAdmin, viewerNotFound bool) error {
+	session, err := s.sessionClass(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("check teacher session access: %w", err)
+		return err
+	}
+	if viewerNotFound {
+		return ensureClassManageOrNotFound(ctx, s.classRepo, s.courseRepo, actorID, session.ClassID, isAdmin)
+	}
+	return s.requireClassWrite(ctx, actorID, isAdmin, session.ClassID)
+}
+
+// ErrStudentNotInSession: học viên trong danh sách điểm danh không đang học lớp của buổi (400).
+var ErrStudentNotInSession = errors.New("student is not an active member of this session's class")
+
+// requireStudentInSession (S5, cùng lỗi M-4 của điểm danh lớp): chỉ ghi điểm danh cho học viên đang học lớp của buổi.
+func (s *ScheduleService) requireStudentInSession(ctx context.Context, sessionID, studentID uuid.UUID) error {
+	allowed, err := s.repo.StudentCanAttendSession(ctx, sessionID, studentID)
+	if err != nil {
+		return fmt.Errorf("check student session membership: %w", err)
 	}
 	if !allowed {
-		return errors.New("not authorized to manage this session")
+		return ErrStudentNotInSession
 	}
 	return nil
 }
@@ -476,13 +570,13 @@ func (s *ScheduleService) requireStudentSessionAccess(ctx context.Context, sessi
 		return fmt.Errorf("check student session access: %w", err)
 	}
 	if !allowed {
-		return errors.New("student is not enrolled in this session's class")
+		return ErrClassSessionNotFound
 	}
 	return nil
 }
 
-func (s *ScheduleService) GetSessionAttendances(ctx context.Context, sessionID, requesterID uuid.UUID) ([]dto.SessionAttendanceResponseDTO, error) {
-	if err := s.requireTeacherSessionAccess(ctx, sessionID, requesterID); err != nil {
+func (s *ScheduleService) GetSessionAttendances(ctx context.Context, sessionID, requesterID uuid.UUID, isAdmin bool) ([]dto.SessionAttendanceResponseDTO, error) {
+	if err := s.requireSessionManage(ctx, sessionID, requesterID, isAdmin, true); err != nil {
 		return nil, err
 	}
 	atts, err := s.repo.GetAttendancesBySessionID(ctx, sessionID)
@@ -497,13 +591,16 @@ func (s *ScheduleService) GetSessionAttendances(ctx context.Context, sessionID, 
 	return result, nil
 }
 
-func (s *ScheduleService) MarkAttendance(ctx context.Context, sessionID uuid.UUID, req dto.MarkAttendanceDTO, verifiedBy uuid.UUID) (*dto.SessionAttendanceResponseDTO, error) {
-	if err := s.requireTeacherSessionAccess(ctx, sessionID, verifiedBy); err != nil {
+func (s *ScheduleService) MarkAttendance(ctx context.Context, sessionID uuid.UUID, req dto.MarkAttendanceDTO, verifiedBy uuid.UUID, isAdmin bool) (*dto.SessionAttendanceResponseDTO, error) {
+	if err := s.requireSessionManage(ctx, sessionID, verifiedBy, isAdmin, false); err != nil {
 		return nil, err
 	}
 	studentID, err := uuid.Parse(req.StudentID)
 	if err != nil {
 		return nil, errors.New("invalid student_id")
+	}
+	if err := s.requireStudentInSession(ctx, sessionID, studentID); err != nil {
+		return nil, err
 	}
 
 	existing, err := s.repo.GetAttendanceBySessionAndStudent(ctx, sessionID, studentID)
@@ -535,8 +632,8 @@ func (s *ScheduleService) MarkAttendance(ctx context.Context, sessionID uuid.UUI
 	return s.mapAttendanceToDTO(att), nil
 }
 
-func (s *ScheduleService) BulkMarkAttendance(ctx context.Context, sessionID uuid.UUID, req dto.BulkMarkAttendanceDTO, verifiedBy uuid.UUID) ([]dto.SessionAttendanceResponseDTO, error) {
-	if err := s.requireTeacherSessionAccess(ctx, sessionID, verifiedBy); err != nil {
+func (s *ScheduleService) BulkMarkAttendance(ctx context.Context, sessionID uuid.UUID, req dto.BulkMarkAttendanceDTO, verifiedBy uuid.UUID, isAdmin bool) ([]dto.SessionAttendanceResponseDTO, error) {
+	if err := s.requireSessionManage(ctx, sessionID, verifiedBy, isAdmin, false); err != nil {
 		return nil, err
 	}
 	attendances := make([]model.SessionAttendance, 0, len(req.Attendances))
@@ -550,6 +647,9 @@ func (s *ScheduleService) BulkMarkAttendance(ctx context.Context, sessionID uuid
 			return nil, fmt.Errorf("student %s appears more than once", studentID)
 		}
 		seen[studentID] = struct{}{}
+		if err := s.requireStudentInSession(ctx, sessionID, studentID); err != nil {
+			return nil, err
+		}
 
 		existing, err := s.repo.GetAttendanceBySessionAndStudent(ctx, sessionID, studentID)
 		if err != nil {
@@ -582,8 +682,8 @@ func (s *ScheduleService) BulkMarkAttendance(ctx context.Context, sessionID uuid
 	return results, nil
 }
 
-func (s *ScheduleService) UpdateAttendance(ctx context.Context, sessionID, id uuid.UUID, req dto.UpdateSessionAttendanceDTO, verifiedBy uuid.UUID) (*dto.SessionAttendanceResponseDTO, error) {
-	if err := s.requireTeacherSessionAccess(ctx, sessionID, verifiedBy); err != nil {
+func (s *ScheduleService) UpdateAttendance(ctx context.Context, sessionID, id uuid.UUID, req dto.UpdateSessionAttendanceDTO, verifiedBy uuid.UUID, isAdmin bool) (*dto.SessionAttendanceResponseDTO, error) {
+	if err := s.requireSessionManage(ctx, sessionID, verifiedBy, isAdmin, false); err != nil {
 		return nil, err
 	}
 	att, err := s.repo.GetAttendanceByID(ctx, id)
@@ -687,7 +787,10 @@ func (s *ScheduleService) GetMyAttendances(ctx context.Context, studentID uuid.U
 // TIMETABLE
 // ============================================================================
 
-func (s *ScheduleService) GetClassTimetable(ctx context.Context, classID uuid.UUID) (*dto.TimetableResponseDTO, error) {
+func (s *ScheduleService) GetClassTimetable(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool) (*dto.TimetableResponseDTO, error) {
+	if err := s.requireClassRead(ctx, actorID, isAdmin, classID); err != nil {
+		return nil, err
+	}
 	schedules, err := s.repo.GetSchedulesByClassID(ctx, classID)
 	if err != nil {
 		return nil, err

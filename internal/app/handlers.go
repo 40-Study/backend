@@ -215,7 +215,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		ParentLink:      handler.NewParentLinkHandler(services.ParentLink),
 
 		// ===== Schedule =====
-		Schedule: handler.NewScheduleHandler(services.Schedule),
+		Schedule: handler.NewScheduleHandler(services.Schedule, permChecker),
 
 		// ===== Quiz =====
 		Quiz: handler.NewQuizHandler(services.Quiz, permChecker),
@@ -233,7 +233,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		Certificate: handler.NewCertificateHandler(services.Certificate),
 
 		// ===== Report =====
-		Report: handler.NewReportHandler(services.Report),
+		Report: handler.NewReportHandler(services.Report, permChecker),
 
 		// ===== Coin =====
 		Coin: handler.NewCoinHandler(services.Coin),

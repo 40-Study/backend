@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/gofiber/fiber/v2"
@@ -273,8 +274,20 @@ func (h *EnrollmentHandler) GetCourseEnrollments(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 
-	enrollments, err := h.service.GetCourseEnrollments(c.Context(), courseID, page, pageSize)
+	actor, err := extractUserID(c)
 	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "Unauthorized", "error": err.Error(),
+		})
+	}
+	enrollments, err := h.service.GetCourseEnrollments(c.Context(), courseID, actor, isAdminActor(c, h.permChecker, actor), page, pageSize)
+	if err != nil {
+		if errors.Is(err, service.ErrCourseHidden) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": err.Error()})
+		}
+		if errors.Is(err, service.ErrNotCourseOwner) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve enrollments", "error": err.Error(),
 		})

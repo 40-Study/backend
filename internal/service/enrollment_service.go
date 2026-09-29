@@ -67,7 +67,7 @@ type EnrollmentServiceInterface interface {
 	// isAdminActor va truyen xuong — dung de bypass luat khoa tuan tu, giong het cach
 	// LessonContentService.GetContentsByLessonID lam. Xem chu thich tai impl.
 	UpdateLessonProgress(ctx context.Context, userID, lessonID uuid.UUID, req dto.UpdateLessonProgressDTO, isAdmin bool) (*dto.LessonProgressStateDTO, error)
-	GetCourseEnrollments(ctx context.Context, courseID uuid.UUID, page, pageSize int) (*dto.CourseEnrollmentListDTO, error)
+	GetCourseEnrollments(ctx context.Context, courseID, actorID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.CourseEnrollmentListDTO, error)
 	DebugGetCourseEnrollments(ctx context.Context, courseID uuid.UUID) ([]dto.DebugEnrollmentDTO, error)
 }
 
@@ -1000,7 +1000,22 @@ func (s *EnrollmentService) toLessonProgressResponseDTO(lp *model.LessonProgress
 }
 
 // GetCourseEnrollments returns all enrollments for a course (instructor view)
-func (s *EnrollmentService) GetCourseEnrollments(ctx context.Context, courseID uuid.UUID, page, pageSize int) (*dto.CourseEnrollmentListDTO, error) {
+func (s *EnrollmentService) GetCourseEnrollments(ctx context.Context, courseID, actorID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.CourseEnrollmentListDTO, error) {
+	// S5: danh sách học viên ghi danh (id, tên, tiến độ) là dữ liệu riêng tư của khoá: chỉ chủ khoá và admin. Khoá
+	// chưa xuất bản mà người gọi không sở hữu thì 404 (như mọi route đọc khoá khác); khoá đã xuất bản thì 403.
+	course, err := s.courseRepo.GetByID(ctx, courseID)
+	if err != nil {
+		return nil, err
+	}
+	if course == nil {
+		return nil, ErrCourseHidden
+	}
+	if !isAdmin && course.InstructorID != actorID {
+		if isPrivateCourseStatus(course.Status) {
+			return nil, ErrCourseHidden
+		}
+		return nil, ErrNotCourseOwner
+	}
 	if page < 1 {
 		page = 1
 	}
