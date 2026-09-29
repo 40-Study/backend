@@ -273,11 +273,7 @@ kể người gọi có được xem bài đó hay không.
 BAO GIỜ bị khoá — áp dụng thống nhất trên cả ba nơi tính khoá: `GET /api/lessons/:id`,
 `GET /api/lessons/:lesson_id/contents`, và `GET /api/courses/:course_id/sections`.
 
-**Lưu ý bảo mật đã biết, CHƯA sửa trong PR này (B-2):** các route `/api/hls/*` (phát HLS
-segment/manifest) hiện KHÔNG có middleware xác thực — bất kỳ ai biết URL (kể cả suy đoán từ
-`video_url`/`video_hls_url` trả về) đều phát được video mà không cần đăng nhập hay kiểm tra
-khoá/enrollment. Đây là lỗi có TRƯỚC PR #60 (không phải hồi quy do các thay đổi trong PR này) —
-xem issue theo dõi riêng: [40-Study/backend#61](https://github.com/40-Study/backend/issues/61).
+**Bảo mật video HLS (B-2, đã sửa):** các route `/api/hls/*` chỉ phục vụ URL có chữ ký HMAC ngắn hạn (query `exp`, `uid` tuỳ chọn, `sig`), do API nội dung bài học cấp qua `video_hls_url`. Chữ ký gắn với `upload_id` và thời hạn (2 giờ); thiếu, sai hoặc hết hạn trả 403 (`HLS_URL_INVALID` / `HLS_URL_EXPIRED`). Chỉ người được xem bài (đã ghi danh, chủ khoá, admin) hoặc khách xem bài preview của khoá đã publish mới nhận URL ký. `video_url` (file gốc, chữ ký phạm vi riêng) chỉ trả cho chủ khoá/admin. Cần biến môi trường `HLS_SIGNING_SECRET` (>= 32 ký tự); thiếu thì backend không khởi động.
 
 **Phase 1 §4 — phụ đề:** `PUT /api/lessons/:id` (`UpdateLessonDTO`) nhận thêm
 `subtitle_url: string|null` — đây là đường GHI mà web dùng thật; backend lưu vào đúng
@@ -629,7 +625,7 @@ content); trước đây response chỉ có `object_key` nên web phải yêu c�
 Khi `MINIO_PUBLIC_ENDPOINT` được cấu hình, host trong `url` là endpoint public đó thay vì
 `MINIO_HOST:MINIO_PORT` nội bộ.
 
-#### 11.3 HLS Streaming (Public)
+#### 11.3 HLS Streaming (yêu cầu URL ký)
 
 | Method | Path | Handler | Mô tả |
 |--------|------|---------|-------|

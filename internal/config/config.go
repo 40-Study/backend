@@ -89,6 +89,11 @@ type Config struct {
 	JWTAccessExpiration  time.Duration
 	JWTRefreshExpiration time.Duration
 
+	// HLSSigningSecret: secret HMAC ký URL ngắn hạn cho /api/hls/* (xem package hlsauth). Bắt buộc,
+	// KHÔNG có mặc định — kiểm ở app.InitResources (không kiểm trong LoadConfig để cmd/seed, vốn
+	// không phát video, vẫn chạy được mà không cần secret này).
+	HLSSigningSecret string `mapstructure:"HLS_SIGNING_SECRET"`
+
 	// CORS
 	AllowedOrigins string `mapstructure:"ALLOWED_ORIGINS"`
 
@@ -231,6 +236,9 @@ func LoadConfig() (*Config, error) {
 	// trong source code), cho phép bất kỳ ai tự ký JWT hợp lệ giả danh user/admin bất kỳ.
 	// Xoá default — JWT_SECRET bắt buộc phải được set qua .env/.env.prod hoặc biến môi
 	// trường thật; validate ngay dưới đây để fail-fast khi thiếu/còn giá trị mặc định cũ.
+	// Đăng ký key với viper (giá trị rỗng, KHÔNG phải secret mặc định) để Unmarshal thấy biến môi
+	// trường HLS_SIGNING_SECRET; giá trị rỗng bị hlsauth.ValidateSecret từ chối lúc khởi động.
+	viper.SetDefault("HLS_SIGNING_SECRET", "")
 	viper.SetDefault("ALLOWED_ORIGINS", "http://localhost:3000")
 	viper.SetDefault("JWT_ACCESS_EXPIRATION_MINUTES", 15)
 	viper.SetDefault("JWT_REFRESH_EXPIRATION_DAYS", 7)

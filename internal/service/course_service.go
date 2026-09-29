@@ -251,6 +251,7 @@ func (s *CourseService) GetCourseByID(ctx context.Context, id, userID uuid.UUID,
 		CourseResponseDTO: *s.toCourseResponseDTO(course),
 	}
 
+	viewer := videoViewer{userID: userID, original: bypass}
 	sections := make([]dto.SectionResponseDTO, len(course.Sections))
 	for i, sec := range course.Sections {
 		lessons := make([]dto.LessonResponseDTO, len(sec.Lessons))
@@ -260,9 +261,9 @@ func (s *CourseService) GetCourseByID(ctx context.Context, id, userID uuid.UUID,
 				// Bài bị khoá: KHÔNG truyền les.Contents — đó chính là đường lộ video_url mà bản
 				// vá này đóng lại. Vẫn trả metadata + locked/lock_reason/progress để client dựng
 				// được danh sách khoá (không trả lỗi, giống GetLessonByID).
-				lessons[j] = s.toLessonResponseDTO(&les, nil)
+				lessons[j] = s.toLessonResponseDTO(&les, nil, withheldVideoViewer)
 			} else {
-				lessons[j] = s.toLessonResponseDTO(&les, les.Contents)
+				lessons[j] = s.toLessonResponseDTO(&les, les.Contents, viewer)
 			}
 			lessons[j].Locked = locked
 			lessons[j].LockReason = reason
@@ -306,7 +307,7 @@ func (s *CourseService) GetCourseBySlug(ctx context.Context, slug string) (*dto.
 		lessons := make([]dto.LessonResponseDTO, len(sec.Lessons))
 		for j, les := range sec.Lessons {
 			// Public course detail exposes the syllabus, never protected content URLs.
-			lessons[j] = s.toLessonResponseDTO(&les, nil)
+			lessons[j] = s.toLessonResponseDTO(&les, nil, withheldVideoViewer)
 
 			// Phase 1 §2: route nay KHONG co user dang nhap (public, xem truoc khi mua) nen
 			// khong biet duoc "bai truoc da completed chua" — chi biet CHAC MOT dieu: nguoi
@@ -560,7 +561,7 @@ func (s *CourseService) toCourseResponseDTO(course *model.Course) *dto.CourseRes
 	return resp
 }
 
-func (s *CourseService) toLessonResponseDTO(lesson *model.Lesson, contents []model.LessonContent) dto.LessonResponseDTO {
+func (s *CourseService) toLessonResponseDTO(lesson *model.Lesson, contents []model.LessonContent, viewer videoViewer) dto.LessonResponseDTO {
 	resp := dto.LessonResponseDTO{
 		ID:           lesson.ID,
 		SectionID:    lesson.SectionID,
@@ -582,7 +583,6 @@ func (s *CourseService) toLessonResponseDTO(lesson *model.Lesson, contents []mod
 				LessonID: c.LessonID,
 				Type:     c.Type,
 				Title:    c.Title,
-				VideoURL: c.VideoURL,
 				Duration: c.Duration,
 				// N10 (review vòng 2, từ review web): xem chú thích tại model.LessonContent.
 				LivestreamSessionID: c.LivestreamSessionID,
@@ -590,6 +590,8 @@ func (s *CourseService) toLessonResponseDTO(lesson *model.Lesson, contents []mod
 				CreatedAt:           c.CreatedAt,
 				UpdatedAt:           c.UpdatedAt,
 			}
+			// URL video ký; URL file gốc chỉ cho chủ khoá/admin — xem applyVideoAccess.
+			applyVideoAccess(&resp.Contents[i], c.VideoURL, viewer)
 		}
 	}
 

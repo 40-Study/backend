@@ -10,6 +10,7 @@ import (
 	"study.com/v1/internal/cache"
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/database"
+	"study.com/v1/internal/hlsauth"
 	asynq_queue "study.com/v1/internal/queue/asynq"
 	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/storage"
@@ -29,6 +30,16 @@ func InitResources() (*Resources, error) {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+		return nil, err
+	}
+
+	// Fail-fast: thiếu/yếu HLS_SIGNING_SECRET thì KHÔNG khởi động — không có chế độ "không ký".
+	if err := hlsauth.ValidateSecret(cfg.HLSSigningSecret, ".env"); err != nil {
+		log.Fatalf("Invalid config: %v", err)
+		return nil, err
+	}
+	if err := hlsauth.Configure(cfg.HLSSigningSecret); err != nil {
+		log.Fatalf("Invalid config: %v", err)
 		return nil, err
 	}
 
