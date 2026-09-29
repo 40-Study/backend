@@ -110,7 +110,7 @@ func (f *fakeReportSvcCR) CreateReport(ctx context.Context, reporterID uuid.UUID
 	f.called = true
 	return &dto.ReportResponseDTO{}, nil
 }
-func (f *fakeReportSvcCR) GetReportByID(ctx context.Context, id uuid.UUID) (*dto.ReportResponseDTO, error) {
+func (f *fakeReportSvcCR) GetReportByID(ctx context.Context, id, actorID uuid.UUID, isModerator bool) (*dto.ReportResponseDTO, error) {
 	return &dto.ReportResponseDTO{}, nil
 }
 func (f *fakeReportSvcCR) ListReports(ctx context.Context, status, reportedType string, page, pageSize int) (*dto.ReportListDTO, error) {
@@ -195,7 +195,7 @@ func newCatRepAuthzEnv(t *testing.T, roleName string) *catRepAuthzEnv {
 	reportSvc := &fakeReportSvcCR{}
 
 	SetupCategoryRoutes(api, cfg, handler.NewCategoryHandler(categorySvc), handler.NewTagHandler(tagSvc), rdb, permChecker)
-	SetupReportRoutes(api, cfg, handler.NewReportHandler(reportSvc), rdb, permChecker)
+	SetupReportRoutes(api, cfg, handler.NewReportHandler(reportSvc, permChecker), rdb, permChecker)
 
 	return &catRepAuthzEnv{app: app, token: accessToken, categorySvc: categorySvc, tagSvc: tagSvc, reportSvc: reportSvc}
 }

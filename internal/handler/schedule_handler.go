@@ -1,21 +1,51 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
 
 type ScheduleHandler struct {
-	service service.ScheduleServiceInterface
+	service     service.ScheduleServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewScheduleHandler(service service.ScheduleServiceInterface) *ScheduleHandler {
-	return &ScheduleHandler{service: service}
+func NewScheduleHandler(service service.ScheduleServiceInterface, permChecker *middleware.PermissionChecker) *ScheduleHandler {
+	return &ScheduleHandler{service: service, permChecker: permChecker}
 }
 
+// scheduleActor (S5): người gọi và cờ admin. Trước đây các route lịch học và buổi học của lớp không kiểm gì
+// nên tài khoản đăng nhập bất kỳ, kể cả học viên, tạo, sửa, xoá, huỷ buổi và đọc lịch của lớp bất kỳ.
+func (h *ScheduleHandler) scheduleActor(c *fiber.Ctx) (uuid.UUID, bool, bool) {
+	actor, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return uuid.Nil, false, false
+	}
+	return actor, isAdminActor(c, h.permChecker, actor), true
+}
+
+func scheduleUnauthorized(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+}
+
+// scheduleFail ánh xạ lỗi uỷ quyền (404 lớp/lịch/buổi không xem được hoặc không tồn tại, 403 xem được nhưng
+// không quản lý); lỗi khác giữ mã và thông điệp cũ của từng route.
+func scheduleFail(c *fiber.Ctx, err error, message string, fallback int) error {
+	status := classErrorStatus(err)
+	if status == 0 && (errors.Is(err, service.ErrScheduleNotFound) || errors.Is(err, service.ErrClassSessionNotFound)) {
+		status = fiber.StatusNotFound
+	}
+	if status != 0 {
+		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+	}
+	return c.Status(fallback).JSON(fiber.Map{"message": message, "error": err.Error()})
+}
 // ============================================================================
 // CLASS SCHEDULE
 // ============================================================================
@@ -44,12 +74,14 @@ func (h *ScheduleHandler) CreateSchedule(c *fiber.Ctx) error {
 		})
 	}
 
-	schedule, err := h.service.CreateSchedule(c.Context(), classID, req)
+	actor, isAdmin, ok := h.scheduleActor(c)
+	if !ok {
+		return scheduleUnauthorized(c)
+	}
+
+	schedule, err := h.service.CreateSchedule(c.Context(), classID, actor, isAdmin, req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to create schedule",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Failed to create schedule", fiber.StatusBadRequest)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -67,12 +99,14 @@ func (h *ScheduleHandler) GetSchedulesByClass(c *fiber.Ctx) error {
 		})
 	}
 
-	schedules, err := h.service.GetSchedulesByClass(c.Context(), classID)
+	actor, isAdmin, ok := h.scheduleActor(c)
+	if !ok {
+		return scheduleUnauthorized(c)
+	}
+
+	schedules, err := h.service.GetSchedulesByClass(c.Context(), classID, actor, isAdmin)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to retrieve schedules",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Failed to retrieve schedules", fiber.StatusInternalServerError)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -98,12 +132,14 @@ func (h *ScheduleHandler) GetScheduleByID(c *fiber.Ctx) error {
 		})
 	}
 
-	schedule, err := h.service.GetScheduleByID(c.Context(), id)
+	actor, isAdmin, ok := h.scheduleActor(c)
+	if !ok {
+		return scheduleUnauthorized(c)
+	}
+
+	schedule, err := h.service.GetScheduleByID(c.Context(), id, actor, isAdmin)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Schedule not found",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Schedule not found", fiber.StatusNotFound)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -144,12 +180,14 @@ func (h *ScheduleHandler) UpdateSchedule(c *fiber.Ctx) error {
 		})
 	}
 
-	schedule, err := h.service.UpdateSchedule(c.Context(), id, req)
+	actor, isAdmin, ok := h.scheduleActor(c)
+	if !ok {
+		return scheduleUnauthorized(c)
+	}
+
+	schedule, err := h.service.UpdateSchedule(c.Context(), id, actor, isAdmin, req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to update schedule",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Failed to update schedule", fiber.StatusBadRequest)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -175,11 +213,13 @@ func (h *ScheduleHandler) DeleteSchedule(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteSchedule(c.Context(), id); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to delete schedule",
-			"error":   err.Error(),
-		})
+	actor, isAdmin, ok := h.scheduleActor(c)
+	if !ok {
+		return scheduleUnauthorized(c)
+	}
+
+	if err := h.service.DeleteSchedule(c.Context(), id, actor, isAdmin); err != nil {
+		return scheduleFail(c, err, "Failed to delete schedule", fiber.StatusBadRequest)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -196,12 +236,14 @@ func (h *ScheduleHandler) GetClassTimetable(c *fiber.Ctx) error {
 		})
 	}
 
-	timetable, err := h.service.GetClassTimetable(c.Context(), classID)
+	actor, isAdmin, ok := h.scheduleActor(c)
+	if !ok {
+		return scheduleUnauthorized(c)
+	}
+
+	timetable, err := h.service.GetClassTimetable(c.Context(), classID, actor, isAdmin)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to retrieve timetable",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Failed to retrieve timetable", fiber.StatusInternalServerError)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -238,12 +280,14 @@ func (h *ScheduleHandler) CreateSession(c *fiber.Ctx) error {
 		})
 	}
 
-	session, err := h.service.CreateSession(c.Context(), classID, req)
+	actor, isAdmin, ok := h.scheduleActor(c)
+	if !ok {
+		return scheduleUnauthorized(c)
+	}
+
+	session, err := h.service.CreateSession(c.Context(), classID, actor, isAdmin, req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to create session",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Failed to create session", fiber.StatusBadRequest)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -264,12 +308,14 @@ func (h *ScheduleHandler) GetSessionsByClass(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
 
-	sessions, err := h.service.GetSessionsByClass(c.Context(), classID, page, pageSize)
+	actor, isAdmin, ok := h.scheduleActor(c)
+	if !ok {
+		return scheduleUnauthorized(c)
+	}
+
+	sessions, err := h.service.GetSessionsByClass(c.Context(), classID, actor, isAdmin, page, pageSize)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to retrieve sessions",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Failed to retrieve sessions", fiber.StatusInternalServerError)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -295,12 +341,14 @@ func (h *ScheduleHandler) GetSessionByID(c *fiber.Ctx) error {
 		})
 	}
 
-	session, err := h.service.GetSessionByID(c.Context(), id)
+	actor, isAdmin, ok := h.scheduleActor(c)
+	if !ok {
+		return scheduleUnauthorized(c)
+	}
+
+	session, err := h.service.GetSessionByID(c.Context(), id, actor, isAdmin)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Session not found",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Session not found", fiber.StatusNotFound)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -341,12 +389,14 @@ func (h *ScheduleHandler) UpdateSession(c *fiber.Ctx) error {
 		})
 	}
 
-	session, err := h.service.UpdateSession(c.Context(), id, req)
+	actor, isAdmin, ok := h.scheduleActor(c)
+	if !ok {
+		return scheduleUnauthorized(c)
+	}
+
+	session, err := h.service.UpdateSession(c.Context(), id, actor, isAdmin, req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to update session",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Failed to update session", fiber.StatusBadRequest)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -382,11 +432,13 @@ func (h *ScheduleHandler) CancelSession(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.CancelSession(c.Context(), id, body.CancelReason); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to cancel session",
-			"error":   err.Error(),
-		})
+	actor, isAdmin, ok := h.scheduleActor(c)
+	if !ok {
+		return scheduleUnauthorized(c)
+	}
+
+	if err := h.service.CancelSession(c.Context(), id, actor, isAdmin, body.CancelReason); err != nil {
+		return scheduleFail(c, err, "Failed to cancel session", fiber.StatusBadRequest)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -418,12 +470,14 @@ func (h *ScheduleHandler) GenerateSessions(c *fiber.Ctx) error {
 		})
 	}
 
-	sessions, err := h.service.GenerateSessions(c.Context(), classID, req)
+	actor, isAdmin, ok := h.scheduleActor(c)
+	if !ok {
+		return scheduleUnauthorized(c)
+	}
+
+	sessions, err := h.service.GenerateSessions(c.Context(), classID, actor, isAdmin, req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to generate sessions",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Failed to generate sessions", fiber.StatusBadRequest)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -450,12 +504,9 @@ func (h *ScheduleHandler) GetSessionAttendances(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
 	}
 
-	attendances, err := h.service.GetSessionAttendances(c.Context(), sessionID, userID)
+	attendances, err := h.service.GetSessionAttendances(c.Context(), sessionID, userID, isAdminActor(c, h.permChecker, userID))
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to retrieve attendances",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Failed to retrieve attendances", fiber.StatusInternalServerError)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -495,12 +546,9 @@ func (h *ScheduleHandler) MarkAttendance(c *fiber.Ctx) error {
 		})
 	}
 
-	attendance, err := h.service.MarkAttendance(c.Context(), sessionID, req, userID)
+	attendance, err := h.service.MarkAttendance(c.Context(), sessionID, req, userID, isAdminActor(c, h.permChecker, userID))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to mark attendance",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Failed to mark attendance", fiber.StatusBadRequest)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -540,12 +588,9 @@ func (h *ScheduleHandler) BulkMarkAttendance(c *fiber.Ctx) error {
 		})
 	}
 
-	attendances, err := h.service.BulkMarkAttendance(c.Context(), sessionID, req, userID)
+	attendances, err := h.service.BulkMarkAttendance(c.Context(), sessionID, req, userID, isAdminActor(c, h.permChecker, userID))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to bulk mark attendance",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Failed to bulk mark attendance", fiber.StatusBadRequest)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -591,12 +636,9 @@ func (h *ScheduleHandler) UpdateAttendance(c *fiber.Ctx) error {
 		})
 	}
 
-	attendance, err := h.service.UpdateAttendance(c.Context(), sessionID, id, req, userID)
+	attendance, err := h.service.UpdateAttendance(c.Context(), sessionID, id, req, userID, isAdminActor(c, h.permChecker, userID))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to update attendance",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Failed to update attendance", fiber.StatusBadRequest)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -623,10 +665,7 @@ func (h *ScheduleHandler) StudentCheckIn(c *fiber.Ctx) error {
 
 	attendance, err := h.service.StudentCheckIn(c.Context(), sessionID, userID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to check in",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Failed to check in", fiber.StatusBadRequest)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -653,10 +692,7 @@ func (h *ScheduleHandler) StudentCheckOut(c *fiber.Ctx) error {
 
 	attendance, err := h.service.StudentCheckOut(c.Context(), sessionID, userID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to check out",
-			"error":   err.Error(),
-		})
+		return scheduleFail(c, err, "Failed to check out", fiber.StatusBadRequest)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

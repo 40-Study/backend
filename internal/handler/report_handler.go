@@ -4,16 +4,18 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
 
 type ReportHandler struct {
-	service service.ReportServiceInterface
+	service     service.ReportServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewReportHandler(service service.ReportServiceInterface) *ReportHandler {
-	return &ReportHandler{service: service}
+func NewReportHandler(service service.ReportServiceInterface, permChecker *middleware.PermissionChecker) *ReportHandler {
+	return &ReportHandler{service: service, permChecker: permChecker}
 }
 
 func (h *ReportHandler) CreateReport(c *fiber.Ctx) error {
@@ -62,7 +64,12 @@ func (h *ReportHandler) GetReportByID(c *fiber.Ctx) error {
 		})
 	}
 
-	report, err := h.service.GetReportByID(c.Context(), id)
+	// S5: chỉ người tạo báo cáo hoặc người kiểm duyệt (REPORTS_MODERATE) đọc được; người khác nhận 404.
+	actor, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+	report, err := h.service.GetReportByID(c.Context(), id, actor, actorHasPermission(c, h.permChecker, actor, "REPORTS_MODERATE"))
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Report not found",

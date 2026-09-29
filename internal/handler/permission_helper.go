@@ -17,6 +17,11 @@ import (
 // admin, KHÔNG panic; lỗi resolve permission cũng coi như không phải admin (fail-closed —
 // không mở rộng quyền khi không chắc chắn).
 func isAdminActor(c *fiber.Ctx, permChecker *middleware.PermissionChecker, userID uuid.UUID) bool {
+	return actorHasPermission(c, permChecker, userID, "SYSTEM_SETTINGS_MANAGE")
+}
+
+// actorHasPermission (S5): cùng luật fail-closed với isAdminActor cho một permission bất kỳ (vd REPORTS_MODERATE).
+func actorHasPermission(c *fiber.Ctx, permChecker *middleware.PermissionChecker, userID uuid.UUID, permission string) bool {
 	if permChecker == nil {
 		return false
 	}
@@ -24,9 +29,9 @@ func isAdminActor(c *fiber.Ctx, permChecker *middleware.PermissionChecker, userI
 	if orgID, ok := c.Locals("active_org_id").(uuid.UUID); ok {
 		activeOrgID = &orgID
 	}
-	isAdmin, err := permChecker.HasPermission(c.Context(), userID, activeOrgID, "SYSTEM_SETTINGS_MANAGE")
+	has, err := permChecker.HasPermission(c.Context(), userID, activeOrgID, permission)
 	if err != nil {
 		return false
 	}
-	return isAdmin
+	return has
 }

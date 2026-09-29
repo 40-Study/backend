@@ -13,7 +13,7 @@ import (
 
 type ReportServiceInterface interface {
 	CreateReport(ctx context.Context, reporterID uuid.UUID, req dto.CreateReportDTO) (*dto.ReportResponseDTO, error)
-	GetReportByID(ctx context.Context, id uuid.UUID) (*dto.ReportResponseDTO, error)
+	GetReportByID(ctx context.Context, id, actorID uuid.UUID, isModerator bool) (*dto.ReportResponseDTO, error)
 	ListReports(ctx context.Context, status, reportedType string, page, pageSize int) (*dto.ReportListDTO, error)
 	UpdateReportStatus(ctx context.Context, id, adminID uuid.UUID, req dto.UpdateReportStatusDTO) (*dto.ReportResponseDTO, error)
 	DeleteReport(ctx context.Context, id uuid.UUID) error
@@ -62,10 +62,16 @@ func (s *ReportService) CreateReport(ctx context.Context, reporterID uuid.UUID, 
 	return s.mapReportToDTO(report), nil
 }
 
-func (s *ReportService) GetReportByID(ctx context.Context, id uuid.UUID) (*dto.ReportResponseDTO, error) {
+// ErrReportNotFound (S5): báo cáo không tồn tại HOẶC người gọi không phải người tạo/người kiểm duyệt (404, không phân biệt).
+var ErrReportNotFound = errors.New("report not found")
+
+func (s *ReportService) GetReportByID(ctx context.Context, id, actorID uuid.UUID, isModerator bool) (*dto.ReportResponseDTO, error) {
 	report, err := s.repo.GetReportByID(ctx, id)
 	if err != nil || report == nil {
-		return nil, errors.New("report not found")
+		return nil, ErrReportNotFound
+	}
+	if !isModerator && report.ReporterID != actorID {
+		return nil, ErrReportNotFound
 	}
 	return s.mapReportToDTO(report), nil
 }

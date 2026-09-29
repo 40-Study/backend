@@ -11,8 +11,8 @@ import (
 // SetupAchievementRoutes registers /achievements endpoints.
 // GET /achievements        - public list
 // GET /achievements/me     - auth required
-// POST /achievements/:id/unlock - auth required (internal use)
-func SetupAchievementRoutes(api fiber.Router, cfg *config.Config, h *handler.AchievementHandler, redis *redis.Client) {
+// POST /achievements/:id/unlock - admin only (S5)
+func SetupAchievementRoutes(api fiber.Router, cfg *config.Config, h *handler.AchievementHandler, redis *redis.Client, permChecker *middleware.PermissionChecker) {
 	achievements := api.Group("/achievements")
 
 	// Public: list all achievements
@@ -21,7 +21,9 @@ func SetupAchievementRoutes(api fiber.Router, cfg *config.Config, h *handler.Ach
 	// Auth-required routes
 	auth := achievements.Use(middleware.AuthMiddleware(cfg, redis))
 	auth.Get("/me", h.GetMyAchievements)
-	auth.Post("/:id/unlock", h.UnlockAchievement)
+	// S5: route ghi chú "internal use" nhưng ai đăng nhập cũng tự mở khoá được mọi thành tựu (không kiểm điều kiện).
+	// Chưa có luồng trao thành tựu nào khác và web chưa gọi; chỉ admin (SYSTEM_SETTINGS_MANAGE) cho tới khi có quyết định.
+	auth.Post("/:id/unlock", permChecker.RequirePermissions("SYSTEM_SETTINGS_MANAGE"), h.UnlockAchievement)
 }
 
 // SetupLeaderboardRoutes registers /leaderboard endpoints.
