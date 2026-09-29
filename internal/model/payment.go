@@ -275,6 +275,10 @@ func (v *Voucher) IsUsageLimitReached() bool {
 	return v.HasUsageLimit() && v.UsedCount >= v.UsageLimit
 }
 
+// UserVoucherSourceContestReward: user_vouchers.source của voucher phát khi chốt kết quả cuộc thi
+// (contract "Cuộc thi" §1.6, §5). Cột source không có CHECK nên chỉ cần hằng này.
+const UserVoucherSourceContestReward = "contest_reward"
+
 // UserVoucher - User's saved/bookmarked voucher
 type UserVoucher struct {
 	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`

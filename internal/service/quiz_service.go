@@ -22,8 +22,14 @@ import (
 // payment_service.go).
 var ErrQuizAttemptAlreadySubmitted = errors.New("quiz attempt already submitted")
 
+// Khoá quiz theo cuộc thi (contract "Cuộc thi" §3.2): mọi method đọc/ghi dưới đây nhận thêm
+// userID/isAdmin để hỏi ContestQuizGate. Quiz gắn cuộc thi trả ErrQuizLockedByContest cho người
+// không phải chủ cuộc thi/admin (403), và ErrQuizEditLockedByContest cho MỌI thao tác sửa khi cuộc
+// thi đang chờ duyệt/đã công bố/đã huỷ (409). Gate nil (trước khi lane B1 nối ContestService) =
+// không quiz nào bị khoá.
 type QuizServiceInterface interface {
-	CreateQuiz(ctx context.Context, req dto.CreateQuizDTO) (*dto.QuizResponseDTO, error)
+	// CreateQuiz: userID là người gọi, ghi vào quizzes.created_by.
+	CreateQuiz(ctx context.Context, userID uuid.UUID, req dto.CreateQuizDTO) (*dto.QuizResponseDTO, error)
 	// GetAllQuizzes (SEC-1, vá lộ nội dung quiz): thêm userID/isAdmin — khi lọc ra quiz gắn với
 	// một bài học (LessonID != nil), quiz của bài đang khoá đối với CHÍNH người gọi (chưa enroll,
 	// hoặc sequential mà bài trước chưa xong) không được liệt kê, xem checkLessonQuizAccess.
@@ -31,30 +37,31 @@ type QuizServiceInterface interface {
 	// GetQuizByID (B-3, review vòng 2): userID/isAdmin quyết định is_correct/explanation có bị
 	// giấu hay không — xem canViewQuizAnswerKey.
 	GetQuizByID(ctx context.Context, id, userID uuid.UUID, isAdmin bool) (*dto.QuizDetailDTO, error)
-	UpdateQuiz(ctx context.Context, id uuid.UUID, req dto.UpdateQuizDTO) (*dto.QuizResponseDTO, error)
-	DeleteQuiz(ctx context.Context, id uuid.UUID) error
-	DuplicateQuiz(ctx context.Context, id uuid.UUID) (*dto.QuizResponseDTO, error)
+	UpdateQuiz(ctx context.Context, id, userID uuid.UUID, isAdmin bool, req dto.UpdateQuizDTO) (*dto.QuizResponseDTO, error)
+	DeleteQuiz(ctx context.Context, id, userID uuid.UUID, isAdmin bool) error
+	// DuplicateQuiz: bản sao thuộc về người gọi (created_by = userID).
+	DuplicateQuiz(ctx context.Context, id, userID uuid.UUID, isAdmin bool) (*dto.QuizResponseDTO, error)
 
 	// Questions
-	CreateQuestion(ctx context.Context, quizID uuid.UUID, req dto.CreateQuestionDTO) (*dto.QuestionResponseDTO, error)
+	CreateQuestion(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.CreateQuestionDTO) (*dto.QuestionResponseDTO, error)
 	// GetQuestionsByQuiz (B-3, review vòng 2): userID/isAdmin — xem GetQuizByID.
 	GetQuestionsByQuiz(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) ([]dto.QuestionResponseDTO, error)
-	UpdateQuestion(ctx context.Context, quizID, questionID uuid.UUID, req dto.UpdateQuestionDTO) (*dto.QuestionResponseDTO, error)
-	DeleteQuestion(ctx context.Context, quizID, questionID uuid.UUID) error
-	ReorderQuestions(ctx context.Context, quizID uuid.UUID, req dto.ReorderQuestionsDTO) error
-	BulkCreateQuestions(ctx context.Context, quizID uuid.UUID, req dto.BulkCreateQuestionsDTO) ([]dto.QuestionResponseDTO, error)
+	UpdateQuestion(ctx context.Context, quizID, questionID, userID uuid.UUID, isAdmin bool, req dto.UpdateQuestionDTO) (*dto.QuestionResponseDTO, error)
+	DeleteQuestion(ctx context.Context, quizID, questionID, userID uuid.UUID, isAdmin bool) error
+	ReorderQuestions(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.ReorderQuestionsDTO) error
+	BulkCreateQuestions(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.BulkCreateQuestionsDTO) ([]dto.QuestionResponseDTO, error)
 
 	// Attempts
 	// StartQuiz (Phase 1 §6): req.Mode "official" (mặc định) hoặc "practice" — practice không
 	// tính vào quiz_max_attempts (xem CountAttemptsByUserAndQuiz, chỉ đếm attempt "official").
 	StartQuiz(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.StartQuizDTO) (*dto.StartQuizResponseDTO, error)
-	SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, req dto.SubmitQuizDTO) (*dto.QuizAttemptResponseDTO, error)
-	GetMyAttempts(ctx context.Context, quizID, userID uuid.UUID) ([]dto.QuizAttemptResponseDTO, error)
-	GetAttemptByID(ctx context.Context, attemptID, userID uuid.UUID) (*dto.QuizAttemptDetailDTO, error)
-	GetQuizResults(ctx context.Context, quizID uuid.UUID) (*dto.QuizResultsDTO, error)
-	GetQuizStatistics(ctx context.Context, quizID uuid.UUID) (*dto.QuizStatisticsDTO, error)
-	SaveAnswer(ctx context.Context, attemptID, userID uuid.UUID, req dto.SaveAnswerDTO) error
-	GetAttemptProgress(ctx context.Context, attemptID, userID uuid.UUID) (*dto.QuizAttemptDetailDTO, error)
+	SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.SubmitQuizDTO) (*dto.QuizAttemptResponseDTO, error)
+	GetMyAttempts(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) ([]dto.QuizAttemptResponseDTO, error)
+	GetAttemptByID(ctx context.Context, attemptID, userID uuid.UUID, isAdmin bool) (*dto.QuizAttemptDetailDTO, error)
+	GetQuizResults(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) (*dto.QuizResultsDTO, error)
+	GetQuizStatistics(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) (*dto.QuizStatisticsDTO, error)
+	SaveAnswer(ctx context.Context, attemptID, userID uuid.UUID, isAdmin bool, req dto.SaveAnswerDTO) error
+	GetAttemptProgress(ctx context.Context, attemptID, userID uuid.UUID, isAdmin bool) (*dto.QuizAttemptDetailDTO, error)
 	GetMyCreatedQuizzes(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.QuizListDTO, error)
 	GetMyQuizHistory(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]dto.QuizAttemptResponseDTO, error)
 }
@@ -72,6 +79,71 @@ type QuizService struct {
 	// LessonContentService đang dùng (gatherLessonLockInput, lesson_lock.go) — xem
 	// checkLessonQuizAccess.
 	enrollmentRepo repository.EnrollmentRepositoryInterface
+	// contestGate (contract "Cuộc thi" §3.2): ContestService của lane B1, nối qua SetContestGate.
+	contestGate ContestQuizGate
+}
+
+// SetContestGate nối cổng khoá quiz theo cuộc thi. Setter thay vì tham số constructor vì
+// ContestService lại cần chính QuizService (ContestQuizEngine) — hai phía phụ thuộc lẫn nhau nên
+// phải tạo QuizService trước rồi mới gắn gate. Gate nil chỉ hợp lệ trước khi lane B1 merge.
+func (s *QuizService) SetContestGate(g ContestQuizGate) {
+	s.contestGate = g
+}
+
+// checkContestAccess: quiz gắn cuộc thi chỉ người tạo cuộc thi và admin được đụng tới (§3.2).
+func (s *QuizService) checkContestAccess(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) error {
+	if s.contestGate == nil {
+		return nil
+	}
+	return s.contestGate.CheckQuizAccess(ctx, quizID, userID, isAdmin)
+}
+
+// ErrQuizNotOwner (review PR #80, F2): sửa/xoá/nhân bản quiz hoặc câu hỏi của quiz mà người gọi
+// không tạo ra. Handler ánh xạ sang 403 QUIZ_FORBIDDEN.
+var ErrQuizNotOwner = errors.New("only the quiz creator or an admin can modify this quiz")
+
+// checkQuizOwner: chỉ người tạo quiz (created_by), giảng viên chủ khoá chứa quiz, hoặc admin được
+// sửa, xoá, nhân bản quiz và câu hỏi của nó. Trước bản vá, mọi tài khoản đăng nhập đều sửa được quiz của người khác, và nhân bản
+// quiz của giảng viên khác rồi làm bài trên bản sao là đọc được đáp án trước khi quiz gốc được gắn
+// vào cuộc thi. Quiz tạo trước khi có cột created_by (NULL) không có chủ xác định nên chỉ admin
+// được sửa — chủ dự án chốt, không để thành "vô chủ ai cũng sửa".
+func (s *QuizService) checkQuizOwner(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) error {
+	if isAdmin {
+		return nil
+	}
+	quiz, err := s.repo.GetQuizByID(ctx, quizID)
+	if err != nil {
+		return err
+	}
+	if quiz == nil {
+		return errors.New("quiz not found")
+	}
+	if quiz.CreatedBy != nil && *quiz.CreatedBy == userID {
+		return nil
+	}
+	// Re-review vòng 2, R2-C (chủ dự án chốt 29/09): giảng viên chủ khoá sửa được MỌI quiz thuộc
+	// khoá của mình (suy từ bài học hoặc khoá học), kể cả quiz do admin hay người khác tạo.
+	isInstructor, err := s.isQuizCourseInstructor(ctx, quiz, userID)
+	if err != nil {
+		return err
+	}
+	if isInstructor {
+		return nil
+	}
+	return ErrQuizNotOwner
+}
+
+// checkQuizMutable: thứ tự kiểm cho mọi thao tác sửa. (1) Khoá cuộc thi: người ngoài nhận 403 như
+// mọi route khác, không để lộ trạng thái cuộc thi qua mã 409. (2) Chủ sở hữu. (3) Cuộc thi đang
+// chờ duyệt/đã công bố/đã huỷ thì không ai sửa được, kể cả admin (409).
+func (s *QuizService) checkQuizMutable(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) error {
+	if err := s.CheckQuizEditAccess(ctx, quizID, userID, isAdmin); err != nil {
+		return err
+	}
+	if s.contestGate == nil {
+		return nil
+	}
+	return s.contestGate.CheckQuizEditable(ctx, quizID)
 }
 
 func NewQuizService(
@@ -103,25 +175,21 @@ func (s *QuizService) canViewQuizAnswerKey(ctx context.Context, quiz *model.Quiz
 	if isAdmin {
 		return true, nil
 	}
+	// Review PR #80, F3: người tạo quiz luôn xem được đáp án của chính mình. Quiz standalone (loại
+	// gắn vào cuộc thi) không lần ra khoá học nào nên trước đây bị giấu cả với người tạo. Không mở
+	// thêm đường lộ: thí sinh cuộc thi đã bị gate cuộc thi chặn trước khi tới đây.
+	if quiz.CreatedBy != nil && *quiz.CreatedBy == userID {
+		return true, nil
+	}
 
 	var courseID *uuid.UUID
 	switch {
-	case quiz.CourseID != nil:
-		courseID = quiz.CourseID
-	case quiz.LessonID != nil:
-		lesson, err := s.lessonRepo.GetByID(ctx, *quiz.LessonID)
+	case quiz.CourseID != nil || quiz.LessonID != nil:
+		id, err := s.quizCourseID(ctx, quiz)
 		if err != nil {
 			return false, err
 		}
-		if lesson != nil {
-			section, err := s.sectionRepo.GetByID(ctx, lesson.SectionID)
-			if err != nil {
-				return false, err
-			}
-			if section != nil {
-				courseID = &section.CourseID
-			}
-		}
+		courseID = id
 	case quiz.SessionID != nil:
 		session, err := s.livestreamRepo.GetByID(ctx, *quiz.SessionID)
 		if err != nil {
@@ -144,6 +212,81 @@ func (s *QuizService) canViewQuizAnswerKey(ctx context.Context, quiz *model.Quiz
 		return false, err
 	}
 	return course != nil && course.InstructorID == userID, nil
+}
+
+// quizCourseID: khoá học chứa quiz, suy từ course_id hoặc lesson → section → course (cùng thứ tự
+// canViewQuizAnswerKey vẫn dùng). nil = quiz không thuộc khoá nào (standalone, live) hoặc dữ liệu
+// hỏng.
+func (s *QuizService) quizCourseID(ctx context.Context, quiz *model.Quiz) (*uuid.UUID, error) {
+	if quiz.CourseID != nil {
+		return quiz.CourseID, nil
+	}
+	if quiz.LessonID == nil {
+		return nil, nil
+	}
+	lesson, err := s.lessonRepo.GetByID(ctx, *quiz.LessonID)
+	if err != nil || lesson == nil {
+		return nil, err
+	}
+	section, err := s.sectionRepo.GetByID(ctx, lesson.SectionID)
+	if err != nil || section == nil {
+		return nil, err
+	}
+	return &section.CourseID, nil
+}
+
+// isQuizCourseInstructor (re-review vòng 2, R2-C): userID là giảng viên của khoá chứa quiz. Khoá
+// "chuẩn" theo đúng luật #79 (quiz_course_guard.go): khoá suy từ lesson_id nếu có, ngược lại
+// course_id — để luật sửa quiz không lệch với guard tạo quiz khi dữ liệu cũ có hai khoá khác nhau.
+func (s *QuizService) isQuizCourseInstructor(ctx context.Context, quiz *model.Quiz, userID uuid.UUID) (bool, error) {
+	course, err := s.lessonCourse(ctx, quiz.LessonID)
+	if err != nil {
+		return false, err
+	}
+	if course == nil && quiz.CourseID != nil {
+		if course, err = s.courseRepo.GetByID(ctx, *quiz.CourseID); err != nil {
+			return false, err
+		}
+	}
+	return course != nil && course.InstructorID == userID, nil
+}
+
+// CheckQuizEditAccess: phần "ai được sửa" của checkQuizMutable (khoá cuộc thi 403, rồi chủ sở hữu
+// 403), không gồm các khoá theo trạng thái (409). Middleware CourseEditLock của #79 gọi hàm này
+// TRƯỚC khoá "khoá học đang chờ duyệt", để người ngoài luôn nhận 403 như mọi route quiz khác, không
+// biết được trạng thái khoá học qua mã 409.
+func (s *QuizService) CheckQuizEditAccess(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) error {
+	if err := s.checkContestAccess(ctx, quizID, userID, isAdmin); err != nil {
+		return err
+	}
+	return s.checkQuizOwner(ctx, quizID, userID, isAdmin)
+}
+
+// isStandaloneQuiz: quiz không gắn bài học, khoá học hay buổi live — loại quiz dùng cho cuộc thi.
+func isStandaloneQuiz(quiz *model.Quiz) bool {
+	return quiz.LessonID == nil && quiz.CourseID == nil && quiz.SessionID == nil
+}
+
+// checkStandaloneQuizReader (re-review vòng 2, R2-A): quiz standalone chỉ người tạo hoặc admin được
+// đọc, làm bài, nộp và xem attempt. Trước bản vá, quiz standalone CHƯA gắn cuộc thi không có kiểm
+// quyền nào: người lạ start + submit rồi đọc attempt là thấy correct_answer_ids, và attempt của họ
+// khiến quiz không gắn được vào cuộc thi nữa (§3.3 yêu cầu chưa có attempt). Quiz ĐÃ gắn cuộc thi
+// vẫn do gate cuộc thi quyết định (gọi trước hàm này). Quiz bài học/khoá học/live giữ luật cũ.
+func (s *QuizService) checkStandaloneQuizReader(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) error {
+	if isAdmin {
+		return nil
+	}
+	quiz, err := s.repo.GetQuizByID(ctx, quizID)
+	if err != nil {
+		return err
+	}
+	if quiz == nil {
+		return errors.New("quiz not found")
+	}
+	if !isStandaloneQuiz(quiz) || (quiz.CreatedBy != nil && *quiz.CreatedBy == userID) {
+		return nil
+	}
+	return ErrQuizNotOwner
 }
 
 // checkLessonQuizAccess (SEC-1, vá lộ nội dung quiz): quiz gắn LessonID mà người gọi KHÔNG phải
@@ -264,8 +407,7 @@ func (s *QuizService) checkSessionQuizAccess(ctx context.Context, sessionID, use
 // GetAllQuizzes. Trước bản vá R4, cả 4 nơi trên CHỈ kiểm tra khi quiz.LessonID != nil, để lộ
 // toàn bộ quiz gắn course_id/session_id cho người chưa enroll (xem review 260919, mục R4).
 // canView=true (chủ khoá học/giảng viên/admin) bỏ qua hoàn toàn ở TẤT CẢ nhánh — giữ đúng hành
-// vi hiện có. Quiz không gắn lesson/course/session nào (dữ liệu mồ côi) mặc định KHÔNG khoá —
-// giữ đúng hành vi trước bản vá cho trường hợp hiếm này (không có gate nào áp được).
+// vi hiện có. Quiz không gắn lesson/course/session nào (standalone) chỉ người tạo/admin được đọc.
 func (s *QuizService) checkQuizAccess(ctx context.Context, quiz *model.Quiz, userID uuid.UUID, canView bool) error {
 	// D4 (review PR #79): quiz của khoá chưa xuất bản ẩn với người ngoài — xem quiz_course_guard.go.
 	if !canView {
@@ -281,7 +423,13 @@ func (s *QuizService) checkQuizAccess(ctx context.Context, quiz *model.Quiz, use
 	case quiz.SessionID != nil:
 		return s.checkSessionQuizAccess(ctx, *quiz.SessionID, userID, canView)
 	default:
-		return nil
+		// Re-review vòng 2, R2-A: quiz standalone (loại dùng cho cuộc thi) chỉ người tạo và admin
+		// được đụng tới — canView đã đúng bằng "người tạo hoặc admin" với quiz không thuộc khoá nào.
+		// Trước đây nhánh này trả nil cho mọi người, xem checkStandaloneQuizReader.
+		if canView {
+			return nil
+		}
+		return ErrQuizNotOwner
 	}
 }
 
@@ -292,12 +440,47 @@ func (s *QuizService) checkQuizAccess(ctx context.Context, quiz *model.Quiz, use
 func stripAnswerKey(q *dto.QuestionResponseDTO) dto.QuestionResponseDTO {
 	out := *q
 	out.Explanation = nil
+	// Review PR #80, F1: với câu mà "lựa chọn" chính là đáp án (fill_blank, essay) thì giấu
+	// is_correct là chưa đủ, answer_text đã là đáp án — bỏ cả danh sách.
+	if answerOptionsRevealKey(q.QuestionType) {
+		out.Answers = []dto.AnswerResponseDTO{}
+		return out
+	}
 	out.Answers = make([]dto.AnswerResponseDTO, len(q.Answers))
 	for i, a := range q.Answers {
 		a.IsCorrect = nil
 		out.Answers[i] = a
 	}
 	return out
+}
+
+// answerOptionsRevealKey (review PR #80, F1): fill_blank chấm bằng cách so text_answer với
+// answer_text của các lựa chọn is_correct (checkAnswer), nên danh sách lựa chọn CHÍNH LÀ đáp án;
+// essay nếu có lựa chọn thì đó là đáp án mẫu. Với trắc nghiệm (single/multiple/true_false) các lựa
+// chọn là phương án, trả ra được miễn là giấu is_correct.
+func answerOptionsRevealKey(questionType string) bool {
+	return questionType == "fill_blank" || questionType == "essay"
+}
+
+// toAttemptQuestion map câu hỏi sang dạng đề làm bài, KHÔNG kèm đáp án: dùng chung cho StartQuiz và
+// đề thi (GetContestAttemptQuestions) để hai đường không lệch nhau.
+func toAttemptQuestion(q *model.Question) dto.AttemptQuestionDTO {
+	answers := []dto.AttemptAnswerDTO{}
+	if !answerOptionsRevealKey(q.QuestionType) {
+		answers = make([]dto.AttemptAnswerDTO, len(q.Answers))
+		for j, a := range q.Answers {
+			answers[j] = dto.AttemptAnswerDTO{ID: a.ID, AnswerText: a.AnswerText, DisplayOrder: a.DisplayOrder}
+		}
+	}
+	return dto.AttemptQuestionDTO{
+		ID:           q.ID,
+		QuestionText: q.QuestionText,
+		QuestionType: q.QuestionType,
+		Points:       q.Points,
+		DisplayOrder: q.DisplayOrder,
+		ImageURL:     q.ImageURL,
+		Answers:      answers,
+	}
 }
 
 const (
@@ -317,10 +500,11 @@ func (s *QuizService) invalidateQuizCache(ctx context.Context, quizID uuid.UUID)
 // QUIZ CRUD
 // ============================================================================
 
-func (s *QuizService) CreateQuiz(ctx context.Context, req dto.CreateQuizDTO) (*dto.QuizResponseDTO, error) {
+func (s *QuizService) CreateQuiz(ctx context.Context, userID uuid.UUID, req dto.CreateQuizDTO) (*dto.QuizResponseDTO, error) {
 	quiz := &model.Quiz{
 		Title:       req.Title,
 		TriggerType: "manual",
+		CreatedBy:   &userID,
 	}
 
 	if req.Description != "" {
@@ -398,12 +582,22 @@ func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, ses
 	data := make([]dto.QuizResponseDTO, 0, len(quizzes))
 	for i := range quizzes {
 		q := &quizzes[i]
+		// Contract "Cuộc thi" §3.2: quiz gắn cuộc thi bị loại khỏi danh sách với người không phải
+		// chủ cuộc thi/admin — cùng cách xử lý quiz của bài đang khoá bên dưới.
+		if err := s.checkContestAccess(ctx, q.ID, userID, isAdmin); err != nil {
+			if errors.Is(err, ErrQuizLockedByContest) {
+				continue
+			}
+			return nil, err
+		}
 		canView, err := s.canViewQuizAnswerKey(ctx, q, userID, isAdmin)
 		if err != nil {
 			return nil, err
 		}
 		if err := s.checkQuizAccess(ctx, q, userID, canView); err != nil {
-			if err == ErrLessonLocked || err == ErrLessonNotInCourse || err == ErrCourseHidden {
+			// ErrCourseHidden: quiz của khoá chưa xuất bản (#79, D4). ErrQuizNotOwner: quiz standalone
+			// của người khác (PR #80, R2-A). Cả hai đều loại khỏi danh sách, không làm hỏng cả trang.
+			if err == ErrLessonLocked || err == ErrLessonNotInCourse || err == ErrCourseHidden || err == ErrQuizNotOwner {
 				continue
 			}
 			return nil, err
@@ -415,6 +609,10 @@ func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, ses
 }
 
 func (s *QuizService) GetQuizByID(ctx context.Context, id, userID uuid.UUID, isAdmin bool) (*dto.QuizDetailDTO, error) {
+	// Kiểm TRƯỚC cache: bản cache chứa đầy đủ đáp án, không được trả cho thí sinh cuộc thi.
+	if err := s.checkContestAccess(ctx, id, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	var quiz *model.Quiz
 	var result *dto.QuizDetailDTO
 
@@ -501,7 +699,10 @@ func (s *QuizService) GetQuizByID(ctx context.Context, id, userID uuid.UUID, isA
 	return result, nil
 }
 
-func (s *QuizService) UpdateQuiz(ctx context.Context, id uuid.UUID, req dto.UpdateQuizDTO) (*dto.QuizResponseDTO, error) {
+func (s *QuizService) UpdateQuiz(ctx context.Context, id, userID uuid.UUID, isAdmin bool, req dto.UpdateQuizDTO) (*dto.QuizResponseDTO, error) {
+	if err := s.checkQuizMutable(ctx, id, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	quiz, err := s.repo.GetQuizByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -546,7 +747,10 @@ func (s *QuizService) UpdateQuiz(ctx context.Context, id uuid.UUID, req dto.Upda
 	return s.mapQuizToDTO(quiz, 0), nil
 }
 
-func (s *QuizService) DeleteQuiz(ctx context.Context, id uuid.UUID) error {
+func (s *QuizService) DeleteQuiz(ctx context.Context, id, userID uuid.UUID, isAdmin bool) error {
+	if err := s.checkQuizMutable(ctx, id, userID, isAdmin); err != nil {
+		return err
+	}
 	quiz, err := s.repo.GetQuizByID(ctx, id)
 	if err != nil {
 		return err
@@ -563,7 +767,16 @@ func (s *QuizService) DeleteQuiz(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (s *QuizService) DuplicateQuiz(ctx context.Context, id uuid.UUID) (*dto.QuizResponseDTO, error) {
+func (s *QuizService) DuplicateQuiz(ctx context.Context, id, userID uuid.UUID, isAdmin bool) (*dto.QuizResponseDTO, error) {
+	// Nhân bản = chép toàn bộ câu hỏi + đáp án đúng sang quiz của người gọi, nên chịu cùng khoá đọc
+	// của cuộc thi VÀ chỉ chủ quiz/admin được làm (review PR #80, F2: nhân bản quiz người khác rồi
+	// làm bài trên bản sao là đọc được đáp án).
+	if err := s.checkContestAccess(ctx, id, userID, isAdmin); err != nil {
+		return nil, err
+	}
+	if err := s.checkQuizOwner(ctx, id, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	original, err := s.repo.GetQuizWithQuestions(ctx, id)
 	if err != nil {
 		return nil, err
@@ -585,6 +798,7 @@ func (s *QuizService) DuplicateQuiz(ctx context.Context, id uuid.UUID) (*dto.Qui
 		ShuffleQuestions:   original.ShuffleQuestions,
 		ShuffleAnswers:     original.ShuffleAnswers,
 		ShowCorrectAnswers: original.ShowCorrectAnswers,
+		CreatedBy:          &userID,
 	}
 
 	if err := s.repo.CreateQuiz(ctx, newQuiz); err != nil {
@@ -625,7 +839,10 @@ func (s *QuizService) DuplicateQuiz(ctx context.Context, id uuid.UUID) (*dto.Qui
 // QUESTION
 // ============================================================================
 
-func (s *QuizService) CreateQuestion(ctx context.Context, quizID uuid.UUID, req dto.CreateQuestionDTO) (*dto.QuestionResponseDTO, error) {
+func (s *QuizService) CreateQuestion(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.CreateQuestionDTO) (*dto.QuestionResponseDTO, error) {
+	if err := s.checkQuizMutable(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	quiz, err := s.repo.GetQuizByID(ctx, quizID)
 	if err != nil || quiz == nil {
 		return nil, errors.New("quiz not found")
@@ -675,6 +892,9 @@ func (s *QuizService) CreateQuestion(ctx context.Context, quizID uuid.UUID, req 
 }
 
 func (s *QuizService) GetQuestionsByQuiz(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) ([]dto.QuestionResponseDTO, error) {
+	if err := s.checkContestAccess(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	quiz, err := s.repo.GetQuizByID(ctx, quizID)
 	if err != nil {
 		return nil, err
@@ -709,7 +929,12 @@ func (s *QuizService) GetQuestionsByQuiz(ctx context.Context, quizID, userID uui
 	return result, nil
 }
 
-func (s *QuizService) UpdateQuestion(ctx context.Context, quizID, questionID uuid.UUID, req dto.UpdateQuestionDTO) (*dto.QuestionResponseDTO, error) {
+func (s *QuizService) UpdateQuestion(ctx context.Context, quizID, questionID, userID uuid.UUID, isAdmin bool, req dto.UpdateQuestionDTO) (*dto.QuestionResponseDTO, error) {
+	// Kiểm theo quizID trên route; câu hỏi thuộc quiz khác bị chặn ở kiểm "belong" bên dưới, nên
+	// không thể mượn một quiz không khoá để sửa câu hỏi của quiz đang thi.
+	if err := s.checkQuizMutable(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	question, err := s.repo.GetQuestionByID(ctx, questionID)
 	if err != nil || question == nil {
 		return nil, errors.New("question not found")
@@ -763,7 +988,10 @@ func (s *QuizService) UpdateQuestion(ctx context.Context, quizID, questionID uui
 	return s.mapQuestionToDTO(question), nil
 }
 
-func (s *QuizService) DeleteQuestion(ctx context.Context, quizID, questionID uuid.UUID) error {
+func (s *QuizService) DeleteQuestion(ctx context.Context, quizID, questionID, userID uuid.UUID, isAdmin bool) error {
+	if err := s.checkQuizMutable(ctx, quizID, userID, isAdmin); err != nil {
+		return err
+	}
 	question, err := s.repo.GetQuestionByID(ctx, questionID)
 	if err != nil || question == nil {
 		return errors.New("question not found")
@@ -780,7 +1008,10 @@ func (s *QuizService) DeleteQuestion(ctx context.Context, quizID, questionID uui
 	return nil
 }
 
-func (s *QuizService) ReorderQuestions(ctx context.Context, quizID uuid.UUID, req dto.ReorderQuestionsDTO) error {
+func (s *QuizService) ReorderQuestions(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.ReorderQuestionsDTO) error {
+	if err := s.checkQuizMutable(ctx, quizID, userID, isAdmin); err != nil {
+		return err
+	}
 	ids := make([]uuid.UUID, len(req.QuestionIDs))
 	for i, idStr := range req.QuestionIDs {
 		id, err := uuid.Parse(idStr)
@@ -798,10 +1029,10 @@ func (s *QuizService) ReorderQuestions(ctx context.Context, quizID uuid.UUID, re
 	return nil
 }
 
-func (s *QuizService) BulkCreateQuestions(ctx context.Context, quizID uuid.UUID, req dto.BulkCreateQuestionsDTO) ([]dto.QuestionResponseDTO, error) {
+func (s *QuizService) BulkCreateQuestions(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.BulkCreateQuestionsDTO) ([]dto.QuestionResponseDTO, error) {
 	var results []dto.QuestionResponseDTO
 	for _, qReq := range req.Questions {
-		result, err := s.CreateQuestion(ctx, quizID, qReq)
+		result, err := s.CreateQuestion(ctx, quizID, userID, isAdmin, qReq)
 		if err != nil {
 			return nil, err
 		}
@@ -815,6 +1046,11 @@ func (s *QuizService) BulkCreateQuestions(ctx context.Context, quizID uuid.UUID,
 // ============================================================================
 
 func (s *QuizService) StartQuiz(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.StartQuizDTO) (*dto.StartQuizResponseDTO, error) {
+	// Thí sinh chỉ được làm bài thi qua POST /contests/:id/start (attempt mode "contest", có hạn
+	// giờ server). Đường /quizzes/:id/start không có hạn giờ đó nên phải bị khoá.
+	if err := s.checkContestAccess(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	quiz, err := s.repo.GetQuizWithQuestions(ctx, quizID)
 	if err != nil || quiz == nil {
 		return nil, errors.New("quiz not found")
@@ -860,24 +1096,8 @@ func (s *QuizService) StartQuiz(ctx context.Context, quizID, userID uuid.UUID, i
 
 	// Build questions for attempt (without correct answers)
 	questions := make([]dto.AttemptQuestionDTO, len(quiz.Questions))
-	for i, q := range quiz.Questions {
-		answers := make([]dto.AttemptAnswerDTO, len(q.Answers))
-		for j, a := range q.Answers {
-			answers[j] = dto.AttemptAnswerDTO{
-				ID:           a.ID,
-				AnswerText:   a.AnswerText,
-				DisplayOrder: a.DisplayOrder,
-			}
-		}
-		questions[i] = dto.AttemptQuestionDTO{
-			ID:           q.ID,
-			QuestionText: q.QuestionText,
-			QuestionType: q.QuestionType,
-			Points:       q.Points,
-			DisplayOrder: q.DisplayOrder,
-			ImageURL:     q.ImageURL,
-			Answers:      answers,
-		}
+	for i := range quiz.Questions {
+		questions[i] = toAttemptQuestion(&quiz.Questions[i])
 	}
 
 	return &dto.StartQuizResponseDTO{
@@ -891,11 +1111,25 @@ func (s *QuizService) StartQuiz(ctx context.Context, quizID, userID uuid.UUID, i
 	}, nil
 }
 
-func (s *QuizService) SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, req dto.SubmitQuizDTO) (*dto.QuizAttemptResponseDTO, error) {
+func (s *QuizService) SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.SubmitQuizDTO) (*dto.QuizAttemptResponseDTO, error) {
+	if err := s.checkContestAccess(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
+	if err := s.checkStandaloneQuizReader(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	// Find the in-progress attempt to submit.
-	attempts, err := s.repo.GetAttemptsByUserAndQuiz(ctx, userID, quizID)
+	all, err := s.repo.GetAttemptsByUserAndQuiz(ctx, userID, quizID)
 	if err != nil {
 		return nil, err
+	}
+	// Attempt "contest" chỉ được nộp qua SubmitContestAttempt (kiểm hạn giờ cuộc thi, giới hạn
+	// time_spent) — đường nộp thường coi như không thấy nó.
+	attempts := make([]model.QuizAttempt, 0, len(all))
+	for _, a := range all {
+		if a.Mode != QuizAttemptModeContest {
+			attempts = append(attempts, a)
+		}
 	}
 
 	var attempt *model.QuizAttempt
@@ -939,68 +1173,12 @@ func (s *QuizService) SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, 
 		return nil, errors.New("quiz not found")
 	}
 
-	// Grade answers — R1 (review 260919, CRITICAL): mẫu số (totalPoints) PHẢI là tổng điểm CỦA
-	// TOÀN BỘ câu hỏi thuộc quiz (quiz.Questions), KHÔNG PHẢI chỉ những câu client gửi trong
-	// req.Answers. Trước bản vá này, một quiz 10 câu mà học viên chỉ trả lời (hoặc bỏ trống rồi
-	// hết giờ tự nộp) đúng 1 câu sẽ có totalPoints = điểm của đúng 1 câu đó => percentage ra
-	// 100% nếu câu đó đúng, bất kể 9 câu còn lại bỏ trống. Lặp qua quiz.Questions (không phải
-	// req.Answers) còn tự nhiên "dedupe": client gửi trùng question_id nhiều lần cho CÙNG một
-	// câu không còn cộng dồn điểm nhiều lần (map ghi đè — chỉ bản ghi cuối được dùng để chấm).
-	answersByQuestion := make(map[uuid.UUID]dto.SubmitAnswerDTO, len(req.Answers))
-	for _, ans := range req.Answers {
-		questionID, parseErr := uuid.Parse(ans.QuestionID)
-		if parseErr != nil {
-			continue // question_id sai định dạng — bỏ qua, giữ đúng hành vi cũ (không khớp thì
-			// cũng bị continue).
-		}
-		answersByQuestion[questionID] = ans
-	}
-
-	totalPoints := decimal.Zero
-	earnedPoints := decimal.Zero
-	var attemptAnswers []model.QuizAttemptAnswer
-
-	for i := range quiz.Questions {
-		question := &quiz.Questions[i]
-		// Mẫu số luôn cộng dồn CHO MỌI câu hỏi của quiz, kể cả câu không có trong req.Answers —
-		// đây chính là chỗ sửa của R1.
-		totalPoints = totalPoints.Add(question.Points)
-
-		ans, answered := answersByQuestion[question.ID]
-		if !answered {
-			// Câu không trả lời = 0 điểm, tính là sai (không cộng vào earnedPoints) — không tạo
-			// attempt_answer vì không có lựa chọn nào được gửi để lưu.
-			continue
-		}
-
-		correct := s.checkAnswer(question, ans)
-		earned := decimal.Zero
-		if correct {
-			earned = question.Points
-		}
-		earnedPoints = earnedPoints.Add(earned)
-
-		selectedIDs := pq.StringArray(ans.SelectedAnswerIDs)
-		aa := model.QuizAttemptAnswer{
-			AttemptID:         attempt.ID,
-			QuestionID:        question.ID,
-			SelectedAnswerIDs: selectedIDs,
-			IsCorrect:         &correct,
-			PointsEarned:      earned,
-		}
-		if ans.TextAnswer != "" {
-			aa.TextAnswer = &ans.TextAnswer
-		}
-		attemptAnswers = append(attemptAnswers, aa)
-	}
+	earnedPoints, totalPoints, attemptAnswers := s.gradeSubmission(quiz, attempt.ID, req.Answers)
 
 	// Calculate result
 	now := time.Now()
 	timeSpent := int(now.Sub(attempt.StartedAt).Seconds())
-	percentage := decimal.Zero
-	if !totalPoints.IsZero() {
-		percentage = earnedPoints.Div(totalPoints).Mul(decimal.NewFromInt(100))
-	}
+	percentage := gradePercentage(earnedPoints, totalPoints)
 	isPassed := percentage.GreaterThanOrEqual(quiz.PassPercentage)
 
 	attempt.Score = &earnedPoints
@@ -1027,6 +1205,65 @@ func (s *QuizService) SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, 
 	}
 
 	return s.mapAttemptToDTO(attempt), nil
+}
+
+// gradeSubmission chấm một lần nộp — dùng chung cho SubmitQuiz và SubmitContestAttempt để bài thi
+// được chấm bằng ĐÚNG luật của quiz thường (contract "Cuộc thi" §4.2).
+//
+// R1 (review 260919, CRITICAL): mẫu số (total) PHẢI là tổng điểm CỦA TOÀN BỘ câu hỏi thuộc quiz
+// (quiz.Questions), KHÔNG PHẢI chỉ những câu client gửi. Trước bản vá đó, quiz 10 câu mà học viên
+// chỉ trả lời (hoặc bỏ trống rồi hết giờ tự nộp) đúng 1 câu sẽ có total = điểm đúng 1 câu đó =>
+// percentage 100% nếu câu đó đúng. Lặp qua quiz.Questions (không phải answers) còn tự nhiên
+// "dedupe": client gửi trùng question_id nhiều lần không cộng dồn điểm (map ghi đè, bản cuối
+// được chấm). Câu không trả lời = 0 điểm và không tạo quiz_attempt_answers.
+func (s *QuizService) gradeSubmission(quiz *model.Quiz, attemptID uuid.UUID, answers []dto.SubmitAnswerDTO) (earned, total decimal.Decimal, rows []model.QuizAttemptAnswer) {
+	answersByQuestion := make(map[uuid.UUID]dto.SubmitAnswerDTO, len(answers))
+	for _, ans := range answers {
+		questionID, parseErr := uuid.Parse(ans.QuestionID)
+		if parseErr != nil {
+			continue // question_id sai định dạng — bỏ qua như câu không khớp.
+		}
+		answersByQuestion[questionID] = ans
+	}
+
+	earned, total = decimal.Zero, decimal.Zero
+	for i := range quiz.Questions {
+		question := &quiz.Questions[i]
+		total = total.Add(question.Points)
+
+		ans, answered := answersByQuestion[question.ID]
+		if !answered {
+			continue
+		}
+		correct := s.checkAnswer(question, ans)
+		points := decimal.Zero
+		if correct {
+			points = question.Points
+		}
+		earned = earned.Add(points)
+
+		row := model.QuizAttemptAnswer{
+			AttemptID:         attemptID,
+			QuestionID:        question.ID,
+			SelectedAnswerIDs: pq.StringArray(ans.SelectedAnswerIDs),
+			IsCorrect:         &correct,
+			PointsEarned:      points,
+		}
+		if ans.TextAnswer != "" {
+			text := ans.TextAnswer
+			row.TextAnswer = &text
+		}
+		rows = append(rows, row)
+	}
+	return earned, total, rows
+}
+
+// gradePercentage: earned/total*100, quiz không có điểm nào thì 0.
+func gradePercentage(earned, total decimal.Decimal) decimal.Decimal {
+	if total.IsZero() {
+		return decimal.Zero
+	}
+	return earned.Div(total).Mul(decimal.NewFromInt(100))
 }
 
 func (s *QuizService) checkAnswer(question *model.Question, answer dto.SubmitAnswerDTO) bool {
@@ -1075,7 +1312,13 @@ func (s *QuizService) checkAnswer(question *model.Question, answer dto.SubmitAns
 	return false
 }
 
-func (s *QuizService) GetMyAttempts(ctx context.Context, quizID, userID uuid.UUID) ([]dto.QuizAttemptResponseDTO, error) {
+func (s *QuizService) GetMyAttempts(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) ([]dto.QuizAttemptResponseDTO, error) {
+	if err := s.checkContestAccess(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
+	if err := s.checkStandaloneQuizReader(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	attempts, err := s.repo.GetAttemptsByUserAndQuiz(ctx, userID, quizID)
 	if err != nil {
 		return nil, err
@@ -1088,10 +1331,18 @@ func (s *QuizService) GetMyAttempts(ctx context.Context, quizID, userID uuid.UUI
 	return result, nil
 }
 
-func (s *QuizService) GetAttemptByID(ctx context.Context, attemptID, userID uuid.UUID) (*dto.QuizAttemptDetailDTO, error) {
+func (s *QuizService) GetAttemptByID(ctx context.Context, attemptID, userID uuid.UUID, isAdmin bool) (*dto.QuizAttemptDetailDTO, error) {
 	attempt, err := s.repo.GetAttemptWithAnswers(ctx, attemptID)
 	if err != nil || attempt == nil {
 		return nil, errors.New("attempt not found")
+	}
+	// Bài thi đã nộp sẽ có correct_answer_ids/explanation bên dưới — thí sinh chỉ được xem qua
+	// GET /contests/:id/my-result sau khi cuộc thi đóng (contract §4.3), không phải ở đây.
+	if err := s.checkContestAccess(ctx, attempt.QuizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
+	if err := s.checkStandaloneQuizReader(ctx, attempt.QuizID, userID, isAdmin); err != nil {
+		return nil, err
 	}
 	if attempt.UserID != userID {
 		return nil, errors.New("forbidden")
@@ -1131,7 +1382,13 @@ func (s *QuizService) GetAttemptByID(ctx context.Context, attemptID, userID uuid
 	}, nil
 }
 
-func (s *QuizService) GetQuizResults(ctx context.Context, quizID uuid.UUID) (*dto.QuizResultsDTO, error) {
+func (s *QuizService) GetQuizResults(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) (*dto.QuizResultsDTO, error) {
+	if err := s.checkContestAccess(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
+	if err := s.checkStandaloneQuizReader(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	quiz, err := s.repo.GetQuizByID(ctx, quizID)
 	if err != nil || quiz == nil {
 		return nil, errors.New("quiz not found")
@@ -1155,7 +1412,13 @@ func (s *QuizService) GetQuizResults(ctx context.Context, quizID uuid.UUID) (*dt
 	}, nil
 }
 
-func (s *QuizService) GetQuizStatistics(ctx context.Context, quizID uuid.UUID) (*dto.QuizStatisticsDTO, error) {
+func (s *QuizService) GetQuizStatistics(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) (*dto.QuizStatisticsDTO, error) {
+	if err := s.checkContestAccess(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
+	if err := s.checkStandaloneQuizReader(ctx, quizID, userID, isAdmin); err != nil {
+		return nil, err
+	}
 	quiz, err := s.repo.GetQuizByID(ctx, quizID)
 	if err != nil || quiz == nil {
 		return nil, errors.New("quiz not found")
@@ -1183,7 +1446,21 @@ func (s *QuizService) GetQuizStatistics(ctx context.Context, quizID uuid.UUID) (
 	}, nil
 }
 
-func (s *QuizService) SaveAnswer(ctx context.Context, attemptID, userID uuid.UUID, req dto.SaveAnswerDTO) error {
+func (s *QuizService) SaveAnswer(ctx context.Context, attemptID, userID uuid.UUID, isAdmin bool, req dto.SaveAnswerDTO) error {
+	// Route chỉ có attemptId, nên phải tra attempt để biết quiz nào mà hỏi khoá cuộc thi.
+	attempt, err := s.repo.GetAttemptByID(ctx, attemptID)
+	if err != nil {
+		return err
+	}
+	if attempt == nil {
+		return errors.New("attempt not found")
+	}
+	if err := s.checkContestAccess(ctx, attempt.QuizID, userID, isAdmin); err != nil {
+		return err
+	}
+	if err := s.checkStandaloneQuizReader(ctx, attempt.QuizID, userID, isAdmin); err != nil {
+		return err
+	}
 	// Save in-progress answer to Redis for auto-save
 	if s.redis == nil {
 		return nil
@@ -1194,8 +1471,8 @@ func (s *QuizService) SaveAnswer(ctx context.Context, attemptID, userID uuid.UUI
 	return s.redis.HSet(ctx, key, req.QuestionID, data).Err()
 }
 
-func (s *QuizService) GetAttemptProgress(ctx context.Context, attemptID, userID uuid.UUID) (*dto.QuizAttemptDetailDTO, error) {
-	return s.GetAttemptByID(ctx, attemptID, userID)
+func (s *QuizService) GetAttemptProgress(ctx context.Context, attemptID, userID uuid.UUID, isAdmin bool) (*dto.QuizAttemptDetailDTO, error) {
+	return s.GetAttemptByID(ctx, attemptID, userID, isAdmin)
 }
 
 func (s *QuizService) GetMyCreatedQuizzes(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.QuizListDTO, error) {
