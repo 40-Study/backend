@@ -193,6 +193,11 @@ func ExtractUploadID(raw string) (uuid.UUID, bool) {
 // tương đối nên chạy đúng dù đi qua proxy Next hay gọi thẳng backend.
 // Chỉ đổi dòng URI thường (không bắt đầu bằng '#'). Playlist do ffmpeg sinh ra chỉ có URI tương đối
 // dạng này (không EXT-X-KEY/EXT-X-MAP); URI tuyệt đối được giữ nguyên vì không phải của ta.
+//
+// GIỚI HẠN (review S1 M4): URI nằm TRONG tag (#EXT-X-KEY, #EXT-X-MAP, #EXT-X-MEDIA:URI=,
+// #EXT-X-I-FRAME-STREAM-INF) KHÔNG được ký. Hiện an toàn vì ffmpeg_encoder.go chỉ sinh master, media
+// playlist và seg_%05d.ts. Nếu sau này chuyển sang fMP4 (EXT-X-MAP) hoặc tách audio rendition thì phải
+// mở rộng hàm này, nếu không các URI đó sẽ 403.
 func RewritePlaylist(body []byte, t Token) []byte {
 	q := t.Query()
 	lines := strings.Split(string(body), "\n")

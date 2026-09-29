@@ -112,6 +112,9 @@ func (s *LessonContentService) CreateContent(ctx context.Context, lessonID uuid.
 	if err := s.requireVideoUploadUsable(ctx, req.VideoURL, nil, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
+	if err := requireSubtitleUsable(ctx, s.videoUploadService, req.SubtitleURL, nil, actorUserID, isAdmin); err != nil {
+		return nil, err
+	}
 
 	content := &model.LessonContent{
 		ID:           uuid.New(),
@@ -285,6 +288,9 @@ func (s *LessonContentService) UpdateContent(ctx context.Context, contentID, act
 		return nil, err
 	}
 	if err := s.requireVideoUploadUsable(ctx, req.VideoURL, content.VideoURL, actorUserID, isAdmin); err != nil {
+		return nil, err
+	}
+	if err := requireSubtitleUsable(ctx, s.videoUploadService, req.SubtitleURL, content.SubtitleURL, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 

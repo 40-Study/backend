@@ -16,6 +16,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"study.com/v1/internal/hlsauth"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/service"
@@ -33,11 +34,31 @@ func (r *ownUploadRepo) GetUploadByID(_ context.Context, id uuid.UUID) (*model.V
 	return nil, fmt.Errorf("%w: %s", repository.ErrVideoUploadNotFound, id)
 }
 
+func (r *ownUploadRepo) GetUploadByObjectKey(_ context.Context, key string) (*model.VideoUpload, error) {
+	for _, u := range r.uploads {
+		if u.ObjectKey == key {
+			return u, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: object_key=%s", repository.ErrVideoUploadNotFound, key)
+}
+
 type ownLessonRepo struct {
 	repository.LessonRepositoryInterface
-	lesson  *model.Lesson
-	created int
+	lesson        *model.Lesson
+	created       int
+	contents      []model.LessonContent
+	lessonUpdated bool
 }
+
+func (r *ownLessonRepo) GetContentsByLessonID(context.Context, uuid.UUID) ([]model.LessonContent, error) {
+	return r.contents, nil
+}
+func (r *ownLessonRepo) Update(context.Context, *model.Lesson) error {
+	r.lessonUpdated = true
+	return nil
+}
+func (r *ownLessonRepo) UpdateContent(context.Context, *model.LessonContent) error { return nil }
 
 func (r *ownLessonRepo) GetByID(context.Context, uuid.UUID) (*model.Lesson, error) {
 	return r.lesson, nil
@@ -130,5 +151,51 @@ func TestCreateContent_UploadCuaChinhMinh_201(t *testing.T) {
 	code, out, lessons := createContentAs(t, a, a, uploads, "/api/hls/"+uploadA.String()+"/master.m3u8")
 	if code != http.StatusCreated || lessons.created != 1 {
 		t.Fatalf("status=%d body=%v created=%d, muon 201", code, out, lessons.created)
+	}
+}
+
+// Review S1 M1, đường thực tế của web: PUT /lessons/:id {subtitle_url} trỏ .vtt của người khác -> 403.
+func TestUpdateLesson_PhuDeCuaNguoiKhac_403UploadNotOwned(t *testing.T) {
+	hlsauth.ConfigureObjectBucket("videos")
+	defer hlsauth.ConfigureObjectBucket("")
+
+	a, b := uuid.New(), uuid.New()
+	keyA := "videos/lesson_content/" + uuid.NewString() + "/1_a.vtt"
+	uploads := map[uuid.UUID]*model.VideoUpload{uuid.New(): {UserID: a, ObjectKey: keyA}}
+
+	courseID, sectionID, lessonID := uuid.New(), uuid.New(), uuid.New()
+	course := &model.Course{InstructorID: b, Status: model.CourseStatusDraft}
+	course.ID = courseID
+	section := &model.Section{CourseID: courseID}
+	section.ID = sectionID
+	lessons := &ownLessonRepo{
+		lesson:   &model.Lesson{ID: lessonID, SectionID: sectionID},
+		contents: []model.LessonContent{{Type: "video", LessonID: lessonID}},
+	}
+	lessonSvc := service.NewLessonService(lessons, &ownSectionRepo{section: section}, &ownCourseRepo{course: course}, nil).
+		WithUploadOwnership(service.NewVideoUploadService(&ownUploadRepo{uploads: uploads}, nil, nil, nil, nil))
+	h := NewLessonHandler(lessonSvc, nil)
+
+	app := fiber.New()
+	app.Put("/lessons/:id", func(c *fiber.Ctx) error {
+		c.Locals("user_id", b)
+		return h.UpdateLesson(c)
+	})
+	body := fmt.Sprintf(`{"subtitle_url":%q}`, "http://localhost:9000/videos/"+keyA)
+	req := httptest.NewRequest(http.MethodPut, "/lessons/"+lessonID.String(), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var out map[string]any
+	_ = json.Unmarshal(raw, &out)
+	if resp.StatusCode != http.StatusForbidden || out["code"] != "UPLOAD_NOT_OWNED" {
+		t.Fatalf("status=%d body=%s, muon 403 UPLOAD_NOT_OWNED", resp.StatusCode, raw)
+	}
+	if lessons.lessonUpdated {
+		t.Error("bai hoc van bi ghi du bi chan")
 	}
 }

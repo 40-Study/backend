@@ -55,6 +55,10 @@ type VideoUploadServiceInterface interface {
 	// RequireUploadUsableBy: upload phải tồn tại (ErrUploadNotFound) và do chính actor tải lên hoặc
 	// actor là admin (ErrUploadNotOwned). Dùng khi gắn một upload_id vào nội dung bài học.
 	RequireUploadUsableBy(ctx context.Context, uploadID, actorUserID uuid.UUID, isAdmin bool) error
+
+	// RequireObjectUsableBy: như RequireUploadUsableBy nhưng tra theo object_key (file phụ đề .vtt
+	// cũng đi qua luồng upload nên có bản ghi upload với chủ sở hữu).
+	RequireObjectUsableBy(ctx context.Context, objectKey string, actorUserID uuid.UUID, isAdmin bool) error
 }
 
 type VideoUploadService struct {
@@ -93,6 +97,27 @@ var ErrUploadNotFound = errors.New("upload not found")
 // len, hoac actor la admin.
 func (s *VideoUploadService) RequireUploadUsableBy(ctx context.Context, uploadID, actorUserID uuid.UUID, isAdmin bool) error {
 	upload, err := s.uploadRepo.GetUploadByID(ctx, uploadID)
+	if err != nil {
+		if errors.Is(err, repository.ErrVideoUploadNotFound) {
+			return ErrUploadNotFound
+		}
+		return fmt.Errorf("failed to find upload: %w", err)
+	}
+	if upload == nil {
+		return ErrUploadNotFound
+	}
+	if !isAdmin && upload.UserID != actorUserID {
+		return ErrUploadNotOwned
+	}
+	return nil
+}
+
+// RequireObjectUsableBy (review S1 M1): subtitle_url do giang vien nhap tu do, ma backend ky moi .vtt
+// trong bucket video — GV B tro subtitle_url sang file .vtt cua GV A la nhan URL ky doc duoc phu de cua A.
+// File .vtt di qua cung luong upload nen co ban ghi video_uploads (object_key + user_id): chi cho gan khi
+// chinh actor da tai file do len, hoac actor la admin.
+func (s *VideoUploadService) RequireObjectUsableBy(ctx context.Context, objectKey string, actorUserID uuid.UUID, isAdmin bool) error {
+	upload, err := s.uploadRepo.GetUploadByObjectKey(ctx, objectKey)
 	if err != nil {
 		if errors.Is(err, repository.ErrVideoUploadNotFound) {
 			return ErrUploadNotFound

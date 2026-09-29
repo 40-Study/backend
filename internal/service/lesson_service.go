@@ -46,6 +46,15 @@ type LessonService struct {
 	sectionRepo    repository.SectionRepositoryInterface
 	courseRepo     repository.CourseRepositoryInterface
 	enrollmentRepo repository.EnrollmentRepositoryInterface
+	// uploads: kiểm chủ file phụ đề khi ghi subtitle_url (review S1 M1). Gắn qua WithUploadOwnership
+	// để không phải đổi chữ ký NewLessonService; nil chỉ trong test không ghi subtitle_url.
+	uploads uploadOwnership
+}
+
+// WithUploadOwnership gắn bộ kiểm chủ upload dùng khi ghi subtitle_url.
+func (s *LessonService) WithUploadOwnership(u uploadOwnership) *LessonService {
+	s.uploads = u
+	return s
 }
 
 func NewLessonService(
@@ -340,6 +349,10 @@ func (s *LessonService) UpdateLesson(ctx context.Context, lessonID, actorUserID 
 		}
 		if videoContent == nil {
 			return nil, ErrLessonHasNoVideo
+		}
+		// Kiểm chủ file phụ đề TRƯỚC KHI ghi bất cứ gì (cùng lý do với LESSON_HAS_NO_VIDEO ở trên).
+		if err := requireSubtitleUsable(ctx, s.uploads, req.SubtitleURL, videoContent.SubtitleURL, actorUserID, isAdmin); err != nil {
+			return nil, err
 		}
 	}
 

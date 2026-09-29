@@ -24,6 +24,14 @@ import (
 type uploadOwnRepo struct {
 	repository.VideoUploadRepositoryInterface
 	uploads map[uuid.UUID]*model.VideoUpload
+	objects map[string]*model.VideoUpload // object_key -> upload (file phu de .vtt)
+}
+
+func (r *uploadOwnRepo) GetUploadByObjectKey(_ context.Context, key string) (*model.VideoUpload, error) {
+	if u, ok := r.objects[key]; ok {
+		return u, nil
+	}
+	return nil, fmt.Errorf("%w: object_key=%s", repository.ErrVideoUploadNotFound, key)
 }
 
 func (r *uploadOwnRepo) GetUploadByID(_ context.Context, id uuid.UUID) (*model.VideoUpload, error) {
@@ -40,6 +48,19 @@ type contentWriteRepo struct {
 	content *model.LessonContent
 	created *model.LessonContent
 	updated *model.LessonContent
+	// UpdateLesson: bai hoc co bi ghi hay khong
+	lessonUpdated bool
+}
+
+func (r *contentWriteRepo) GetContentsByLessonID(context.Context, uuid.UUID) ([]model.LessonContent, error) {
+	if r.content == nil {
+		return nil, nil
+	}
+	return []model.LessonContent{*r.content}, nil
+}
+func (r *contentWriteRepo) Update(context.Context, *model.Lesson) error {
+	r.lessonUpdated = true
+	return nil
 }
 
 func (r *contentWriteRepo) GetByID(context.Context, uuid.UUID) (*model.Lesson, error) {
@@ -66,6 +87,11 @@ type ownerFixture struct {
 	admin    uuid.UUID
 	uploadA  uuid.UUID
 	uploadB  uuid.UUID
+	subKeyA  string // file phu de .vtt do teacherA tai len
+	subKeyB  string // file phu de .vtt do teacherB tai len
+	uploads  *VideoUploadService
+	section  *model.Section
+	course   *model.Course
 }
 
 func hlsURLFor(id uuid.UUID) *string {
@@ -89,12 +115,21 @@ func buildOwnerFixture(courseOwner func(a, b uuid.UUID) uuid.UUID, existingVideo
 	content := &model.LessonContent{ID: uuid.New(), LessonID: f.lessonID, Type: "video", VideoURL: existingVideo}
 	f.repo = &contentWriteRepo{lesson: lesson, content: content}
 
-	uploads := &uploadOwnRepo{uploads: map[uuid.UUID]*model.VideoUpload{
-		f.uploadA: {ID: f.uploadA, UserID: f.teacherA},
-		f.uploadB: {ID: f.uploadB, UserID: f.teacherB},
-	}}
-	f.svc = NewLessonContentService(f.repo, &previewSectionRepoStub{section: section}, &previewCourseRepoStub2{course: course}, nil,
-		NewVideoUploadService(uploads, nil, nil, nil, nil))
+	f.subKeyA = "videos/lesson_content/" + uuid.NewString() + "/1_a.vtt"
+	f.subKeyB = "videos/lesson_content/" + uuid.NewString() + "/1_b.vtt"
+	uploads := &uploadOwnRepo{
+		uploads: map[uuid.UUID]*model.VideoUpload{
+			f.uploadA: {ID: f.uploadA, UserID: f.teacherA},
+			f.uploadB: {ID: f.uploadB, UserID: f.teacherB},
+		},
+		objects: map[string]*model.VideoUpload{
+			f.subKeyA: {ID: uuid.New(), UserID: f.teacherA, ObjectKey: f.subKeyA},
+			f.subKeyB: {ID: uuid.New(), UserID: f.teacherB, ObjectKey: f.subKeyB},
+		},
+	}
+	f.uploads = NewVideoUploadService(uploads, nil, nil, nil, nil)
+	f.section, f.course = section, course
+	f.svc = NewLessonContentService(f.repo, &previewSectionRepoStub{section: section}, &previewCourseRepoStub2{course: course}, nil, f.uploads)
 	return f
 }
 

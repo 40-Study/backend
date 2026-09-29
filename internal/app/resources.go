@@ -69,12 +69,15 @@ func InitResources() (*Resources, error) {
 
 	minioWrapper, err := storage.NewMinioClient(cfg)
 	if err != nil {
-		log.Printf("Warning: Failed to create minio wrapper client: %v", err)
-	} else if minioWrapper != nil {
-		if err := minioWrapper.EnsureBuckets(context.Background()); err != nil {
-			// Có thể nghĩa là bucket video CHƯA được đặt private — kiểm tra MinIO trước khi mở ra ngoài.
-			log.Printf("Warning: Failed to ensure MinIO buckets (video bucket private policy may not be applied): %v", err)
-		}
+		// Không có client thì không đặt được bucket video private -> không được chạy tiếp.
+		log.Fatalf("Failed to create minio wrapper client: %v", err)
+		return nil, err
+	}
+	// Review S1 F1: bucket video PHẢI private trước khi phục vụ request. Lỗi (gồm cấu hình trùng bucket
+	// ảnh, gỡ policy thất bại, MinIO không với tới) là lỗi khởi động, không phải warning.
+	if err := ensureVideoBucketsPrivate(context.Background(), minioWrapper); err != nil {
+		log.Fatalf("Invalid MinIO setup: %v", err)
+		return nil, err
 	}
 
 	rabbitMQ, err := rabbitmq_queue.NewRabbitMQService(cfg)

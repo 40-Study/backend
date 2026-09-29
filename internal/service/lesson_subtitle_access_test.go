@@ -57,17 +57,20 @@ func TestApplyVideoAccess_PhuDe_DuongChuaKiemQuyenKhongLoURL(t *testing.T) {
 	}
 }
 
-func TestApplyVideoAccess_PhuDe_URLNgoaiBucketVideoGiuNguyen(t *testing.T) {
+// Review S1 M5: URL không nằm trong bucket video (bucket khác, URL ngoài, không phải .vtt) KHÔNG được
+// trả nguyên dạng thô — bucket video private nên nó chỉ 403 lặng lẽ; bỏ và log cảnh báo.
+func TestApplyVideoAccess_PhuDe_URLNgoaiBucketVideo_BoVaKhongTraURLTho(t *testing.T) {
 	withObjectBucket(t)
 	for _, raw := range []string{
 		"https://example.com/sub.vtt",
 		"http://localhost:9000/images/a/sub.vtt",
+		"http://localhost:9000/videos/course/abc/movie.mp4",
 	} {
 		s := raw
 		r := dto.LessonContentResponseDTO{SubtitleURL: &s}
 		applyVideoAccess(&r, nil, guestVideoViewer)
-		if r.SubtitleURL == nil || *r.SubtitleURL != raw {
-			t.Errorf("URL ngoai bucket video phai giu nguyen: %s -> %s", raw, ptrStr(r.SubtitleURL))
+		if r.SubtitleURL != nil {
+			t.Errorf("khong ky duoc thi khong duoc tra URL tho: %s -> %s", raw, *r.SubtitleURL)
 		}
 	}
 }

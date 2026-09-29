@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"log"
 	"time"
 
@@ -37,7 +39,11 @@ func signSubtitleURL(stored *string, v videoViewer) *string {
 	}
 	key, ok := hlsauth.ObjectKey(*stored)
 	if !ok {
-		return stored
+		// Không trả URL thô: bucket video private nên URL MinIO/CDN trực tiếp chỉ 403 lặng lẽ, còn URL
+		// ngoài không do ta kiểm soát. Log lý do để dò ra cấu hình lệch (MINIO_PUBLIC_ENDPOINT có path
+		// prefix, đổi tên bucket, phụ đề cũ ở bucket khác, không phải .vtt).
+		log.Printf("[WARN] Bo phu de: URL khong nam trong bucket video hoac khong phai .vtt hop le, khong ky/khong tra: %q", *stored)
+		return nil
 	}
 	if v.withheld {
 		return nil
@@ -49,6 +55,35 @@ func signSubtitleURL(stored *string, v videoViewer) *string {
 	}
 	signed := hlsauth.ObjectURL(key, tok)
 	return &signed
+}
+
+// uploadOwnership là phần của VideoUploadService dùng để kiểm chủ upload / chủ file phụ đề.
+type uploadOwnership interface {
+	RequireUploadUsableBy(ctx context.Context, uploadID, actorUserID uuid.UUID, isAdmin bool) error
+	RequireObjectUsableBy(ctx context.Context, objectKey string, actorUserID uuid.UUID, isAdmin bool) error
+}
+
+// requireSubtitleUsable (review S1 M1): subtitle_url trỏ vào bucket video (.vtt) thì file đó phải do
+// chính actor tải lên (hoặc actor là admin) — nếu không, GV B trỏ subtitle_url sang .vtt của GV A rồi
+// nhận URL ký đọc được transcript của A. URL không thuộc bucket video (không ký được, sẽ bị bỏ khi đọc)
+// và giá trị đang có sẵn trên content (currentURL, dữ liệu trước bản vá / form gửi lại nguyên) thì bỏ qua.
+func requireSubtitleUsable(ctx context.Context, uploads uploadOwnership, newURL, currentURL *string, actorUserID uuid.UUID, isAdmin bool) error {
+	if newURL == nil || *newURL == "" {
+		return nil
+	}
+	key, ok := hlsauth.ObjectKey(*newURL)
+	if !ok {
+		return nil
+	}
+	if currentURL != nil {
+		if cur, ok := hlsauth.ObjectKey(*currentURL); ok && cur == key {
+			return nil
+		}
+	}
+	if uploads == nil {
+		return errors.New("cannot verify subtitle ownership: upload service unavailable")
+	}
+	return uploads.RequireObjectUsableBy(ctx, key, actorUserID, isAdmin)
 }
 
 // applyVideoAccess điền các field video của một content: thay URL HLS/gốc đã lưu bằng URL KÝ.
