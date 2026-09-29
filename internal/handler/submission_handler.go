@@ -84,7 +84,7 @@ func (h *SubmissionHandler) GetByID(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
 	}
 
-	submission, err := h.svc.GetByID(c.Context(), id, requesterID)
+	submission, err := h.svc.GetByID(c.Context(), id, requesterID, isAdminActor(c, h.permChecker, requesterID))
 	if err != nil {
 		if status := submissionErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{"error": err.Error()})

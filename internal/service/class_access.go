@@ -24,11 +24,83 @@ import (
 // sinh cua lop — dung cho cac handler DOC (hoi vien lop/giao vien). La loi UY QUYEN (403).
 var ErrNotClassMember = errors.New("forbidden: not a member of this class")
 
-// classTeacherOrInstructor tra ve true khi userID la giao vien cua lop HOAC instructor cua khoa
-// chua lop. `class` duoc truyen vao (da load san) vi moi caller deu can no cho muc dich khac nua.
+// ErrClassNotFound (S4): lop khong ton tai HOAC nguoi goi khong xem duoc lop do — handler tra 404,
+// khong phan biet hai truong hop de khong do duoc id lop.
+var ErrClassNotFound = errors.New("class not found")
+
+// ErrNotClassOwner (S4): nguoi goi thay duoc lop nhung khong phai CHU lop (nguoi tao lop hoac giang
+// vien chu khoa) khi gan/go giang vien hoac doi khoa cua lop. Handler tra 403.
+var ErrNotClassOwner = errors.New("forbidden: only the class owner or an admin can assign or remove teachers or change the course")
+
+// ErrNotCourseInstructor (S4): tao lop vao khoa, hoac doi lop sang khoa, ma nguoi goi khong phai
+// giang vien chu khoa do (va khong phai admin). Handler tra 403.
+var ErrNotCourseInstructor = errors.New("forbidden: only the course instructor or an admin can put a class in this course")
+
+// classOwner (S4): CHU lop = nguoi tao lop (classes.created_by) HOAC giang vien chu khoa chua lop.
+// Hep hon classTeacherOrInstructor: giang vien duoc gan vao lop (teacher_classes) quan tri lop nhung
+// KHONG phai chu, nen khong tu gan them giang vien khac — neu khong, moi giang vien deu tu gan minh
+// vao lop cua nguoi khac roi co quyen CanManage tren assignment cua lop do.
+func classOwner(ctx context.Context, courseRepo repository.CourseRepositoryInterface, userID uuid.UUID, class *model.Class) (bool, error) {
+	if class == nil {
+		return false, ErrClassNotFound
+	}
+	if class.CreatedBy != nil && *class.CreatedBy == userID {
+		return true, nil
+	}
+	return courseInstructorOf(ctx, courseRepo, userID, class.CourseID)
+}
+
+// courseInstructorOf: userID co phai instructor cua khoa (nil courseID = khong co khoa = false).
+func courseInstructorOf(ctx context.Context, courseRepo repository.CourseRepositoryInterface, userID uuid.UUID, courseID *uuid.UUID) (bool, error) {
+	if courseID == nil {
+		return false, nil
+	}
+	course, err := courseRepo.GetByID(ctx, *courseID)
+	if err != nil {
+		return false, fmt.Errorf("failed to load course: %w", err)
+	}
+	return course != nil && course.InstructorID == userID, nil
+}
+
+// ensureClassOwner (S4): admin, hoac chu lop. Nguoi khong phai chu: da thay duoc lop (giang vien lop,
+// hoc sinh dang hoc, instructor) -> ErrNotClassOwner (403); khong thay duoc -> ErrClassNotFound (404).
+func ensureClassOwner(ctx context.Context, classRepo repository.ClassRepositoryInterface, courseRepo repository.CourseRepositoryInterface, userID, classID uuid.UUID, isAdmin bool) error {
+	class, err := classRepo.GetByID(ctx, classID)
+	if err != nil {
+		return fmt.Errorf("failed to load class: %w", err)
+	}
+	if class == nil {
+		return ErrClassNotFound
+	}
+	if isAdmin {
+		return nil
+	}
+	owner, err := classOwner(ctx, courseRepo, userID, class)
+	if err != nil {
+		return err
+	}
+	if owner {
+		return nil
+	}
+	related, err := classRepo.IsUserRelatedToClass(ctx, class.ID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to verify class membership: %w", err)
+	}
+	if related {
+		return ErrNotClassOwner
+	}
+	return ErrClassNotFound
+}
+
+// classTeacherOrInstructor tra ve true khi userID la giao vien cua lop, instructor cua khoa chua
+// lop, HOAC nguoi tao lop (S4: nguoi tao chua duoc gan giang vien van phai quan tri duoc lop minh
+// vua tao). `class` duoc truyen vao (da load san) vi moi caller deu can no cho muc dich khac nua.
 func classTeacherOrInstructor(ctx context.Context, classRepo repository.ClassRepositoryInterface, courseRepo repository.CourseRepositoryInterface, userID uuid.UUID, class *model.Class) (bool, error) {
 	if class == nil {
-		return false, errors.New("class not found")
+		return false, ErrClassNotFound
+	}
+	if class.CreatedBy != nil && *class.CreatedBy == userID {
+		return true, nil
 	}
 	isTeacher, err := classRepo.TeacherClassExists(ctx, class.ID, userID)
 	if err != nil {
@@ -37,16 +109,7 @@ func classTeacherOrInstructor(ctx context.Context, classRepo repository.ClassRep
 	if isTeacher {
 		return true, nil
 	}
-	if class.CourseID != nil {
-		course, err := courseRepo.GetByID(ctx, *class.CourseID)
-		if err != nil {
-			return false, fmt.Errorf("failed to load course: %w", err)
-		}
-		if course != nil && course.InstructorID == userID {
-			return true, nil
-		}
-	}
-	return false, nil
+	return courseInstructorOf(ctx, courseRepo, userID, class.CourseID)
 }
 
 // ensureClassManage = giao vien lop, HOAC instructor cua khoa chua lop, HOAC admin he thong.

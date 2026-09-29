@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -37,8 +39,14 @@ func NewClassHandler(service service.ClassServiceInterface, permChecker *middlew
 // classErrorStatus ánh xạ lỗi phân quyền (H-11) sang HTTP status phù hợp; trả 0 khi không
 // nhận diện được (để caller giữ nguyên xử lý 400/500 hiện có) — cùng pattern gradeErrorStatus.
 func classErrorStatus(err error) int {
-	switch err {
-	case service.ErrNotClassTeacher:
+	switch {
+	case errors.Is(err, service.ErrClassNotFound):
+		// S4: lớp không tồn tại hoặc người gọi không xem được lớp — không phân biệt để không dò được id.
+		return fiber.StatusNotFound
+	case errors.Is(err, service.ErrNotClassTeacher),
+		errors.Is(err, service.ErrNotClassOwner),
+		errors.Is(err, service.ErrNotCourseInstructor),
+		errors.Is(err, service.ErrNotTeacher):
 		return fiber.StatusForbidden
 	default:
 		return 0
@@ -54,8 +62,16 @@ func (h *ClassHandler) CreateClass(c *fiber.Ctx) error {
 		})
 	}
 
-	class, err := h.service.CreateClass(c.Context(), req)
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+
+	class, err := h.service.CreateClass(c.Context(), actorUserID, isAdminActor(c, h.permChecker, actorUserID), req)
 	if err != nil {
+		if status := classErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create class",
 			"error":   err.Error(),
@@ -86,8 +102,16 @@ func (h *ClassHandler) CreateClassForCourse(c *fiber.Ctx) error {
 	}
 	req.CourseID = &courseID
 
-	class, err := h.service.CreateClass(c.Context(), req)
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+
+	class, err := h.service.CreateClass(c.Context(), actorUserID, isAdminActor(c, h.permChecker, actorUserID), req)
 	if err != nil {
+		if status := classErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create class",
 			"error":   err.Error(),
@@ -287,8 +311,16 @@ func (h *ClassHandler) AssignTeacherToClass(c *fiber.Ctx) error {
 		})
 	}
 
-	tc, err := h.service.AssignTeacherToClass(c.Context(), classID, req)
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+
+	tc, err := h.service.AssignTeacherToClass(c.Context(), classID, actorUserID, isAdminActor(c, h.permChecker, actorUserID), req)
 	if err != nil {
+		if status := classErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to assign teacher",
 			"error":   err.Error(),
@@ -318,7 +350,15 @@ func (h *ClassHandler) RemoveTeacherFromClass(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.RemoveTeacherFromClass(c.Context(), classID, teacherID); err != nil {
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+
+	if err := h.service.RemoveTeacherFromClass(c.Context(), classID, teacherID, actorUserID, isAdminActor(c, h.permChecker, actorUserID)); err != nil {
+		if status := classErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to remove teacher",
 			"error":   err.Error(),

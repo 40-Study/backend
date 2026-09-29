@@ -212,8 +212,6 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		repos.Submission,
 		assignmentSvc,
 		repos.TestCase,
-		repos.Schedule,
-		repos.Class,
 		resources.Redis,
 		resources.Config,
 	)

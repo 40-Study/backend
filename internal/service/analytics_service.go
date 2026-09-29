@@ -120,18 +120,15 @@ func (s *AnalyticsService) GetAssignmentAnalytics(ctx context.Context, assignmen
 		return nil, nil
 	}
 
+	// S4 (SSOT): số liệu assignment cần đúng quyền quản lý assignment (CanManage: host phiên, giảng
+	// viên lớp, chủ khoá) — không tự suy lớp rồi kiểm lại theo một định nghĩa khác.
 	if !isAdmin {
-		classID := uuid.Nil
-		if assignment.ClassID != nil {
-			classID = *assignment.ClassID
-		} else if assignment.Session != nil {
-			classID = assignment.Session.ClassID
-		}
-		if classID == uuid.Nil {
-			return nil, ErrNotAnalyticsOwner
-		}
-		if err := ensureClassManage(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin); err != nil {
+		manage, err := s.assignmentRepo.CanManage(ctx, assignmentID, actorUserID)
+		if err != nil {
 			return nil, err
+		}
+		if !manage {
+			return nil, ErrNotAnalyticsOwner
 		}
 	}
 

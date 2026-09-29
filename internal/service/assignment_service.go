@@ -391,7 +391,7 @@ func (s *AssignmentService) isSessionMember(ctx context.Context, sessionID, user
 	switch {
 	case err == nil:
 		return true, nil
-	case errors.Is(err, ErrNotSessionMember), errors.Is(err, ErrParticipantKicked), err.Error() == "session not found":
+	case errors.Is(err, ErrNotSessionMember), errors.Is(err, ErrParticipantKicked), errors.Is(err, ErrSessionNotFound):
 		return false, nil
 	default:
 		return false, err
