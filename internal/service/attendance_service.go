@@ -15,6 +15,9 @@ import (
 // ErrAttendanceNotFound (S4): bản ghi điểm danh không tồn tại HOẶC không thuộc lớp trong URL. Handler trả 404.
 var ErrAttendanceNotFound = errors.New("attendance not found")
 
+// ErrStudentNotInClass: học viên trong danh sách điểm danh không đang học lớp này (400).
+var ErrStudentNotInClass = errors.New("student is not an active member of this class")
+
 // AttendanceServiceInterface (S4): điểm danh của LỚP (bảng attendances). Ghi (tạo, sửa, xoá) chỉ người quản
 // lý lớp (ensureClassManage: giảng viên lớp, chủ khoá, người tạo, admin), người khác ErrNotClassTeacher (403).
 // Đọc (danh sách, một bản ghi) cũng chỉ người quản lý lớp, người khác ErrClassNotFound (404): học viên và
@@ -60,6 +63,17 @@ func (s *AttendanceService) MarkAttendance(ctx context.Context, classID, actorUs
 	date, err := time.Parse("2006-01-02", req.Date)
 	if err != nil {
 		return nil, errors.New("invalid date format, expected YYYY-MM-DD")
+	}
+
+	// M-4 (review S4): kiểm cả danh sách TRƯỚC khi ghi dòng nào, để một học viên lạ không làm dở dang lô.
+	for _, entry := range req.Attendances {
+		in, err := s.classRepo.StudentClassExists(ctx, classID, entry.StudentID)
+		if err != nil {
+			return nil, err
+		}
+		if !in {
+			return nil, ErrStudentNotInClass
+		}
 	}
 
 	result := make([]dto.AttendanceResponseDTO, 0, len(req.Attendances))
