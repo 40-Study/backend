@@ -1,7 +1,8 @@
 # Gửi thông báo Discord khi có code vào main và khi CI trên main chạy xong.
-# Cần secret DISCORD_WEBHOOK_URL (Discord > Channel Settings > Integrations > Webhooks).
-# Payload dựng bằng jq đọc thẳng file event, không nhúng ${{ }} vào shell để tránh injection
-# qua commit message / tên nhánh.
+# Cần secret DISCORD_WEBHOOK_URL (Discord > Channel Settings > Integrations > Webhooks),
+# thêm "?thread_id=<id>" vào cuối URL để gửi vào một thread.
+# Payload dựng bằng jq đọc thẳng file event / JSON từ API, không nhúng ${{ }} vào shell để tránh
+# injection qua commit message, tiêu đề PR hay tên nhánh.
 name: Discord Notify
 
 on:
@@ -13,7 +14,10 @@ on:
     types: [ completed ]
     branches: [ main ]
 
-permissions: {}
+# Chỉ đọc: tra PR gắn với commit (tiêu đề, mô tả, review, commit của PR)
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
   notify:
@@ -25,37 +29,83 @@ jobs:
       (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion != 'skipped')
     env:
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Build payload
         shell: bash
         run: |
           set -euo pipefail
+          # Hàm jq dùng chung: cắt chuỗi theo giới hạn ký tự của Discord embed
+          JQ_LIB='def trunc(n): if length > n then .[0:n-1] + "…" else . end;'
+
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             if [ "$(jq '.commits | length' "$GITHUB_EVENT_PATH")" -eq 0 ]; then
               echo "Push không có commit mới, bỏ qua."; exit 0
             fi
-            # Merge commit ("Merge pull request #N") hoặc squash ("... (#N)") => báo "PR #N merged"
-            jq '
-              def trunc(n): if length > n then .[0:n-1] + "…" else . end;
-              (.commits | length) as $n
-              | ((.head_commit.message // "") | split("\n")[0]) as $head
-              | ([$head | capture("(Merge pull request #|\\(#)(?<pr>[0-9]+)")?] | first // null) as $m
-              | {
-                  username: "40Study GitHub",
-                  embeds: [{
-                    title: (if $m
-                      then "🔀 [\(.repository.name):main] PR #\($m.pr) đã merge"
-                      else "📦 [\(.repository.name):main] \($n) commit mới" end),
-                    url: (if $m then "\(.repository.html_url)/pull/\($m.pr)" else .compare end),
-                    color: 5793266,
-                    author: { name: .sender.login, icon_url: .sender.avatar_url, url: .sender.html_url },
-                    description: ([ .commits[-10:][]
-                      | "[`\(.id[0:7])`](\(.url)) \(.message | split("\n")[0] | trunc(90)) - \(.author.username // .author.name)" ]
-                      | join("\n") | trunc(4000)),
-                    footer: { text: (if $n > 10 then "Hiển thị 10/\($n) commit gần nhất" else "push vào main" end) },
-                    timestamp: (now | todate)
-                  }]
-                }' "$GITHUB_EVENT_PATH" > payload.json
+            # Tra PR đã merge vào main chứa commit này (đúng cho cả merge commit, squash và rebase)
+            sha=$(jq -r '.after' "$GITHUB_EVENT_PATH")
+            pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/pulls" \
+              --jq '[.[] | select(.merged_at != null and .base.ref == "main")][0].number // empty' || true)
+            # API lỗi thì gh in thân lỗi ra stdout: không phải số => coi như push thẳng
+            [[ "$pr" =~ ^[0-9]+$ ]] || pr=""
+
+            if [ -n "$pr" ]; then
+              gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" > pr.json
+              gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr/commits" | jq -s 'add // []' > pr-commits.json
+              gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr/reviews" | jq -s 'add // []' > pr-reviews.json
+              jq -n --slurpfile pr pr.json --slurpfile commits pr-commits.json --slurpfile reviews pr-reviews.json "$JQ_LIB"'
+                $pr[0] as $p | $commits[0] as $c | $reviews[0] as $rv
+                | ([$rv[] | select(.state == "APPROVED") | .user.login] | unique) as $approved
+                | ([$rv[] | .user.login | select(. != $p.user.login)] | unique) as $reviewers
+                # Bỏ comment HTML của PR template và dòng trống thừa
+                | (($p.body // "") | gsub("<!--[\\s\\S]*?-->"; "") | gsub("\r"; "") | gsub("\n{3,}"; "\n\n")
+                   | sub("^\\s+"; "") | sub("\\s+$"; "") | trunc(1500)) as $body
+                | ([ $c[-15:][] | "[`\(.sha[0:7])`](\(.html_url)) \(.commit.message | split("\n")[0] | trunc(150))" ]
+                   | join("\n")) as $clist
+                | {
+                    username: "40Study GitHub",
+                    embeds: [{
+                      title: ("🔀 [\($p.base.repo.name)] PR #\($p.number): \($p.title)" | trunc(256)),
+                      url: $p.html_url,
+                      color: 5793266,
+                      author: { name: ($p.merged_by.login // $p.user.login),
+                                icon_url: ($p.merged_by.avatar_url // $p.user.avatar_url),
+                                url: ($p.merged_by.html_url // $p.user.html_url) },
+                      description: ((if $body == "" then "_PR không có mô tả_" else $body end)
+                        + "\n\n**Commit trong PR (\($c | length)):**\n" + $clist) | trunc(4000),
+                      fields: ([
+                        { name: "Nhánh", value: "`\($p.head.ref)` → `\($p.base.ref)`", inline: true },
+                        { name: "Người tạo", value: $p.user.login, inline: true },
+                        { name: "Người merge", value: ($p.merged_by.login // "?"), inline: true },
+                        { name: "Review", inline: true, value: (if ($reviewers | length) == 0 then "Chưa có review"
+                            else ($reviewers | map(if IN($approved[]) then "✅ \(.)" else . end) | join(", ") | trunc(1024)) end) }
+                      ] + (if ($p.labels | length) > 0
+                            then [{ name: "Label", value: ($p.labels | map(.name) | join(", ") | trunc(1024)), inline: true }]
+                            else [] end)),
+                      footer: { text: (if ($c | length) > 15 then "Hiển thị 15/\($c | length) commit gần nhất" else "merge vào main" end) },
+                      timestamp: $p.merged_at
+                    }]
+                  }' > payload.json
+            else
+              # Push thẳng vào main, không qua PR: liệt kê tên từng commit
+              jq "$JQ_LIB"'
+                (.commits | length) as $n
+                | {
+                    username: "40Study GitHub",
+                    embeds: [{
+                      title: "📦 [\(.repository.name):main] \($n) commit push thẳng (không qua PR)",
+                      url: .compare,
+                      color: 16753920,
+                      author: { name: .sender.login, icon_url: .sender.avatar_url, url: .sender.html_url },
+                      description: ([ .commits[-15:][]
+                        | "[`\(.id[0:7])`](\(.url)) **\(.message | split("\n")[0] | trunc(150))** - \(.author.username // .author.name)" ]
+                        | join("\n") | trunc(4000)),
+                      fields: [ { name: "Người push", value: .sender.login, inline: true } ],
+                      footer: { text: (if $n > 15 then "Hiển thị 15/\($n) commit gần nhất" else "push vào main" end) },
+                      timestamp: (now | todate)
+                    }]
+                  }' "$GITHUB_EVENT_PATH" > payload.json
+            fi
           else
             jq '
               .workflow_run as $r
