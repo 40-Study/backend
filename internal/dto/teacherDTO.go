@@ -8,15 +8,13 @@ import (
 
 type TeacherResponseDTO struct {
 	ID uuid.UUID `json:"id"`
-	// Không có Email (S3): DTO này phục vụ /teachers (không cần đăng nhập) và danh sách giảng viên
-	// của lớp. Email chỉ thuộc về chính chủ (hồ sơ của mình) và admin (/users) — thêm lại trường
+	// Không có Email, Phone, DateOfBirth (S3): DTO này phục vụ /teachers (không cần đăng nhập) và danh sách giảng viên
+	// của lớp. Email, số điện thoại và ngày sinh chỉ thuộc về chính chủ (hồ sơ của mình) và admin (/users) — thêm lại trường
 	// email vào đây làm TestS3_TeacherDTOsKhongCoEmail đỏ.
 	UserName   string     `json:"user_name"`
 	FullName    *string    `json:"full_name,omitempty"`
 	AvatarURL   *string    `json:"avatar_url,omitempty"`
-	Phone       *string    `json:"phone,omitempty"`
 	Bio         *string    `json:"bio,omitempty"`
-	DateOfBirth *time.Time `json:"date_of_birth,omitempty"`
 	IsVerified  bool       `json:"is_verified"`
 	IsActive    bool       `json:"is_active"`
 	CreatedAt   string     `json:"created_at"`
