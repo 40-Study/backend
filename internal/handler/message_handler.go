@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
@@ -66,6 +67,14 @@ func (h *MessageHandler) CreateDirectConversation(c *fiber.Ctx) error {
 
 	result, err := h.convService.CreateDirectConversation(c.Context(), userID, req.UserID)
 	if err != nil {
+		// Lane G (QA 260927): thiếu quan hệ hợp lệ -> 403 + code CONVERSATION_NOT_ALLOWED, phân
+		// biệt với các lỗi khác (tự nhắn cho mình, lỗi hệ thống) vẫn trả 400 như trước.
+		if errors.Is(err, service.ErrConversationNotAllowed) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"message": err.Error(),
+				"code":    "CONVERSATION_NOT_ALLOWED",
+			})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": err.Error(),
 		})

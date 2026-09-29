@@ -372,6 +372,9 @@ func RunPostMigrations(db *gorm.DB) error {
 		},
 	}
 	statements = append(statements, contestPostMigrations()...)
+	// Lane G (role-based UX QA, 260927): 2 permission cuộc thi (CONTESTS_MANAGE_OWN,
+	// CONTESTS_APPROVE_ALL) — CHỈ THÊM, xem contest_permission_grants.go.
+	statements = append(statements, contestPermissionPostMigrations()...)
 
 	for _, stmt := range statements {
 		if err := db.Exec(stmt.sql).Error; err != nil {
