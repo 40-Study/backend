@@ -16,7 +16,8 @@ type ClassServiceInterface interface {
 	// CreateClass (S4): chỉ admin, giảng viên chủ khoá (khi có course_id) hoặc giảng viên (khi không có khoá); người tạo thành chủ lớp.
 	CreateClass(ctx context.Context, actorUserID uuid.UUID, isAdmin bool, req dto.CreateClassDTO) (*dto.ClassResponseDTO, error)
 	GetAllClasses(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.ClassListResponseDTO, error)
-	GetClassByID(ctx context.Context, id uuid.UUID) (*dto.ClassResponseDTO, error)
+	// GetClassByID (S4): chỉ thành viên lớp, người quản lý lớp và admin; người khác ErrClassNotFound (404).
+	GetClassByID(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool) (*dto.ClassResponseDTO, error)
 	UpdateClass(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateClassDTO) (*dto.ClassResponseDTO, error)
 	DeleteClass(ctx context.Context, id, actorUserID uuid.UUID, isAdmin, hardDelete bool) error
 	GetClassesByCourseID(ctx context.Context, courseID uuid.UUID) ([]dto.ClassResponseDTO, error)
@@ -170,7 +171,10 @@ func (s *ClassService) GetAllClasses(ctx context.Context, page, pageSize int, ke
 	}, nil
 }
 
-func (s *ClassService) GetClassByID(ctx context.Context, id uuid.UUID) (*dto.ClassResponseDTO, error) {
+func (s *ClassService) GetClassByID(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool) (*dto.ClassResponseDTO, error) {
+	if err := ensureClassVisible(ctx, s.classRepo, s.courseRepo, actorUserID, id, isAdmin); err != nil {
+		return nil, err
+	}
 	class, err := s.classRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -529,9 +533,9 @@ func (s *ClassService) RemoveStudentFromClass(ctx context.Context, classID, stud
 }
 
 func (s *ClassService) GetStudentsByClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.StudentClassListResponseDTO, error) {
-	// H-11: danh sách học sinh (email, tên, avatar) chỉ cho giáo viên của lớp hoặc admin xem —
-	// tránh học sinh/giáo viên khác dò classID để lấy PII của học sinh lớp khác.
-	if err := s.requireClassTeacherOrAdmin(ctx, classID, actorUserID, isAdmin); err != nil {
+	// H-11 + S4: danh sách học sinh chỉ cho thành viên lớp (học viên, giảng viên), người quản lý lớp và admin;
+	// người khác nhận 404 (không dò được lớp nào tồn tại, không lấy được tên học sinh lớp khác).
+	if err := ensureClassVisible(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin); err != nil {
 		return nil, err
 	}
 

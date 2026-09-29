@@ -161,6 +161,28 @@ func ensureClassView(ctx context.Context, classRepo repository.ClassRepositoryIn
 	return nil
 }
 
+// ensureClassVisible (S4): nhu ensureClassView nhung nguoi ngoai nhan ErrClassNotFound (404) thay vi
+// ErrNotClassMember (403), de khong do duoc lop nao ton tai. Dung cho doc chi tiet lop va danh sach hoc vien:
+// chi thanh vien lop (hoc vien, giang vien), nguoi quan tri lop (chu khoa, nguoi tao) va admin.
+func ensureClassVisible(ctx context.Context, classRepo repository.ClassRepositoryInterface, courseRepo repository.CourseRepositoryInterface, userID, classID uuid.UUID, isAdmin bool) error {
+	err := ensureClassView(ctx, classRepo, courseRepo, userID, classID, isAdmin)
+	if errors.Is(err, ErrNotClassMember) {
+		return ErrClassNotFound
+	}
+	return err
+}
+
+// ensureClassManageOrNotFound (S4): nhu ensureClassManage nhung nguoi khong quan tri duoc lop nhan
+// ErrClassNotFound (404). Dung cho route DOC danh sach quan ly (diem danh): hoc vien khong duoc thay route
+// nay ton tai, khac voi route GHI tra 403 (ensureClassManage).
+func ensureClassManageOrNotFound(ctx context.Context, classRepo repository.ClassRepositoryInterface, courseRepo repository.CourseRepositoryInterface, userID, classID uuid.UUID, isAdmin bool) error {
+	err := ensureClassManage(ctx, classRepo, courseRepo, userID, classID, isAdmin)
+	if errors.Is(err, ErrNotClassTeacher) {
+		return ErrClassNotFound
+	}
+	return err
+}
+
 // ensureAnyClassView dung cho cac handler doc TRA VE NHIEU LOP cung luc (vd: cac lop duoc gan vao
 // mot lesson content). Quyen duoc xet tren dung tap lop sap tra ve, va dung ngay khi mot lop cho
 // qua — nen so truy van bi chan tren so lop cua trang, khong phai toan bo khoa hoc.

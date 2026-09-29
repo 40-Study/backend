@@ -117,7 +117,9 @@ func (s *AnalyticsService) GetAssignmentAnalytics(ctx context.Context, assignmen
 		return nil, err
 	}
 	if assignment == nil {
-		return nil, nil
+		// S4: id không tồn tại trả 404, không phải 200 với data null (trước đây 200 null cho id không có và
+		// 403 cho id có thật, nên dò được id nào tồn tại).
+		return nil, ErrAssignmentNotFound
 	}
 
 	// S4 (SSOT): số liệu assignment cần đúng quyền quản lý assignment (CanManage: host phiên, giảng

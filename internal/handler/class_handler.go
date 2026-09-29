@@ -200,7 +200,12 @@ func (h *ClassHandler) GetClassByID(c *fiber.Ctx) error {
 		})
 	}
 
-	class, err := h.service.GetClassByID(c.Context(), id)
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+
+	class, err := h.service.GetClassByID(c.Context(), id, actorUserID, isAdminActor(c, h.permChecker, actorUserID))
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "Class not found",
