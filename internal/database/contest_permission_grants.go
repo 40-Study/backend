@@ -59,6 +59,7 @@ func grantSystemRolePermissionSQL(roleName, permName string) string {
 		SELECT sr.id, p.id, now()
 		FROM system_roles sr, permissions p
 		WHERE sr.name = '%s' AND p.name = '%s'
+		  AND sr.deleted_at IS NULL AND p.deleted_at IS NULL
 		ON CONFLICT (system_role_id, permission_id) DO NOTHING;
 	`, roleName, permName)
 }

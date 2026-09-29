@@ -43,7 +43,7 @@ type ConversationServiceInterface interface {
 // nào để mở cuộc trò chuyện trực tiếp MỚI — xem canCreateDirectConversation. Handler
 // (message_handler.go) nhận diện lỗi này qua errors.Is để trả 403 kèm code CONVERSATION_NOT_ALLOWED
 // thay vì 400 mặc định như các lỗi khác của CreateDirectConversation.
-var ErrConversationNotAllowed = errors.New("Bạn và người này chưa có quan hệ (học viên-giảng viên, phụ huynh-con đã xác nhận, hoặc bạn bè) nên chưa thể nhắn tin trực tiếp")
+var ErrConversationNotAllowed = errors.New("Bạn chỉ có thể nhắn tin với giảng viên của khoá bạn đang học, phụ huynh hoặc con đã liên kết, hoặc quản trị viên")
 
 type ConversationService struct {
 	convRepo           *repository.ConversationRepository
