@@ -1,0 +1,95 @@
+# Gửi thông báo Discord khi có code vào main và khi CI trên main chạy xong.
+# Cần secret DISCORD_WEBHOOK_URL (Discord > Channel Settings > Integrations > Webhooks).
+# Payload dựng bằng jq đọc thẳng file event, không nhúng ${{ }} vào shell để tránh injection
+# qua commit message / tên nhánh.
+name: Discord Notify
+
+on:
+  push:
+    branches: [ main ]
+  workflow_run:
+    # Tên workflow CI cần báo kết quả (khớp field `name:` của workflow đó)
+    workflows: [ "Backend CI" ]
+    types: [ completed ]
+    branches: [ main ]
+
+permissions: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Chỉ báo build chạy từ push vào main (bỏ qua build của PR) và bỏ run bị skip
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion != 'skipped')
+    env:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+    steps:
+      - name: Build payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            if [ "$(jq '.commits | length' "$GITHUB_EVENT_PATH")" -eq 0 ]; then
+              echo "Push không có commit mới, bỏ qua."; exit 0
+            fi
+            # Merge commit ("Merge pull request #N") hoặc squash ("... (#N)") => báo "PR #N merged"
+            jq '
+              def trunc(n): if length > n then .[0:n-1] + "…" else . end;
+              (.commits | length) as $n
+              | ((.head_commit.message // "") | split("\n")[0]) as $head
+              | ([$head | capture("(Merge pull request #|\\(#)(?<pr>[0-9]+)")?] | first // null) as $m
+              | {
+                  username: "40Study GitHub",
+                  embeds: [{
+                    title: (if $m
+                      then "🔀 [\(.repository.name):main] PR #\($m.pr) đã merge"
+                      else "📦 [\(.repository.name):main] \($n) commit mới" end),
+                    url: (if $m then "\(.repository.html_url)/pull/\($m.pr)" else .compare end),
+                    color: 5793266,
+                    author: { name: .sender.login, icon_url: .sender.avatar_url, url: .sender.html_url },
+                    description: ([ .commits[-10:][]
+                      | "[`\(.id[0:7])`](\(.url)) \(.message | split("\n")[0] | trunc(90)) - \(.author.username // .author.name)" ]
+                      | join("\n") | trunc(4000)),
+                    footer: { text: (if $n > 10 then "Hiển thị 10/\($n) commit gần nhất" else "push vào main" end) },
+                    timestamp: (now | todate)
+                  }]
+                }' "$GITHUB_EVENT_PATH" > payload.json
+          else
+            jq '
+              .workflow_run as $r
+              | ({ success:   ["✅", "thành công", 3066993],
+                   failure:   ["❌", "THẤT BẠI",   15158332],
+                   cancelled: ["⚪", "bị huỷ",     9807270],
+                   timed_out: ["⏱️", "quá thời gian", 15158332] }[$r.conclusion]
+                 // ["⚠️", $r.conclusion, 16776960]) as $s
+              | ((($r.updated_at | fromdate) - ($r.run_started_at | fromdate))) as $d
+              | {
+                  username: "40Study GitHub",
+                  embeds: [{
+                    title: "\($s[0]) [\(.repository.name):\($r.head_branch)] \($r.name) \($s[1])",
+                    url: $r.html_url,
+                    color: $s[2],
+                    author: { name: $r.actor.login, icon_url: $r.actor.avatar_url, url: $r.actor.html_url },
+                    description: "[`\($r.head_sha[0:7])`](\(.repository.html_url)/commit/\($r.head_sha)) \(($r.head_commit.message // "") | split("\n")[0])",
+                    fields: [
+                      { name: "Run", value: "#\($r.run_number)", inline: true },
+                      { name: "Thời gian", value: "\($d / 60 | floor)m \($d % 60)s", inline: true }
+                    ],
+                    timestamp: $r.updated_at
+                  }]
+                }' "$GITHUB_EVENT_PATH" > payload.json
+          fi
+          cat payload.json
+
+      - name: Send to Discord
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -f payload.json ] || exit 0
+          if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
+            echo "::warning::Chưa cấu hình secret DISCORD_WEBHOOK_URL, không gửi thông báo."; exit 0
+          fi
+          curl -sS --fail-with-body -H "Content-Type: application/json" \
+            -d @payload.json "$DISCORD_WEBHOOK_URL"
