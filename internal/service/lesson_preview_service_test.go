@@ -102,6 +102,20 @@ func TestGetPreviewContentsByLessonID_KhoaChuaPublished_TuChoi(t *testing.T) {
 	}
 }
 
+// M3 (review): bài preview thuộc KHOÁ KHÁC (section.CourseID != course.ID) phải bị từ chối dù cả hai
+// điều kiện published/is_preview đều đúng. Bỏ điều kiện đối chiếu CourseID làm test này ĐỎ.
+func TestGetPreviewContentsByLessonID_BaiThuocKhoaKhac_TuChoi(t *testing.T) {
+	svc, lessonID := buildPreviewFixture(model.CourseStatusPublished, true)
+	// Đổi section trả về sang một khoá khác với khoá của slug trên URL.
+	otherSection := &model.Section{CourseID: uuid.New()}
+	svc.sectionRepo = &previewSectionRepoStub{section: otherSection}
+
+	_, err := svc.GetPreviewContentsByLessonID(context.Background(), "khoa-da-xuat-ban", lessonID)
+	if err != ErrLessonNotInCourse {
+		t.Fatalf("bai thuoc khoa khac phai bi tu choi ErrLessonNotInCourse, nhan duoc: %v", err)
+	}
+}
+
 func TestGetPreviewContentsByLessonID_KhoaKhongTonTai_TuChoi(t *testing.T) {
 	svc := NewLessonContentService(
 		&previewLessonRepoStub{},

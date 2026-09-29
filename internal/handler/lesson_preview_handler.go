@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"log"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/service"
@@ -38,8 +40,11 @@ func (h *LessonPreviewHandler) GetPreviewContents(c *fiber.Ctx) error {
 		if err == service.ErrCourseHidden || err == service.ErrLessonNotPreview || err == service.ErrLessonNotInCourse {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "Lesson not found"})
 		}
+		// M1 (review): route công khai, KHÔNG trả err.Error() (có thể lộ chi tiết DB/nội bộ cho khách).
+		// Log để điều tra, trả message chung.
+		log.Printf("[ERROR] lesson preview contents (slug=%s lesson=%s): %v", slug, lessonID, err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to retrieve contents", "error": err.Error(),
+			"message": "Failed to retrieve contents",
 		})
 	}
 
