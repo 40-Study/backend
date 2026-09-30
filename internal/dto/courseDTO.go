@@ -40,6 +40,9 @@ type UpdateCourseDTO struct {
 	Language          *string          `json:"language" validate:"omitempty,max=10"`
 	Price             *decimal.Decimal `json:"price"`
 	DiscountPrice     *decimal.Decimal `json:"discount_price"`
+	// DiscountPriceCleared: client gửi `"discount_price": null` hoặc `""` => xoá khuyến mãi. Do
+	// UnmarshalJSON đặt (clearable_update_dto.go); DiscountPrice khi đó là nil.
+	DiscountPriceCleared bool         `json:"-"`
 	DiscountExpiresAt *time.Time       `json:"discount_expires_at"`
 	Requirements      []string        `json:"requirements"`
 	Objectives        []string        `json:"objectives"`

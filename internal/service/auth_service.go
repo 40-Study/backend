@@ -1205,6 +1205,10 @@ func (s *AuthService) UpdateMe(ctx context.Context, userID uuid.UUID, req dto.Up
 	if req.Phone != nil {
 		updates["phone"] = *req.Phone
 	}
+	// Xoá SĐT: ghi NULL (cột nullable) chứ không ghi "" để không lẫn với số rỗng khi tra cứu theo SĐT.
+	if req.PhoneCleared {
+		updates["phone"] = nil
+	}
 
 	if req.Bio != nil {
 		updates["bio"] = *req.Bio

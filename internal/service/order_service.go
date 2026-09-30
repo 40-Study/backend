@@ -569,7 +569,11 @@ func (s *OrderService) GetOrderByID(ctx context.Context, orderID, actorUserID uu
 		return nil, err
 	}
 
-	return s.toOrderResponse(order, items), nil
+	resp := s.toOrderResponse(order, items)
+	if !isAdmin {
+		hideInternalRefundFields(resp)
+	}
+	return resp, nil
 }
 
 // GetOrderByNumber - Get order by order number
@@ -584,7 +588,8 @@ func (s *OrderService) GetOrderByNumber(ctx context.Context, orderNumber string)
 		return nil, err
 	}
 
-	return s.toOrderResponse(order, items), nil
+	// Không có ngữ cảnh người gọi => coi như học viên, không lộ lý do hoàn tiền nội bộ.
+	return hideInternalRefundFields(s.toOrderResponse(order, items)), nil
 }
 
 // GetUserOrders - Get orders for user with pagination
@@ -609,7 +614,8 @@ func (s *OrderService) GetUserOrders(ctx context.Context, userID uuid.UUID, page
 		if err != nil {
 			return nil, err
 		}
-		orderResponses = append(orderResponses, *s.toOrderResponse(&orders[i], items))
+		// Danh sách "đơn của tôi" luôn là góc nhìn học viên: ẩn lý do hoàn tiền nội bộ.
+		orderResponses = append(orderResponses, *hideInternalRefundFields(s.toOrderResponse(&orders[i], items)))
 	}
 
 	totalPages := int(total) / limit
