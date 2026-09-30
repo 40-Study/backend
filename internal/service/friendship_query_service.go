@@ -142,8 +142,8 @@ func (s *FriendshipService) Search(ctx context.Context, me uuid.UUID, q string, 
 	}
 	users := make([]dto.FriendSearchUserDTO, len(rows))
 	for i, r := range rows {
-		status, _ := relationFromRow(byOther[r.UserID], me)
-		users[i] = dto.FriendSearchUserDTO{FriendUserDTO: toFriendUserDTO(r), Relationship: status}
+		status, reqID := relationFromRow(byOther[r.UserID], me)
+		users[i] = dto.FriendSearchUserDTO{FriendUserDTO: toFriendUserDTO(r), Relationship: status, RequestID: reqID}
 	}
 	return &dto.FriendSearchResponse{Users: users}, nil
 }

@@ -192,6 +192,16 @@ func TestFriendRoutes_LuongHocVien_DungEnvelopeVaField(t *testing.T) {
 	}
 	e.expect(e.do("alice", "GET", "/api/friends/requests?direction=x", ""), 400, "ERR_VALIDATION", "direction lạ")
 
+	// Tìm kiếm trả relationship + request_id (chỉ khi đang có lời mời chờ) để web thu hồi/chấp nhận ngay.
+	r = e.do("alice", "GET", "/api/friends/search?q=bob", "")
+	e.expect(r, 200, "", "search")
+	if !strings.Contains(r.Raw, `"relationship":"PENDING_OUT"`) || !strings.Contains(r.Raw, `"request_id":"`+sent.ID+`"`) {
+		t.Errorf("search alice->bob muốn PENDING_OUT kèm request_id %s: %s", sent.ID, r.Raw)
+	}
+	if r := e.do("carol", "GET", "/api/friends/search?q=bob", ""); strings.Contains(r.Raw, "request_id") || !strings.Contains(r.Raw, `"relationship":"NONE"`) {
+		t.Errorf("search carol->bob (không có lời mời) muốn NONE và KHÔNG có request_id: %s", r.Raw)
+	}
+
 	// Quan hệ theo từng phía.
 	r = e.do("alice", "GET", "/api/friends/relationship/"+e.ids["bob"].String(), "")
 	if !strings.Contains(r.Raw, `"PENDING_OUT"`) || !strings.Contains(r.Raw, sent.ID) {

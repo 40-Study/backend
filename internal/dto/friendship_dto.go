@@ -78,10 +78,13 @@ type FriendDeclineResultDTO struct {
 	Status string    `json:"status"`
 }
 
-// FriendSearchUserDTO — FriendUser + relationship (nhúng nên JSON phẳng như contract).
+// FriendSearchUserDTO — FriendUser + relationship (nhúng nên JSON phẳng như contract). RequestID chỉ có khi
+// relationship là PENDING_OUT/PENDING_IN: web thu hồi/chấp nhận ngay từ kết quả tìm kiếm, không phải gọi
+// thêm /friends/relationship/:userId.
 type FriendSearchUserDTO struct {
 	FriendUserDTO
-	Relationship string `json:"relationship"`
+	Relationship string     `json:"relationship"`
+	RequestID    *uuid.UUID `json:"request_id,omitempty"`
 }
 
 type FriendSearchResponse struct {

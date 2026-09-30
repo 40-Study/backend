@@ -264,9 +264,9 @@ func TestFriendship_TimKiem(t *testing.T) {
 	friend := fx.namedStudent("mai-ban", "Mai Ban Than")
 	fx.befriend(me, friend)
 	pendOut := fx.namedStudent("mai-out", "Mai Out")
-	fx.send(me, pendOut)
+	outReq := fx.send(me, pendOut)
 	pendIn := fx.namedStudent("mai-in", "Mai In")
-	fx.send(pendIn, me)
+	inReq := fx.send(pendIn, me)
 	declined := fx.namedStudent("mai-declined", "Mai Declined")
 	if _, err := fx.svc.DeclineRequest(ctx, declined, fx.send(me, declined)); err != nil {
 		t.Fatal(err)
@@ -304,6 +304,14 @@ func TestFriendship_TimKiem(t *testing.T) {
 	got := map[uuid.UUID]string{}
 	for _, u := range res.Users {
 		got[u.UserID] = u.Relationship
+		// request_id chỉ có khi đang có lời mời chờ (PENDING_OUT/PENDING_IN) và đúng id lời mời.
+		wantReq := map[uuid.UUID]uuid.UUID{pendOut: outReq, pendIn: inReq}[u.UserID]
+		switch {
+		case wantReq != uuid.Nil && (u.RequestID == nil || *u.RequestID != wantReq):
+			t.Errorf("user %v (%s): muốn request_id %v, nhận %v", u.UserID, u.Relationship, wantReq, u.RequestID)
+		case wantReq == uuid.Nil && u.RequestID != nil:
+			t.Errorf("user %v (%s): không có lời mời chờ nhưng có request_id %v", u.UserID, u.Relationship, *u.RequestID)
+		}
 	}
 	want := map[uuid.UUID]string{
 		match: dto.RelationNone, friend: dto.RelationFriends, pendOut: dto.RelationPendingOut,
