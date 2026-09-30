@@ -2,11 +2,22 @@ import hmac
 import mbbank
 import datetime
 import os
+from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Header, Query, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
 
-app = FastAPI(title="MBBank Transaction API")
+import service_token
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    # S6: thiếu TRANSACTION_SERVICE_TOKEN (và không có ALLOW_INSECURE_TRANSACTIONS=1) thì uvicorn không khởi động được.
+    service_token.load_service_token()
+    yield
+
+
+app = FastAPI(title="MBBank Transaction API", lifespan=lifespan)
 
 # S6: xác thực giữa backend Go và service này bằng token dùng chung (header X-Transaction-Token).
 # Trước đây /transactions, /transactions/count, /transactions/check-pin KHÔNG xác thực: ai chạm được
@@ -24,6 +35,8 @@ def _configured_token() -> str:
 def require_service_token(x_transaction_token: Optional[str] = Header(default=None)):
     expected = _configured_token()
     if not expected:
+        if service_token.insecure_allowed():
+            return  # chế độ dev tường minh (ALLOW_INSECURE_TRANSACTIONS=1); lifespan đã cảnh báo lúc khởi động
         raise HTTPException(status_code=503, detail="TRANSACTION_SERVICE_TOKEN is not configured")
     provided = x_transaction_token or ""
     # compare_digest: so sánh thời gian hằng số, không lộ token qua độ trễ.

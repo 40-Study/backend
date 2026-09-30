@@ -285,3 +285,55 @@ func TestS6_GroupChat_KickNgungPhatKenhWebSocket(t *testing.T) {
 		t.Errorf("người bị kick vẫn nằm trong kênh WebSocket: %v", members)
 	}
 }
+
+// M2: sửa/xoá tin cũ của chính mình sau khi bị kick/ban/rời phải bị từ chối; còn là thành viên thì vẫn được.
+func TestS6_GroupChat_KickBanRoiKhongSuaXoaDuocTinCu(t *testing.T) {
+	e := newS6GroupEnv(t)
+	ctx := context.Background()
+	owner, member, kicked, banned, leaver := e.user("owner"), e.user("member"), e.user("kicked"), e.user("banned"), e.user("leaver")
+	g, conv := e.newGroup(owner, "PRIVATE", member, kicked, banned, leaver)
+
+	post := func(u model.User) uuid.UUID {
+		text := "tin cu"
+		m, err := e.convs.SendMessage(ctx, u.ID, conv, dto.SendMessageRequest{Content: &text})
+		if err != nil {
+			t.Fatalf("gửi tin: %v", err)
+		}
+		return m.ID
+	}
+	ids := map[uuid.UUID]model.User{}
+	for _, u := range []model.User{member, kicked, banned, leaver} {
+		ids[post(u)] = u
+	}
+	if err := e.groups.RemoveMember(ctx, owner.ID, g.ID, kicked.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.groups.BanMember(ctx, owner.ID, g.ID, banned.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.groups.LeaveGroup(ctx, leaver.ID, g.ID); err != nil {
+		t.Fatal(err)
+	}
+	for id, u := range ids {
+		if u.ID == member.ID {
+			continue
+		}
+		if _, err := e.convs.EditMessage(ctx, u.ID, conv, id, dto.EditMessageRequest{Content: "da sua"}); err == nil {
+			t.Errorf("%s đã bị gỡ mà vẫn SỬA được tin cũ", u.UserName)
+		}
+		if err := e.convs.DeleteMessage(ctx, u.ID, conv, id); err == nil {
+			t.Errorf("%s đã bị gỡ mà vẫn XOÁ được tin cũ", u.UserName)
+		}
+	}
+	for id, u := range ids {
+		if u.ID != member.ID {
+			continue
+		}
+		if _, err := e.convs.EditMessage(ctx, u.ID, conv, id, dto.EditMessageRequest{Content: "da sua"}); err != nil {
+			t.Errorf("thành viên còn lại bị chặn sửa tin của mình: %v", err)
+		}
+		if err := e.convs.DeleteMessage(ctx, u.ID, conv, id); err != nil {
+			t.Errorf("thành viên còn lại bị chặn xoá tin của mình: %v", err)
+		}
+	}
+}

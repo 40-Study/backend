@@ -198,15 +198,16 @@ func (h *Hub) HandleClientMessage(client *Client, msg IncomingMessage) {
 
 // SendToUser sends a message to all connections of a specific user
 func (h *Hub) SendToUser(userID uuid.UUID, msg Message) {
+	// S6: sao chép danh sách client KHI CÒN giữ khoá rồi mới gửi. Trước đây nhả RLock rồi duyệt map bên trong
+	// trong lúc Register/Unregister ghi vào nó: "concurrent map iteration and map write" là fatal error, sập cả process.
 	h.clientsMu.RLock()
-	clients, ok := h.clients[userID]
+	targets := make([]*Client, 0, len(h.clients[userID]))
+	for client := range h.clients[userID] {
+		targets = append(targets, client)
+	}
 	h.clientsMu.RUnlock()
 
-	if !ok {
-		return
-	}
-
-	for client := range clients {
+	for _, client := range targets {
 		_ = client.SendMessage(msg)
 	}
 }
@@ -220,15 +221,15 @@ func (h *Hub) SendToUsers(userIDs []uuid.UUID, msg Message) {
 
 // SendToChannel sends a message to all clients in a channel
 func (h *Hub) SendToChannel(channel string, msg Message) {
+	// S6: cùng lý do với SendToUser, sao chép khi còn giữ khoá (Subscribe/Unsubscribe/Evict ghi vào map này).
 	h.channelsMu.RLock()
-	clients, ok := h.channels[channel]
+	targets := make([]*Client, 0, len(h.channels[channel]))
+	for client := range h.channels[channel] {
+		targets = append(targets, client)
+	}
 	h.channelsMu.RUnlock()
 
-	if !ok {
-		return
-	}
-
-	for client := range clients {
+	for _, client := range targets {
 		_ = client.SendMessage(msg)
 	}
 }

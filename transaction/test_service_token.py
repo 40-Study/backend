@@ -77,6 +77,7 @@ def _load_grpc_server():
     pb2 = types.ModuleType("transaction_pb2")
     pb2_grpc = types.ModuleType("transaction_pb2_grpc")
     pb2_grpc.TransactionServiceServicer = object
+    pb2_grpc.add_TransactionServiceServicer_to_server = lambda servicer, server: None
     sys.modules["transaction_pb2"] = pb2
     sys.modules["transaction_pb2_grpc"] = pb2_grpc
     sys.modules.pop("grpc_server", None)
@@ -122,3 +123,69 @@ def test_grpc_wrong_token_is_rejected():
 
 def test_grpc_right_token_is_accepted():
     assert _call_with_interceptor(TOKEN, (("x-transaction-token", TOKEN),)) == b"ok"
+
+
+# ── Khởi động fail-closed (M3) ──────────────────────────────────────────────
+
+
+def test_rest_refuses_to_start_without_token(monkeypatch):
+    from fastapi.testclient import TestClient
+    import api
+    import service_token
+
+    monkeypatch.delenv("TRANSACTION_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("ALLOW_INSECURE_TRANSACTIONS", raising=False)
+    with pytest.raises(service_token.MissingServiceTokenError):
+        with TestClient(api.app):
+            pass
+
+
+def test_rest_starts_with_token(monkeypatch):
+    from fastapi.testclient import TestClient
+    import api
+
+    monkeypatch.setenv("TRANSACTION_SERVICE_TOKEN", TOKEN)
+    monkeypatch.delenv("ALLOW_INSECURE_TRANSACTIONS", raising=False)
+    with TestClient(api.app) as c:
+        assert c.get("/transactions?" + QUERY, headers={"X-Transaction-Token": TOKEN}).status_code == 200
+
+
+def test_rest_starts_only_with_explicit_dev_flag(monkeypatch):
+    from fastapi.testclient import TestClient
+    import api
+
+    monkeypatch.delenv("TRANSACTION_SERVICE_TOKEN", raising=False)
+    monkeypatch.setenv("ALLOW_INSECURE_TRANSACTIONS", "1")
+    with TestClient(api.app) as c:
+        assert c.get("/transactions?" + QUERY).status_code == 200  # dev: không xác thực
+
+
+@pytest.mark.parametrize("value", ["", "0", "true", "yes", "1 "])
+def test_dev_flag_must_be_exactly_1(monkeypatch, value):
+    import service_token
+
+    monkeypatch.delenv("TRANSACTION_SERVICE_TOKEN", raising=False)
+    monkeypatch.setenv("ALLOW_INSECURE_TRANSACTIONS", value)
+    with pytest.raises(service_token.MissingServiceTokenError):
+        service_token.load_service_token()
+
+
+def test_grpc_refuses_to_start_without_token(monkeypatch):
+    import service_token
+
+    grpc_server = _load_grpc_server()
+    monkeypatch.delenv("TRANSACTION_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("ALLOW_INSECURE_TRANSACTIONS", raising=False)
+    with pytest.raises(service_token.MissingServiceTokenError):
+        grpc_server.serve(port=0, token="")
+
+
+def test_grpc_starts_with_token_and_with_dev_flag(monkeypatch):
+    grpc_server = _load_grpc_server()
+    monkeypatch.delenv("ALLOW_INSECURE_TRANSACTIONS", raising=False)
+    s = grpc_server.serve(port=0, token=TOKEN)
+    s.stop(0)
+    monkeypatch.delenv("TRANSACTION_SERVICE_TOKEN", raising=False)
+    monkeypatch.setenv("ALLOW_INSECURE_TRANSACTIONS", "1")
+    s = grpc_server.serve(port=0, token="")
+    s.stop(0)

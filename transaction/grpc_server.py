@@ -6,6 +6,7 @@ import datetime
 import logging
 import os
 import mbbank
+import service_token
 
 import transaction_pb2
 import transaction_pb2_grpc
@@ -185,13 +186,11 @@ class TransactionServicer(transaction_pb2_grpc.TransactionServiceServicer):
 
 
 def serve(port=50051, max_workers=10, token=""):
-    """Start gRPC server. token rỗng = không xác thực (tương thích cũ, có cảnh báo)."""
-    interceptors = [TokenAuthInterceptor(token)] if token else []
+    """Start gRPC server. Token rỗng chỉ được phép khi ALLOW_INSECURE_TRANSACTIONS=1 (dev), còn lại từ chối khởi động."""
     if not token:
-        logger.warning(
-            "TRANSACTION_SERVICE_TOKEN chua duoc cau hinh: gRPC server nhan MOI request khong xac thuc. "
-            "Dat token o ca backend Go va service nay truoc khi mo cong ra ngoai."
-        )
+        # load_service_token raise MissingServiceTokenError khi không có cờ dev; có cờ thì trả "" kèm cảnh báo.
+        token = service_token.load_service_token({**os.environ, "TRANSACTION_SERVICE_TOKEN": ""})
+    interceptors = [TokenAuthInterceptor(token)] if token else []
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers), interceptors=interceptors)
     transaction_pb2_grpc.add_TransactionServiceServicer_to_server(
         TransactionServicer(), server
@@ -209,7 +208,7 @@ if __name__ == '__main__':
     PASSWORD = os.getenv("MB_PASSWORD", "")
     ACCOUNT_NO = os.getenv("MB_ACCOUNT_NO", "")
 
-    server = serve(token=os.getenv("TRANSACTION_SERVICE_TOKEN", ""))
+    server = serve(token=service_token.load_service_token())
     try:
         while True:
             time.sleep(86400)

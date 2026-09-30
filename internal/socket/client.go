@@ -140,6 +140,11 @@ func (c *Client) handleMessage(data []byte) {
 			c.channelMu.RLock()
 			subscribed := c.channels[channelName]
 			c.channelMu.RUnlock()
+			if subscribed && c.authorizer != nil {
+				if ok, err := c.authorizer.CanSubscribe(c.UserID, channelName); err != nil || !ok {
+					subscribed = false
+				}
+			}
 			if !subscribed {
 				c.SendError("typing_denied", "You are not subscribed to this conversation")
 				return

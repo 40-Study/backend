@@ -11,8 +11,10 @@ Service đã được cấu hình sẵn trong `docker-compose.yaml`. Chỉ cần
 MB_USERNAME=your_mbbank_username
 MB_PASSWORD=your_mbbank_password
 MB_ACCOUNT_NO=your_account_number
-# Secret dùng chung với backend Go (cùng biến TRANSACTION_SERVICE_TOKEN trong .env của backend).
+# BẮT BUỘC. Secret dùng chung với backend Go (cùng biến TRANSACTION_SERVICE_TOKEN trong .env của backend).
+# Thiếu biến này service (cả REST lẫn gRPC) từ chối khởi động, docker-compose cũng không lên.
 TRANSACTION_SERVICE_TOKEN=chuoi-ngau-nhien-dai
+# Chỉ máy dev, thay cho token: ALLOW_INSECURE_TRANSACTIONS=1 (chạy không xác thực, có cảnh báo). KHÔNG dùng ở production.
 ```
 
 **2. Chạy:**

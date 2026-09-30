@@ -258,6 +258,10 @@ func (s *ConversationService) SendMessage(ctx context.Context, userID, convID uu
 }
 
 func (s *ConversationService) EditMessage(ctx context.Context, userID, convID, messageID uuid.UUID, req dto.EditMessageRequest) (*dto.MessageResponse, error) {
+	// S6: người đã bị kick/ban/rời (left_at) không còn sửa được tin cũ của chính mình.
+	if err := s.requireParticipant(ctx, convID, userID); err != nil {
+		return nil, err
+	}
 	msg, err := s.messageRepo.GetByID(ctx, messageID)
 	if err != nil {
 		return nil, err
@@ -290,6 +294,10 @@ func (s *ConversationService) EditMessage(ctx context.Context, userID, convID, m
 }
 
 func (s *ConversationService) DeleteMessage(ctx context.Context, userID, convID, messageID uuid.UUID) error {
+	// S6: xem EditMessage.
+	if err := s.requireParticipant(ctx, convID, userID); err != nil {
+		return err
+	}
 	msg, err := s.messageRepo.GetByID(ctx, messageID)
 	if err != nil {
 		return err
