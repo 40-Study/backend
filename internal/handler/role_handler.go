@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -33,17 +35,42 @@ func NewRoleHandler(service service.RoleServiceInterface, permChecker *middlewar
 	return &RoleHandler{service: service, permChecker: permChecker}
 }
 
-// roleErrorStatus ánh xạ lỗi phân quyền (C-03 residual) sang HTTP 403; trả 0 khi không nhận
-// diện được để caller giữ nguyên xử lý 400 hiện có.
+// roleErrorStatus ánh xạ lỗi phân quyền (C-03 residual, S6) sang HTTP 403; trả 0 khi không nhận
+// diện được để caller giữ nguyên xử lý mặc định. errors.Is vì ErrPermissionNotOrgScope được bọc
+// kèm tên permission.
 func roleErrorStatus(err error) int {
-	switch err {
-	case service.ErrNotRoleOrgMember:
+	switch {
+	case errors.Is(err, service.ErrNotRoleOrgMember), errors.Is(err, service.ErrPermissionNotOrgScope):
 		return fiber.StatusForbidden
+	case err != nil && err.Error() == "role not found":
+		return fiber.StatusNotFound
 	default:
 		return 0
 	}
 }
 
+// roleActor gom (user, active_org_id, isAdmin) của người gọi cho mọi route /org-roles/* (S6):
+// tổ chức của role phải khớp tổ chức đang active của người gọi, trừ admin (SYSTEM_SETTINGS_MANAGE).
+// ok=false nghĩa là chưa đăng nhập (đã trả 401).
+func (h *RoleHandler) roleActor(c *fiber.Ctx) (activeOrgID *uuid.UUID, isAdmin bool, ok bool) {
+	userID, isUUID := c.Locals("user_id").(uuid.UUID)
+	if !isUUID || userID == uuid.Nil {
+		_ = c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+		return nil, false, false
+	}
+	if orgID, has := c.Locals("active_org_id").(uuid.UUID); has {
+		activeOrgID = &orgID
+	}
+	return activeOrgID, isAdminActor(c, h.permChecker, userID), true
+}
+
+// respondRoleError trả 403/404 cho lỗi phân quyền/không tìm thấy, còn lại dùng fallback (400/500 cũ).
+func respondRoleError(c *fiber.Ctx, err error, fallbackStatus int, message string) error {
+	if status := roleErrorStatus(err); status != 0 {
+		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+	}
+	return c.Status(fallbackStatus).JSON(fiber.Map{"message": message, "error": err.Error()})
+}
 func (h *RoleHandler) CreateRole(c *fiber.Ctx) error {
 	var req dto.CreateRoleDTO
 	if err := c.BodyParser(&req); err != nil {
@@ -61,12 +88,14 @@ func (h *RoleHandler) CreateRole(c *fiber.Ctx) error {
 		})
 	}
 
-	role, err := h.service.CreateRole(c.Context(), req)
+	activeOrgID, isAdmin, ok := h.roleActor(c)
+	if !ok {
+		return nil
+	}
+
+	role, err := h.service.CreateRole(c.Context(), activeOrgID, isAdmin, req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to create role",
-			"error":   err.Error(),
-		})
+		return respondRoleError(c, err, fiber.StatusBadRequest, "Failed to create role")
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -85,12 +114,14 @@ func (h *RoleHandler) GetRole(c *fiber.Ctx) error {
 		})
 	}
 
-	role, err := h.service.GetRoleByID(c.Context(), id)
+	activeOrgID, isAdmin, ok := h.roleActor(c)
+	if !ok {
+		return nil
+	}
+
+	role, err := h.service.GetRoleByID(c.Context(), id, activeOrgID, isAdmin)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Role not found",
-			"error":   err.Error(),
-		})
+		return respondRoleError(c, err, fiber.StatusNotFound, "Role not found")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -118,12 +149,14 @@ func (h *RoleHandler) GetAllRoles(c *fiber.Ctx) error {
 		orgID = &parsed
 	}
 
-	roles, err := h.service.GetAllRoles(c.Context(), page, pageSize, keyword, status, orgID)
+	activeOrgID, isAdmin, ok := h.roleActor(c)
+	if !ok {
+		return nil
+	}
+
+	roles, err := h.service.GetAllRoles(c.Context(), page, pageSize, keyword, status, orgID, activeOrgID, isAdmin)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to retrieve roles",
-			"error":   err.Error(),
-		})
+		return respondRoleError(c, err, fiber.StatusInternalServerError, "Failed to retrieve roles")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -160,27 +193,14 @@ func (h *RoleHandler) UpdateRole(c *fiber.Ctx) error {
 
 	// C-03 residual: :id là Role.ID, không phải Organization.ID nên middleware router chưa
 	// đối chiếu được — kiểm tra role.OrganizationID khớp active_org_id ở tầng service.
-	userID, ok := c.Locals("user_id").(uuid.UUID)
+	activeOrgID, isAdmin, ok := h.roleActor(c)
 	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"message": "Unauthorized",
-		})
+		return nil
 	}
-	var activeOrgID *uuid.UUID
-	if orgID, ok := c.Locals("active_org_id").(uuid.UUID); ok {
-		activeOrgID = &orgID
-	}
-	isAdmin := isAdminActor(c, h.permChecker, userID)
 
 	role, err := h.service.UpdateRole(c.Context(), id, activeOrgID, isAdmin, req)
 	if err != nil {
-		if status := roleErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
-		}
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to update role",
-			"error":   err.Error(),
-		})
+		return respondRoleError(c, err, fiber.StatusBadRequest, "Failed to update role")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -202,26 +222,13 @@ func (h *RoleHandler) DeleteRole(c *fiber.Ctx) error {
 	hardDelete := c.QueryBool("hard_delete", false)
 
 	// C-03 residual: xem ghi chú ở UpdateRole.
-	userID, ok := c.Locals("user_id").(uuid.UUID)
+	activeOrgID, isAdmin, ok := h.roleActor(c)
 	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"message": "Unauthorized",
-		})
+		return nil
 	}
-	var activeOrgID *uuid.UUID
-	if orgID, ok := c.Locals("active_org_id").(uuid.UUID); ok {
-		activeOrgID = &orgID
-	}
-	isAdmin := isAdminActor(c, h.permChecker, userID)
 
 	if err := h.service.DeleteRole(c.Context(), id, activeOrgID, isAdmin, hardDelete); err != nil {
-		if status := roleErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
-		}
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to delete role",
-			"error":   err.Error(),
-		})
+		return respondRoleError(c, err, fiber.StatusBadRequest, "Failed to delete role")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -238,11 +245,13 @@ func (h *RoleHandler) RestoreRole(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.RestoreRole(c.Context(), id); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to restore role",
-			"error":   err.Error(),
-		})
+	activeOrgID, isAdmin, ok := h.roleActor(c)
+	if !ok {
+		return nil
+	}
+
+	if err := h.service.RestoreRole(c.Context(), id, activeOrgID, isAdmin); err != nil {
+		return respondRoleError(c, err, fiber.StatusBadRequest, "Failed to restore role")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -278,11 +287,13 @@ func (h *RoleHandler) AddPermissionsToRole(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.AddPermissionsToRole(c.Context(), roleID, req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to add permissions to role",
-			"error":   err.Error(),
-		})
+	activeOrgID, isAdmin, ok := h.roleActor(c)
+	if !ok {
+		return nil
+	}
+
+	if err := h.service.AddPermissionsToRole(c.Context(), roleID, activeOrgID, isAdmin, req); err != nil {
+		return respondRoleError(c, err, fiber.StatusBadRequest, "Failed to add permissions to role")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -316,11 +327,13 @@ func (h *RoleHandler) RemovePermissionsFromRole(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.RemovePermissionsFromRole(c.Context(), roleID, req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to remove permissions from role",
-			"error":   err.Error(),
-		})
+	activeOrgID, isAdmin, ok := h.roleActor(c)
+	if !ok {
+		return nil
+	}
+
+	if err := h.service.RemovePermissionsFromRole(c.Context(), roleID, activeOrgID, isAdmin, req); err != nil {
+		return respondRoleError(c, err, fiber.StatusBadRequest, "Failed to remove permissions from role")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -354,11 +367,13 @@ func (h *RoleHandler) SetRolePermissions(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.SetRolePermissions(c.Context(), roleID, req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to set role permissions",
-			"error":   err.Error(),
-		})
+	activeOrgID, isAdmin, ok := h.roleActor(c)
+	if !ok {
+		return nil
+	}
+
+	if err := h.service.SetRolePermissions(c.Context(), roleID, activeOrgID, isAdmin, req); err != nil {
+		return respondRoleError(c, err, fiber.StatusBadRequest, "Failed to set role permissions")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -376,12 +391,14 @@ func (h *RoleHandler) GetRolePermissions(c *fiber.Ctx) error {
 		})
 	}
 
-	permissions, err := h.service.GetRolePermissions(c.Context(), roleID)
+	activeOrgID, isAdmin, ok := h.roleActor(c)
+	if !ok {
+		return nil
+	}
+
+	permissions, err := h.service.GetRolePermissions(c.Context(), roleID, activeOrgID, isAdmin)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to get role permissions",
-			"error":   err.Error(),
-		})
+		return respondRoleError(c, err, fiber.StatusBadRequest, "Failed to get role permissions")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

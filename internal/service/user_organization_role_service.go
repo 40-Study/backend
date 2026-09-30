@@ -17,10 +17,10 @@ import (
 
 type UserOrganizationRoleServiceInterface interface {
 	GetMyOrgRoles(ctx context.Context, userID uuid.UUID, orgID *uuid.UUID) ([]dto.UserOrgRoleResponseDTO, error)
-	GetUserOrgRoles(ctx context.Context, userID uuid.UUID, status string) ([]dto.UserOrgRoleResponseDTO, error)
+	GetUserOrgRoles(ctx context.Context, userID uuid.UUID, status string, activeOrgID *uuid.UUID, isAdmin bool) ([]dto.UserOrgRoleResponseDTO, error)
 	AssignOrgRolesToUser(ctx context.Context, userID uuid.UUID, req dto.AssignOrgRolesToUserDTO, grantedBy uuid.UUID, activeOrgID *uuid.UUID, isAdmin bool) ([]dto.UserOrgRoleResponseDTO, error)
 	RevokeOrgRoleFromUser(ctx context.Context, userID, orgRoleID, revokedBy uuid.UUID, activeOrgID *uuid.UUID, isAdmin bool) error
-	GetUsersWithOrgRoleByRoleID(ctx context.Context, roleID uuid.UUID, page, pageSize int, status string) (*dto.UserOrgRoleListResponseDTO, error)
+	GetUsersWithOrgRoleByRoleID(ctx context.Context, roleID uuid.UUID, page, pageSize int, status string, activeOrgID *uuid.UUID, isAdmin bool) (*dto.UserOrgRoleListResponseDTO, error)
 	GetOrganizationMembers(ctx context.Context, organizationID uuid.UUID, page, pageSize int, status string) (*dto.UserOrgRoleListResponseDTO, error)
 	GetUsersWithOrgRole(ctx context.Context, roleID, organizationID uuid.UUID, page, pageSize int, status string) (*dto.UsersWithOrgRoleResponseDTO, error)
 }
@@ -102,8 +102,14 @@ func (s *UserOrganizationRoleService) GetMyOrgRoles(ctx context.Context, userID 
 	return result, nil
 }
 
-// GetUserOrgRoles lay organization roles cua mot user
-func (s *UserOrganizationRoleService) GetUserOrgRoles(ctx context.Context, userID uuid.UUID, status string) ([]dto.UserOrgRoleResponseDTO, error) {
+// GetUserOrgRoles lay organization roles cua mot user.
+// S6: người không phải admin chỉ thấy vai trò của user đó TRONG tổ chức đang active của mình — trước đây
+// ai có ORG_MEMBERS_MANAGE ở tổ chức A cũng xem được mọi vai trò của bất kỳ user nào ở MỌI tổ chức.
+func (s *UserOrganizationRoleService) GetUserOrgRoles(ctx context.Context, userID uuid.UUID, status string, activeOrgID *uuid.UUID, isAdmin bool) ([]dto.UserOrgRoleResponseDTO, error) {
+	if !isAdmin && activeOrgID == nil {
+		return nil, ErrOrgRoleForbidden
+	}
+
 	// Kiem tra user ton tai
 	user, err := s.userRepo.FindUserByID(ctx, userID)
 	if err != nil {
@@ -118,9 +124,12 @@ func (s *UserOrganizationRoleService) GetUserOrgRoles(ctx context.Context, userI
 		return nil, err
 	}
 
-	result := make([]dto.UserOrgRoleResponseDTO, len(userOrgRoles))
-	for i, uor := range userOrgRoles {
-		result[i] = *toUserOrgRoleResponseDTO(&uor)
+	result := make([]dto.UserOrgRoleResponseDTO, 0, len(userOrgRoles))
+	for _, uor := range userOrgRoles {
+		if !isAdmin && uor.OrganizationID != *activeOrgID {
+			continue
+		}
+		result = append(result, *toUserOrgRoleResponseDTO(&uor))
 	}
 
 	return result, nil
@@ -164,7 +173,9 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 		if role.Status != "active" {
 			return nil, errors.New("role is not active: " + role.Name)
 		}
-		if role.OrganizationID != nil && *role.OrganizationID != req.OrganizationID {
+		// S6: role KHÔNG thuộc tổ chức nào (organization_id NULL) cũng bị từ chối — trước đây điều kiện
+		// chỉ chặn role của tổ chức KHÁC nên role NULL gán được vào mọi tổ chức.
+		if role.OrganizationID == nil || *role.OrganizationID != req.OrganizationID {
 			return nil, errors.New("role does not belong to this organization: " + role.Name)
 		}
 	}
@@ -291,7 +302,7 @@ func (s *UserOrganizationRoleService) RevokeOrgRoleFromUser(ctx context.Context,
 }
 
 // GetUsersWithOrgRoleByRoleID lay users theo organization role
-func (s *UserOrganizationRoleService) GetUsersWithOrgRoleByRoleID(ctx context.Context, roleID uuid.UUID, page, pageSize int, status string) (*dto.UserOrgRoleListResponseDTO, error) {
+func (s *UserOrganizationRoleService) GetUsersWithOrgRoleByRoleID(ctx context.Context, roleID uuid.UUID, page, pageSize int, status string, activeOrgID *uuid.UUID, isAdmin bool) (*dto.UserOrgRoleListResponseDTO, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -305,6 +316,10 @@ func (s *UserOrganizationRoleService) GetUsersWithOrgRoleByRoleID(ctx context.Co
 	}
 	if role == nil {
 		return nil, errors.New("organization role not found")
+	}
+	// S6: role phải thuộc tổ chức đang active của người gọi (admin thì không giới hạn).
+	if err := requireRoleOrgMatch(role, activeOrgID, isAdmin); err != nil {
+		return nil, err
 	}
 
 	userOrgRoles, total, err := s.repo.FindByRoleID(ctx, roleID, page, pageSize, status)

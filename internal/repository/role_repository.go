@@ -14,6 +14,7 @@ type RoleRepositoryInterface interface {
 	// Role CRUD
 	CreateRole(ctx context.Context, role *model.Role) error
 	GetRoleByID(ctx context.Context, id uuid.UUID) (*model.Role, error)
+	GetRoleByIDIncludingDeleted(ctx context.Context, id uuid.UUID) (*model.Role, error)
 	GetRoleByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Role, error)
 	GetRoleByName(ctx context.Context, name string) (*model.Role, error)
 	GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string, organizationID *uuid.UUID) ([]model.Role, int64, error)
@@ -44,6 +45,20 @@ func (r *RoleRepository) CreateRole(ctx context.Context, role *model.Role) error
 func (r *RoleRepository) GetRoleByID(ctx context.Context, id uuid.UUID) (*model.Role, error) {
 	var role model.Role
 	err := r.db.WithContext(ctx).Where("id = ?", id).First(&role).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &role, nil
+}
+
+// GetRoleByIDIncludingDeleted tìm cả role đã xoá mềm — RestoreRole cần biết role thuộc tổ chức
+// nào TRƯỚC khi khôi phục (GetRoleByID bỏ qua dòng đã xoá nên không dùng được cho việc này).
+func (r *RoleRepository) GetRoleByIDIncludingDeleted(ctx context.Context, id uuid.UUID) (*model.Role, error) {
+	var role model.Role
+	err := r.db.WithContext(ctx).Unscoped().Where("id = ?", id).First(&role).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

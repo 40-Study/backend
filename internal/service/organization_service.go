@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"study.com/v1/data"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -30,18 +31,12 @@ func NewOrganizationService(repo repository.OrganizationRepositoryInterface) *Or
 	return &OrganizationService{repo: repo}
 }
 
-// orgOwnerPermissionNames (23a, review vòng 1) — ĐÚNG danh sách permission của role ORG_OWNER
-// khai báo trong data/roles.json, dùng để tạo Role "ORG_OWNER" theo TỪNG tổ chức (bảng "roles",
-// phân biệt với SystemRole "ORG_OWNER" toàn cục đã seed sẵn — xem comment ở CreateOrganization).
-var orgOwnerPermissionNames = []string{
-	"ORG_MEMBERS_MANAGE",
-	"ORG_ROLES_MANAGE",
-	"ORG_CATEGORIES_MANAGE",
-	"COURSES_APPROVE_OWN_ORG",
-	"COURSES_DELETE_ORG",
-	"REPORTS_VIEW_ORG",
-	"TRACKING_VIEW_ORG_STUDENTS",
-}
+// orgOwnerPermissionNames (23a, review vòng 1) — danh sách permission của role ORG_OWNER dùng để
+// tạo Role "ORG_OWNER" theo TỪNG tổ chức (bảng "roles", phân biệt với SystemRole "ORG_OWNER" toàn
+// cục đã seed sẵn — xem comment ở CreateOrganization). S6: lấy từ SSOT data/permissions/
+// org_owner_permissions.json (cùng nguồn với bộ lọc phạm vi org ở PermissionChecker), không còn
+// lặp danh sách bằng tay ở đây.
+var orgOwnerPermissionNames = data.OrgPermissionNames()
 
 // CreateOrganization (M-01/23a, review vòng 1): TRƯỚC ĐÂY chỉ INSERT bản ghi Organization,
 // không cấp role nào cho người tạo. PUT/DELETE /organizations/:id yêu cầu ORG_ROLES_MANAGE

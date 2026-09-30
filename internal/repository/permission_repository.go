@@ -18,6 +18,7 @@ type PermissionRepositoryInterface interface {
 	UpdatePermission(ctx context.Context, permission *model.Permission) error
 	DeletePermission(ctx context.Context, id uuid.UUID, hardDelete bool) error
 	CountPermissionsByIDs(ctx context.Context, ids []uuid.UUID) (int64, error)
+	GetPermissionsByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Permission, error)
 }
 
 type PermissionRepository struct {
@@ -99,6 +100,13 @@ func (r *PermissionRepository) DeletePermission(ctx context.Context, id uuid.UUI
 		query = query.Unscoped()
 	}
 	return query.Delete(&model.Permission{}, "id = ?", id).Error
+}
+
+// GetPermissionsByIDs trả các permission có id trong danh sách (id không tồn tại thì vắng mặt).
+func (r *PermissionRepository) GetPermissionsByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Permission, error) {
+	var perms []model.Permission
+	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&perms).Error
+	return perms, err
 }
 
 func (r *PermissionRepository) CountPermissionsByIDs(ctx context.Context, ids []uuid.UUID) (int64, error) {
