@@ -43,6 +43,15 @@ type GroupResponse struct {
 	CreatedAt      time.Time          `json:"created_at"`
 	UpdatedAt      time.Time          `json:"updated_at"`
 	Conversation   *ConversationBrief `json:"conversation,omitempty"`
+	// MyJoinRequest chỉ có ở GET /groups/:slug, khi người xem đã đăng nhập, chưa là thành viên và đang có
+	// yêu cầu xin vào ở trạng thái chờ (contract-api.md §2) — để web phân biệt "Xin tham gia" / "Đã gửi yêu cầu".
+	MyJoinRequest *MyJoinRequestBrief `json:"my_join_request,omitempty"`
+}
+
+// MyJoinRequestBrief — yêu cầu xin vào nhóm đang chờ của chính người xem.
+type MyJoinRequestBrief struct {
+	ID     uuid.UUID `json:"id"`
+	Status string    `json:"status"`
 }
 
 type GroupListResponse struct {
@@ -78,8 +87,16 @@ type InviteMembersRequest struct {
 	UserIDs []uuid.UUID `json:"user_ids" validate:"required,min=1,max=50"`
 }
 
-// GroupInviteNotAllowedCode - ma loi khi nguoi duoc moi khong co quan he hop le voi nguoi moi.
-const GroupInviteNotAllowedCode = "GROUP_INVITE_NOT_ALLOWED"
+// Mã lỗi nhóm (contract-api.md §2). Dùng cho `code` của lỗi join/approve và `rejected[].code` của lời mời.
+const (
+	// GroupInviteNotAllowedCode - ma loi khi nguoi duoc moi khong co quan he hop le voi nguoi moi.
+	GroupInviteNotAllowedCode = "GROUP_INVITE_NOT_ALLOWED"
+	GroupMemberBannedCode     = "GROUP_MEMBER_BANNED" // chỉ trong rejected[] của lời mời
+	GroupBannedCode           = "GROUP_BANNED"        // join/approve: người đó đang bị cấm
+	GroupFullCode             = "GROUP_FULL"
+	GroupAlreadyMemberCode    = "GROUP_ALREADY_MEMBER"
+	GroupJoinRequestExists    = "GROUP_JOIN_REQUEST_EXISTS"
+)
 
 // InviteRejection - mot nguoi bi tu choi khi moi vao nhom.
 type InviteRejection struct {

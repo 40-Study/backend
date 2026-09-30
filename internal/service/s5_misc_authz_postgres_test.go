@@ -112,17 +112,17 @@ func TestS5_Group_DanhSachThanhVienNhomSecretChiThanhVien(t *testing.T) {
 	secret, public := mk(model.GroupPrivacySecret), mk(model.GroupPrivacyPublic)
 
 	for _, u := range []model.User{owner, member} {
-		if got, err := svc.ListMembers(ctx, u.ID, secret, 1, 20); err != nil || got == nil || got.TotalCount != 2 {
+		if got, err := svc.ListMembers(ctx, u.ID, secret, "", 1, 20); err != nil || got == nil || got.TotalCount != 2 {
 			t.Errorf("thành viên nhóm SECRET bị chặn nhầm: err=%v got=%+v", err, got)
 		}
 	}
-	if got, err := svc.ListMembers(ctx, stranger.ID, secret, 1, 20); !errors.Is(err, ErrGroupNotFound) || got != nil {
+	if got, err := svc.ListMembers(ctx, stranger.ID, secret, "", 1, 20); !errors.Is(err, ErrGroupNotFound) || got != nil {
 		t.Errorf("người ngoài nhóm SECRET: err=%v, muốn ErrGroupNotFound và không có dữ liệu", err)
 	}
-	if got, err := svc.ListMembers(ctx, stranger.ID, public, 1, 20); err != nil || got == nil || got.TotalCount != 2 {
+	if got, err := svc.ListMembers(ctx, stranger.ID, public, "", 1, 20); err != nil || got == nil || got.TotalCount != 2 {
 		t.Errorf("nhóm PUBLIC phải giữ nguyên hành vi cũ: err=%v got=%+v", err, got)
 	}
-	if _, err := svc.ListMembers(ctx, owner.ID, uuid.New(), 1, 20); !errors.Is(err, ErrGroupNotFound) {
+	if _, err := svc.ListMembers(ctx, owner.ID, uuid.New(), "", 1, 20); !errors.Is(err, ErrGroupNotFound) {
 		t.Errorf("nhóm không tồn tại: err=%v, muốn ErrGroupNotFound", err)
 	}
 }

@@ -233,9 +233,7 @@ func (h *GroupHandler) JoinGroup(c *fiber.Ctx) error {
 		if errors.Is(err, service.ErrGroupNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": err.Error()})
 		}
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": err.Error(),
-		})
+		return groupBadRequest(c, err)
 	}
 
 	return c.JSON(fiber.Map{
@@ -287,10 +285,16 @@ func (h *GroupHandler) ListMembers(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	result, err := h.groupService.ListMembers(c.Context(), requesterID, groupID, page, limit)
+	result, err := h.groupService.ListMembers(c.Context(), requesterID, groupID, c.Query("status"), page, limit)
 	if err != nil {
 		if errors.Is(err, service.ErrGroupNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": err.Error()})
+		}
+		if errors.Is(err, service.ErrGroupForbidden) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": err.Error(), "code": "ERR_FORBIDDEN"})
+		}
+		if errors.Is(err, service.ErrGroupInvalidMemberStatus) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error(), "code": "ERR_VALIDATION"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": err.Error(),
@@ -338,11 +342,12 @@ func (h *GroupHandler) InviteMembers(c *fiber.Ctx) error {
 		})
 	}
 
-	// Khong ai duoc them va co nguoi bi tu choi -> 403 kem danh sach; them mot phan -> 200 kem
-	// danh sach bi tu choi de web bao ro cho nguoi moi.
-	if len(result.Invited) == 0 && len(result.Rejected) > 0 {
+	// 403 CHỈ khi không ai được thêm VÀ mọi người đều bị từ chối vì thiếu quan hệ hợp lệ (đúng hành vi cũ,
+	// contract-api.md §2). Các lý do khác (đã là thành viên, bị cấm, nhóm đầy) và trường hợp thêm một phần
+	// trả 200 kèm danh sách rejected để web báo rõ từng người.
+	if len(result.Invited) == 0 && allRejectedNotAllowed(result.Rejected) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"message": "Bạn chỉ có thể mời người có quan hệ hợp lệ (học viên - giảng viên, phụ huynh - con).",
+			"message": "Bạn chỉ có thể mời người có quan hệ hợp lệ (học viên - giảng viên, phụ huynh - con, bạn bè).",
 			"code":    dto.GroupInviteNotAllowedCode,
 			"data":    result,
 		})
@@ -350,7 +355,7 @@ func (h *GroupHandler) InviteMembers(c *fiber.Ctx) error {
 
 	message := "Members invited successfully"
 	if len(result.Rejected) > 0 {
-		message = "Một số người không thể được mời do không có quan hệ hợp lệ"
+		message = "Một số người không thể được mời vào nhóm"
 	}
 	return c.JSON(fiber.Map{
 		"message": message,
@@ -554,9 +559,7 @@ func (h *GroupHandler) ApproveRequest(c *fiber.Ctx) error {
 	}
 
 	if err := h.groupService.ApproveRequest(c.Context(), userID, groupID, requestID); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": err.Error(),
-		})
+		return groupBadRequest(c, err)
 	}
 
 	return c.JSON(fiber.Map{
@@ -597,6 +600,42 @@ func (h *GroupHandler) RejectRequest(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"message": "Join request rejected",
 	})
+}
+
+// groupErrorCodes ánh xạ lỗi nhóm có `code` riêng (contract-api.md §2) cho join/approve.
+var groupErrorCodes = []struct {
+	err  error
+	code string
+}{
+	{service.ErrGroupAlreadyMember, dto.GroupAlreadyMemberCode},
+	{service.ErrGroupBanned, dto.GroupBannedCode},
+	{service.ErrGroupFull, dto.GroupFullCode},
+	{service.ErrGroupJoinRequestExists, dto.GroupJoinRequestExists},
+}
+
+// groupBadRequest trả 400 với message cũ; thêm `code` khi là lỗi nhóm đã định danh.
+func groupBadRequest(c *fiber.Ctx, err error) error {
+	body := fiber.Map{"message": err.Error()}
+	for _, m := range groupErrorCodes {
+		if errors.Is(err, m.err) {
+			body["code"] = m.code
+			break
+		}
+	}
+	return c.Status(fiber.StatusBadRequest).JSON(body)
+}
+
+// allRejectedNotAllowed — mọi người bị từ chối đều vì GROUP_INVITE_NOT_ALLOWED (danh sách rỗng thì false).
+func allRejectedNotAllowed(rejected []dto.InviteRejection) bool {
+	if len(rejected) == 0 {
+		return false
+	}
+	for _, r := range rejected {
+		if r.Code != dto.GroupInviteNotAllowedCode {
+			return false
+		}
+	}
+	return true
 }
 
 // parseUserID is defined in wallet_handler.go

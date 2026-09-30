@@ -21,6 +21,7 @@ type GroupRepositoryInterface interface {
 	GetOwnedByUserID(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]model.Group, int64, error)
 	IncrementMemberCount(ctx context.Context, groupID uuid.UUID) error
 	DecrementMemberCount(ctx context.Context, groupID uuid.UUID) error
+	TryReserveMemberSlot(ctx context.Context, groupID uuid.UUID) (bool, error)
 }
 
 type GroupMemberRepositoryInterface interface {
@@ -28,7 +29,7 @@ type GroupMemberRepositoryInterface interface {
 	GetByGroupAndUser(ctx context.Context, groupID, userID uuid.UUID) (*model.GroupMember, error)
 	Update(ctx context.Context, member *model.GroupMember) error
 	Delete(ctx context.Context, id uuid.UUID) error
-	ListByGroupID(ctx context.Context, groupID uuid.UUID, page, pageSize int) ([]model.GroupMember, int64, error)
+	ListByGroupID(ctx context.Context, groupID uuid.UUID, status model.GroupMemberStatus, page, pageSize int) ([]model.GroupMember, int64, error)
 	GetActiveByGroupAndUser(ctx context.Context, groupID, userID uuid.UUID) (*model.GroupMember, error)
 }
 
@@ -36,6 +37,7 @@ type GroupJoinRequestRepositoryInterface interface {
 	Create(ctx context.Context, req *model.GroupJoinRequest) error
 	GetByID(ctx context.Context, id uuid.UUID) (*model.GroupJoinRequest, error)
 	GetPendingByGroupAndUser(ctx context.Context, groupID, userID uuid.UUID) (*model.GroupJoinRequest, error)
+	GetByGroupAndUser(ctx context.Context, groupID, userID uuid.UUID) (*model.GroupJoinRequest, error)
 	Update(ctx context.Context, req *model.GroupJoinRequest) error
 	ListByGroupID(ctx context.Context, groupID uuid.UUID, status string, page, pageSize int) ([]model.GroupJoinRequest, int64, error)
 }
@@ -163,6 +165,16 @@ func (r *GroupRepository) DecrementMemberCount(ctx context.Context, groupID uuid
 		UpdateColumn("member_count", gorm.Expr("member_count - 1")).Error
 }
 
+// TryReserveMemberSlot tăng member_count thêm 1 CHỈ KHI nhóm còn chỗ (member_count < max_members), trong một
+// câu UPDATE nguyên tử. Trả false khi nhóm đã đầy (hoặc không tồn tại). Kiểm "còn chỗ" rồi mới ghi ở hai
+// bước riêng thì hai người vào cùng lúc vượt được max_members; câu lệnh này đóng khe đó.
+func (r *GroupRepository) TryReserveMemberSlot(ctx context.Context, groupID uuid.UUID) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&model.Group{}).
+		Where("id = ? AND member_count < max_members", groupID).
+		UpdateColumn("member_count", gorm.Expr("member_count + 1"))
+	return res.RowsAffected > 0, res.Error
+}
+
 // ============================================================================
 // GROUP MEMBER REPOSITORY
 // ============================================================================
@@ -215,12 +227,13 @@ func (r *GroupMemberRepository) Delete(ctx context.Context, id uuid.UUID) error 
 	return r.db.WithContext(ctx).Delete(&model.GroupMember{}, "id = ?", id).Error
 }
 
-func (r *GroupMemberRepository) ListByGroupID(ctx context.Context, groupID uuid.UUID, page, pageSize int) ([]model.GroupMember, int64, error) {
+// ListByGroupID liệt kê thành viên theo trạng thái (ACTIVE cho danh sách thường, BANNED cho danh sách bị cấm).
+func (r *GroupMemberRepository) ListByGroupID(ctx context.Context, groupID uuid.UUID, status model.GroupMemberStatus, page, pageSize int) ([]model.GroupMember, int64, error) {
 	var members []model.GroupMember
 	var total int64
 
 	query := r.db.WithContext(ctx).Model(&model.GroupMember{}).
-		Where("group_id = ? AND status = ?", groupID, model.GroupMemberActive).
+		Where("group_id = ? AND status = ?", groupID, status).
 		Preload("User")
 
 	if err := query.Count(&total).Error; err != nil {
@@ -265,6 +278,20 @@ func (r *GroupJoinRequestRepository) GetPendingByGroupAndUser(ctx context.Contex
 	err := r.db.WithContext(ctx).
 		Where("group_id = ? AND user_id = ? AND status = ?", groupID, userID, model.JoinRequestPending).
 		First(&req).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &req, nil
+}
+
+// GetByGroupAndUser trả yêu cầu của user với nhóm ở MỌI trạng thái (unique theo cặp group_id+user_id nên tối
+// đa một dòng) — dùng để tái sử dụng dòng cũ khi xin vào lại sau khi bị từ chối hoặc đã rời nhóm.
+func (r *GroupJoinRequestRepository) GetByGroupAndUser(ctx context.Context, groupID, userID uuid.UUID) (*model.GroupJoinRequest, error) {
+	var req model.GroupJoinRequest
+	err := r.db.WithContext(ctx).Where("group_id = ? AND user_id = ?", groupID, userID).First(&req).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
