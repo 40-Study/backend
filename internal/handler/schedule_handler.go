@@ -41,6 +41,10 @@ func scheduleFail(c *fiber.Ctx, err error, message string, fallback int) error {
 	if status == 0 && (errors.Is(err, service.ErrScheduleNotFound) || errors.Is(err, service.ErrClassSessionNotFound)) {
 		status = fiber.StatusNotFound
 	}
+	// Điểm danh ngoài ngày / buổi đã đóng: 409 (đúng người, sai thời điểm), không phải 400 chung chung.
+	if status == 0 && (errors.Is(err, service.ErrCheckInOutsideSessionDay) || errors.Is(err, service.ErrSessionClosedForCheckIn)) {
+		status = fiber.StatusConflict
+	}
 	if status != 0 {
 		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
 	}

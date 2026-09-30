@@ -47,6 +47,15 @@ USERNAME = os.getenv("MB_USERNAME", "")
 PASSWORD = os.getenv("MB_PASSWORD", "")
 ACCOUNT_NO = os.getenv("MB_ACCOUNT_NO", "")
 
+
+# Lane P: healthcheck của docker-compose gọi /health nhưng API trước đây không có route này, nên container
+# luôn bị đánh dấu unhealthy. Cố ý KHÔNG đòi token (healthcheck của Docker không có secret) và chỉ trả một
+# cờ tĩnh: không đụng MB Bank, không lộ cấu hình hay dữ liệu giao dịch. Các route /transactions* vẫn đòi token.
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 class TransactionDetail(BaseModel):
     posting_date: Optional[str]
     transaction_date: Optional[str]

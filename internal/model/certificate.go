@@ -15,6 +15,10 @@ type Certificate struct {
 	CertificateNumber string    `gorm:"type:varchar(50);uniqueIndex;not null" json:"certificate_number"`
 	CertificateURL    *string   `gorm:"type:varchar(500);column:certificate_url" json:"certificate_url,omitempty"`
 	IssuedAt          time.Time `gorm:"default:CURRENT_TIMESTAMP" json:"issued_at"`
+	// RevokedAt: chứng chỉ bị thu hồi khi đơn mua khoá học được hoàn tiền (admin refund). Giữ dòng
+	// thay vì xoá để trang tra cứu công khai vẫn báo "đã thu hồi" thay vì "không tồn tại", và để
+	// cấp lại đúng số cũ nếu học viên mua lại và học xong (unique index user+course chỉ cho 1 dòng).
+	RevokedAt *time.Time `gorm:"index" json:"revoked_at,omitempty"`
 
 	// Relationships
 	User   User   `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`

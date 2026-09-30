@@ -448,12 +448,17 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Payment: paymentSvc,
 		TransactionService: transactionSvc,
 		Voucher:            voucherSvc,
-		AdminOrder: service.NewAdminOrderService(
-			repos.Order,
-			repos.OrderItem,
-			repos.Enrollment,
-			repos.Course,
-		),
+		// Redis để hoàn tiền xoá cache tra cứu của chứng chỉ vừa thu hồi (cùng khoá với CertificateService).
+		AdminOrder: func() service.AdminOrderServiceInterface {
+			adminOrderSvc := service.NewAdminOrderService(
+				repos.Order,
+				repos.OrderItem,
+				repos.Enrollment,
+				repos.Course,
+			)
+			adminOrderSvc.SetCertificateCache(resources.Redis)
+			return adminOrderSvc
+		}(),
 		PlatformSetting: service.NewPlatformSettingService(repos.PlatformSetting),
 
 		// ===== Gamification =====

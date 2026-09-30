@@ -31,7 +31,10 @@ type CertificateListDTO struct {
 }
 
 type VerifyCertificateResponseDTO struct {
-	Valid             bool      `json:"valid"`
+	Valid bool `json:"valid"`
+	// Revoked: chứng chỉ có thật nhưng đã bị thu hồi (đơn mua khoá bị hoàn tiền). Khi true thì
+	// valid = false và KHÔNG trả tên/khoá học (trang này công khai).
+	Revoked           bool      `json:"revoked,omitempty"`
 	CertificateNumber string    `json:"certificate_number"`
 	UserName          string    `json:"user_name,omitempty"`
 	CourseName        string    `json:"course_name,omitempty"`

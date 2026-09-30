@@ -189,6 +189,66 @@ func (h *AdminOrderHandler) RefundOrder(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "Order refunded", "data": resp})
 }
 
+// MarkLatePaymentRefunded - POST /api/orders/admin/:id/late-refund
+//
+// Admin xác nhận đã hoàn khoản tiền về muộn của đơn đã đóng. Body tuỳ chọn ({note, transaction_ref}),
+// có thể để trống. Idempotent: gọi lại vẫn 200 (already_recorded = true).
+func (h *AdminOrderHandler) MarkLatePaymentRefunded(c *fiber.Ctx) error {
+	actorID, ok := getAuthUserID(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+
+	orderID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid order ID",
+			"error":   "invalid_id",
+		})
+	}
+
+	var req dto.LateRefundRequest
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "Invalid request body",
+				"error":   "invalid_request",
+			})
+		}
+	}
+	req.Note = strings.TrimSpace(req.Note)
+	req.TransactionRef = strings.TrimSpace(req.TransactionRef)
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed",
+			"errors":  errs,
+		})
+	}
+
+	resp, err := h.adminOrderService.MarkLatePaymentRefunded(c.Context(), actorID, orderID, req.Note, req.TransactionRef)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrOrderNotFound):
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"message": "Order not found",
+				"error":   "not_found",
+			})
+		case errors.Is(err, service.ErrLateRefundNotNeeded):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "Order has no late payment awaiting refund",
+				"error":   "refund_not_needed",
+			})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"message": "Failed to record late refund",
+				"error":   err.Error(),
+			})
+		}
+	}
+
+	return c.JSON(fiber.Map{"message": "Late refund recorded", "data": resp})
+}
+
 // GetRevenueReport - GET /api/admin/reports/revenue
 func (h *AdminOrderHandler) GetRevenueReport(c *fiber.Ctx) error {
 	to := time.Now()

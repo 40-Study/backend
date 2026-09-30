@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -134,9 +135,13 @@ func (s *PaymentService) reconcileIssuedOrder(ctx context.Context, order *model.
 		return r
 	}
 
-	// Đơn đã đóng đã gắn cờ cần hoàn tiền: đã cảnh báo đúng 1 lần, không gọi ngân hàng lại.
+	// Đơn đã đóng đang chờ admin hoàn tiền: đã cảnh báo rồi, không gọi ngân hàng lại. Khi admin ĐÃ ghi
+	// hoàn thì vẫn đối chiếu ngân hàng: khách có thể chuyển thêm vào cùng mã (giao dịch mới được
+	// flagRefundNeeded gắn cờ lại, idempotent theo mã giao dịch).
 	if !processing && s.hasLatePaymentRecord(order.ID) {
-		return current(func(r *dto.PaymentStatusResponse) { r.LatePaymentReceived = true }), nil
+		if pending, _ := lateRefundState(s.orderRepo.TxDB(), order); pending {
+			return current(func(r *dto.PaymentStatusResponse) { r.LatePaymentReceived = true }), nil
+		}
 	}
 
 	result, err := s.lookupBankTransaction(ctx, order, now)
@@ -347,11 +352,11 @@ func (s *PaymentService) flagRefundNeeded(ctx context.Context, order *model.Orde
 		if err := txDB.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", order.ID).First(&locked).Error; err != nil {
 			return err
 		}
-		var existing int64
-		if err := txDB.Model(&model.OrderStatusHistory{}).Where("order_id = ? AND to_status = ?", order.ID, latePaymentHistoryStatus).Count(&existing).Error; err != nil {
+		var prior []model.OrderStatusHistory
+		if err := txDB.Where("order_id = ? AND to_status = ?", order.ID, latePaymentHistoryStatus).Find(&prior).Error; err != nil {
 			return err
 		}
-		if existing > 0 {
+		if lateFlagAlreadyRecorded(prior, result.TransactionID) {
 			return nil
 		}
 		recorded = true
@@ -369,16 +374,66 @@ func (s *PaymentService) flagRefundNeeded(ctx context.Context, order *model.Orde
 	return true
 }
 
-// refundNeeded — đơn đã có cờ cần hoàn tiền (history payment_after_expiry). Chỉ đơn đã đóng từng có
-// mã mới có thể có cờ nên chỉ những đơn đó tốn 1 truy vấn.
-func refundNeeded(db *gorm.DB, order *model.Order) bool {
+// lateFlagAlreadyRecorded — giao dịch `txID` đã có dòng cờ payment_after_expiry chưa. Idempotent theo
+// mã giao dịch: poll lại cùng giao dịch không ghi thêm, còn giao dịch MỚI (khách chuyển lần hai vào
+// cùng mã) thì ghi cờ mới dù đơn đã có cờ từ trước. Không có mã giao dịch thì giữ hành vi cũ: đã có
+// cờ nào là đủ, vì không phân biệt được hai lần chuyển.
+func lateFlagAlreadyRecorded(prior []model.OrderStatusHistory, txID string) bool {
+	if txID == "" {
+		return len(prior) > 0
+	}
+	marker := "transaction " + txID + " "
+	for _, p := range prior {
+		if strings.Contains(p.Reason, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// lateRefundPending — còn khoản tiền muộn chưa hoàn: có cờ, và hoặc admin chưa ghi late_refund_done,
+// hoặc cờ mới nhất ghi SAU lần admin xác nhận gần nhất (khách chuyển thêm sau khi đã hoàn).
+func lateRefundPending(lastFlag, lastDone *time.Time) bool {
+	if lastFlag == nil {
+		return false
+	}
+	return lastDone == nil || lastFlag.After(*lastDone)
+}
+
+// lateRefundState — trạng thái hoàn tiền của đơn đã đóng nhận tiền về muộn, đọc từ history:
+// needed = còn khoản muộn chưa hoàn (xem lateRefundPending); refundedAt != nil khi không còn khoản
+// nào chờ và admin đã ghi nhận (mốc xác nhận gần nhất). Chỉ đơn đã đóng từng có mã mới có thể có cờ
+// nên chỉ những đơn đó tốn 1 truy vấn.
+func lateRefundState(db *gorm.DB, order *model.Order) (needed bool, refundedAt *time.Time) {
 	if db == nil || (order.Status != "expired" && order.Status != "cancelled") || !hasPaymentCode(order) {
-		return false
+		return false, nil
 	}
-	var n int64
-	if err := db.Model(&model.OrderStatusHistory{}).Where("order_id = ? AND to_status = ?", order.ID, latePaymentHistoryStatus).Count(&n).Error; err != nil {
+	var rows []struct {
+		ToStatus string
+		LastAt   time.Time
+	}
+	if err := db.Model(&model.OrderStatusHistory{}).
+		Select("to_status, MAX(created_at) AS last_at").
+		Where("order_id = ? AND to_status IN ?", order.ID, []string{latePaymentHistoryStatus, lateRefundDoneHistoryStatus}).
+		Group("to_status").Scan(&rows).Error; err != nil {
 		log.Printf("[PAYMENT-STATUS] order=%s không đọc được cờ hoàn tiền: %v", order.ID, err)
-		return false
+		return false, nil
 	}
-	return n > 0
+	var lastFlag, lastDone *time.Time
+	for _, r := range rows {
+		at := r.LastAt
+		switch r.ToStatus {
+		case latePaymentHistoryStatus:
+			lastFlag = &at
+		case lateRefundDoneHistoryStatus:
+			lastDone = &at
+		}
+	}
+	if lastFlag == nil {
+		return false, nil
+	}
+	if lateRefundPending(lastFlag, lastDone) {
+		return true, nil
+	}
+	return false, lastDone
 }

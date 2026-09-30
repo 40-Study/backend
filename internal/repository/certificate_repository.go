@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -65,7 +66,8 @@ func (r *CertificateRepository) GetCertificatesByUserID(ctx context.Context, use
 	var certs []model.Certificate
 	var total int64
 
-	query := r.db.WithContext(ctx).Model(&model.Certificate{}).Where("user_id = ?", userID)
+	// Chứng chỉ đã thu hồi (hoàn tiền) không được liệt kê: học viên không còn thấy/tải được.
+	query := r.db.WithContext(ctx).Model(&model.Certificate{}).Where("user_id = ? AND revoked_at IS NULL", userID)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -97,6 +99,29 @@ func (r *CertificateRepository) GetCertificateByCourseAndUser(ctx context.Contex
 
 func (r *CertificateRepository) UpdateCertificate(ctx context.Context, cert *model.Certificate) error {
 	return r.db.WithContext(ctx).Save(cert).Error
+}
+
+// RevokeCertificates thu hồi chứng chỉ khoá học (bảng certificates) của (user, course) trên db
+// truyền vào — gọi bằng *gorm.DB của transaction hoàn tiền để thu hồi nguyên tử với việc đổi
+// trạng thái đơn. Chỉ đụng dòng chưa thu hồi nên gọi lại là idempotent. Trả về số chứng chỉ vừa
+// thu hồi để caller xoá cache tra cứu công khai. KHÔNG đụng contest_awards (chứng nhận cuộc
+// thi nằm ở bảng khác và không phụ thuộc đơn mua khoá).
+func RevokeCertificates(ctx context.Context, db *gorm.DB, userID, courseID uuid.UUID, at time.Time) ([]string, error) {
+	var numbers []string
+	if err := db.WithContext(ctx).Model(&model.Certificate{}).
+		Where("user_id = ? AND course_id = ? AND revoked_at IS NULL", userID, courseID).
+		Pluck("certificate_number", &numbers).Error; err != nil {
+		return nil, err
+	}
+	if len(numbers) == 0 {
+		return nil, nil
+	}
+	if err := db.WithContext(ctx).Model(&model.Certificate{}).
+		Where("user_id = ? AND course_id = ? AND revoked_at IS NULL", userID, courseID).
+		Update("revoked_at", at).Error; err != nil {
+		return nil, err
+	}
+	return numbers, nil
 }
 
 func (r *CertificateRepository) DeleteCertificate(ctx context.Context, id uuid.UUID) error {

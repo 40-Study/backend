@@ -41,6 +41,9 @@ func NewReviewService(repo repository.ReviewRepositoryInterface, courseRepo repo
 // (admin_order_service.go: revokeEnrollmentsForRefund) nên "đã hoàn tiền" tự rơi vào nhánh này.
 var ErrReviewNotEnrolled = apperr.Forbidden("Bạn cần đăng ký khoá học này mới đánh giá được")
 
+// ErrReviewOwnCourse: giảng viên (chủ khoá) không được đánh giá khoá của chính mình.
+var ErrReviewOwnCourse = apperr.Forbidden("Bạn không thể đánh giá khoá học của chính mình")
+
 // recomputeCourseRatingStats (H6) tính lại average_rating/total_reviews thật từ
 // bảng reviews rồi ghi vào courses, gọi sau mỗi lần tạo/xoá review để 2 cột này
 // không còn đứng yên từ lúc seed (derived-field drift). Lỗi chỉ log, không chặn
@@ -88,6 +91,17 @@ func (s *ReviewService) CreateReview(ctx context.Context, userID, courseID uuid.
 	}
 	if enrollment == nil {
 		return nil, ErrReviewNotEnrolled
+	}
+	// Lane P (câu hỏi mở 4 của rà soát phân quyền): chủ khoá tự ghi danh khoá miễn phí của mình rồi
+	// tự chấm 5 sao làm sai điểm trung bình công khai — không được đánh giá khoá của chính mình.
+	if s.courseRepo != nil {
+		course, err := s.courseRepo.GetByID(ctx, courseID)
+		if err != nil {
+			return nil, err
+		}
+		if course != nil && course.InstructorID == userID {
+			return nil, ErrReviewOwnCourse
+		}
 	}
 
 	// Check if already reviewed

@@ -70,6 +70,20 @@ func (s *GradeService) requireClassTeacher(ctx context.Context, classID, teacher
 	return nil
 }
 
+// requireStudentInClass (lane P): điểm chỉ ghi được cho học viên đang học lớp đó. Trước đây giảng viên
+// của lớp ghi điểm cho student_id bất kỳ, và điểm hiện ra trong bảng điểm cá nhân (GetMyGrades) của
+// người không hề thuộc lớp. Dùng ErrStudentNotInClass như điểm danh lớp (attendance_service.go).
+func (s *GradeService) requireStudentInClass(ctx context.Context, classID, studentID uuid.UUID) error {
+	in, err := s.classRepo.StudentClassExists(ctx, classID, studentID)
+	if err != nil {
+		return err
+	}
+	if !in {
+		return ErrStudentNotInClass
+	}
+	return nil
+}
+
 const (
 	gradeBookCachePrefix = "gradebook:class:"
 	gradeBookCacheTTL    = 10 * time.Minute
@@ -221,6 +235,9 @@ func (s *GradeService) CreateGrade(ctx context.Context, classID, gradedBy uuid.U
 	studentID, err := uuid.Parse(req.StudentID)
 	if err != nil {
 		return nil, errors.New("invalid student_id")
+	}
+	if err := s.requireStudentInClass(ctx, classID, studentID); err != nil {
+		return nil, err
 	}
 
 	grade := &model.Grade{
@@ -414,6 +431,20 @@ func (s *GradeService) DeleteGrade(ctx context.Context, id, actorUserID uuid.UUI
 }
 
 func (s *GradeService) BulkCreateGrades(ctx context.Context, classID, gradedBy uuid.UUID, req dto.BulkCreateGradesDTO) ([]dto.GradeResponseDTO, error) {
+	// Kiểm quyền và học viên của CẢ lô trước khi ghi dòng nào (như điểm danh lớp, M-4 review S4),
+	// để một học viên ngoài lớp không làm lô ghi dở dang.
+	if err := s.requireClassTeacher(ctx, classID, gradedBy); err != nil {
+		return nil, err
+	}
+	for _, gReq := range req.Grades {
+		studentID, err := uuid.Parse(gReq.StudentID)
+		if err != nil {
+			return nil, errors.New("invalid student_id")
+		}
+		if err := s.requireStudentInClass(ctx, classID, studentID); err != nil {
+			return nil, err
+		}
+	}
 	var results []dto.GradeResponseDTO
 	for _, gReq := range req.Grades {
 		result, err := s.CreateGrade(ctx, classID, gradedBy, gReq)
