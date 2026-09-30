@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -80,11 +81,22 @@ func (h *UserOrganizationRoleHandler) GetUserOrgRoles(c *fiber.Ctx) error {
 
 	status := c.Query("status")
 
-	result, err := h.service.GetUserOrgRoles(c.Context(), userID, status)
+	// S6: chỉ thấy vai trò trong tổ chức đang active của mình (admin thì thấy hết).
+	callerID, _ := c.Locals("user_id").(uuid.UUID)
+	var activeOrgID *uuid.UUID
+	if orgID, ok := c.Locals("active_org_id").(uuid.UUID); ok {
+		activeOrgID = &orgID
+	}
+	isAdmin := isAdminActor(c, h.permChecker, callerID)
+
+	result, err := h.service.GetUserOrgRoles(c.Context(), userID, status, activeOrgID, isAdmin)
 	if err != nil {
 		httpStatus := fiber.StatusInternalServerError
 		if err.Error() == "user not found" {
 			httpStatus = fiber.StatusNotFound
+		}
+		if errors.Is(err, service.ErrOrgRoleForbidden) {
+			httpStatus = fiber.StatusForbidden
 		}
 		return c.Status(httpStatus).JSON(fiber.Map{
 			"message": "Failed to retrieve user organization roles",
@@ -240,11 +252,21 @@ func (h *UserOrganizationRoleHandler) GetUsersWithOrgRoleSimple(c *fiber.Ctx) er
 	pageSize := c.QueryInt("page_size", 20)
 	status := c.Query("status")
 
-	result, err := h.service.GetUsersWithOrgRoleByRoleID(c.Context(), roleID, page, pageSize, status)
+	callerID, _ := c.Locals("user_id").(uuid.UUID)
+	var activeOrgID *uuid.UUID
+	if orgID, ok := c.Locals("active_org_id").(uuid.UUID); ok {
+		activeOrgID = &orgID
+	}
+	isAdmin := isAdminActor(c, h.permChecker, callerID)
+
+	result, err := h.service.GetUsersWithOrgRoleByRoleID(c.Context(), roleID, page, pageSize, status, activeOrgID, isAdmin)
 	if err != nil {
 		httpStatus := fiber.StatusInternalServerError
 		if err.Error() == "organization role not found" {
 			httpStatus = fiber.StatusNotFound
+		}
+		if errors.Is(err, service.ErrNotRoleOrgMember) {
+			httpStatus = fiber.StatusForbidden
 		}
 		return c.Status(httpStatus).JSON(fiber.Map{
 			"message": "Failed to retrieve users with role",

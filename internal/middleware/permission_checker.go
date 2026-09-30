@@ -6,6 +6,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"study.com/v1/data"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 )
@@ -98,6 +99,14 @@ func (pc *PermissionChecker) resolvePermissions(ctx context.Context, userID uuid
 				return nil, err
 			}
 			for _, p := range rolePerms {
+				// S6: org role chỉ được mang quyền THUỘC PHẠM VI TỔ CHỨC (SSOT
+				// data/permissions/org_owner_permissions.json). Quyền hệ thống nằm trong một org
+				// role (do gán cũ chưa bị chặn, hoặc ghi thẳng DB) KHÔNG được cộng vào tập quyền,
+				// nếu không ORG_OWNER tự nâng mình thành admin nền tảng: RequirePermissions(
+				// "SYSTEM_SETTINGS_MANAGE"/"PAYMENTS_MANAGE"...) và isAdminActor đều đọc tập này.
+				if !data.IsOrgPermission(p.Name) {
+					continue
+				}
 				perms = append(perms, p.Name)
 			}
 		}
