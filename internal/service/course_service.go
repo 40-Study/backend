@@ -407,6 +407,11 @@ func (s *CourseService) UpdateCourse(ctx context.Context, id, actorUserID uuid.U
 	if req.DiscountExpiresAt != nil {
 		course.DiscountExpiresAt = req.DiscountExpiresAt
 	}
+	// Xoá khuyến mãi (đặt SAU hạn để gửi kèm hạn cũng không giữ lại): bỏ luôn hạn khuyến mãi, nếu không còn sót một ngày hết hạn không gắn với giá nào.
+	if req.DiscountPriceCleared {
+		course.DiscountPrice = nil
+		course.DiscountExpiresAt = nil
+	}
 	if req.Status != nil {
 		// Phase 3: PUT không còn được tự xuất bản — chỉ published<->archived/draft thủ công;
 		// nộp duyệt/duyệt/từ chối đi qua endpoint riêng (course_status_guard.go).

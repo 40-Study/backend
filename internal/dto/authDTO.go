@@ -233,6 +233,10 @@ type UpdateMeRequestDto struct {
 	DateOfBirth *string `json:"date_of_birth,omitempty" validate:"omitempty,datetime=2006-01-02" example:"2005-01-01"`
 	Bio         *string `json:"bio,omitempty" validate:"omitempty,max=1000" example:"Sinh viên PTIT"`
 	AvatarURL   *string `json:"avatar_url,omitempty" validate:"omitempty,url,max=500" example:"https://example.com/avatar.jpg"`
+
+	// PhoneCleared: client gửi `"phone": null` hoặc `""` => xoá số điện thoại. Do UnmarshalJSON đặt
+	// (clearable_update_dto.go); Phone khi đó là nil nên validate e164 không chạy.
+	PhoneCleared bool `json:"-"`
 }
 
 // MyProfileResponseDto - Full profile response including user info, roles, orgs
