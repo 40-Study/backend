@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 )
 
@@ -85,11 +86,12 @@ func (s *LeaderboardService) GetMyRank(ctx context.Context, userID uuid.UUID, pe
 	return resp, nil
 }
 
+// ErrInvalidLeaderboardPeriod — kỳ xếp hạng không thuộc model.IsValidLeaderboardPeriodType.
+var ErrInvalidLeaderboardPeriod = errors.New("invalid period: must be weekly, monthly, or all_time")
+
 func validatePeriodType(p string) error {
-	switch p {
-	case "weekly", "monthly", "all_time":
-		return nil
-	default:
-		return errors.New("invalid period: must be weekly, monthly, or all_time")
+	if !model.IsValidLeaderboardPeriodType(p) {
+		return ErrInvalidLeaderboardPeriod
 	}
+	return nil
 }
