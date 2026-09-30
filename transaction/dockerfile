@@ -6,13 +6,20 @@ COPY transaction/requirements.txt .
 
 RUN pip install --no-cache-dir --user -r requirements.txt
 
+# grpc_server.py import transaction_pb2 / transaction_pb2_grpc: mã sinh từ proto, KHÔNG nằm trong repo.
+COPY transaction/transaction.proto .
+RUN python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. transaction.proto
+
 FROM python:3.11-slim
 
 WORKDIR /app
 
 COPY --from=builder /root/.local /root/.local
+COPY --from=builder /app/transaction_pb2.py /app/transaction_pb2_grpc.py ./
 
-COPY transaction/api.py transaction/service_token.py ./
+# api.py = REST (:8000), grpc_server.py = gRPC (:50051, backend Go gọi ở đây), run_services.py chạy cả hai,
+# healthcheck.py là healthcheck của compose (image slim không có curl).
+COPY transaction/api.py transaction/service_token.py transaction/grpc_server.py transaction/run_services.py transaction/healthcheck.py ./
 
 ENV PATH=/root/.local/bin:$PATH \
     MB_USERNAME="" \
@@ -20,6 +27,6 @@ ENV PATH=/root/.local/bin:$PATH \
     MB_ACCOUNT_NO="" \
     MB_BANK_CODE=""
 
-EXPOSE 8000
+EXPOSE 8000 50051
 
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "run_services.py"]

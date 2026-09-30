@@ -36,6 +36,13 @@ service chưa cấu hình token thì trả 503 (đóng cửa, không mở). gRPC
 `x-transaction-token` khi biến được đặt; chưa đặt thì server ghi cảnh báo và nhận mọi request (giữ luồng thanh toán
 đang chạy). Bật theo thứ tự: backend Go trước, service này sau.
 
+## Một container, hai cổng
+
+Container chạy cả REST (`:8000`) và gRPC (`:50051`, backend Go gọi ở đây) qua `run_services.py`. Một trong hai
+tiến trình dừng thì cả container thoát mã khác 0 để `restart: unless-stopped` dựng lại. Mã gRPC (`transaction_pb2*.py`)
+được sinh từ `transaction.proto` lúc build image, không nằm trong repo. Healthcheck (`healthcheck.py`) kiểm `GET /health`
+(không cần token, chỉ trả `{"status": "ok"}`) và cổng gRPC.
+
 ## API Endpoints
 
 - `GET /transactions` - Lấy danh sách giao dịch

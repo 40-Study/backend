@@ -13,15 +13,7 @@ import pytest
 TOKEN = "s6-shared-secret"
 
 
-class _FakeMBBank:
-    def __init__(self, username="", password=""):
-        pass
-
-    def getTransactionAccountHistory(self, accountNo, from_date, to_date):
-        return types.SimpleNamespace(transactionHistoryList=[])
-
-
-sys.modules.setdefault("mbbank", types.SimpleNamespace(MBBank=_FakeMBBank))
+# mbbank giả nằm ở conftest.py (dùng chung với test_health_and_launcher.py).
 
 QUERY = "from_date=00-00-00-01-01-2024&to_date=00-00-00-02-01-2024"
 ROUTES = [
