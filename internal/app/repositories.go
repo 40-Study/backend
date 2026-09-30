@@ -144,6 +144,10 @@ type Repositories struct {
 
 	// ===== Personal Event =====
 	PersonalEvent *repository.PersonalEventRepository
+
+	// ===== Friends =====
+	Friendship *repository.FriendshipRepository
+	UserBlock  *repository.UserBlockRepository
 }
 
 func InitRepositories(db *gorm.DB) *Repositories {
@@ -275,5 +279,9 @@ func InitRepositories(db *gorm.DB) *Repositories {
 
 		// ===== Personal Event =====
 		PersonalEvent: repository.NewPersonalEventRepository(db),
+
+		// ===== Friends =====
+		Friendship: repository.NewFriendshipRepository(db),
+		UserBlock:  repository.NewUserBlockRepository(db),
 	}
 }

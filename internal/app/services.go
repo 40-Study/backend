@@ -138,6 +138,9 @@ type Services struct {
 
 	// ===== Personal Event =====
 	PersonalEvent *service.PersonalEventService
+
+	// ===== Friends =====
+	Friendship *service.FriendshipService
 }
 
 func InitServices(resources *Resources, repos *Repositories, notifier *socket.Notifier) *Services {
@@ -543,7 +546,11 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 
 		// ===== Personal Event =====
 		PersonalEvent: service.NewPersonalEventService(repos.PersonalEvent, resources.Queue),
+
+		// ===== Friends =====
+		Friendship: service.NewFriendshipService(repos.Friendship, repos.UserBlock),
 	}
+	s.Friendship.SetNotifier(s.Notification)
 	// Lane S2: moi vao nhom dung chung guard nhan tin cua Conversation (Lane G).
 	s.Group.SetInviteGuard(s.Conversation)
 	s.Group.SetChannelEvictor(notifier)
