@@ -39,6 +39,9 @@ type s6ExposureEnv struct {
 	course  model.Course
 	private model.User
 	hidden  model.User
+	// friendsOnly đặt hồ sơ chế độ `friends` (plan 260930 phase 05); learner là bạn ACCEPTED của họ,
+	// stranger có dòng ACCEPTED nhưng bị chặn (dữ liệu không nhất quán: chặn phải thắng).
+	friendsOnly model.User
 }
 
 func newS6ExposureEnv(t *testing.T) *s6ExposureEnv {
@@ -68,13 +71,18 @@ func newS6ExposureEnv(t *testing.T) *s6ExposureEnv {
 		e.ids[name] = u.ID
 		return u
 	}
-	e.private, e.hidden = mkUser("private"), mkUser("hidden")
-	for u, vis := range map[uuid.UUID]string{e.private.ID: "private", e.hidden.ID: "hidden"} {
+	e.private, e.hidden, e.friendsOnly = mkUser("private"), mkUser("hidden"), mkUser("friendsonly")
+	for u, vis := range map[uuid.UUID]string{e.private.ID: "private", e.hidden.ID: "hidden", e.friendsOnly.ID: "friends"} {
 		must(db.Create(&model.UserPreference{UserID: u, ProfileVisibility: vis}).Error)
 	}
 	viewer, learner, stranger, teacher, admin := mkUser("viewer"), mkUser("learner"), mkUser("stranger"), mkUser("teacher"), mkUser("admin")
 	_ = viewer
-	_ = stranger
+	now := time.Now()
+	for _, friendID := range []uuid.UUID{learner.ID, stranger.ID} {
+		must(db.Create(&model.Friendship{RequesterID: e.friendsOnly.ID, AddresseeID: friendID,
+			Status: model.FriendshipStatusAccepted, RequestedAt: now, RespondedAt: &now}).Error)
+	}
+	must(db.Create(&model.UserBlock{BlockerID: e.friendsOnly.ID, BlockedID: stranger.ID}).Error)
 
 	e.course = model.Course{InstructorID: teacher.ID, Title: "S6 course", Slug: "s6-" + uuid.NewString()[:8], Price: decimal.Zero, Status: "published"}
 	must(db.Create(&e.course).Error)
@@ -91,6 +99,7 @@ func newS6ExposureEnv(t *testing.T) *s6ExposureEnv {
 	pc := middleware.NewPermissionChecker(repository.NewUserSystemRoleRepository(db), repository.NewSystemRoleRepository(db),
 		repository.NewUserOrganizationRoleRepository(db), repository.NewRoleRepository(db))
 	statsSvc := service.NewUserStatsService(repository.NewUserStatsRepository(db), repository.NewUserPreferenceRepository(db))
+	statsSvc.SetFriendshipChecker(service.NewFriendshipService(repository.NewFriendshipRepository(db), repository.NewUserBlockRepository(db)))
 	reviewSvc := service.NewReviewService(repository.NewReviewRepository(db), repository.NewCourseRepository(db), repository.NewEnrollmentRepository(db), nil)
 
 	app := fiber.New()
@@ -153,6 +162,23 @@ func TestS6_PublicProfileRoute_TheoCaiDatRiengTuVaTungVai(t *testing.T) {
 		priv, bio := isPrivate(raw)
 		if status != fiber.StatusOK || priv || !strings.HasPrefix(bio, "bio private") {
 			t.Errorf("%q xem hồ sơ riêng tư của private: %d %s, muốn hồ sơ đầy đủ", who, status, raw)
+		}
+	}
+	// Chế độ `friends` (Q12, đảo kỳ vọng cũ "friends = private"): chỉ bạn ACCEPTED, chính chủ và admin thấy
+	// đầy đủ. Khách, người lạ, giáo viên (mọi người không phải bạn) chỉ thấy tên + avatar; người đã bị chặn
+	// thì dù còn dòng ACCEPTED cũng không được mở.
+	for _, who := range []string{"learner", "friendsonly", "admin"} {
+		status, raw := e.do(t, who, "GET", path(e.friendsOnly), "")
+		priv, bio := isPrivate(raw)
+		if status != fiber.StatusOK || priv || !strings.HasPrefix(bio, "bio friendsonly") {
+			t.Errorf("%q xem hồ sơ chế độ friends: %d %s, muốn hồ sơ đầy đủ", who, status, raw)
+		}
+	}
+	for _, who := range []string{"", "viewer", "teacher", "stranger"} {
+		status, raw := e.do(t, who, "GET", path(e.friendsOnly), "")
+		priv, bio := isPrivate(raw)
+		if status != fiber.StatusOK || !priv || bio != "" || strings.Contains(raw, "bio friendsonly") {
+			t.Errorf("%q (không phải bạn hợp lệ) xem hồ sơ chế độ friends: %d %s, muốn chỉ tên + avatar", who, status, raw)
 		}
 	}
 	// Ẩn hẳn: khách và người khác 404, chính chủ và admin vẫn xem được.

@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -225,6 +226,7 @@ func TestS6_PublicProfile_TheoCaiDatRiengTu(t *testing.T) {
 	ctx := context.Background()
 	viewer, admin := f.user("viewer"), f.user("admin")
 	svc := NewUserStatsService(repository.NewUserStatsRepository(f.db), repository.NewUserPreferenceRepository(f.db))
+	svc.SetFriendshipChecker(NewFriendshipService(repository.NewFriendshipRepository(f.db), repository.NewUserBlockRepository(f.db)))
 
 	bio := "Tiểu sử riêng tư"
 	full := "Le Thi Rieng Tu"
@@ -270,8 +272,9 @@ func TestS6_PublicProfile_TheoCaiDatRiengTu(t *testing.T) {
 		}
 	}
 
-	// private, friends (chưa có tính năng bạn bè) và giá trị lạ: người khác chỉ thấy tên + avatar.
-	for _, vis := range []string{"private", "friends", "gia-tri-la"} {
+	// private và giá trị lạ: người khác chỉ thấy tên + avatar. (`friends` đã tách ra khối riêng bên dưới:
+	// trước khi có tính năng bạn bè nó bị pin là "giống private với MỌI người"; nay bạn ACCEPTED thấy đầy đủ.)
+	for _, vis := range []string{"private", "gia-tri-la"} {
 		owner := ownerOf[vis]
 		for _, w := range viewers(owner) {
 			got, err := svc.GetPublicProfile(ctx, owner.ID, w.id, w.admin)
@@ -293,6 +296,55 @@ func TestS6_PublicProfile_TheoCaiDatRiengTu(t *testing.T) {
 				t.Errorf("visibility=%q %s: lộ dữ liệu riêng tư: %+v", vis, w.name, got)
 			}
 		}
+	}
+
+	// friends (Q12): CHỈ bạn ACCEPTED (không bị chặn), chính chủ và admin xem đầy đủ. Mọi người còn lại chỉ thấy
+	// tên + avatar, kể cả lời mời PENDING/DECLINED/CANCELLED (không phải bạn) và người đã bị chặn dù còn dòng
+	// ACCEPTED cũ. Bỏ checker hoặc nhận nhầm trạng thái khác ACCEPTED thì khối này ĐỎ; chiều ngược lại (mọi người
+	// đều thấy đầy đủ, hoặc không ai thấy) cũng đỏ: message nêu hướng lệch, không được chỉnh kỳ vọng cho khớp.
+	friendsOwner := ownerOf["friends"]
+	mkRel := func(status string, asRequester bool) model.User {
+		other := f.user("rel-" + strings.ToLower(status))
+		req, addr := friendsOwner.ID, other.ID
+		if !asRequester {
+			req, addr = other.ID, friendsOwner.ID
+		}
+		now := time.Now()
+		if err := f.db.Create(&model.Friendship{RequesterID: req, AddresseeID: addr, Status: status, RequestedAt: now, RespondedAt: &now}).Error; err != nil {
+			t.Fatal(err)
+		}
+		return other
+	}
+	friendA, friendB := mkRel(model.FriendshipStatusAccepted, true), mkRel(model.FriendshipStatusAccepted, false) // cả hai chiều gửi
+	pendingV, declinedV, cancelledV := mkRel(model.FriendshipStatusPending, true), mkRel(model.FriendshipStatusDeclined, true), mkRel(model.FriendshipStatusCancelled, true)
+	blockedFriend := mkRel(model.FriendshipStatusAccepted, true)
+	if err := f.db.Create(&model.UserBlock{BlockerID: friendsOwner.ID, BlockedID: blockedFriend.ID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	friendsWantFull := map[string]*uuid.UUID{"bạn (chiều gửi)": &friendA.ID, "bạn (chiều nhận)": &friendB.ID, "chính chủ": &friendsOwner.ID}
+	friendsWantPrivate := map[string]*uuid.UUID{
+		"khách": nil, "người lạ": &viewer.ID, "lời mời PENDING": &pendingV.ID, "lời mời DECLINED": &declinedV.ID,
+		"lời mời CANCELLED": &cancelledV.ID, "bạn đã bị chặn": &blockedFriend.ID,
+	}
+	for name, id := range friendsWantFull {
+		got, err := svc.GetPublicProfile(ctx, friendsOwner.ID, id, false)
+		if err != nil || got == nil || got.IsPrivate || got.Bio == nil || *got.Bio != bio {
+			t.Errorf("friends: %s phải thấy đầy đủ: err=%v got=%+v", name, err, got)
+		}
+	}
+	if got, err := svc.GetPublicProfile(ctx, friendsOwner.ID, &admin.ID, true); err != nil || got.IsPrivate {
+		t.Errorf("friends: admin phải thấy đầy đủ: err=%v got=%+v", err, got)
+	}
+	for name, id := range friendsWantPrivate {
+		got, err := svc.GetPublicProfile(ctx, friendsOwner.ID, id, false)
+		if err != nil || got == nil || !got.IsPrivate || got.Bio != nil || got.UserName != friendsOwner.UserName {
+			t.Errorf("friends: %s chỉ được thấy tên + avatar: err=%v got=%+v", name, err, got)
+		}
+	}
+	// Chưa nối checker: đóng chứ không mở cửa — cả bạn thật cũng chỉ thấy bản rút gọn.
+	bare := NewUserStatsService(repository.NewUserStatsRepository(f.db), repository.NewUserPreferenceRepository(f.db))
+	if got, err := bare.GetPublicProfile(ctx, friendsOwner.ID, &friendA.ID, false); err != nil || !got.IsPrivate {
+		t.Errorf("friends + checker nil: muốn private, nhận err=%v got=%+v", err, got)
 	}
 
 	// hidden: người khác 404, chính chủ và admin vẫn xem được.

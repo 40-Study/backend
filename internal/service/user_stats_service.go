@@ -17,7 +17,13 @@ type UserStatsServiceInterface interface {
 type UserStatsService struct {
 	repo     *repository.UserStatsRepository
 	prefRepo repository.UserPreferenceRepositoryInterface
+	// friendChecker quyết định người xem có phải bạn (ACCEPTED, không bị chặn) của chủ hồ sơ không, cho chế
+	// độ `friends`. nil = chưa nối: `friends` xử lý như `private` (đóng chứ không mở cửa).
+	friendChecker FriendshipChecker
 }
+
+// SetFriendshipChecker nối kiểm tra bạn bè/chặn cho hồ sơ chế độ `friends`.
+func (s *UserStatsService) SetFriendshipChecker(c FriendshipChecker) { s.friendChecker = c }
 
 func NewUserStatsService(repo *repository.UserStatsRepository, prefRepo repository.UserPreferenceRepositoryInterface) *UserStatsService {
 	return &UserStatsService{repo: repo, prefRepo: prefRepo}
@@ -26,7 +32,7 @@ func NewUserStatsService(repo *repository.UserStatsRepository, prefRepo reposito
 // Giá trị cài đặt "Hiển thị hồ sơ" (user_preferences.profile_visibility).
 const (
 	ProfileVisibilityPublic  = "public"  // mọi người xem đầy đủ
-	ProfileVisibilityFriends = "friends" // chưa có tính năng bạn bè: xử lý như riêng tư
+	ProfileVisibilityFriends = "friends" // chỉ bạn bè ACCEPTED (và chính chủ, admin) xem đầy đủ; người khác như riêng tư
 	ProfileVisibilityPrivate = "private" // người khác chỉ thấy tên và avatar
 	ProfileVisibilityHidden  = "hidden"  // ẩn hẳn: người khác nhận 404
 )
@@ -48,9 +54,38 @@ func (s *UserStatsService) profileVisibility(userID uuid.UUID) (string, error) {
 	return pref.ProfileVisibility, nil
 }
 
+// restrictedProfile — bản rút gọn: chỉ tên + avatar, mọi dữ liệu khác rỗng.
+func restrictedProfile(row *repository.PublicProfileRow) *dto.PublicProfileResponse {
+	return &dto.PublicProfileResponse{
+		UserID:               row.UserID,
+		UserName:             row.UserName,
+		FullName:             row.FullName,
+		AvatarURL:            row.AvatarURL,
+		IsPrivate:            true,
+		FeaturedAchievements: []dto.PublicProfileAchievementDTO{},
+		Activity:             []dto.PublicProfileActivityDTO{},
+		CompletedCourses:     []dto.PublicProfileCompletedCourseDTO{},
+	}
+}
+
+// viewerIsFriend — người xem đã đăng nhập, là bạn ACCEPTED của chủ hồ sơ và không có block giữa hai người
+// (khoá kép: chặn luôn xoá bạn, nhưng dữ liệu cũ không nhất quán cũng không được mở hồ sơ). Khách, hoặc chưa nối
+// checker: false.
+func (s *UserStatsService) viewerIsFriend(ctx context.Context, viewerID *uuid.UUID, ownerID uuid.UUID) (bool, error) {
+	if viewerID == nil || s.friendChecker == nil {
+		return false, nil
+	}
+	blocked, err := s.friendChecker.IsBlockedEitherWay(ctx, *viewerID, ownerID)
+	if err != nil || blocked {
+		return false, err
+	}
+	return s.friendChecker.AreFriends(ctx, *viewerID, ownerID)
+}
+
 // GetPublicProfile (S6): trước đây bỏ qua hoàn toàn cài đặt riêng tư, ai (kể cả khách) cũng thấy đầy đủ
 // hồ sơ, thành tích, hoạt động, khoá đã hoàn thành. Nay: chủ hồ sơ và admin luôn thấy đầy đủ; người khác
-// theo cài đặt của chủ hồ sơ (public đầy đủ; private/friends chỉ tên + avatar; hidden 404).
+// theo cài đặt của chủ hồ sơ (public đầy đủ; friends đầy đủ với bạn ACCEPTED, còn lại chỉ tên + avatar;
+// private chỉ tên + avatar; hidden 404).
 func (s *UserStatsService) GetPublicProfile(ctx context.Context, userID uuid.UUID, viewerID *uuid.UUID, viewerIsAdmin bool) (*dto.PublicProfileResponse, error) {
 	row, err := s.repo.GetPublicProfile(ctx, userID)
 	if err != nil {
@@ -71,18 +106,18 @@ func (s *UserStatsService) GetPublicProfile(ctx context.Context, userID uuid.UUI
 			// đầy đủ, đi tiếp
 		case ProfileVisibilityHidden:
 			return nil, ErrPublicProfileNotFound
+		case ProfileVisibilityFriends:
+			// Q12: chỉ bạn ACCEPTED xem đầy đủ. Phụ huynh/giáo viên/khách không phải bạn nên chỉ thấy tên + avatar.
+			isFriend, err := s.viewerIsFriend(ctx, viewerID, userID)
+			if err != nil {
+				return nil, err
+			}
+			if !isFriend {
+				return restrictedProfile(row), nil
+			}
 		default:
-			// private, friends (chưa có bạn bè để xác minh) và mọi giá trị không nhận ra: chỉ tên + avatar.
-			return &dto.PublicProfileResponse{
-				UserID:               row.UserID,
-				UserName:             row.UserName,
-				FullName:             row.FullName,
-				AvatarURL:            row.AvatarURL,
-				IsPrivate:            true,
-				FeaturedAchievements: []dto.PublicProfileAchievementDTO{},
-				Activity:             []dto.PublicProfileActivityDTO{},
-				CompletedCourses:     []dto.PublicProfileCompletedCourseDTO{},
-			}, nil
+			// private và mọi giá trị không nhận ra: chỉ tên + avatar.
+			return restrictedProfile(row), nil
 		}
 	}
 

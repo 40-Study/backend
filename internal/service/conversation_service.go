@@ -43,7 +43,7 @@ type ConversationServiceInterface interface {
 // nào để mở cuộc trò chuyện trực tiếp MỚI — xem canCreateDirectConversation. Handler
 // (message_handler.go) nhận diện lỗi này qua errors.Is để trả 403 kèm code CONVERSATION_NOT_ALLOWED
 // thay vì 400 mặc định như các lỗi khác của CreateDirectConversation.
-var ErrConversationNotAllowed = errors.New("Bạn chỉ có thể nhắn tin với giảng viên của khoá bạn đang học, phụ huynh hoặc con đã liên kết, hoặc quản trị viên")
+var ErrConversationNotAllowed = errors.New("Bạn chỉ có thể nhắn tin với giảng viên của khoá bạn đang học, phụ huynh hoặc con đã liên kết, bạn bè hoặc quản trị viên")
 
 type ConversationService struct {
 	convRepo           *repository.ConversationRepository
@@ -54,7 +54,14 @@ type ConversationService struct {
 	enrollmentRepo     repository.EnrollmentRepositoryInterface
 	parentStudentRepo  repository.ParentStudentRepositoryInterface
 	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface
+	// friendChecker (nhánh bạn bè + chặn của canCreateDirectConversation) nối bằng SetFriendshipChecker để
+	// không đổi chữ ký NewConversationService. nil = chưa nối: nhánh bạn bè trả false.
+	friendChecker FriendshipChecker
 }
+
+// SetFriendshipChecker nối kiểm tra bạn bè/chặn cho guard tạo cuộc trò chuyện trực tiếp (và, qua
+// CanStartDirectConversation, cho guard mời vào nhóm).
+func (s *ConversationService) SetFriendshipChecker(c FriendshipChecker) { s.friendChecker = c }
 
 func NewConversationService(
 	convRepo *repository.ConversationRepository,
@@ -500,13 +507,14 @@ func (s *ConversationService) GetUnreadCount(ctx context.Context, userID uuid.UU
 //     giảng viên phụ trách — thử cả 2 chiều, vì API không biết trước ai là học viên/giảng viên.
 //   - (b) phụ huynh<->con: parent_student_relations.status = active (đã xác nhận — pending/revoked
 //     không tính).
-//   - (c) bạn bè đã chấp nhận kết bạn: dự án CHƯA CÓ bảng dữ liệu nào cho "bạn bè" — trang
-//     web/src/app/(app)/friends/page.tsx là placeholder "Sắp có" web-only (QA-260927 S-P1-4), do
-//     lane khác sở hữu, backend không có router/model friendship nào (grep "friend" toàn backend/
-//     = 0 kết quả ngoài 1 trùng khớp tình cờ trong utils/slug.go). Không có cách nào kiểm tra quan
-//     hệ này nên nhánh này LUÔN trả false cho tới khi có bảng friendship thật — xem báo cáo bàn
-//     giao, đây là giới hạn đã biết, không phải thiếu sót của guard.
+//   - (c) bạn bè: friendships.status = ACCEPTED giữa hai người (FriendshipChecker; PENDING, DECLINED
+//     và CANCELLED không tính). Chưa nối checker (nil) thì nhánh này trả false — đóng chứ không mở cửa.
 //   - (d) một trong hai là SYSTEM_ADMIN.
+//
+// Chặn (user_blocks, một trong hai chiều) thắng MỌI nhánh trừ admin: người đã chặn nhau không tạo được
+// cuộc trò chuyện mới dù còn quan hệ khác. Đây chỉ là guard lúc TẠO MỚI: cuộc trực tiếp đã tồn tại vẫn mở
+// (CreateDirectConversation trả lại cuộc cũ trước khi tới guard) nên chặn/huỷ bạn KHÔNG khoá cuộc cũ —
+// giới hạn đã biết (Q3), cần biết khi báo cáo cho chủ dự án.
 func (s *ConversationService) canCreateDirectConversation(ctx context.Context, userA, userB uuid.UUID) (bool, error) {
 	isAdminA, err := s.isSystemAdmin(ctx, userA)
 	if err != nil {
@@ -521,6 +529,16 @@ func (s *ConversationService) canCreateDirectConversation(ctx context.Context, u
 	}
 	if isAdminB {
 		return true, nil
+	}
+
+	if s.friendChecker != nil {
+		blocked, err := s.friendChecker.IsBlockedEitherWay(ctx, userA, userB)
+		if err != nil {
+			return false, err
+		}
+		if blocked {
+			return false, nil
+		}
 	}
 
 	abIsStudentTeacher, err := s.enrollmentRepo.HasActiveEnrollmentWithInstructor(ctx, userA, userB)
@@ -546,8 +564,11 @@ func (s *ConversationService) canCreateDirectConversation(ctx context.Context, u
 		return true, nil
 	}
 
-	// (c) bạn bè — xem docstring ở trên: chưa có bảng dữ liệu, không thể kiểm tra thật.
-	return false, nil
+	// (c) bạn bè: CHỈ dòng ACCEPTED (xem FriendshipChecker.AreFriends).
+	if s.friendChecker == nil {
+		return false, nil
+	}
+	return s.friendChecker.AreFriends(ctx, userA, userB)
 }
 
 // CanStartDirectConversation la cua vao cong khai cho guard nhan tin cua Lane G, de cac luong
