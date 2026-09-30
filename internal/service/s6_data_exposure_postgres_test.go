@@ -132,6 +132,20 @@ func TestS6_Review_ChiHocVienGhiDanhMoiDuocDanhGia(t *testing.T) {
 		t.Fatalf("có %d đánh giá của người không đủ điều kiện", n)
 	}
 
+	// Lane P: chủ khoá tự ghi danh khoá của mình (khoá miễn phí) cũng không được tự đánh giá.
+	if err := f.db.Create(&model.Enrollment{UserID: owner.ID, CourseID: course.ID, EnrolledAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.CreateReview(ctx, owner.ID, course.ID, req)
+	if got != nil {
+		t.Errorf("chủ khoá tự ghi danh: vẫn tự đánh giá được khoá của mình")
+	}
+	requireAppErrStatus(t, "chủ khoá tự ghi danh", err, http.StatusForbidden)
+	f.db.Model(&model.Review{}).Where("course_id = ?", course.ID).Count(&n)
+	if n != 0 {
+		t.Fatalf("có %d đánh giá của chủ khoá", n)
+	}
+
 	for name, u := range map[string]model.User{"học viên đang học": learner, "học viên đã hoàn thành": finisher} {
 		if got, err := svc.CreateReview(ctx, u.ID, course.ID, req); err != nil || got == nil {
 			t.Errorf("%s bị chặn nhầm: err=%v", name, err)

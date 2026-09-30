@@ -85,6 +85,43 @@ var (
 	ErrClassSessionNotFound = errors.New("class session not found")
 )
 
+// Giới hạn tự điểm danh (lane P, câu hỏi mở 5 của rà soát phân quyền): trước đây học viên check-in buổi
+// bất kỳ lúc nào, kể cả buổi năm ngoái hay buổi đã huỷ, nên "có mặt" không nói lên điều gì.
+var (
+	// ErrCheckInOutsideSessionDay: hôm nay (giờ Việt Nam) không phải ngày của buổi học.
+	ErrCheckInOutsideSessionDay = errors.New("check-in is only open on the day of the session")
+	// ErrSessionClosedForCheckIn: buổi đã huỷ hoặc đã kết thúc.
+	ErrSessionClosedForCheckIn = errors.New("session is cancelled or already completed")
+	// ErrGenerateRangeTooLong: khoảng ngày sinh buổi vượt maxGenerateSessionDays.
+	ErrGenerateRangeTooLong = errors.New("date range for generating sessions is too long")
+)
+
+const (
+	// sessionDayUTCOffsetHours: múi giờ của "ngày buổi học". Cột class_sessions.date là kiểu date
+	// (không múi giờ), còn giờ bắt đầu/kết thúc thì chưa thống nhất kiểu cột (rà soát S5, câu hỏi 9)
+	// nên khung check-in chỉ dựa vào NGÀY. Việt Nam không có giờ mùa hè nên dùng độ lệch cố định.
+	sessionDayUTCOffsetHours = 7
+	// maxGenerateSessionDays: trần khoảng ngày của POST /classes/:classId/sessions/generate (một năm
+	// có nhuận); trước đây một yêu cầu có thể sinh hàng chục nghìn buổi.
+	maxGenerateSessionDays = 366
+)
+
+var sessionDayZone = time.FixedZone("ICT", sessionDayUTCOffsetHours*60*60)
+
+// requireCheckInOpen: chỉ cho tự điểm danh khi buổi chưa huỷ/kết thúc và hôm nay đúng là ngày của buổi.
+// Ngày của buổi lấy nguyên các trường lịch của cột date (đã là ngày, không có múi giờ).
+func requireCheckInOpen(session *model.ClassSession, now time.Time) error {
+	if session.Status == model.SessionCancelled || session.Status == model.SessionCompleted {
+		return ErrSessionClosedForCheckIn
+	}
+	sy, sm, sd := session.Date.Date()
+	ny, nm, nd := now.In(sessionDayZone).Date()
+	if sy != ny || sm != nm || sd != nd {
+		return ErrCheckInOutsideSessionDay
+	}
+	return nil
+}
+
 // requireClassWrite: người quản lý lớp và admin qua; người xem được lớp mà không quản lý nhận
 // ErrNotClassTeacher (403); người không xem được nhận ErrClassNotFound (404).
 func (s *ScheduleService) requireClassWrite(ctx context.Context, actorID uuid.UUID, isAdmin bool, classID uuid.UUID) error {
@@ -463,6 +500,9 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 	if err != nil {
 		return nil, errors.New("invalid end_date format")
 	}
+	if endDate.Sub(startDate) > maxGenerateSessionDays*24*time.Hour {
+		return nil, ErrGenerateRangeTooLong
+	}
 
 	schedules, err := s.repo.GetSchedulesByClassID(ctx, classID)
 	if err != nil {
@@ -718,6 +758,14 @@ func (s *ScheduleService) StudentCheckIn(ctx context.Context, sessionID, student
 		return nil, err
 	}
 	now := time.Now()
+	// Sau bước quyền (người ngoài lớp vẫn 404): học viên trong lớp mới biết buổi đó có/đóng hay không.
+	session, err := s.sessionClass(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireCheckInOpen(session, now); err != nil {
+		return nil, err
+	}
 	existing, err := s.repo.GetAttendanceBySessionAndStudent(ctx, sessionID, studentID)
 	if err != nil {
 		return nil, fmt.Errorf("get attendance for check-in: %w", err)

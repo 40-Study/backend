@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -82,7 +83,8 @@ func (r *stubScheduleRepo) GetAttendanceByID(ctx context.Context, id uuid.UUID) 
 // S5: quyền quản lý buổi đi qua ensureClassManage trên lớp của buổi (test Postgres s5_schedule_authz_postgres_test.go);
 // ở đây actor là admin nên chỉ cần buổi tồn tại, để test này giữ đúng phạm vi luật nghiệp vụ điểm danh.
 func (r *stubScheduleRepo) GetSessionByID(_ context.Context, id uuid.UUID) (*model.ClassSession, error) {
-	return &model.ClassSession{ClassID: uuid.New()}, nil
+	// Hôm nay + chưa huỷ: check-in của học viên chỉ mở đúng ngày của buổi (lane P). Test riêng cho cửa sổ ở schedule_checkin_window_test.go.
+	return &model.ClassSession{ClassID: uuid.New(), Date: time.Now().In(sessionDayZone), Status: model.SessionScheduled}, nil
 }
 
 func (r *stubScheduleRepo) StudentCanAttendSession(context.Context, uuid.UUID, uuid.UUID) (bool, error) {

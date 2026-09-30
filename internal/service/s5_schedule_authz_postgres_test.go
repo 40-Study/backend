@@ -275,7 +275,11 @@ func TestS5_SessionAttendance_QuyenGhiDocVaHocVienTrongLop(t *testing.T) {
 		t.Errorf("UpdateAttendance với id thuộc buổi khác phải bị từ chối")
 	}
 
-	// Học viên tự check-in: trong lớp qua, người ngoài lớp 404.
+	// Học viên tự check-in: trong lớp qua, người ngoài lớp 404. Check-in chỉ mở đúng ngày của buổi
+	// (lane P), nên đưa buổi này về hôm nay; cửa sổ ngày có test riêng ở schedule_checkin_window_postgres_test.go.
+	if err := e.f.db.Exec("UPDATE class_sessions SET date = ? WHERE id = ?", time.Now().In(sessionDayZone).Format("2006-01-02"), ses2.ID).Error; err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.StudentCheckIn(ctx, ses2.ID, e.student.ID); err != nil {
 		t.Errorf("check-in học viên trong lớp bị chặn nhầm: %v", err)
 	}
