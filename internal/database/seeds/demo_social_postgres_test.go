@@ -3,7 +3,7 @@ package seeds
 // Lane D seed demo — chạy SeedDemoSocialAndPayouts HAI lần trên Postgres THẬT (schema tạm
 // pgtest.IsolatedSchema, DROP khi xong; không có Postgres: Skip ở local, FAIL khi CI=true).
 // Kiểm số bản ghi đúng kỳ vọng, không tăng ở lần 2, và dữ liệu hiện ra qua CHÍNH repository mà
-// các trang web dùng (danh sách nhóm, hội thoại, ví giảng viên, livestream, lịch cá nhân).
+// các trang web dùng (danh sách nhóm, hội thoại, ví giảng viên, lịch cá nhân).
 
 import (
 	"context"
@@ -46,7 +46,6 @@ func TestSeedDemoSocialAndPayouts_Postgres_IdempotentVaHienTrenTrang(t *testing.
 		{&model.Conversation{}, 6}, {&model.ConversationParticipant{}, 13}, {&model.Message{}, 22},
 		{&model.Order{}, 3}, {&model.OrderItem{}, 3}, {&model.InstructorPayout{}, 5}, {&model.TeacherProfile{}, 2},
 		{&model.CourseExercise{}, 1}, {&model.ExerciseTestCase{}, 4},
-		{&model.Class{}, 2}, {&model.TeacherClass{}, 2}, {&model.StudentClass{}, 2}, {&model.LivestreamSession{}, 2},
 		{&model.PersonalEvent{}, 5}, {&model.Report{}, 4},
 	}
 	for run := 1; run <= 2; run++ {
@@ -114,10 +113,7 @@ func TestSeedDemoSocialAndPayouts_Postgres_IdempotentVaHienTrenTrang(t *testing.
 		t.Errorf("còn %d content exercise chưa gắn bài tập", unlinked)
 	}
 
-	// Livestream: học viên thấy phiên qua lớp mình học; lịch cá nhân trong 2 tuần tới.
-	if _, total, err := repository.NewLivestreamRepository(db).GetAll(ctx, id("student1@demo.com"), false, 1, 20, "", nil, nil); err != nil || total != 1 {
-		t.Errorf("Livestream student1 thấy = %d (err %v), muốn 1", total, err)
-	}
+	// Lịch cá nhân trong 2 tuần tới (lớp + livestream do SeedDemoClasses đảm nhận).
 	events, err := repository.NewPersonalEventRepository(db).ListByUserAndDateRange(ctx, id("student1@demo.com"), time.Now(), time.Now().AddDate(0, 0, 14))
 	if err != nil || len(events) != 3 {
 		t.Errorf("Lịch cá nhân student1 = %d (err %v), muốn 3", len(events), err)

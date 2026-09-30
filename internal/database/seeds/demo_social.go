@@ -16,10 +16,10 @@ var socialDemoEmails = []string{
 	"student1@demo.com", "student2@demo.com",
 }
 
-// SeedDemoSocialAndPayouts seed toàn bộ dữ liệu "xã hội + tiền giáo viên + lớp học" cho demo:
+// SeedDemoSocialAndPayouts seed toàn bộ dữ liệu "xã hội + tiền giáo viên" cho demo:
 // nhóm học & chat (trang (app)/groups, (app)/messages), đơn hàng hoàn tất + yêu cầu rút tiền
 // ((teacher)/teacher/wallet, (admin)/admin/withdrawals), bài tập code gắn vào bài học thực hành,
-// lớp học + livestream, lịch cá nhân ((app)/schedule) và báo cáo kiểm duyệt ((admin)/admin/moderation).
+// lịch cá nhân ((app)/schedule) và báo cáo kiểm duyệt ((admin)/admin/moderation).
 //
 // Phụ thuộc: SeedDemoUsers + SeedDemoCourses (+ nên chạy sau SeedDemoEnrollments để đơn hàng khớp
 // ghi danh). Không phụ thuộc dữ liệu discussions/reviews của seed khác. Mọi bước idempotent.
@@ -43,9 +43,6 @@ func (s *Seeder) SeedDemoSocialAndPayouts(users map[string]model.User, courses m
 		return err
 	}
 	if err := s.SeedDemoCourseExercises(courses); err != nil {
-		return err
-	}
-	if err := s.SeedDemoClassesAndLivestreams(users, courses); err != nil {
 		return err
 	}
 	if err := s.SeedDemoPersonalEvents(users); err != nil {
