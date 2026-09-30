@@ -48,6 +48,7 @@ var ErrGroupInviteGuardMissing = errors.New("group invite guard is not configure
 
 type GroupService struct {
 	inviteGuard     GroupInviteGuard
+	evictor         ChannelEvictor
 	groupRepo       *repository.GroupRepository
 	memberRepo      *repository.GroupMemberRepository
 	joinRequestRepo *repository.GroupJoinRequestRepository
@@ -73,6 +74,14 @@ func NewGroupService(
 
 // SetInviteGuard gan guard moi thanh vien (xem GroupInviteGuard).
 func (s *GroupService) SetInviteGuard(g GroupInviteGuard) { s.inviteGuard = g }
+
+// ChannelEvictor ngừng phát kênh WebSocket cho một user (socket.Notifier cài đặt). Tuỳ chọn: nil = bỏ qua.
+type ChannelEvictor interface {
+	EvictUserFromChannel(userID uuid.UUID, channel string)
+}
+
+// SetChannelEvictor gắn evictor để người rời/bị kick/ban ngừng nhận tin qua kết nối WebSocket đang mở (S6).
+func (s *GroupService) SetChannelEvictor(e ChannelEvictor) { s.evictor = e }
 
 func (s *GroupService) CreateGroup(ctx context.Context, userID uuid.UUID, req dto.CreateGroupRequest) (*dto.GroupResponse, error) {
 	slug, err := utils.GenerateUniqueSlug(req.Name, func(slug string) (bool, error) {
@@ -230,7 +239,24 @@ func (s *GroupService) GetGroupBySlug(ctx context.Context, slug string, userID *
 		return nil, err
 	}
 	if group == nil {
-		return nil, errors.New("group not found")
+		return nil, ErrGroupNotFound
+	}
+
+	// S6: nhóm SECRET chỉ thành viên thấy; người không phải thành viên (kể cả khách chưa đăng nhập)
+	// nhận 404 như nhóm không tồn tại. Nhóm PRIVATE vẫn hiện tên và mô tả để xin vào, nhưng KHÔNG kèm
+	// id hội thoại (xem toGroupResponse): id đó là chìa khoá để nghe/gửi tin của nhóm.
+	if group.Privacy == model.GroupPrivacySecret {
+		isMember := false
+		if userID != nil {
+			member, err := s.memberRepo.GetActiveByGroupAndUser(ctx, group.ID, *userID)
+			if err != nil {
+				return nil, err
+			}
+			isMember = member != nil
+		}
+		if !isMember {
+			return nil, ErrGroupNotFound
+		}
 	}
 
 	return s.toGroupResponse(group, userID), nil
@@ -306,13 +332,17 @@ func (s *GroupService) JoinGroup(ctx context.Context, userID, groupID uuid.UUID,
 		return nil, err
 	}
 	if group == nil {
-		return nil, errors.New("group not found")
+		return nil, ErrGroupNotFound
 	}
 
 	// Check if already a member
 	existing, err := s.memberRepo.GetByGroupAndUser(ctx, groupID, userID)
 	if err != nil {
 		return nil, err
+	}
+	// S6: nhóm SECRET không tồn tại với người chưa được mời: xin vào bằng id cũng 404.
+	if group.Privacy == model.GroupPrivacySecret && (existing == nil || (existing.Status != model.GroupMemberInvited && existing.Status != model.GroupMemberActive)) {
+		return nil, ErrGroupNotFound
 	}
 	if existing != nil {
 		if existing.Status == model.GroupMemberActive {
@@ -400,7 +430,7 @@ func (s *GroupService) LeaveGroup(ctx context.Context, userID, groupID uuid.UUID
 	}
 
 	_ = s.groupRepo.DecrementMemberCount(ctx, groupID)
-	return nil
+	return s.removeFromGroupConversation(ctx, groupID, userID)
 }
 
 // ============================================================================
@@ -557,7 +587,7 @@ func (s *GroupService) RemoveMember(ctx context.Context, requesterID, groupID, t
 	}
 
 	_ = s.groupRepo.DecrementMemberCount(ctx, groupID)
-	return nil
+	return s.removeFromGroupConversation(ctx, groupID, targetUserID)
 }
 
 func (s *GroupService) BanMember(ctx context.Context, requesterID, groupID, targetUserID uuid.UUID) error {
@@ -585,7 +615,8 @@ func (s *GroupService) BanMember(ctx context.Context, requesterID, groupID, targ
 	if wasActive {
 		_ = s.groupRepo.DecrementMemberCount(ctx, groupID)
 	}
-	return nil
+	// Bị cấm thì luôn gỡ khỏi hội thoại, kể cả khi trạng thái trước đó không phải ACTIVE.
+	return s.removeFromGroupConversation(ctx, groupID, targetUserID)
 }
 
 func (s *GroupService) UnbanMember(ctx context.Context, requesterID, groupID, targetUserID uuid.UUID) error {
@@ -739,6 +770,26 @@ func (s *GroupService) requireRole(ctx context.Context, groupID, userID uuid.UUI
 	return errors.New("insufficient permissions")
 }
 
+// removeFromGroupConversation (S6) gỡ người dùng khỏi hội thoại của nhóm (đặt left_at). Lỗi được trả về:
+// nuốt lỗi sẽ để người bị kick/ban đọc và gửi tin tiếp mà không ai biết.
+func (s *GroupService) removeFromGroupConversation(ctx context.Context, groupID, userID uuid.UUID) error {
+	conv, err := s.convRepo.GetByGroupID(ctx, groupID)
+	if err != nil {
+		return err
+	}
+	if conv == nil {
+		return nil
+	}
+	if err := s.participantRepo.MarkLeft(ctx, conv.ID, userID); err != nil {
+		return err
+	}
+	if s.evictor != nil {
+		s.evictor.EvictUserFromChannel(userID, "conversation:"+conv.ID.String())
+		s.evictor.EvictUserFromChannel(userID, "group:"+groupID.String())
+	}
+	return nil
+}
+
 func (s *GroupService) addToGroupConversation(ctx context.Context, groupID, userID uuid.UUID) {
 	conv, err := s.convRepo.GetByGroupID(ctx, groupID)
 	if err != nil || conv == nil {
@@ -747,6 +798,10 @@ func (s *GroupService) addToGroupConversation(ctx context.Context, groupID, user
 
 	existing, err := s.participantRepo.GetByConvAndUser(ctx, conv.ID, userID)
 	if err != nil || existing != nil {
+		return
+	}
+	// Vào lại nhóm sau khi đã rời: kích hoạt lại dòng cũ thay vì chèn dòng mới (chỉ mục duy nhất).
+	if rejoined, err := s.participantRepo.Rejoin(ctx, conv.ID, userID); err != nil || rejoined {
 		return
 	}
 
@@ -776,15 +831,16 @@ func (s *GroupService) toGroupResponse(group *model.Group, userID *uuid.UUID) *d
 		UpdatedAt:      group.UpdatedAt,
 	}
 
-	if group.Conversation != nil {
-		resp.Conversation = &dto.ConversationBrief{ID: group.Conversation.ID}
-	}
-
 	if userID != nil {
 		member, err := s.memberRepo.GetActiveByGroupAndUser(context.Background(), group.ID, *userID)
 		if err == nil && member != nil {
 			role := string(member.Role)
 			resp.MyRole = &role
+			// S6: id hội thoại chỉ trả cho thành viên còn hiệu lực. Trước đây GET /groups/:slug (công khai)
+			// trả cho cả khách, đủ để đăng ký nghe tin nhắn của nhóm qua WebSocket.
+			if group.Conversation != nil {
+				resp.Conversation = &dto.ConversationBrief{ID: group.Conversation.ID}
+			}
 		}
 	}
 

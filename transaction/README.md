@@ -11,6 +11,10 @@ Service đã được cấu hình sẵn trong `docker-compose.yaml`. Chỉ cần
 MB_USERNAME=your_mbbank_username
 MB_PASSWORD=your_mbbank_password
 MB_ACCOUNT_NO=your_account_number
+# BẮT BUỘC. Secret dùng chung với backend Go (cùng biến TRANSACTION_SERVICE_TOKEN trong .env của backend).
+# Thiếu biến này service (cả REST lẫn gRPC) từ chối khởi động, docker-compose cũng không lên.
+TRANSACTION_SERVICE_TOKEN=chuoi-ngau-nhien-dai
+# Chỉ máy dev, thay cho token: ALLOW_INSECURE_TRANSACTIONS=1 (chạy không xác thực, có cảnh báo). KHÔNG dùng ở production.
 ```
 
 **2. Chạy:**
@@ -24,6 +28,13 @@ API sẽ chạy tại `http://localhost:8000`
 ```bash
 docker-compose logs -f mbbank-api
 ```
+
+## Xác thực
+
+Mọi endpoint REST bắt buộc header `X-Transaction-Token: <TRANSACTION_SERVICE_TOKEN>`; thiếu hoặc sai trả 401, và khi
+service chưa cấu hình token thì trả 503 (đóng cửa, không mở). gRPC (`:50051`) đọc cùng token ở metadata
+`x-transaction-token` khi biến được đặt; chưa đặt thì server ghi cảnh báo và nhận mọi request (giữ luồng thanh toán
+đang chạy). Bật theo thứ tự: backend Go trước, service này sau.
 
 ## API Endpoints
 

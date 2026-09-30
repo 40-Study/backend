@@ -12,7 +12,7 @@ WORKDIR /app
 
 COPY --from=builder /root/.local /root/.local
 
-COPY transaction/api.py .
+COPY transaction/api.py transaction/service_token.py ./
 
 ENV PATH=/root/.local/bin:$PATH \
     MB_USERNAME="" \

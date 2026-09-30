@@ -5,6 +5,7 @@ import (
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/service"
+	"study.com/v1/internal/utils"
 )
 
 type UserPreferenceHandler struct {
@@ -40,6 +41,10 @@ func (h *UserPreferenceHandler) UpdatePrivacySettings(c *fiber.Ctx) error {
 	var req dto.UpdatePrivacySettingsDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Giá trị cài đặt không hợp lệ", "errors": errs})
 	}
 
 	result, err := h.svc.UpdatePrivacySettings(userID, req)

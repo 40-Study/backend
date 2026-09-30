@@ -25,14 +25,21 @@ type ReviewServiceInterface interface {
 }
 
 type ReviewService struct {
-	repo       repository.ReviewRepositoryInterface
-	courseRepo repository.CourseRepositoryInterface
-	redis      *redis.Client
+	repo           repository.ReviewRepositoryInterface
+	courseRepo     repository.CourseRepositoryInterface
+	enrollmentRepo repository.EnrollmentRepositoryInterface
+	redis          *redis.Client
 }
 
-func NewReviewService(repo repository.ReviewRepositoryInterface, courseRepo repository.CourseRepositoryInterface, redis *redis.Client) *ReviewService {
-	return &ReviewService{repo: repo, courseRepo: courseRepo, redis: redis}
+func NewReviewService(repo repository.ReviewRepositoryInterface, courseRepo repository.CourseRepositoryInterface, enrollmentRepo repository.EnrollmentRepositoryInterface, redis *redis.Client) *ReviewService {
+	return &ReviewService{repo: repo, courseRepo: courseRepo, enrollmentRepo: enrollmentRepo, redis: redis}
 }
+
+// ErrReviewNotEnrolled (S6): chỉ học viên ĐANG ghi danh hoặc đã hoàn thành khoá mới được đánh giá.
+// Trước đây chỉ cần đăng nhập nên ai cũng chấm sao được khoá chưa từng học (và đơn đã hoàn tiền vẫn
+// giữ được đánh giá): làm sai điểm trung bình hiển thị công khai. Hoàn tiền soft-delete enrollment
+// (admin_order_service.go: revokeEnrollmentsForRefund) nên "đã hoàn tiền" tự rơi vào nhánh này.
+var ErrReviewNotEnrolled = apperr.Forbidden("Bạn cần đăng ký khoá học này mới đánh giá được")
 
 // recomputeCourseRatingStats (H6) tính lại average_rating/total_reviews thật từ
 // bảng reviews rồi ghi vào courses, gọi sau mỗi lần tạo/xoá review để 2 cột này
@@ -73,8 +80,21 @@ func (s *ReviewService) invalidateRatingCache(ctx context.Context, courseID uuid
 }
 
 func (s *ReviewService) CreateReview(ctx context.Context, userID, courseID uuid.UUID, req dto.CreateReviewDTO) (*dto.ReviewResponseDTO, error) {
+	// S6: phải có ghi danh còn hiệu lực (chưa bị xoá mềm do huỷ/hoàn tiền) — đang học hoặc đã hoàn thành.
+	// Lỗi hạ tầng trả nguyên để không biến sự cố DB thành "chưa ghi danh".
+	enrollment, err := s.enrollmentRepo.GetByUserAndCourse(ctx, userID, courseID)
+	if err != nil {
+		return nil, err
+	}
+	if enrollment == nil {
+		return nil, ErrReviewNotEnrolled
+	}
+
 	// Check if already reviewed
-	existing, _ := s.repo.GetReviewByUserAndCourse(ctx, userID, courseID)
+	existing, err := s.repo.GetReviewByUserAndCourse(ctx, userID, courseID)
+	if err != nil {
+		return nil, err
+	}
 	if existing != nil {
 		return nil, apperr.Conflict("you have already reviewed this course")
 	}
@@ -89,6 +109,11 @@ func (s *ReviewService) CreateReview(ctx context.Context, userID, courseID uuid.
 	}
 
 	if err := s.repo.CreateReview(ctx, review); err != nil {
+		// Hai request đồng thời cùng qua bước kiểm "đã đánh giá": chỉ mục duy nhất (user_id, course_id)
+		// chặn dòng thứ hai — trả 409 thay vì 500.
+		if isDuplicateKey(err) {
+			return nil, apperr.Conflict("you have already reviewed this course")
+		}
 		return nil, err
 	}
 

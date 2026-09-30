@@ -109,6 +109,9 @@ type PublicProfileResponse struct {
 	AvatarURL            *string                           `json:"avatar_url,omitempty"`
 	Bio                  *string                           `json:"bio,omitempty"`
 	JoinedAt             time.Time                         `json:"joined_at"`
+	// IsPrivate (S6): chủ hồ sơ đặt riêng tư nên người xem chỉ nhận tên + avatar; mọi trường còn lại
+	// (stats, bio, thành tích, hoạt động, khoá đã hoàn thành) để trống.
+	IsPrivate            bool                              `json:"is_private"`
 	Stats                UserStatsDTO                      `json:"stats"`
 	FeaturedAchievements []PublicProfileAchievementDTO     `json:"featured_achievements"`
 	Activity             []PublicProfileActivityDTO        `json:"activity"`

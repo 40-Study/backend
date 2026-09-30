@@ -98,11 +98,11 @@ func (r *GroupRepository) List(ctx context.Context, keyword string, privacy stri
 
 	query := r.db.WithContext(ctx).Model(&model.Group{})
 
+	// S6: danh sách công khai KHÔNG BAO GIỜ trả nhóm SECRET. Trước đây ?privacy=SECRET liệt kê được chúng
+	// (chỉ trường hợp mặc định mới lọc), làm lộ slug của nhóm bí mật.
+	query = query.Where("privacy != ?", model.GroupPrivacySecret)
 	if privacy != "" {
 		query = query.Where("privacy = ?", privacy)
-	} else {
-		// By default, don't show SECRET groups in listings
-		query = query.Where("privacy != ?", model.GroupPrivacySecret)
 	}
 
 	if keyword != "" {

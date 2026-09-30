@@ -7,7 +7,11 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 )
+
+// TokenMetadataKey là khoá metadata gRPC mang secret dùng chung với service Python (grpc_server.py).
+const TokenMetadataKey = "x-transaction-token"
 
 // TransactionClient is a client for the TransactionService gRPC service
 type TransactionClient struct {
@@ -16,12 +20,17 @@ type TransactionClient struct {
 	addr   string
 }
 
-// NewTransactionClient creates a new transaction gRPC client
-func NewTransactionClient(addr string) (*TransactionClient, error) {
-	conn, err := grpc.NewClient(
-		addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+// NewTransactionClient creates a new transaction gRPC client.
+//
+// token (S6): secret dùng chung với service giao dịch, gắn vào metadata của MỌI lời gọi. token rỗng thì
+// không gắn gì — giữ nguyên hành vi cũ để bật xác thực theo từng bước mà không làm hỏng luồng thanh toán
+// (đặt token ở backend Go trước, rồi mới bật ở service Python).
+func NewTransactionClient(addr string, token string) (*TransactionClient, error) {
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	if token != "" {
+		opts = append(opts, grpc.WithUnaryInterceptor(tokenInterceptor(token)))
+	}
+	conn, err := grpc.NewClient(addr, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to transaction service: %w", err)
 	}
@@ -31,6 +40,14 @@ func NewTransactionClient(addr string) (*TransactionClient, error) {
 		client: NewTransactionServiceClient(conn),
 		addr:   addr,
 	}, nil
+}
+
+// tokenInterceptor gắn token vào metadata gửi đi của mọi RPC unary.
+func tokenInterceptor(token string) grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		ctx = metadata.AppendToOutgoingContext(ctx, TokenMetadataKey, token)
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
 }
 
 // Close closes the gRPC connection

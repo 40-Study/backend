@@ -188,7 +188,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		// ===== Gamification =====
 		Achievement: handler.NewAchievementHandler(services.Achievement),
 		Leaderboard: handler.NewLeaderboardHandler(services.Leaderboard),
-		UserStats:   handler.NewUserStatsHandler(services.UserStats),
+		UserStats:   handler.NewUserStatsHandler(services.UserStats, permChecker),
 		// ===== Wallet =====
 		Wallet:     handler.NewWalletHandler(services.Wallet),
 		Withdrawal: handler.NewWithdrawalHandler(services.Withdrawal),

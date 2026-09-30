@@ -20,9 +20,9 @@ type TransactionService struct {
 }
 
 // NewTransactionService creates a new transaction service
-func NewTransactionService(host, port string) (*TransactionService, error) {
+func NewTransactionService(host, port, token string) (*TransactionService, error) {
 	addr := fmt.Sprintf("%s:%s", host, port)
-	client, err := grpc.NewTransactionClient(addr)
+	client, err := grpc.NewTransactionClient(addr, token)
 	if err != nil {
 		return nil, err
 	}

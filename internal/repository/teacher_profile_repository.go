@@ -50,7 +50,8 @@ func (r *TeacherProfileRepository) GetAll(ctx context.Context, page, pageSize in
 		Joins("JOIN users ON users.id = teacher_profiles.user_id").
 		Where("teacher_profiles.approval_status = ?", model.TeacherApprovalApproved)
 	query = utils.ApplySoftDeleteStatus(query, status)
-	query = utils.ApplyKeywordSearch(query, keyword, "users.user_name", "users.email", "teacher_profiles.specialization", "teacher_profiles.department")
+	// S6: chỉ tìm theo tên hoặc chuyên môn, KHÔNG theo email (route công khai, xem teacher_repository.go).
+	query = utils.ApplyKeywordSearch(query, keyword, "users.user_name", "teacher_profiles.specialization", "teacher_profiles.department")
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err

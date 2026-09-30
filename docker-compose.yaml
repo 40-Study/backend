@@ -13,11 +13,12 @@ services:
     container_name: mbbank-transaction-api
     ports:
       - "8000:8000"   # REST API
-      - "50051:50051" # gRPC
+      - "127.0.0.1:50051:50051" # gRPC: chỉ loopback (backend Go cùng máy gọi localhost:50051; trong mạng docker dùng mbbank-api:50051, không cần publish)
     environment:
       - MB_USERNAME=${MB_USERNAME}
       - MB_PASSWORD=${MB_PASSWORD}
       - MB_ACCOUNT_NO=${MB_ACCOUNT_NO}
+      - TRANSACTION_SERVICE_TOKEN=${TRANSACTION_SERVICE_TOKEN:?TRANSACTION_SERVICE_TOKEN is required}
       - WEBHOOK_URL=${WEBHOOK_URL:-http://host.docker.internal:3000/api/v1/payment/webhook}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-your-webhook-secret}
       - POLL_INTERVAL=${POLL_INTERVAL:-30}

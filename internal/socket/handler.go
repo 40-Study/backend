@@ -32,6 +32,10 @@ type FiberClient struct {
 	closed     bool
 	channels   map[string]bool
 	channelMu  sync.RWMutex
+	// hubClient là con trỏ DUY NHẤT hub biết tới (S6): Register, Unregister và đăng ký kênh đều phải dùng đúng
+	// con trỏ này. Trước đây mỗi chỗ tạo một &Client mới nên Unregister không bao giờ tìm thấy client đã đăng ký,
+	// kênh của hub không có Send để phát tin, và client đã đóng vẫn bị phát tới (panic send on closed channel).
+	hubClient *Client
 }
 
 func newFiberClient(userID uuid.UUID, conn *websocket.Conn, hub *Hub, authorizer ChannelAuthorizer) *FiberClient {
@@ -77,9 +81,7 @@ func (h *Handler) HandleWebSocket(c *fiber.Ctx) error {
 		wsUserID := conn.Locals("ws_user_id").(uuid.UUID)
 
 		client := newFiberClient(wsUserID, conn, h.hub, h.authorizer)
-
-		// Register client with hub
-		h.hub.Register <- &Client{
+		client.hubClient = &Client{
 			ID:         client.ID,
 			UserID:     client.UserID,
 			Hub:        h.hub,
@@ -88,16 +90,15 @@ func (h *Handler) HandleWebSocket(c *fiber.Ctx) error {
 			channels:   client.channels,
 		}
 
+		// Register client with hub
+		h.hub.Register <- client.hubClient
+
 		log.Printf("[WS] Client connected: user=%s, client=%s", client.UserID, client.ID)
 
 		// Auto-subscribe to personal notification channel
 		personalChannel := "user:" + client.UserID.String()
 		client.channels[personalChannel] = true
-		h.hub.SubscribeToChannel(&Client{
-			ID:       client.ID,
-			UserID:   client.UserID,
-			channels: client.channels,
-		}, personalChannel)
+		h.hub.SubscribeToChannel(client.hubClient, personalChannel)
 
 		// Start writer goroutine
 		go client.writePump()
@@ -114,11 +115,7 @@ func (h *Handler) HandleWebSocket(c *fiber.Ctx) error {
 
 func (c *FiberClient) readPump() {
 	defer func() {
-		c.Hub.Unregister <- &Client{
-			ID:       c.ID,
-			UserID:   c.UserID,
-			channels: c.channels,
-		}
+		c.Hub.Unregister <- c.hubClient
 		c.close()
 	}()
 
@@ -200,6 +197,21 @@ func (c *FiberClient) handleMessage(data []byte) {
 		if err := json.Unmarshal(msg.Payload, &payload); err == nil {
 			payload.UserID = c.UserID
 			channelName := "conversation:" + payload.ConversationID
+			// S6: chỉ chuyển tiếp "đang gõ" vào kênh mà chính client này đã đăng ký được (đã qua authorizer);
+			// trước đây gửi được vào hội thoại bất kỳ chỉ cần biết id.
+			c.channelMu.RLock()
+			subscribed := c.channels[channelName]
+			c.channelMu.RUnlock()
+			// Kiểm lại quyền ngay lúc gõ: bị kick/ban sau khi đăng ký thì c.channels vẫn còn kênh cũ.
+			if subscribed && c.authorizer != nil {
+				if ok, err := c.authorizer.CanSubscribe(c.UserID, channelName); err != nil || !ok {
+					subscribed = false
+				}
+			}
+			if !subscribed {
+				c.sendError("typing_denied", "You are not subscribed to this conversation")
+				return
+			}
 			c.Hub.SendToChannel(channelName, Message{
 				Event:   EventConversationTyping,
 				Payload: payload,
@@ -248,11 +260,7 @@ func (c *FiberClient) subscribe(channel string) {
 	c.channels[channel] = true
 	c.channelMu.Unlock()
 
-	c.Hub.SubscribeToChannel(&Client{
-		ID:       c.ID,
-		UserID:   c.UserID,
-		channels: c.channels,
-	}, channel)
+	c.Hub.SubscribeToChannel(c.hubClient, channel)
 }
 
 func (c *FiberClient) unsubscribe(channel string) {
@@ -260,11 +268,7 @@ func (c *FiberClient) unsubscribe(channel string) {
 	delete(c.channels, channel)
 	c.channelMu.Unlock()
 
-	c.Hub.UnsubscribeFromChannel(&Client{
-		ID:       c.ID,
-		UserID:   c.UserID,
-		channels: c.channels,
-	}, channel)
+	c.Hub.UnsubscribeFromChannel(c.hubClient, channel)
 }
 
 func (c *FiberClient) close() {

@@ -40,7 +40,10 @@ func (r *TeacherRepository) GetAllTeachers(ctx context.Context, page, pageSize i
 
 	query := r.teacherQuery(ctx)
 	query = utils.ApplySoftDeleteStatus(query, status)
-	query = utils.ApplyKeywordSearch(query, keyword, "users.user_name", "users.email", "users.full_name")
+	// S6: KHÔNG tìm theo users.email. Route công khai (GET /teachers) trước đây khớp keyword với email nên
+	// gõ "ten@gmail.com" (hoặc dò từng tiền tố) là dựng lại được email giảng viên, vô hiệu hoá việc S3 đã
+	// bỏ email khỏi DTO. Chỉ tìm theo tên.
+	query = utils.ApplyKeywordSearch(query, keyword, "users.user_name", "users.full_name")
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err

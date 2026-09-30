@@ -1,10 +1,12 @@
 import grpc
+import hmac
 import time
 from concurrent import futures
 import datetime
 import logging
 import os
 import mbbank
+import service_token
 
 import transaction_pb2
 import transaction_pb2_grpc
@@ -15,6 +17,35 @@ logger = logging.getLogger(__name__)
 USERNAME = ""
 PASSWORD = ""
 ACCOUNT_NO = ""
+
+# S6: xác thực giữa backend Go và service này bằng token dùng chung trong metadata gRPC
+# "x-transaction-token" (cùng biến TRANSACTION_SERVICE_TOKEN với api.py và backend Go).
+# Luồng mua xu/thanh toán gọi CheckTransaction qua đây nên KHÔNG được làm hỏng: khi chưa cấu hình token,
+# server vẫn nhận mọi request (như trước) nhưng ghi cảnh báo lớn lúc khởi động; khi đã cấu hình, request
+# thiếu/sai token bị từ chối UNAUTHENTICATED. Bật token: đặt cùng giá trị ở CẢ HAI phía (Go trước, rồi Python).
+TOKEN_METADATA_KEY = "x-transaction-token"
+
+
+class TokenAuthInterceptor(grpc.ServerInterceptor):
+    """Từ chối RPC không kèm đúng token trong metadata."""
+
+    def __init__(self, token: str):
+        self._token = token.encode("utf-8")
+
+        def deny(request, context):
+            context.abort(grpc.StatusCode.UNAUTHENTICATED, "invalid or missing service token")
+
+        self._deny_handler = grpc.unary_unary_rpc_method_handler(deny)
+
+    def intercept_service(self, continuation, handler_call_details):
+        provided = ""
+        for key, value in handler_call_details.invocation_metadata or ():
+            if key == TOKEN_METADATA_KEY:
+                provided = value
+                break
+        if hmac.compare_digest(str(provided).encode("utf-8"), self._token):
+            return continuation(handler_call_details)
+        return self._deny_handler
 
 
 def parse_timestamp(ts):
@@ -154,9 +185,13 @@ class TransactionServicer(transaction_pb2_grpc.TransactionServiceServicer):
         )
 
 
-def serve(port=50051, max_workers=10):
-    """Start gRPC server"""
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
+def serve(port=50051, max_workers=10, token=""):
+    """Start gRPC server. Token rỗng chỉ được phép khi ALLOW_INSECURE_TRANSACTIONS=1 (dev), còn lại từ chối khởi động."""
+    if not token:
+        # load_service_token raise MissingServiceTokenError khi không có cờ dev; có cờ thì trả "" kèm cảnh báo.
+        token = service_token.load_service_token({**os.environ, "TRANSACTION_SERVICE_TOKEN": ""})
+    interceptors = [TokenAuthInterceptor(token)] if token else []
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers), interceptors=interceptors)
     transaction_pb2_grpc.add_TransactionServiceServicer_to_server(
         TransactionServicer(), server
     )
@@ -173,7 +208,7 @@ if __name__ == '__main__':
     PASSWORD = os.getenv("MB_PASSWORD", "")
     ACCOUNT_NO = os.getenv("MB_ACCOUNT_NO", "")
 
-    server = serve()
+    server = serve(token=service_token.load_service_token())
     try:
         while True:
             time.sleep(86400)

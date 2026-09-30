@@ -90,6 +90,11 @@ func (n *Notifier) SendAchievement(userID uuid.UUID, payload interface{}) {
 	})
 }
 
+// EvictUserFromChannel: xem Hub.EvictUserFromChannel.
+func (n *Notifier) EvictUserFromChannel(userID uuid.UUID, channel string) {
+	n.hub.EvictUserFromChannel(userID, channel)
+}
+
 // SendToChannel sends a custom message to a channel
 func (n *Notifier) SendToChannel(channel string, event string, payload interface{}) {
 	n.hub.SendToChannel(channel, Message{

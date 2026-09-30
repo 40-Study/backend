@@ -57,17 +57,18 @@ func (h *Hub) Run() {
 // registerClient adds a client to the hub
 func (h *Hub) registerClient(client *Client) {
 	h.clientsMu.Lock()
-	defer h.clientsMu.Unlock()
-
 	if _, ok := h.clients[client.UserID]; !ok {
 		h.clients[client.UserID] = make(map[*Client]bool)
 	}
 	h.clients[client.UserID][client] = true
+	total := h.countConnections()
+	h.clientsMu.Unlock()
 
 	log.Printf("Client registered: user=%s, client=%s, total_connections=%d",
-		client.UserID, client.ID, h.countConnections())
+		client.UserID, client.ID, total)
 
-	// Broadcast user online status
+	// S6: phải nhả clientsMu TRƯỚC khi phát trạng thái online. broadcastUserStatus -> BroadcastAll cần RLock cùng
+	// mutex; giữ Lock rồi gọi nó là tự khoá chết goroutine Run, và mọi kết nối WebSocket sau đó treo ở Register.
 	h.broadcastUserStatus(client.UserID, true)
 }
 
@@ -143,6 +144,25 @@ func (h *Hub) SubscribeToChannel(client *Client, channel string) {
 	log.Printf("Client subscribed to channel: user=%s, channel=%s", client.UserID, channel)
 }
 
+// EvictUserFromChannel gỡ MỌI kết nối của user khỏi kênh (S6): người bị kick/ban/rời nhóm đang mở WebSocket
+// không nhận thêm tin của hội thoại nhóm dù đã đăng ký từ trước. Chỉ gỡ ở hub (ngừng phát); kết nối vẫn sống.
+func (h *Hub) EvictUserFromChannel(userID uuid.UUID, channel string) {
+	h.channelsMu.Lock()
+	defer h.channelsMu.Unlock()
+	clients, ok := h.channels[channel]
+	if !ok {
+		return
+	}
+	for client := range clients {
+		if client.UserID == userID {
+			delete(clients, client)
+		}
+	}
+	if len(clients) == 0 {
+		delete(h.channels, channel)
+	}
+}
+
 // UnsubscribeFromChannel removes a client from a channel
 func (h *Hub) UnsubscribeFromChannel(client *Client, channel string) {
 	h.channelsMu.Lock()
@@ -178,15 +198,16 @@ func (h *Hub) HandleClientMessage(client *Client, msg IncomingMessage) {
 
 // SendToUser sends a message to all connections of a specific user
 func (h *Hub) SendToUser(userID uuid.UUID, msg Message) {
+	// S6: sao chép danh sách client KHI CÒN giữ khoá rồi mới gửi. Trước đây nhả RLock rồi duyệt map bên trong
+	// trong lúc Register/Unregister ghi vào nó: "concurrent map iteration and map write" là fatal error, sập cả process.
 	h.clientsMu.RLock()
-	clients, ok := h.clients[userID]
+	targets := make([]*Client, 0, len(h.clients[userID]))
+	for client := range h.clients[userID] {
+		targets = append(targets, client)
+	}
 	h.clientsMu.RUnlock()
 
-	if !ok {
-		return
-	}
-
-	for client := range clients {
+	for _, client := range targets {
 		_ = client.SendMessage(msg)
 	}
 }
@@ -200,15 +221,15 @@ func (h *Hub) SendToUsers(userIDs []uuid.UUID, msg Message) {
 
 // SendToChannel sends a message to all clients in a channel
 func (h *Hub) SendToChannel(channel string, msg Message) {
+	// S6: cùng lý do với SendToUser, sao chép khi còn giữ khoá (Subscribe/Unsubscribe/Evict ghi vào map này).
 	h.channelsMu.RLock()
-	clients, ok := h.channels[channel]
+	targets := make([]*Client, 0, len(h.channels[channel]))
+	for client := range h.channels[channel] {
+		targets = append(targets, client)
+	}
 	h.channelsMu.RUnlock()
 
-	if !ok {
-		return
-	}
-
-	for client := range clients {
+	for _, client := range targets {
 		_ = client.SendMessage(msg)
 	}
 }

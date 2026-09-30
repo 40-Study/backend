@@ -40,7 +40,8 @@ func SetupLeaderboardRoutes(api fiber.Router, cfg *config.Config, h *handler.Lea
 }
 
 // SetupUserStatsRoutes registers /users/:id/public-profile endpoint.
-// GET /users/:id/public-profile - public
-func SetupUserStatsRoutes(api fiber.Router, h *handler.UserStatsHandler) {
-	api.Get("/users/:id/public-profile", h.GetPublicProfile)
+// GET /users/:id/public-profile - công khai nhưng theo người xem (S6): OptionalAuth để biết khách,
+// chủ hồ sơ hay admin, rồi áp cài đặt riêng tư của chủ hồ sơ.
+func SetupUserStatsRoutes(api fiber.Router, cfg *config.Config, h *handler.UserStatsHandler, redis *redis.Client) {
+	api.Get("/users/:id/public-profile", middleware.OptionalAuth(cfg, redis), h.GetPublicProfile)
 }

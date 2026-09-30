@@ -18,32 +18,6 @@ import (
 	"study.com/v1/internal/utils"
 )
 
-// defaultAuthorizer allows all authenticated users to subscribe to their own channels
-type defaultAuthorizer struct{}
-
-func (a *defaultAuthorizer) CanSubscribe(userID uuid.UUID, channel string) (bool, error) {
-	// Allow users to subscribe to their personal notification channel
-	// Format: "user:{userID}"
-	if channel == fmt.Sprintf("user:%s", userID.String()) {
-		return true, nil
-	}
-	// Allow subscribing to general notifications
-	if channel == "notifications" {
-		return true, nil
-	}
-	// Allow subscribing to conversation channels
-	// Format: "conversation:{conversationID}"
-	if len(channel) > 13 && channel[:13] == "conversation:" {
-		return true, nil
-	}
-	// Allow subscribing to group channels
-	// Format: "group:{groupID}"
-	if len(channel) > 6 && channel[:6] == "group:" {
-		return true, nil
-	}
-	return false, nil
-}
-
 type App struct {
 	Resources *Resources
 	Repos     *Repositories
@@ -60,8 +34,9 @@ func New() (*App, error) {
 	hub := socket.NewHub()
 	go hub.Run()
 	notifier := socket.NewNotifier(hub)
-	socketHandler := socket.NewHandler(hub, &defaultAuthorizer{})
 	repos := InitRepositories(resources.DB)
+	// S6: authorizer thật (kiểm participant/thành viên nhóm), thay defaultAuthorizer cho phép mọi kênh.
+	socketHandler := socket.NewHandler(hub, newWSChannelAuthorizer(repos.ConversationParticipant, repos.GroupMember))
 
 	// C-02 (audit 260909): PermissionChecker triển khai thật cho RequirePermissions (trước
 	// đây là no-op không dùng ở đâu). Dùng chung các repository RBAC đã có sẵn trong repos.

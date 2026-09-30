@@ -370,6 +370,28 @@ func RunPostMigrations(db *gorm.DB) error {
 				END $$;
 			`,
 		},
+		{
+			// S6 backfill: rời/kick/ban nhóm trước đây không đặt conversation_participants.left_at nên
+			// người đã rời hoặc bị cấm vẫn đọc/gửi được tin nhóm. Gỡ mọi participant của hội thoại nhóm
+			// mà không còn là thành viên ACTIVE của nhóm. Idempotent: chỉ chạm dòng left_at IS NULL, và
+			// đường thêm thành viên (addToGroupConversation) luôn tạo/khôi phục cả hai bên cùng lúc.
+			name: "backfill conversation_participants.left_at cho thanh vien nhom da roi/bi cam (S6)",
+			sql: `
+				UPDATE conversation_participants cp
+				SET left_at = NOW(), unread_count = 0
+				FROM conversations c
+				WHERE cp.conversation_id = c.id
+				  AND c.group_id IS NOT NULL
+				  AND cp.left_at IS NULL
+				  AND NOT EXISTS (
+					SELECT 1 FROM group_members gm
+					WHERE gm.group_id = c.group_id
+					  AND gm.user_id = cp.user_id
+					  AND gm.status = 'ACTIVE'
+					  AND gm.deleted_at IS NULL
+				  );
+			`,
+		},
 	}
 	statements = append(statements, contestPostMigrations()...)
 
