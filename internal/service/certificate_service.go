@@ -89,6 +89,15 @@ func (s *CertificateService) IssueCertificate(ctx context.Context, userID, cours
 		return nil, fmt.Errorf("check existing certificate: %w", err)
 	}
 	if existing != nil {
+		// Chứng chỉ bị thu hồi do hoàn tiền: học viên mua lại và học xong lần nữa thì cấp lại đúng
+		// số cũ (unique index chỉ cho một dòng cho mỗi user+course), không tạo dòng mới.
+		if reinstated, err := s.reinstateRevoked(ctx, existing, enrollment); err != nil {
+			return nil, err
+		} else if reinstated {
+			if loaded, _ := s.repo.GetCertificateByID(ctx, existing.ID); loaded != nil {
+				return s.mapCertToDTO(loaded), nil
+			}
+		}
 		return nil, errors.New("certificate already issued for this course")
 	}
 
@@ -205,7 +214,8 @@ func (s *CertificateService) ensureCertificate(ctx context.Context, e *model.Enr
 		return fmt.Errorf("check existing certificate: %w", err)
 	}
 	if existing != nil {
-		return nil
+		_, err := s.reinstateRevoked(ctx, existing, e)
+		return err
 	}
 	if _, err := s.createCertificate(ctx, e.UserID, e.CourseID, e.ID); err != nil {
 		// Thua race với request song song: unique index đã có bản ghi -> coi như đã cấp.
@@ -216,6 +226,41 @@ func (s *CertificateService) ensureCertificate(ctx context.Context, e *model.Enr
 		return fmt.Errorf("issue certificate for enrollment %s: %w", e.ID, err)
 	}
 	return nil
+}
+
+// reinstateRevoked cấp lại chứng chỉ đã bị thu hồi (hoàn tiền) — chỉ khi ghi danh e đã hoàn thành
+// SAU thời điểm thu hồi, tức học viên đã mua lại rồi học xong lần nữa (mua lại đặt completed_at về
+// nil, xem completeOrderFulfillment). Chứng chỉ chưa thu hồi thì không làm gì. Trả true khi vừa cấp
+// lại. Giữ nguyên số chứng chỉ, chỉ gắn ghi danh mới và đặt lại ngày cấp.
+func (s *CertificateService) reinstateRevoked(ctx context.Context, cert *model.Certificate, e *model.Enrollment) (bool, error) {
+	if cert.RevokedAt == nil {
+		return false, nil
+	}
+	if e.CompletedAt == nil || !e.CompletedAt.After(*cert.RevokedAt) {
+		return false, nil
+	}
+	cert.RevokedAt = nil
+	cert.EnrollmentID = e.ID
+	cert.IssuedAt = time.Now()
+	if err := s.repo.UpdateCertificate(ctx, cert); err != nil {
+		return false, fmt.Errorf("reinstate certificate %s: %w", cert.ID, err)
+	}
+	return true, nil
+}
+
+// InvalidateCertificateVerifyCache xoá cache tra cứu công khai của các số chứng chỉ vừa thu hồi để
+// trang verify không còn báo "hợp lệ" tới 30 phút sau hoàn tiền. redis nil = không có cache.
+func InvalidateCertificateVerifyCache(ctx context.Context, rdb *redis.Client, numbers []string) {
+	if rdb == nil || len(numbers) == 0 {
+		return
+	}
+	keys := make([]string, len(numbers))
+	for i, n := range numbers {
+		keys[i] = certVerifyCachePrefix + n
+	}
+	if err := rdb.Del(ctx, keys...).Err(); err != nil {
+		log.Printf("[certificate] không xoá được cache tra cứu của %d chứng chỉ vừa thu hồi: %v", len(keys), err)
+	}
 }
 
 func (s *CertificateService) GetMyCertificates(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.CertificateListDTO, error) {
@@ -245,7 +290,8 @@ func (s *CertificateService) GetMyCertificates(ctx context.Context, userID uuid.
 
 func (s *CertificateService) GetCertificateByID(ctx context.Context, id uuid.UUID) (*dto.CertificateResponseDTO, error) {
 	cert, err := s.repo.GetCertificateByID(ctx, id)
-	if err != nil || cert == nil {
+	// Đã thu hồi (hoàn tiền) coi như không tồn tại với chủ sở hữu: không xem, không tải được nữa.
+	if err != nil || cert == nil || cert.RevokedAt != nil {
 		return nil, errors.New("certificate not found")
 	}
 	return s.mapCertToDTO(cert), nil
@@ -274,6 +320,10 @@ func (s *CertificateService) VerifyCertificate(ctx context.Context, number strin
 			CertificateNumber: number,
 		}
 		return result, nil
+	}
+	if cert.RevokedAt != nil {
+		// Không cache và không trả tên/khoá học: trang công khai chỉ cần biết mã này đã bị thu hồi.
+		return &dto.VerifyCertificateResponseDTO{Valid: false, Revoked: true, CertificateNumber: cert.CertificateNumber}, nil
 	}
 
 	userName := cert.User.UserName

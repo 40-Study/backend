@@ -544,6 +544,11 @@ func (s *PaymentService) expireOrderTx(ctx context.Context, order *model.Order, 
 // trị này để hoàn tiền; varchar(20) nên giữ đúng độ dài hiện tại.
 const latePaymentHistoryStatus = "payment_after_expiry"
 
+// lateRefundDoneHistoryStatus — to_status của dòng history admin ghi khi ĐÃ chuyển khoản hoàn tiền
+// cho đơn có cờ latePaymentHistoryStatus. Đủ 1 dòng là cờ "cần hoàn tiền" tắt và web đổi badge
+// thành "Đã hoàn tiền". Cũng varchar(20) (16 ký tự).
+const lateRefundDoneHistoryStatus = "late_refund_done"
+
 // expireWithLatePayment (re-review #76 vòng 2): có giao dịch ngân hàng cho mã này nhưng không đủ
 // điều kiện hoàn tất (về SAU hạn mã, sai số tiền, hoặc không đọc được ngày). Vẫn chốt "expired"
 // (quyết định: đơn quá hạn không thanh toán được), nhưng KHÔNG im lặng: log [PAYMENT-ALERT] + ghi

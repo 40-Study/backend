@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
@@ -20,6 +21,9 @@ import (
 var (
 	ErrOrderNotRefundable   = errors.New("only completed orders can be refunded")
 	ErrOrderAlreadyRefunded = errors.New("order already refunded")
+	// ErrLateRefundNotNeeded: đơn không có cờ tiền về muộn (payment_after_expiry) nên không có gì
+	// để ghi nhận hoàn tiền.
+	ErrLateRefundNotNeeded = errors.New("order has no late payment to refund")
 )
 
 // AdminOrderServiceInterface — xem context đầy đủ ở phase-02-orders-refund.md (đơn hàng admin +
@@ -27,6 +31,7 @@ var (
 type AdminOrderServiceInterface interface {
 	ListOrders(ctx context.Context, filter repository.AdminOrderFilter) (*dto.AdminOrderListResponse, error)
 	RefundOrder(ctx context.Context, actorID, orderID uuid.UUID, reason, refundMethod, transactionRef string) (*dto.RefundOrderResponse, error)
+	MarkLatePaymentRefunded(ctx context.Context, actorID, orderID uuid.UUID, note, transactionRef string) (*dto.LateRefundResponse, error)
 	GetRevenueReport(ctx context.Context, from, to time.Time) (*dto.RevenueReportResponse, error)
 }
 
@@ -35,7 +40,13 @@ type AdminOrderService struct {
 	orderItemRepo  repository.OrderItemRepositoryInterface
 	enrollmentRepo repository.EnrollmentRepositoryInterface
 	courseRepo     repository.CourseRepositoryInterface
+	// redis: chỉ để xoá cache tra cứu chứng chỉ vừa thu hồi khi hoàn tiền (SetCertificateCache).
+	redis *redis.Client
 }
+
+// SetCertificateCache gắn Redis dùng cho cache tra cứu chứng chỉ công khai, để hoàn tiền xoá cache
+// của chứng chỉ vừa thu hồi. Không gắn (nil) thì bỏ qua bước xoá cache.
+func (s *AdminOrderService) SetCertificateCache(rdb *redis.Client) { s.redis = rdb }
 
 func NewAdminOrderService(
 	orderRepo repository.OrderRepositoryInterface,
@@ -76,19 +87,21 @@ func (s *AdminOrderService) ListOrders(ctx context.Context, filter repository.Ad
 				FinalPrice:  it.FinalPrice,
 			})
 		}
+		needRefund, lateRefundedAt := lateRefundState(s.orderRepo.TxDB(), &order)
 		items = append(items, dto.AdminOrderListItem{
-			ID:            order.ID,
-			OrderNumber:   order.OrderNumber,
-			UserID:        order.UserID,
-			UserEmail:     order.User.Email,
-			TotalAmount:   order.TotalAmount,
-			Currency:      order.Currency,
-			Status:        order.Status,
-			PaymentMethod: order.PaymentMethod,
-			CreatedAt:     order.CreatedAt,
-			PaidAt:        order.PaidAt,
-			Items:         itemBriefs,
-			RefundNeeded:  refundNeeded(s.orderRepo.TxDB(), &order),
+			ID:             order.ID,
+			OrderNumber:    order.OrderNumber,
+			UserID:         order.UserID,
+			UserEmail:      order.User.Email,
+			TotalAmount:    order.TotalAmount,
+			Currency:       order.Currency,
+			Status:         order.Status,
+			PaymentMethod:  order.PaymentMethod,
+			CreatedAt:      order.CreatedAt,
+			PaidAt:         order.PaidAt,
+			Items:          itemBriefs,
+			RefundNeeded:   needRefund,
+			LateRefundedAt: lateRefundedAt,
 		})
 	}
 
@@ -120,6 +133,7 @@ func (s *AdminOrderService) ListOrders(ctx context.Context, filter repository.Ad
 // không có khoảng hở đọc-trước-ghi-sau giữa 2 transaction như UPDATE-có-điều-kiện-không-khoá.
 func (s *AdminOrderService) RefundOrder(ctx context.Context, actorID, orderID uuid.UUID, reason, refundMethod, transactionRef string) (*dto.RefundOrderResponse, error) {
 	var result *dto.RefundOrderResponse
+	var revokedCertificates []string
 
 	err := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
 		txDB := txRepo.TxDB()
@@ -166,14 +180,89 @@ func (s *AdminOrderService) RefundOrder(ctx context.Context, actorID, orderID uu
 			return err
 		}
 
-		if err := s.revokeEnrollmentsForRefund(ctx, txDB, order); err != nil {
-			return err
+		var revokeErr error
+		if revokedCertificates, revokeErr = s.revokeEnrollmentsForRefund(ctx, txDB, order); revokeErr != nil {
+			return revokeErr
 		}
 
 		result = &dto.RefundOrderResponse{ID: order.ID, Status: "refunded", RefundedAt: now}
 		return nil
 	})
 
+	if err != nil {
+		return nil, err
+	}
+	// Sau khi commit: trang tra cứu công khai không được báo "hợp lệ" từ cache cho chứng chỉ đã thu hồi.
+	InvalidateCertificateVerifyCache(ctx, s.redis, revokedCertificates)
+	return result, nil
+}
+
+// MarkLatePaymentRefunded - POST /api/orders/admin/:id/late-refund.
+//
+// Admin xác nhận ĐÃ chuyển khoản hoàn khoản tiền về muộn cho đơn đã đóng (expired/cancelled, cờ
+// payment_after_expiry). Không đổi trạng thái đơn, không đụng ghi danh (đơn chưa từng hoàn tất nên
+// chưa có gì để thu hồi) — chỉ ghi history late_refund_done để cờ refund_needed tắt.
+//
+// Idempotent: khoá dòng order rồi mới kiểm history (cùng khuôn flagRefundNeeded), nên hai request
+// đồng thời chỉ ghi một dòng; gọi lại trả 200 với already_recorded = true và mốc ghi nhận lần đầu.
+func (s *AdminOrderService) MarkLatePaymentRefunded(ctx context.Context, actorID, orderID uuid.UUID, note, transactionRef string) (*dto.LateRefundResponse, error) {
+	var result *dto.LateRefundResponse
+
+	err := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
+		txDB := txRepo.TxDB()
+
+		order, err := txRepo.GetForUpdate(txDB, orderID)
+		if err != nil {
+			if errors.Is(err, repository.ErrOrderNotFound) {
+				return ErrOrderNotFound
+			}
+			return err
+		}
+
+		var rows []model.OrderStatusHistory
+		if err := txDB.Where("order_id = ? AND to_status IN ?", order.ID,
+			[]string{latePaymentHistoryStatus, lateRefundDoneHistoryStatus}).
+			Order("created_at ASC").Find(&rows).Error; err != nil {
+			return err
+		}
+		flagged := false
+		var done *model.OrderStatusHistory
+		for i := range rows {
+			switch rows[i].ToStatus {
+			case latePaymentHistoryStatus:
+				flagged = true
+			case lateRefundDoneHistoryStatus:
+				if done == nil {
+					done = &rows[i]
+				}
+			}
+		}
+		if !flagged {
+			return ErrLateRefundNotNeeded
+		}
+		if done != nil {
+			result = &dto.LateRefundResponse{ID: order.ID, LateRefundedAt: done.CreatedAt, AlreadyRecorded: true}
+			return nil
+		}
+
+		// Cắt về micro giây (độ chính xác của Postgres) để lần gọi đầu và lần gọi lại trả cùng một mốc.
+		now := time.Now().Truncate(time.Microsecond)
+		actor := actorID.String()
+		history := &model.OrderStatusHistory{
+			ID:         uuid.New(),
+			CreatedAt:  now,
+			OrderID:    order.ID,
+			FromStatus: order.Status,
+			ToStatus:   lateRefundDoneHistoryStatus,
+			Reason:     fmt.Sprintf("Late payment refunded by admin %s (ref=%s): %s", actorID, transactionRef, note),
+			Actor:      &actor,
+		}
+		if err := repository.NewOrderStatusHistoryRepository(txDB).Create(history); err != nil {
+			return err
+		}
+		result = &dto.LateRefundResponse{ID: order.ID, LateRefundedAt: now}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -188,11 +277,17 @@ func (s *AdminOrderService) RefundOrder(ctx context.Context, actorID, orderID uu
 // user+course NGAY TRONG transaction đang khoá đơn hiện tại — còn ít nhất 1 đơn "completed" khác
 // thì khoá học đó vẫn "sống", không đụng enrollment; ngược lại mới soft-delete + giảm
 // total_students đối xứng với lúc tạo (completeOrderFulfillment).
-func (s *AdminOrderService) revokeEnrollmentsForRefund(ctx context.Context, txDB *gorm.DB, order *model.Order) error {
+//
+// Chứng chỉ khoá học đi cùng ghi danh: cùng điều kiện "đơn hoàn tất duy nhất", chứng chỉ (bảng
+// certificates) của (user, course) bị đánh dấu thu hồi trong CÙNG transaction — không thì học viên
+// đã được hoàn tiền vẫn giữ chứng chỉ và trang tra cứu vẫn báo hợp lệ. Trả về các số chứng chỉ vừa
+// thu hồi để caller xoá cache tra cứu sau khi commit.
+func (s *AdminOrderService) revokeEnrollmentsForRefund(ctx context.Context, txDB *gorm.DB, order *model.Order) ([]string, error) {
 	items, err := repository.NewOrderItemRepository(txDB).GetByOrderID(order.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	var revoked []string
 
 	enrollmentRepoTx := repository.NewEnrollmentRepository(txDB)
 	courseRepoTx := repository.NewCourseRepository(txDB)
@@ -204,27 +299,35 @@ func (s *AdminOrderService) revokeEnrollmentsForRefund(ctx context.Context, txDB
 			Where("orders.user_id = ? AND oi.course_id = ? AND orders.status = 'completed' AND orders.id <> ?",
 				order.UserID, item.CourseID, order.ID).
 			Count(&otherCompleted).Error; err != nil {
-			return err
+			return nil, err
 		}
 		if otherCompleted > 0 {
 			continue // course còn "sống" nhờ đơn hoàn tất KHÁC — không đụng enrollment (item 24/26 tinh thần).
 		}
 
+		// Thu hồi chứng chỉ TRƯỚC bước kiểm ghi danh: chứng chỉ vẫn có thể còn dù ghi danh đã bị gỡ
+		// (học viên tự huỷ ghi danh trước khi được hoàn tiền), nên không được `continue` bỏ qua nó.
+		numbers, err := repository.RevokeCertificates(ctx, txDB, order.UserID, item.CourseID, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		revoked = append(revoked, numbers...)
+
 		enrollment, err := enrollmentRepoTx.GetByUserAndCourse(ctx, order.UserID, item.CourseID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if enrollment == nil {
 			continue // chưa/không còn enrollment active — không có gì để thu hồi.
 		}
 		if err := enrollmentRepoTx.Delete(ctx, enrollment.ID); err != nil {
-			return err
+			return nil, err
 		}
 		if err := courseRepoTx.IncrementTotalStudents(ctx, item.CourseID, -1); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return revoked, nil
 }
 
 // GetRevenueReport - GET /api/admin/reports/revenue. Đọc trực tiếp (không mở transaction — thao

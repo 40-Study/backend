@@ -30,6 +30,8 @@ func SetupOrderRoutes(api fiber.Router,
 	adminOrders.Get("/", adminOrderHandler.ListOrders)
 	adminOrders.Get("/:id", adminOrderHandler.GetOrder)
 	adminOrders.Post("/:id/refund", adminOrderHandler.RefundOrder)
+	// Đánh dấu "đã hoàn tiền xong" cho khoản tiền về muộn của đơn đã đóng (cờ refund_needed).
+	adminOrders.Post("/:id/late-refund", adminOrderHandler.MarkLatePaymentRefunded)
 
 	orders.Post("/", authMiddleware, orderHandler.CreateOrder)
 	orders.Get("/me", authMiddleware, orderHandler.GetUserOrders)

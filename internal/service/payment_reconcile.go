@@ -369,16 +369,37 @@ func (s *PaymentService) flagRefundNeeded(ctx context.Context, order *model.Orde
 	return true
 }
 
-// refundNeeded — đơn đã có cờ cần hoàn tiền (history payment_after_expiry). Chỉ đơn đã đóng từng có
-// mã mới có thể có cờ nên chỉ những đơn đó tốn 1 truy vấn.
-func refundNeeded(db *gorm.DB, order *model.Order) bool {
+// lateRefundState — trạng thái hoàn tiền của đơn đã đóng nhận tiền về muộn, đọc từ history:
+// needed = có cờ payment_after_expiry mà admin CHƯA ghi late_refund_done; refundedAt != nil khi đã
+// ghi (mốc admin xác nhận đã chuyển khoản hoàn). Chỉ đơn đã đóng từng có mã mới có thể có cờ nên
+// chỉ những đơn đó tốn 1 truy vấn.
+func lateRefundState(db *gorm.DB, order *model.Order) (needed bool, refundedAt *time.Time) {
 	if db == nil || (order.Status != "expired" && order.Status != "cancelled") || !hasPaymentCode(order) {
-		return false
+		return false, nil
 	}
-	var n int64
-	if err := db.Model(&model.OrderStatusHistory{}).Where("order_id = ? AND to_status = ?", order.ID, latePaymentHistoryStatus).Count(&n).Error; err != nil {
+	var rows []struct {
+		ToStatus string
+		LastAt   time.Time
+	}
+	if err := db.Model(&model.OrderStatusHistory{}).
+		Select("to_status, MAX(created_at) AS last_at").
+		Where("order_id = ? AND to_status IN ?", order.ID, []string{latePaymentHistoryStatus, lateRefundDoneHistoryStatus}).
+		Group("to_status").Scan(&rows).Error; err != nil {
 		log.Printf("[PAYMENT-STATUS] order=%s không đọc được cờ hoàn tiền: %v", order.ID, err)
-		return false
+		return false, nil
 	}
-	return n > 0
+	flagged := false
+	for _, r := range rows {
+		switch r.ToStatus {
+		case latePaymentHistoryStatus:
+			flagged = true
+		case lateRefundDoneHistoryStatus:
+			at := r.LastAt
+			refundedAt = &at
+		}
+	}
+	if !flagged {
+		return false, nil
+	}
+	return refundedAt == nil, refundedAt
 }

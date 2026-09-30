@@ -908,6 +908,7 @@ func (s *OrderService) toOrderResponse(order *model.Order, items []model.OrderIt
 		})
 	}
 
+	needRefund, lateRefundedAt := lateRefundState(s.orderRepo.TxDB(), order)
 	response := &dto.OrderResponse{
 		ID:             order.ID,
 		OrderNumber:    order.OrderNumber,
@@ -927,7 +928,8 @@ func (s *OrderService) toOrderResponse(order *model.Order, items []model.OrderIt
 		CreatedAt:            order.CreatedAt,
 		ExpiresAt:            orderHoldExpiresAt(order),
 		PaymentCodeIssued:    order.Status != "completed" && hasPaymentCode(order),
-		RefundNeeded:         refundNeeded(s.orderRepo.TxDB(), order),
+		RefundNeeded:         needRefund,
+		LateRefundedAt:       lateRefundedAt,
 		RefundReason:         order.RefundReason,
 		RefundTransactionRef: order.RefundTransactionRef,
 		RefundedAt:           order.RefundedAt,

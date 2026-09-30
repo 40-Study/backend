@@ -43,6 +43,9 @@ type OrderResponse struct {
 	// RefundNeeded (review #76 final, quyết định 1): đơn đã đóng nhận được tiền (không khôi phục) —
 	// cần hoàn tiền thủ công. Nguồn: history payment_after_expiry.
 	RefundNeeded bool `json:"refund_needed,omitempty"`
+	// LateRefundedAt: admin đã xác nhận hoàn tiền xong cho khoản tiền về muộn (refund_needed khi đó
+	// = false). Web đổi badge "Cần hoàn tiền" thành "Đã hoàn tiền".
+	LateRefundedAt *time.Time `json:"late_refunded_at,omitempty"`
 	// Refund* (B6, QA vòng 2): chỉ có khi đơn đã hoàn tiền — trang chi tiết admin hiển thị dấu vết
 	// đối soát (lý do, mã giao dịch chuyển khoản, thời điểm).
 	RefundReason         *string    `json:"refund_reason,omitempty"`
@@ -188,6 +191,8 @@ type AdminOrderListItem struct {
 	Items         []AdminOrderItemBrief `json:"items"`
 	// RefundNeeded (review #76 final): đơn đã đóng nhận được tiền, admin cần hoàn tiền thủ công.
 	RefundNeeded bool `json:"refund_needed,omitempty"`
+	// LateRefundedAt: xem OrderResponse.LateRefundedAt.
+	LateRefundedAt *time.Time `json:"late_refunded_at,omitempty"`
 }
 
 // AdminOrderListResponse — envelope phân trang (mẫu OrderListResponse chuẩn mới của 4 phase).
@@ -219,6 +224,22 @@ type RefundOrderResponse struct {
 	ID         uuid.UUID `json:"id"`
 	Status     string    `json:"status"`
 	RefundedAt time.Time `json:"refunded_at"`
+}
+
+// LateRefundRequest — POST /orders/admin/:id/late-refund: admin xác nhận ĐÃ chuyển khoản hoàn lại
+// khoản tiền về muộn cho đơn đã đóng. Cả hai trường đều tuỳ chọn (ghi chú / mã giao dịch hoàn).
+type LateRefundRequest struct {
+	Note           string `json:"note" validate:"omitempty,max=500"`
+	TransactionRef string `json:"transaction_ref" validate:"omitempty,max=100"`
+}
+
+// LateRefundResponse — 200 của POST /orders/admin/:id/late-refund. AlreadyRecorded = true khi đơn
+// đã được ghi nhận hoàn từ trước (gọi lại không tạo thêm dòng history).
+type LateRefundResponse struct {
+	ID              uuid.UUID `json:"id"`
+	RefundNeeded    bool      `json:"refund_needed"`
+	LateRefundedAt  time.Time `json:"late_refunded_at"`
+	AlreadyRecorded bool      `json:"already_recorded"`
 }
 
 // RevenueReportResponse — GET /admin/reports/revenue.
