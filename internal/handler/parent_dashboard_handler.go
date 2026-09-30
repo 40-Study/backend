@@ -183,3 +183,32 @@ func (h *ParentDashboardHandler) GetChildAssignments(c *fiber.Ctx) error {
 		"data":    assignments,
 	})
 }
+
+// GetChildSessionAnalysis GET /parent/children/:id/sessions/:sessionId/analysis
+// Phân tích kết quả và nhận xét chi tiết buổi học của con cho phụ huynh (Locked child context)
+func (h *ParentDashboardHandler) GetChildSessionAnalysis(c *fiber.Ctx) error {
+	parentID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || parentID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	childID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid child id"})
+	}
+
+	sessionID, err := uuid.Parse(c.Params("sessionId"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid session id"})
+	}
+
+	analysis, err := h.svc.GetChildSessionAnalysis(c.Context(), parentID, childID, sessionID)
+	if err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "success",
+		"data":    analysis,
+	})
+}
