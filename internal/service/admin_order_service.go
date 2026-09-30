@@ -225,23 +225,23 @@ func (s *AdminOrderService) MarkLatePaymentRefunded(ctx context.Context, actorID
 			Order("created_at ASC").Find(&rows).Error; err != nil {
 			return err
 		}
-		flagged := false
-		var done *model.OrderStatusHistory
+		// rows đã sắp xếp tăng dần: lần cuối mỗi loại là mốc lớn nhất. Khách chuyển thêm SAU lần admin
+		// xác nhận thì cờ mới nhất muộn hơn late_refund_done và đơn lại cần hoàn.
+		var lastFlag, lastDone *time.Time
 		for i := range rows {
+			at := rows[i].CreatedAt
 			switch rows[i].ToStatus {
 			case latePaymentHistoryStatus:
-				flagged = true
+				lastFlag = &at
 			case lateRefundDoneHistoryStatus:
-				if done == nil {
-					done = &rows[i]
-				}
+				lastDone = &at
 			}
 		}
-		if !flagged {
+		if lastFlag == nil {
 			return ErrLateRefundNotNeeded
 		}
-		if done != nil {
-			result = &dto.LateRefundResponse{ID: order.ID, LateRefundedAt: done.CreatedAt, AlreadyRecorded: true}
+		if !lateRefundPending(lastFlag, lastDone) {
+			result = &dto.LateRefundResponse{ID: order.ID, LateRefundedAt: *lastDone, AlreadyRecorded: true}
 			return nil
 		}
 

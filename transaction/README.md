@@ -32,9 +32,10 @@ docker-compose logs -f mbbank-api
 ## Xác thực
 
 Mọi endpoint REST bắt buộc header `X-Transaction-Token: <TRANSACTION_SERVICE_TOKEN>`; thiếu hoặc sai trả 401, và khi
-service chưa cấu hình token thì trả 503 (đóng cửa, không mở). gRPC (`:50051`) đọc cùng token ở metadata
-`x-transaction-token` khi biến được đặt; chưa đặt thì server ghi cảnh báo và nhận mọi request (giữ luồng thanh toán
-đang chạy). Bật theo thứ tự: backend Go trước, service này sau.
+service chưa cấu hình token thì trả 503 (đóng cửa, không mở). gRPC (`:50051`) cũng đóng cửa: đọc cùng token ở metadata
+`x-transaction-token`, thiếu hoặc sai trả `UNAUTHENTICATED`; chưa đặt `TRANSACTION_SERVICE_TOKEN` thì server từ chối
+khởi động (trừ khi `ALLOW_INSECURE_TRANSACTIONS=1` ở máy dev, khi đó có cảnh báo). Backend Go phải gửi cùng token trước
+khi bật service này, nếu không luồng thanh toán bị từ chối.
 
 ## Một container, hai cổng
 

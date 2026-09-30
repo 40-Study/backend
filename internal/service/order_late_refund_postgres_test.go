@@ -135,3 +135,73 @@ func TestMarkLatePaymentRefunded_RejectsUnflaggedAndUnknownOrders(t *testing.T) 
 		t.Fatalf("đơn không tồn tại: err=%v, muốn ErrOrderNotFound", err)
 	}
 }
+
+// Khách chuyển thêm lần hai vào cùng mã SAU khi admin đã bấm "đã hoàn": giao dịch mới (mã tx chưa
+// từng thấy) phải gắn cờ lại và refund_needed về true; poll lại đúng giao dịch cũ thì không ghi thêm.
+func TestLateRefund_SecondTransferAfterRefundFlagsAgain(t *testing.T) {
+	f := newOrderFixture(t)
+	student := f.user()
+	ctx := context.Background()
+	orderID, codeExpiry, _ := f.processingWithCodeExpiring(student, "QA-P chuyển hai lần", -2*time.Hour)
+	f.exec("UPDATE orders SET status = 'cancelled' WHERE id = ?", orderID)
+
+	first := bankPaid(codeExpiry.Add(-time.Minute))
+	if _, err := f.paymentServiceWith(&fakeBankLookup{result: first}, nil).CheckAndProcessPayment(ctx, orderID, student, false); err != nil {
+		t.Fatalf("giao dịch 1: %v", err)
+	}
+	admin := f.adminOrderService()
+	actor := uuid.New()
+	if _, err := admin.MarkLatePaymentRefunded(ctx, actor, orderID, "hoàn lần 1", "FT-1"); err != nil {
+		t.Fatalf("hoàn lần 1: %v", err)
+	}
+	if needed, at := f.adminListItem(student, orderID); needed || at == nil {
+		t.Fatalf("sau hoàn lần 1: refund_needed=%v late_refunded_at=%v, muốn false/có mốc", needed, at)
+	}
+
+	// Poll lại ĐÚNG giao dịch 1: không phải khoản mới.
+	if _, err := f.paymentServiceWith(&fakeBankLookup{result: first}, nil).CheckAndProcessPayment(ctx, orderID, student, false); err != nil {
+		t.Fatalf("poll lại giao dịch 1: %v", err)
+	}
+	if n := f.historyCount(orderID, latePaymentHistoryStatus); n != 1 {
+		t.Fatalf("poll lại cùng giao dịch ghi thêm cờ: %d dòng, muốn 1", n)
+	}
+	if needed, _ := f.adminListItem(student, orderID); needed {
+		t.Fatal("poll lại cùng giao dịch làm refund_needed bật lại")
+	}
+
+	// Giao dịch 2 (mã tx mới) đến sau lần hoàn: cờ mới, refund_needed về true, không còn mốc đã hoàn.
+	second := bankPaid(codeExpiry.Add(-30 * time.Second))
+	pay2 := f.paymentServiceWith(&fakeBankLookup{result: second}, nil)
+	if _, err := pay2.CheckAndProcessPayment(ctx, orderID, student, false); err != nil {
+		t.Fatalf("giao dịch 2: %v", err)
+	}
+	if _, err := pay2.CheckAndProcessPayment(ctx, orderID, student, false); err != nil {
+		t.Fatalf("poll lại giao dịch 2: %v", err)
+	}
+	if n := f.historyCount(orderID, latePaymentHistoryStatus); n != 2 {
+		t.Fatalf("cờ payment_after_expiry = %d, muốn 2 (một dòng mỗi giao dịch, idempotent theo tx)", n)
+	}
+	if needed, at := f.adminListItem(student, orderID); !needed || at != nil {
+		t.Fatalf("sau giao dịch 2: refund_needed=%v late_refunded_at=%v, muốn true/nil", needed, at)
+	}
+	detail, err := f.svc.GetOrderByID(ctx, orderID, student, false)
+	if err != nil || !detail.RefundNeeded || detail.LateRefundedAt != nil {
+		t.Fatalf("chi tiết đơn học viên: %+v err=%v, muốn refund_needed=true và chưa có late_refunded_at", detail, err)
+	}
+
+	// Admin hoàn khoản thứ hai: ghi mới (không phải already_recorded), rồi gọi lại mới là idempotent.
+	res, err := admin.MarkLatePaymentRefunded(ctx, actor, orderID, "hoàn lần 2", "FT-2")
+	if err != nil || res.AlreadyRecorded {
+		t.Fatalf("hoàn lần 2: resp=%+v err=%v, muốn ghi mới", res, err)
+	}
+	if n := f.historyCount(orderID, lateRefundDoneHistoryStatus); n != 2 {
+		t.Fatalf("late_refund_done = %d, muốn 2", n)
+	}
+	again, err := admin.MarkLatePaymentRefunded(ctx, actor, orderID, "gọi lại", "FT-3")
+	if err != nil || !again.AlreadyRecorded || !again.LateRefundedAt.Equal(res.LateRefundedAt) {
+		t.Fatalf("gọi lại sau hoàn lần 2: resp=%+v err=%v, muốn already_recorded cùng mốc", again, err)
+	}
+	if needed, at := f.adminListItem(student, orderID); needed || at == nil {
+		t.Fatalf("sau hoàn lần 2: refund_needed=%v late_refunded_at=%v, muốn false/có mốc", needed, at)
+	}
+}
