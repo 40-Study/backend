@@ -230,6 +230,9 @@ func (h *GroupHandler) JoinGroup(c *fiber.Ctx) error {
 
 	result, err := h.groupService.JoinGroup(c.Context(), userID, groupID, req.Message)
 	if err != nil {
+		if errors.Is(err, service.ErrGroupNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": err.Error(),
 		})

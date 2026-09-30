@@ -24,6 +24,9 @@ type ConversationParticipantRepositoryInterface interface {
 	Create(ctx context.Context, p *model.ConversationParticipant) error
 	CreateBatch(ctx context.Context, participants []model.ConversationParticipant) error
 	GetByConvAndUser(ctx context.Context, convID, userID uuid.UUID) (*model.ConversationParticipant, error)
+	MarkLeft(ctx context.Context, convID, userID uuid.UUID) error
+	Rejoin(ctx context.Context, convID, userID uuid.UUID) (bool, error)
+	IsActiveParticipant(ctx context.Context, convID, userID uuid.UUID) (bool, error)
 	ListByConversationID(ctx context.Context, convID uuid.UUID) ([]model.ConversationParticipant, error)
 	MarkAsRead(ctx context.Context, convID, userID, messageID uuid.UUID) error
 	UpdateMuted(ctx context.Context, convID, userID uuid.UUID, muted bool) error
@@ -165,6 +168,30 @@ func (r *ConversationParticipantRepository) GetByConvAndUser(ctx context.Context
 		return nil, err
 	}
 	return &p, nil
+}
+
+// MarkLeft đặt left_at cho người tham gia còn hiệu lực (S6). Rời/kick/ban khỏi nhóm trước đây chỉ đổi
+// group_members.status nên người đó vẫn là participant: đọc và gửi tin nhóm bình thường. Mọi chỗ đọc/gửi
+// (GetByConvAndUser, danh sách, đếm chưa đọc, tìm kiếm) đã lọc left_at IS NULL nên chỉ cần ghi cột này.
+func (r *ConversationParticipantRepository) MarkLeft(ctx context.Context, convID, userID uuid.UUID) error {
+	return r.db.WithContext(ctx).Model(&model.ConversationParticipant{}).
+		Where("conversation_id = ? AND user_id = ? AND left_at IS NULL", convID, userID).
+		Updates(map[string]interface{}{"left_at": gorm.Expr("NOW()"), "unread_count": 0}).Error
+}
+
+// Rejoin kích hoạt lại dòng participant đã rời (vào lại nhóm). Chỉ mục duy nhất (conversation_id, user_id)
+// không cho chèn dòng thứ hai. Trả true nếu có dòng cũ được kích hoạt lại.
+func (r *ConversationParticipantRepository) Rejoin(ctx context.Context, convID, userID uuid.UUID) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&model.ConversationParticipant{}).
+		Where("conversation_id = ? AND user_id = ? AND left_at IS NOT NULL", convID, userID).
+		Updates(map[string]interface{}{"left_at": nil, "joined_at": gorm.Expr("NOW()"), "unread_count": 0})
+	return res.RowsAffected > 0, res.Error
+}
+
+// IsActiveParticipant: người dùng là participant CÒN HIỆU LỰC (chưa rời) của hội thoại. Dùng cho WebSocket.
+func (r *ConversationParticipantRepository) IsActiveParticipant(ctx context.Context, convID, userID uuid.UUID) (bool, error) {
+	p, err := r.GetByConvAndUser(ctx, convID, userID)
+	return p != nil, err
 }
 
 func (r *ConversationParticipantRepository) ListByConversationID(ctx context.Context, convID uuid.UUID) ([]model.ConversationParticipant, error) {

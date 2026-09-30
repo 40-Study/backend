@@ -1,11 +1,34 @@
+import hmac
 import mbbank
 import datetime
 import os
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import Depends, FastAPI, Header, Query, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
 
 app = FastAPI(title="MBBank Transaction API")
+
+# S6: xác thực giữa backend Go và service này bằng token dùng chung (header X-Transaction-Token).
+# Trước đây /transactions, /transactions/count, /transactions/check-pin KHÔNG xác thực: ai chạm được
+# cổng 8000 đều đọc được sao kê tài khoản ngân hàng. Không cấu hình token thì từ chối MỌI request
+# (503, đóng cửa) thay vì mở — API REST này không có nơi nào trong backend Go gọi tới nên không thể
+# làm hỏng luồng thanh toán (luồng đơn hàng đi qua gRPC, xem grpc_server.py).
+TOKEN_HEADER = "X-Transaction-Token"
+
+
+def _configured_token() -> str:
+    # Đọc lúc gọi (không cache ở import) để đổi env không cần khởi động lại tiến trình test.
+    return os.getenv("TRANSACTION_SERVICE_TOKEN", "")
+
+
+def require_service_token(x_transaction_token: Optional[str] = Header(default=None)):
+    expected = _configured_token()
+    if not expected:
+        raise HTTPException(status_code=503, detail="TRANSACTION_SERVICE_TOKEN is not configured")
+    provided = x_transaction_token or ""
+    # compare_digest: so sánh thời gian hằng số, không lộ token qua độ trễ.
+    if not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
+        raise HTTPException(status_code=401, detail="invalid or missing service token")
 
 USERNAME = os.getenv("MB_USERNAME", "")
 PASSWORD = os.getenv("MB_PASSWORD", "")
@@ -65,7 +88,7 @@ def extract_transaction_data(trans):
         "transaction_type": getattr(trans, 'transactionType', None)
     }
 
-@app.get("/transactions")
+@app.get("/transactions", dependencies=[Depends(require_service_token)])
 async def get_transactions(
     from_date: str = Query(..., description="Format: hh-mm-ss-dd-mm-yyyy"),
     to_date: str = Query(..., description="Format: hh-mm-ss-dd-mm-yyyy")
@@ -103,7 +126,7 @@ async def get_transactions(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-@app.get("/transactions/count")
+@app.get("/transactions/count", dependencies=[Depends(require_service_token)])
 async def get_transaction_count(
     from_date: str = Query(..., description="Format: hh-mm-ss-dd-mm-yyyy"),
     to_date: str = Query(..., description="Format: hh-mm-ss-dd-mm-yyyy")
@@ -139,7 +162,7 @@ async def get_transaction_count(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-@app.get("/transactions/check-pin")
+@app.get("/transactions/check-pin", dependencies=[Depends(require_service_token)])
 async def check_transaction_by_pin(
     pin: str = Query(..., description="Mã PIN 15 ký tự (9 chữ cái + 6 ký tự mã hóa thời gian)", min_length=15, max_length=15),
     from_date: str = Query(..., description="Format: hh-mm-ss-dd-mm-yyyy"),

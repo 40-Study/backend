@@ -18,6 +18,7 @@ services:
       - MB_USERNAME=${MB_USERNAME}
       - MB_PASSWORD=${MB_PASSWORD}
       - MB_ACCOUNT_NO=${MB_ACCOUNT_NO}
+      - TRANSACTION_SERVICE_TOKEN=${TRANSACTION_SERVICE_TOKEN:-}
       - WEBHOOK_URL=${WEBHOOK_URL:-http://host.docker.internal:3000/api/v1/payment/webhook}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-your-webhook-secret}
       - POLL_INTERVAL=${POLL_INTERVAL:-30}

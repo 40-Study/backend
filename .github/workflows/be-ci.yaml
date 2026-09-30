@@ -103,7 +103,13 @@ jobs:
           if [ -f transaction/requirements.txt ]; then pip install -r transaction/requirements.txt; fi
 
       - name: Lint check
-        run: python -m py_compile transaction/api.py
+        run: python -m py_compile transaction/api.py transaction/grpc_server.py
+
+      # S6: xác thực token dùng chung giữa backend Go và service giao dịch (REST + gRPC).
+      - name: Service token tests
+        run: |
+          pip install pytest
+          cd transaction && python -m pytest -q -p no:cacheprovider
 
   docker-check:
     name: Docker Build Verification

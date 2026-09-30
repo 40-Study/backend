@@ -105,6 +105,9 @@ type Config struct {
 	// Transaction Service (MBBank gRPC)
 	TransactionServiceHost string `mapstructure:"TRANSACTION_SERVICE_HOST"`
 	TransactionServicePort string `mapstructure:"TRANSACTION_SERVICE_PORT"`
+	// TransactionServiceToken (S6): secret dùng chung với service Python — gửi trong metadata gRPC
+	// "x-transaction-token". Rỗng = không gửi (tương thích service chưa bật xác thực).
+	TransactionServiceToken string `mapstructure:"TRANSACTION_SERVICE_TOKEN"`
 
 	// OAuth Providers
 	GitHub   GithubOAuthConfig
@@ -169,6 +172,7 @@ func LoadConfig() (*Config, error) {
 	// Transaction Service
 	viper.SetDefault("TRANSACTION_SERVICE_HOST", "localhost")
 	viper.SetDefault("TRANSACTION_SERVICE_PORT", "50051")
+	viper.SetDefault("TRANSACTION_SERVICE_TOKEN", "")
 
 	// GITHUB
 	viper.SetDefault("GITHUB_CLIENT_ID", "")

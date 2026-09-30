@@ -459,7 +459,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		// ===== Gamification =====
 		Achievement: service.NewAchievementService(repos.Achievement),
 		Leaderboard: service.NewLeaderboardService(repos.Leaderboard),
-		UserStats:   service.NewUserStatsService(repos.UserStats),
+		UserStats:   service.NewUserStatsService(repos.UserStats, repos.UserPreference),
 		// ===== Wallet =====
 		Wallet:     service.NewWalletService(repos.Wallet, repos.TeacherProfile, resources.Config.WithdrawalMinAmount),
 		Withdrawal: service.NewWithdrawalService(repos.Withdrawal, repos.Wallet, resources.Config.WithdrawalMinAmount),
@@ -492,7 +492,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Exercise: service.NewExerciseService(repos.Exercise, resources.Redis, resources.RabbitMQ),
 
 		// ===== Review (Redis cache for ratings) =====
-		Review: service.NewReviewService(repos.Review, repos.Course, resources.Redis),
+		Review: service.NewReviewService(repos.Review, repos.Course, repos.Enrollment, resources.Redis),
 
 		// ===== Certificate (RabbitMQ for PDF generation) =====
 		Certificate: service.NewCertificateService(
@@ -546,6 +546,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 	}
 	// Lane S2: moi vao nhom dung chung guard nhan tin cua Conversation (Lane G).
 	s.Group.SetInviteGuard(s.Conversation)
+	s.Group.SetChannelEvictor(notifier)
 	wireContest(s, repos)
 	return s
 }
@@ -570,6 +571,7 @@ func initTransactionService(cfg *config.Config) *service.TransactionService {
 	transactionSvc, err := service.NewTransactionService(
 		cfg.TransactionServiceHost,
 		cfg.TransactionServicePort,
+		cfg.TransactionServiceToken,
 	)
 	if err != nil {
 		log.Printf("Warning: Failed to initialize transaction service: %v", err)

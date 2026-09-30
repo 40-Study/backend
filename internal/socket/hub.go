@@ -57,17 +57,18 @@ func (h *Hub) Run() {
 // registerClient adds a client to the hub
 func (h *Hub) registerClient(client *Client) {
 	h.clientsMu.Lock()
-	defer h.clientsMu.Unlock()
-
 	if _, ok := h.clients[client.UserID]; !ok {
 		h.clients[client.UserID] = make(map[*Client]bool)
 	}
 	h.clients[client.UserID][client] = true
+	total := h.countConnections()
+	h.clientsMu.Unlock()
 
 	log.Printf("Client registered: user=%s, client=%s, total_connections=%d",
-		client.UserID, client.ID, h.countConnections())
+		client.UserID, client.ID, total)
 
-	// Broadcast user online status
+	// S6: phải nhả clientsMu TRƯỚC khi phát trạng thái online. broadcastUserStatus -> BroadcastAll cần RLock cùng
+	// mutex; giữ Lock rồi gọi nó là tự khoá chết goroutine Run, và mọi kết nối WebSocket sau đó treo ở Register.
 	h.broadcastUserStatus(client.UserID, true)
 }
 
@@ -141,6 +142,25 @@ func (h *Hub) SubscribeToChannel(client *Client, channel string) {
 	h.channels[channel][client] = true
 
 	log.Printf("Client subscribed to channel: user=%s, channel=%s", client.UserID, channel)
+}
+
+// EvictUserFromChannel gỡ MỌI kết nối của user khỏi kênh (S6): người bị kick/ban/rời nhóm đang mở WebSocket
+// không nhận thêm tin của hội thoại nhóm dù đã đăng ký từ trước. Chỉ gỡ ở hub (ngừng phát); kết nối vẫn sống.
+func (h *Hub) EvictUserFromChannel(userID uuid.UUID, channel string) {
+	h.channelsMu.Lock()
+	defer h.channelsMu.Unlock()
+	clients, ok := h.channels[channel]
+	if !ok {
+		return
+	}
+	for client := range clients {
+		if client.UserID == userID {
+			delete(clients, client)
+		}
+	}
+	if len(clients) == 0 {
+		delete(h.channels, channel)
+	}
 }
 
 // UnsubscribeFromChannel removes a client from a channel

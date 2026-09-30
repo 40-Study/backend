@@ -136,6 +136,14 @@ func (c *Client) handleMessage(data []byte) {
 		if err := json.Unmarshal(msg.Payload, &payload); err == nil {
 			payload.UserID = c.UserID
 			channelName := "conversation:" + payload.ConversationID
+			// S6: xem ghi chú ở handler.go — chỉ kênh đã đăng ký được.
+			c.channelMu.RLock()
+			subscribed := c.channels[channelName]
+			c.channelMu.RUnlock()
+			if !subscribed {
+				c.SendError("typing_denied", "You are not subscribed to this conversation")
+				return
+			}
 			c.Hub.SendToChannel(channelName, Message{
 				Event:   EventConversationTyping,
 				Payload: payload,
@@ -148,11 +156,17 @@ func (c *Client) handleMessage(data []byte) {
 }
 
 // SendMessage sends a message to the client
-func (c *Client) SendMessage(msg Message) error {
+func (c *Client) SendMessage(msg Message) (err error) {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
+	// S6: kết nối đóng giữa lúc hub đang phát thì Send đã bị close; gửi vào đó panic và làm sập cả server.
+	defer func() {
+		if recover() != nil {
+			err = ErrConnectionClosed
+		}
+	}()
 
 	select {
 	case c.Send <- data:

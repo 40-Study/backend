@@ -123,7 +123,7 @@ func SetupAllRoutes(
 	// Gamification routes
 	SetupAchievementRoutes(api, cfg, achievementHandler, redis, permChecker)
 	SetupLeaderboardRoutes(api, cfg, leaderboardHandler, redis)
-	SetupUserStatsRoutes(api, userStatsHandler)
+	SetupUserStatsRoutes(api, cfg, userStatsHandler, redis)
 	// Wallet routes
 	SetupWalletRoutes(api, cfg, walletHandler, redis)
 
