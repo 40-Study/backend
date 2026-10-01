@@ -394,9 +394,10 @@ func TestFriendship_Chan_XoaBanVaLoiMoi_ChanHaiChieu(t *testing.T) {
 		t.Error("sau khi chặn không còn là bạn")
 	}
 
-	// Cả hai chiều đều không gửi được, báo cùng một lỗi (không phân biệt ai chặn ai).
+	// Cả hai chiều đều không gửi được. Người bị chặn nhận kết quả y hệt người dùng không tồn tại (không đoán
+	// ra mình bị chặn); người chặn biết mình đã chặn nên nhận lỗi rõ ràng.
 	_, err := fx.svc.SendRequest(ctx, b, a)
-	wantErr(t, err, ErrFriendRequestNotAllowed, "người bị chặn gửi cho người chặn")
+	wantErr(t, err, ErrFriendUserNotFound, "người bị chặn gửi cho người chặn")
 	_, err = fx.svc.SendRequest(ctx, a, b)
 	wantErr(t, err, ErrFriendRequestNotAllowed, "người chặn gửi cho người bị chặn")
 	if fx.rowOf(a, b) != nil {
@@ -443,8 +444,9 @@ func TestFriendship_Chan_XoaLoiMoiDangCho_Va_TuChanMinh(t *testing.T) {
 	if err := fx.svc.Block(ctx, a, b); err != nil {
 		t.Fatal(err)
 	}
-	if fx.rowOf(a, b) != nil {
-		t.Error("chặn phải xoá lời mời đang chờ (chiều a->b)")
+	// Lời mời đang chờ không bị xoá mà chuyển CANCELLED (giữ lịch sử cho hạn mức/cooldown); không còn hiệu lực.
+	if r := fx.rowOf(a, b); r == nil || r.Status != model.FriendshipStatusCancelled {
+		t.Errorf("chặn phải huỷ lời mời đang chờ (chiều a->b), nhận %+v", r)
 	}
 	if err := fx.svc.Block(ctx, b, c); err != nil {
 		t.Fatal(err)
@@ -452,8 +454,8 @@ func TestFriendship_Chan_XoaLoiMoiDangCho_Va_TuChanMinh(t *testing.T) {
 	if err := fx.svc.Block(ctx, a, c); err != nil {
 		t.Fatal(err)
 	}
-	if fx.rowOf(a, c) != nil {
-		t.Error("chặn phải xoá lời mời đang chờ (chiều c->a)")
+	if r := fx.rowOf(a, c); r == nil || r.Status != model.FriendshipStatusCancelled {
+		t.Errorf("chặn phải huỷ lời mời đang chờ (chiều c->a), nhận %+v", r)
 	}
 	wantErr(t, fx.svc.Block(ctx, a, a), ErrFriendSelfRequest, "tự chặn mình")
 	wantErr(t, fx.svc.Block(ctx, a, fx.user("gv", "TEACHER")), ErrFriendUserNotFound, "chặn giáo viên")

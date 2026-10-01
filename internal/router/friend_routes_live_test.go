@@ -349,7 +349,13 @@ func TestFriendRoutes_NguoiBiChan(t *testing.T) {
 	}
 	// Tình bạn biến mất, hai chiều đều không gửi được, cùng một mã lỗi.
 	e.expect(e.do("alice", "DELETE", "/api/friends/"+e.ids["bob"].String(), ""), 404, "FRIEND_NOT_FOUND", "bạn đã bị xoá")
-	e.expect(e.do("bob", "POST", "/api/friends/requests", e.target("alice")), 403, "FRIEND_REQUEST_NOT_ALLOWED", "người bị chặn gửi")
+	// Người bị chặn nhận y hệt kết quả với một người không tồn tại (không đoán ra mình bị chặn).
+	blockedSend := e.do("bob", "POST", "/api/friends/requests", e.target("alice"))
+	e.expect(blockedSend, 404, "FRIEND_USER_NOT_FOUND", "người bị chặn gửi")
+	missing := e.do("bob", "POST", "/api/friends/requests", `{"user_id":"`+uuid.NewString()+`"}`)
+	if blockedSend.Status != missing.Status || blockedSend.Body.Code != missing.Body.Code || blockedSend.Body.Message != missing.Body.Message {
+		t.Errorf("bị chặn phải trùng hệt người không tồn tại: %s vs %s", blockedSend.Raw, missing.Raw)
+	}
 	e.expect(e.do("alice", "POST", "/api/friends/requests", e.target("bob")), 403, "FRIEND_REQUEST_NOT_ALLOWED", "người chặn gửi")
 	// Người bị chặn thấy NONE (không lộ), người chặn thấy BLOCKED_BY_ME.
 	if r := e.do("bob", "GET", "/api/friends/relationship/"+e.ids["alice"].String(), ""); !strings.Contains(r.Raw, `"NONE"`) {

@@ -167,12 +167,23 @@ func (s *FriendshipService) SendRequest(ctx context.Context, me, targetID uuid.U
 		if err := tx.LockUsers(ctx, me, targetID); err != nil {
 			return err
 		}
-		blocked, err := s.blocks.WithTx(tx).IsBlockedEitherWay(ctx, me, targetID)
+		txBlocks := s.blocks.WithTx(tx)
+		blockedByMe, err := txBlocks.IsBlockedBy(ctx, me, targetID)
 		if err != nil {
 			return err
 		}
-		if blocked {
+		if blockedByMe {
+			// Chính người gọi đã chặn: họ biết, nên báo rõ để bỏ chặn.
 			return ErrFriendRequestNotAllowed
+		}
+		blockedByThem, err := txBlocks.IsBlockedBy(ctx, targetID, me)
+		if err != nil {
+			return err
+		}
+		if blockedByThem {
+			// Bị chặn: trả y hệt người dùng không tồn tại/ẩn hồ sơ, để không đoán ra mình bị chặn (khớp
+			// relationship = NONE và search giấu hai phía).
+			return ErrFriendUserNotFound
 		}
 		existing, err := tx.FindByPair(ctx, me, targetID)
 		if err != nil {
@@ -260,6 +271,17 @@ func (s *FriendshipService) applySend(ctx context.Context, tx *repository.Friend
 	return nil, false, fmt.Errorf("friendship: trạng thái không xác định %q", existing.Status)
 }
 
+// lockRequestPair khoá (advisory, theo thứ tự id) hai người của lời mời với CÙNG khoá mà Gửi/Chấp nhận/Chặn
+// dùng, rồi người gọi đọc lại dòng trong transaction. Thiếu bước này thì Huỷ/Từ chối đọc-rồi-ghi đè nhau với
+// Chấp nhận (cả hai cùng báo thành công). Dòng không tồn tại: không khoá, để người gọi tự trả NotFound.
+func lockRequestPair(ctx context.Context, tx *repository.FriendshipRepository, requestID uuid.UUID) error {
+	row, err := tx.GetByID(ctx, requestID)
+	if err != nil || row == nil {
+		return err
+	}
+	return tx.LockUsers(ctx, row.RequesterID, row.AddresseeID)
+}
+
 // loadRequestForAddressee đọc lời mời cho accept/decline: chỉ người NHẬN thấy dòng (người khác và dòng đã
 // thu hồi đều là "không tồn tại", không lộ việc có lời mời).
 func (s *FriendshipService) loadRequestForAddressee(ctx context.Context, tx *repository.FriendshipRepository, me, requestID uuid.UUID) (*model.Friendship, error) {
@@ -334,6 +356,9 @@ func (s *FriendshipService) DeclineRequest(ctx context.Context, me, requestID uu
 	}
 	var result dto.FriendDeclineResultDTO
 	err := s.repo.Transaction(ctx, func(tx *repository.FriendshipRepository) error {
+		if err := lockRequestPair(ctx, tx, requestID); err != nil {
+			return err
+		}
 		row, err := s.loadRequestForAddressee(ctx, tx, me, requestID)
 		if err != nil {
 			return err
@@ -360,6 +385,9 @@ func (s *FriendshipService) CancelRequest(ctx context.Context, me, requestID uui
 		return err
 	}
 	return s.repo.Transaction(ctx, func(tx *repository.FriendshipRepository) error {
+		if err := lockRequestPair(ctx, tx, requestID); err != nil {
+			return err
+		}
 		row, err := tx.GetByID(ctx, requestID)
 		if err != nil {
 			return err

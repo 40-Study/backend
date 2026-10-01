@@ -12,16 +12,18 @@ import (
 )
 
 // eligibleStudentSQL — điều kiện (alias bảng users là `u`) để một tài khoản được tham gia tính năng
-// Bạn bè: đang hoạt động, có vai trò hệ thống STUDENT và KHÔNG mang vai trò giáo viên/phụ huynh/quản
-// trị. Q1: chỉ học viên kết bạn với học viên (trẻ vị thành niên: không mở kênh cho người lớn). Một người
-// vừa là học viên vừa là giáo viên bị loại vì mang vai trò người lớn. Chuỗi là hằng compile-time.
+// Bạn bè: đang hoạt động, có vai trò hệ thống STUDENT và KHÔNG mang bất kỳ vai trò hệ thống active nào khác
+// (ALLOWLIST, không phải denylist TEACHER/PARENT/SYSTEM_ADMIN: vai trò tạo thêm qua CreateSystemRole mà người
+// dùng mang kèm STUDENT cũng bị loại).
+// Q1: chỉ học viên kết bạn với học viên (trẻ vị thành niên: không mở kênh cho người lớn). Chuỗi là hằng
+// compile-time.
 const eligibleStudentSQL = `u.is_active = TRUE AND u.deleted_at IS NULL
 	AND EXISTS (SELECT 1 FROM user_system_roles usr JOIN system_roles sr ON sr.id = usr.system_role_id
 		WHERE usr.user_id = u.id AND usr.status = 'active' AND usr.deleted_at IS NULL
 		AND sr.deleted_at IS NULL AND sr.name = 'STUDENT')
 	AND NOT EXISTS (SELECT 1 FROM user_system_roles usr JOIN system_roles sr ON sr.id = usr.system_role_id
 		WHERE usr.user_id = u.id AND usr.status = 'active' AND usr.deleted_at IS NULL
-		AND sr.deleted_at IS NULL AND sr.name IN ('TEACHER', 'PARENT', 'SYSTEM_ADMIN'))`
+		AND sr.deleted_at IS NULL AND sr.name <> 'STUDENT')`
 
 // FriendUserRow — cột công khai của một học viên (KHÔNG có email/phone).
 type FriendUserRow struct {
@@ -123,11 +125,20 @@ func (r *FriendshipRepository) DeleteAcceptedPair(ctx context.Context, a, b uuid
 	return res.RowsAffected, res.Error
 }
 
-// DeletePair xoá mọi dòng của cặp (mọi trạng thái) — dùng khi chặn.
-func (r *FriendshipRepository) DeletePair(ctx context.Context, a, b uuid.UUID) error {
-	return r.db.WithContext(ctx).
-		Where("(requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)", a, b, b, a).
-		Delete(&model.Friendship{}).Error
+// EndActiveRelation kết thúc quan hệ ĐANG HIỆU LỰC của cặp khi chặn: dòng ACCEPTED bị xoá, dòng PENDING
+// chuyển CANCELLED (giữ requested_at để hạn mức 20/24h còn đếm, đặt responded_at để cooldown thu hồi chạy).
+// Dòng DECLINED/CANCELLED giữ nguyên: chúng là lịch sử chống spam (cooldown 7 ngày/1 giờ và hạn mức), xoá đi
+// thì "chặn rồi bỏ chặn" lách được cả hai.
+func (r *FriendshipRepository) EndActiveRelation(ctx context.Context, a, b uuid.UUID, now time.Time) error {
+	pair := "((requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?))"
+	if err := r.db.WithContext(ctx).
+		Where("status = ? AND "+pair, model.FriendshipStatusAccepted, a, b, b, a).
+		Delete(&model.Friendship{}).Error; err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Model(&model.Friendship{}).
+		Where("status = ? AND "+pair, model.FriendshipStatusPending, a, b, b, a).
+		Updates(map[string]any{"status": model.FriendshipStatusCancelled, "responded_at": now}).Error
 }
 
 func (r *FriendshipRepository) CountFriends(ctx context.Context, userID uuid.UUID) (int64, error) {
@@ -198,9 +209,14 @@ const notHiddenSQL = `NOT EXISTS (SELECT 1 FROM user_preferences up WHERE up.use
 func (r *FriendshipRepository) SearchStudents(ctx context.Context, viewerID uuid.UUID, keyword string, limit int) ([]FriendSearchRow, error) {
 	like := "%" + escapeLike(keyword) + "%"
 	var rows []FriendSearchRow
-	err := r.db.WithContext(ctx).Table("users u").Select(friendUserColumns).
+	// Tài khoản đăng ký bằng Google có user_name = phần trước '@' của email (thirdparty/oauth): khớp hay trả giá
+	// trị đó là lộ một phần email và cho phép quét danh bạ theo tiền tố email. Với tài khoản đó tìm kiếm chỉ
+	// khớp theo họ tên và user_name trả rỗng (web hiển thị full_name).
+	emailDerived := "lower(u.user_name) = lower(split_part(u.email, '@', 1))"
+	err := r.db.WithContext(ctx).Table("users u").
+		Select("u.id AS user_id, CASE WHEN "+emailDerived+" THEN '' ELSE u.user_name END AS user_name, u.full_name, u.avatar_url").
 		Where("u.id <> ? AND "+eligibleStudentSQL+" AND "+notHiddenSQL, viewerID).
-		Where(`(u.user_name ILIKE ? ESCAPE '\' OR u.full_name ILIKE ? ESCAPE '\')`, like, like).
+		Where(`((NOT (`+emailDerived+`) AND u.user_name ILIKE ? ESCAPE '\') OR u.full_name ILIKE ? ESCAPE '\')`, like, like).
 		Where(`NOT EXISTS (SELECT 1 FROM user_blocks b WHERE (b.blocker_id = ? AND b.blocked_id = u.id) OR (b.blocker_id = u.id AND b.blocked_id = ?))`, viewerID, viewerID).
 		Order("u.user_name ASC, u.id ASC").Limit(limit).Scan(&rows).Error
 	return rows, err

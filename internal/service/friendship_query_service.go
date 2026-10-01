@@ -203,8 +203,10 @@ func (s *FriendshipService) ListBlocks(ctx context.Context, me uuid.UUID, page, 
 	return &dto.FriendBlockListResponse{Blocks: items, TotalCount: total, Page: page, Limit: limit}, nil
 }
 
-// Block — POST /friends/blocks: chặn + xoá bạn + xoá lời mời hai chiều trong CÙNG transaction, để không có
-// khoảnh khắc đã chặn mà vẫn là bạn. Chặn lại người đã chặn là thao tác idempotent.
+// Block — POST /friends/blocks: chặn + xoá bạn + huỷ lời mời đang chờ hai chiều trong CÙNG transaction, để
+// không có khoảnh khắc đã chặn mà vẫn là bạn. CHỈ quan hệ đang hiệu lực bị đụng tới (xem EndActiveRelation):
+// lịch sử DECLINED/CANCELLED được giữ để block -> unblock không xoá cooldown và hạn mức. Chặn lại người đã
+// chặn là thao tác idempotent.
 func (s *FriendshipService) Block(ctx context.Context, me, targetID uuid.UUID) error {
 	if _, err := s.requireStudent(ctx, me); err != nil {
 		return err
@@ -223,7 +225,7 @@ func (s *FriendshipService) Block(ctx context.Context, me, targetID uuid.UUID) e
 		if err := tx.LockUsers(ctx, me, targetID); err != nil {
 			return err
 		}
-		if err := tx.DeletePair(ctx, me, targetID); err != nil {
+		if err := tx.EndActiveRelation(ctx, me, targetID, s.now()); err != nil {
 			return err
 		}
 		return s.blocks.WithTx(tx).Create(ctx, me, targetID)
