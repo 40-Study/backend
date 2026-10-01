@@ -199,12 +199,20 @@ func (s *ScheduleService) CreateSchedule(ctx context.Context, classID, actorID u
 	if err != nil {
 		return nil, errors.New("invalid effective_from date format, use YYYY-MM-DD")
 	}
+	startTime, err := parseClockField("start_time", req.StartTime)
+	if err != nil {
+		return nil, err
+	}
+	endTime, err := parseClockField("end_time", req.EndTime)
+	if err != nil {
+		return nil, err
+	}
 
 	schedule := &model.ClassSchedule{
 		ClassID:       classID,
 		DayOfWeek:     req.DayOfWeek,
-		StartTime:     req.StartTime,
-		EndTime:       req.EndTime,
+		StartTime:     startTime,
+		EndTime:       endTime,
 		IsActive:      true,
 		EffectiveFrom: effectiveFrom,
 	}
@@ -288,10 +296,14 @@ func (s *ScheduleService) UpdateSchedule(ctx context.Context, id, actorID uuid.U
 		schedule.DayOfWeek = *req.DayOfWeek
 	}
 	if req.StartTime != nil {
-		schedule.StartTime = *req.StartTime
+		if schedule.StartTime, err = parseClockField("start_time", *req.StartTime); err != nil {
+			return nil, err
+		}
 	}
 	if req.EndTime != nil {
-		schedule.EndTime = *req.EndTime
+		if schedule.EndTime, err = parseClockField("end_time", *req.EndTime); err != nil {
+			return nil, err
+		}
 	}
 	if req.Room != nil {
 		schedule.Room = req.Room
@@ -351,6 +363,14 @@ func (s *ScheduleService) CreateSession(ctx context.Context, classID, actorID uu
 	if err != nil {
 		return nil, errors.New("invalid date format, use YYYY-MM-DD")
 	}
+	startTime, err := parseClockField("start_time", req.StartTime)
+	if err != nil {
+		return nil, err
+	}
+	endTime, err := parseClockField("end_time", req.EndTime)
+	if err != nil {
+		return nil, err
+	}
 
 	nextNum, err := s.repo.GetNextSessionNumber(ctx, classID)
 	if err != nil {
@@ -361,8 +381,8 @@ func (s *ScheduleService) CreateSession(ctx context.Context, classID, actorID uu
 		ClassID:       classID,
 		SessionNumber: nextNum,
 		Date:          date,
-		StartTime:     req.StartTime,
-		EndTime:       req.EndTime,
+		StartTime:     startTime,
+		EndTime:       endTime,
 		Status:        model.SessionScheduled,
 	}
 
@@ -441,10 +461,14 @@ func (s *ScheduleService) UpdateSession(ctx context.Context, id, actorID uuid.UU
 		session.Date = date
 	}
 	if req.StartTime != nil {
-		session.StartTime = *req.StartTime
+		if session.StartTime, err = parseClockField("start_time", *req.StartTime); err != nil {
+			return nil, err
+		}
 	}
 	if req.EndTime != nil {
-		session.EndTime = *req.EndTime
+		if session.EndTime, err = parseClockField("end_time", *req.EndTime); err != nil {
+			return nil, err
+		}
 	}
 	if req.Status != nil {
 		session.Status = model.ClassSessionStatus(*req.Status)
@@ -853,8 +877,8 @@ func (s *ScheduleService) GetClassTimetable(ctx context.Context, classID, actorI
 			ScheduleID: &sch.ID,
 			ClassID:    sch.ClassID,
 			DayOfWeek:  sch.DayOfWeek,
-			StartTime:  sch.StartTime,
-			EndTime:    sch.EndTime,
+			StartTime:  sch.StartTime.String(),
+			EndTime:    sch.EndTime.String(),
 			Room:       sch.Room,
 			Status:     "active",
 		}
@@ -907,8 +931,8 @@ func (s *ScheduleService) GetMyTimetable(ctx context.Context, userID uuid.UUID, 
 			ScheduleID: &sch.ID,
 			ClassID:    sch.ClassID,
 			DayOfWeek:  sch.DayOfWeek,
-			StartTime:  sch.StartTime,
-			EndTime:    sch.EndTime,
+			StartTime:  sch.StartTime.String(),
+			EndTime:    sch.EndTime.String(),
 			Room:       sch.Room,
 			Status:     "active",
 		}
@@ -995,8 +1019,7 @@ func (s *ScheduleService) scheduleSessionReminder(ctx context.Context, session *
 	}
 
 	// Parse session datetime
-	sessionDate := session.Date.Format("2006-01-02")
-	sessionDateTime, err := time.ParseInLocation("2006-01-02 15:04:05", sessionDate+" "+session.StartTime, time.FixedZone("ICT", 7*3600))
+	sessionDateTime, err := session.StartTime.On(session.Date, time.FixedZone("ICT", 7*3600))
 	if err != nil {
 		log.Printf("[schedule] Failed to parse session datetime: %v", err)
 		return
@@ -1005,7 +1028,7 @@ func (s *ScheduleService) scheduleSessionReminder(ctx context.Context, session *
 	payload := asynq_queue.ClassReminderPayload{
 		SessionID:  session.ID,
 		ClassID:    classID,
-		StartTime:  session.StartTime,
+		StartTime:  session.StartTime.String(),
 		MinsBefore: 30,
 	}
 
@@ -1019,6 +1042,16 @@ func (s *ScheduleService) scheduleSessionReminder(ctx context.Context, session *
 	}
 }
 
+// parseClockField đọc giờ trong ngày từ request ("HH:MM" hoặc "HH:MM:SS"). Lỗi là lỗi đầu vào:
+// handler trả 400 qua scheduleFail.
+func parseClockField(field, value string) (model.TimeOfDay, error) {
+	t, err := model.ParseTimeOfDay(value)
+	if err != nil {
+		return "", fmt.Errorf("invalid %s: %w", field, err)
+	}
+	return t, nil
+}
+
 // ============================================================================
 // MAPPERS
 // ============================================================================
@@ -1028,8 +1061,8 @@ func (s *ScheduleService) mapScheduleToDTO(sch *model.ClassSchedule) *dto.ClassS
 		ID:             sch.ID,
 		ClassID:        sch.ClassID,
 		DayOfWeek:      sch.DayOfWeek,
-		StartTime:      sch.StartTime,
-		EndTime:        sch.EndTime,
+		StartTime:      sch.StartTime.String(),
+		EndTime:        sch.EndTime.String(),
 		Room:           sch.Room,
 		IsActive:       sch.IsActive,
 		EffectiveFrom:  sch.EffectiveFrom,
@@ -1045,8 +1078,8 @@ func (s *ScheduleService) mapSessionToDTO(sess *model.ClassSession) *dto.ClassSe
 		ScheduleID:          sess.ScheduleID,
 		SessionNumber:       sess.SessionNumber,
 		Date:                sess.Date.Format("2006-01-02"),
-		StartTime:           sess.StartTime,
-		EndTime:             sess.EndTime,
+		StartTime:           sess.StartTime.String(),
+		EndTime:             sess.EndTime.String(),
 		Status:              string(sess.Status),
 		Topic:               sess.Topic,
 		Notes:               sess.Notes,

@@ -18,7 +18,7 @@ type Attendance struct {
 	// Enhanced tracking fields
 	CheckInTime       *time.Time `json:"check_in_time,omitempty"`
 	CheckOutTime      *time.Time `json:"check_out_time,omitempty"`
-	ExpectedTime      *string    `gorm:"type:time" json:"expected_time,omitempty"`
+	ExpectedTime      *TimeOfDay `gorm:"type:time without time zone" json:"expected_time,omitempty"`
 	LateMinutes       int        `gorm:"default:0" json:"late_minutes"`
 	EarlyLeaveMinutes int        `gorm:"default:0" json:"early_leave_minutes"`
 	Location          *string    `gorm:"type:varchar(50)" json:"location,omitempty"` // online, offline, room_name

@@ -285,8 +285,8 @@ func (s *ParentDashboardService) GetChildSchedule(ctx context.Context, parentID,
 				ClassID:   sch.ClassID.String(),
 				ClassName: className,
 				DayOfWeek: sch.DayOfWeek,
-				StartTime: sch.StartTime,
-				EndTime:   sch.EndTime,
+				StartTime: sch.StartTime.String(),
+				EndTime:   sch.EndTime.String(),
 				Room:      room,
 			})
 		}
@@ -315,8 +315,8 @@ func (s *ParentDashboardService) GetChildSchedule(ctx context.Context, parentID,
 					SessionNumber: sess.SessionNumber,
 					Topic:         topic,
 					Date:          sess.Date,
-					StartTime:     sess.StartTime,
-					EndTime:       sess.EndTime,
+					StartTime:     sess.StartTime.String(),
+					EndTime:       sess.EndTime.String(),
 					Room:          room,
 				})
 			}
@@ -358,8 +358,8 @@ func (s *ParentDashboardService) GetChildTimetable(ctx context.Context, parentID
 			ScheduleID: &sch.ID,
 			ClassID:    sch.ClassID,
 			DayOfWeek:  sch.DayOfWeek,
-			StartTime:  sch.StartTime,
-			EndTime:    sch.EndTime,
+			StartTime:  sch.StartTime.String(),
+			EndTime:    sch.EndTime.String(),
 			Room:       sch.Room,
 			Status:     "active",
 		}

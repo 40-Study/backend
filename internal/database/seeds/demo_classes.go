@@ -117,20 +117,12 @@ func (s *Seeder) linkDemoClassMembers(class model.Class, teacher model.User, stu
 func (s *Seeder) upsertDemoSchedules(spec classSpec, class model.Class) (map[int]model.ClassSchedule, error) {
 	result := make(map[int]model.ClassSchedule, len(spec.Days))
 	from := dateOrToday(class.StartDate)
-	startAt, err := clockStamp(from, spec.StartTime)
-	if err != nil {
-		return nil, err
-	}
-	endAt, err := clockStamp(from, spec.EndTime)
-	if err != nil {
-		return nil, err
-	}
 	for _, day := range spec.Days {
 		sch := model.ClassSchedule{
 			ClassID:        class.ID,
 			DayOfWeek:      day,
-			StartTime:      startAt, // cột TIMESTAMPTZ, xem clockStamp
-			EndTime:        endAt,
+			StartTime:      spec.StartTime,
+			EndTime:        spec.EndTime,
 			Room:           ptr(spec.Room),
 			IsActive:       true,
 			EffectiveFrom:  from,
