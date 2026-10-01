@@ -29,14 +29,36 @@ type groupMemberChecker interface {
 //   - conversation:<id>  participant CÒN HIỆU LỰC (chưa rời/bị kick/ban) của hội thoại
 //   - group:<id>         thành viên ACTIVE của nhóm
 //   - kênh khác / id sai định dạng: từ chối
+//
 // Lỗi hạ tầng trả ra ngoài và bị coi là từ chối (fail-closed) ở socket.subscribe.
 type wsChannelAuthorizer struct {
 	participants participantChecker
 	groupMembers groupMemberChecker
+	// directBlocks nối sau khi dựng services (authorizer được tạo trước services trong app.New). nil = chưa nối:
+	// mọi "đang gõ" của người đã đăng ký kênh được chuyển tiếp như trước.
+	directBlocks directBlockChecker
+}
+
+// directBlockChecker — DM 1-1 giữa userID và người kia có chặn ở bất kỳ chiều nào không. Cài đặt thật là
+// ConversationService.IsDirectBlocked, cùng quy tắc khoá gửi tin nên "đang gõ" và "gửi" không bao giờ lệch.
+type directBlockChecker interface {
+	IsDirectBlocked(ctx context.Context, convID, userID uuid.UUID) (bool, error)
 }
 
 func newWSChannelAuthorizer(p participantChecker, g groupMemberChecker) *wsChannelAuthorizer {
 	return &wsChannelAuthorizer{participants: p, groupMembers: g}
+}
+
+// SetDirectBlockChecker nối kiểm tra chặn cho sự kiện "đang gõ" (socket.TypingGuard).
+func (a *wsChannelAuthorizer) SetDirectBlockChecker(c directBlockChecker) { a.directBlocks = c }
+
+// CanBroadcastTyping cài đặt socket.TypingGuard: DM 1-1 bị chặn thì không phát "đang gõ".
+func (a *wsChannelAuthorizer) CanBroadcastTyping(userID, conversationID uuid.UUID) (bool, error) {
+	if a.directBlocks == nil {
+		return true, nil
+	}
+	blocked, err := a.directBlocks.IsDirectBlocked(context.Background(), conversationID, userID)
+	return !blocked, err
 }
 
 func (a *wsChannelAuthorizer) CanSubscribe(userID uuid.UUID, channel string) (bool, error) {

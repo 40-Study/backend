@@ -36,7 +36,8 @@ func New() (*App, error) {
 	notifier := socket.NewNotifier(hub)
 	repos := InitRepositories(resources.DB)
 	// S6: authorizer thật (kiểm participant/thành viên nhóm), thay defaultAuthorizer cho phép mọi kênh.
-	socketHandler := socket.NewHandler(hub, newWSChannelAuthorizer(repos.ConversationParticipant, repos.GroupMember))
+	wsAuthorizer := newWSChannelAuthorizer(repos.ConversationParticipant, repos.GroupMember)
+	socketHandler := socket.NewHandler(hub, wsAuthorizer)
 
 	// C-02 (audit 260909): PermissionChecker triển khai thật cho RequirePermissions (trước
 	// đây là no-op không dùng ở đâu). Dùng chung các repository RBAC đã có sẵn trong repos.
@@ -51,6 +52,8 @@ func New() (*App, error) {
 	}
 
 	services := InitServices(resources, repos, notifier)
+	// "Đang gõ" trong DM bị chặn không được phát cho phía bên kia (cùng quy tắc với khoá gửi tin).
+	wireDirectBlockRealtime(services, wsAuthorizer)
 
 	// Register tasks sau khi có services để có thể inject livestream starter
 	// V3-6 (issue #58): Start() nay doi actorID (nguoi goi). Task auto-start chay nen khong co

@@ -8,7 +8,7 @@ type OAuthUserInfo struct {
 	Email          *string // email chính (có thể nil nếu user ẩn email)
 	Name           *string // tên hiển thị
 	AvatarURL      *string // ảnh đại diện
-	Username       string  // username (GitHub: login, Google: email prefix, FB: "fb_"+id)
+	Username       string  // username (GitHub: login, FB: "fb_"+id; Google: để trống, service sinh từ tên, KHÔNG từ email)
 }
 
 // OAuthProvider — interface chung cho tất cả OAuth provider

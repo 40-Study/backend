@@ -20,6 +20,12 @@ const (
 	// muốn bỏ hẳn.
 	FriendCancelCooldown = 5 * time.Minute
 
+	// FriendRequestNoticeLimit — số thông báo "lời mời kết bạn" tối đa mà một cặp người gửi → người nhận được
+	// tạo trong FriendRequestNoticeWindow. Vượt trần thì lời mời vẫn tạo nhưng không đẩy thông báo/WS
+	// (gửi-huỷ-gửi mỗi 5 phút nếu không có trần sẽ là ~288 thông báo/ngày cho một người).
+	FriendRequestNoticeLimit  = 3
+	FriendRequestNoticeWindow = 24 * time.Hour
+
 	// Giới hạn tốc độ theo user (Redis, cửa sổ 1 phút): mọi POST dưới /friends dùng chung một bộ đếm.
 	FriendPostsPerMinute  = 10
 	FriendSearchPerMinute = 30

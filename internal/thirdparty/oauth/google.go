@@ -78,7 +78,7 @@ func (p *GoogleProvider) ExchangeCode(code string) (string, error) {
 	form.Set("code", code)
 	form.Set("redirect_uri", p.redirectURL)
 	form.Set("grant_type", "authorization_code")
-	
+
 	req, err := http.NewRequest("POST", "https://oauth2.googleapis.com/token", strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err
@@ -147,12 +147,14 @@ func (p *GoogleProvider) GetUserInfo(accessToken string) (*OAuthUserInfo, error)
 		return nil, fmt.Errorf("decode google userinfo response: %w", err)
 	}
 
-	// Lấy phần trước @ làm username (Google không có username riêng)
-	username := gUser.Email
-	if idx := strings.Index(gUser.Email, "@"); idx > 0 {
-		username = gUser.Email[:idx]
-	}
+	return googleUserToOAuthInfo(gUser), nil
+}
 
+// googleUserToOAuthInfo chuẩn hoá phản hồi userinfo của Google. Username CỐ Ý để trống: Google không có
+// username riêng, và trước đây lấy phần trước '@' của email làm user_name làm lộ một phần email ở những
+// nơi user_name hiển thị công khai (leaderboard, contest, danh sách thành viên nhóm; issue #105).
+// Tầng service sinh user_name an toàn từ tên + hậu tố ngẫu nhiên khi tạo tài khoản.
+func googleUserToOAuthInfo(gUser googleUserResponse) *OAuthUserInfo {
 	var name *string
 	if gUser.Name != "" {
 		name = &gUser.Name
@@ -171,6 +173,6 @@ func (p *GoogleProvider) GetUserInfo(accessToken string) (*OAuthUserInfo, error)
 		Email:          email,
 		Name:           name,
 		AvatarURL:      avatar,
-		Username:       username,
-	}, nil
+		Username:       "",
+	}
 }
