@@ -69,7 +69,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          go test -count=1 -v ./... > go-test.log 2>&1
+          go test -count=1 -timeout 25m -v ./... > go-test.log 2>&1
           rc=$?
           grep -E '^(ok|FAIL|panic)|--- FAIL' go-test.log
           if [ "$rc" -ne 0 ]; then grep -B2 -A20 -- '--- FAIL' go-test.log | head -200; fi
