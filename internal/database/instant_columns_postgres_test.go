@@ -18,6 +18,12 @@ import (
 	"study.com/v1/internal/testutil/pgtest"
 )
 
+// Tên kiểu theo information_schema.columns.data_type.
+const (
+	typeTimestamp   = "timestamp without time zone"
+	typeTimestamptz = "timestamp with time zone"
+)
+
 func instantColumnTypes(t *testing.T, db *gorm.DB) map[string]string {
 	t.Helper()
 	type col struct{ TableName, ColumnName, DataType string }
