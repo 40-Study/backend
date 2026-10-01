@@ -47,6 +47,9 @@ type VoucherServiceInterface interface {
 	CreateVoucher(ctx context.Context, req *dto.CreateVoucherRequest) (*model.Voucher, error)
 	GetVoucherByID(ctx context.Context, voucherID uuid.UUID) (*model.Voucher, error)
 	GetVoucherByCode(ctx context.Context, code string) (*model.Voucher, error)
+	// GetVoucherByCodeForViewer: tra cứu công khai theo mã có xét holders_only (viewerID = uuid.Nil
+	// cho khách). Voucher dành riêng mà người xem chưa giữ trả lỗi như mã không tồn tại.
+	GetVoucherByCodeForViewer(ctx context.Context, code string, viewerID uuid.UUID) (*model.Voucher, error)
 	UpdateVoucher(ctx context.Context, voucherID uuid.UUID, req *dto.UpdateVoucherRequest) (*model.Voucher, error)
 	DeleteVoucher(ctx context.Context, voucherID uuid.UUID) error
 	RestoreVoucher(ctx context.Context, voucherID uuid.UUID) error
@@ -251,6 +254,9 @@ func (vs *VoucherService) CreateVoucher(ctx context.Context, req *dto.CreateVouc
 	if req.IsActive != nil {
 		voucher.IsActive = *req.IsActive
 	}
+	if req.HoldersOnly != nil {
+		voucher.HoldersOnly = *req.HoldersOnly
+	}
 
 	if err := vs.vr.CreateVoucher(ctx, voucher); err != nil {
 		return nil, err
@@ -265,6 +271,37 @@ func (vs *VoucherService) GetVoucherByID(ctx context.Context, voucherID uuid.UUI
 
 func (vs *VoucherService) GetVoucherByCode(ctx context.Context, code string) (*model.Voucher, error) {
 	return vs.vr.GetVoucherByCode(ctx, code)
+}
+
+// voucherUsableBy — người xem này có được biết/dùng voucher không. Voucher công khai: ai cũng được.
+// Voucher holders_only: chỉ user đã được cấp hoặc đã lưu (user_vouchers); khách (uuid.Nil) thì không.
+// Mọi chỗ chặn holders_only đi qua hàm này để một quy ước "người giữ" duy nhất.
+func (vs *VoucherService) voucherUsableBy(ctx context.Context, v *model.Voucher, userID uuid.UUID) (bool, error) {
+	if !v.HoldersOnly {
+		return true, nil
+	}
+	if userID == uuid.Nil {
+		return false, nil
+	}
+	return vs.vr.UserHoldsVoucher(ctx, userID, v.ID)
+}
+
+// GetVoucherByCodeForViewer — tra cứu công khai theo mã (GET /vouchers/code/:code, khách hoặc user
+// đăng nhập). Voucher holders_only mà người xem chưa giữ trả CHÍNH lỗi của mã không tồn tại
+// (repository.ErrVoucherNotFound) để không lộ mã có thật. viewerID = uuid.Nil khi là khách.
+func (vs *VoucherService) GetVoucherByCodeForViewer(ctx context.Context, code string, viewerID uuid.UUID) (*model.Voucher, error) {
+	voucher, err := vs.vr.GetVoucherByCode(ctx, code)
+	if err != nil {
+		return nil, err
+	}
+	ok, err := vs.voucherUsableBy(ctx, voucher, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, repository.ErrVoucherNotFound
+	}
+	return voucher, nil
 }
 
 func (vs *VoucherService) UpdateVoucher(ctx context.Context, voucherID uuid.UUID, req *dto.UpdateVoucherRequest) (*model.Voucher, error) {
@@ -332,6 +369,9 @@ func (vs *VoucherService) UpdateVoucher(ctx context.Context, voucherID uuid.UUID
 
 	if req.IsActive != nil {
 		voucher.IsActive = *req.IsActive
+	}
+	if req.HoldersOnly != nil {
+		voucher.HoldersOnly = *req.HoldersOnly
 	}
 
 	if err := vs.vr.UpdateVoucher(ctx, voucher); err != nil {
@@ -411,6 +451,13 @@ func (vs *VoucherService) ApplyVoucher(ctx context.Context, userID uuid.UUID, su
 	}
 	if voucher == nil {
 		return uuid.Nil, nil, errors.New("voucher not found")
+	}
+	usable, err := vs.voucherUsableBy(ctx, voucher, userID)
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	if !usable {
+		return uuid.Nil, nil, repository.ErrVoucherNotFound
 	}
 
 	discountAmount, err := vs.CalculateDiscountAmount(voucher, *subTotal)
@@ -508,6 +555,17 @@ func (vs *VoucherService) ValidateAndApplyVoucher(ctx context.Context, code stri
 	}
 	if voucher == nil {
 		return nil, decimal.Zero, ErrVoucherNotFoundByCode
+	}
+
+	// holders_only: kiểm TRƯỚC mọi điều kiện khác (hết hạn, tắt, đủ lượt...) và trả CHÍNH lỗi mà
+	// GetVoucherByCode trả cho mã không tồn tại (repository.ErrVoucherNotFound) — lỗi khác đi thì
+	// người ngoài dò ra được mã có thật.
+	usable, err := vs.voucherUsableBy(ctx, voucher, userID)
+	if err != nil {
+		return nil, decimal.Zero, err
+	}
+	if !usable {
+		return nil, decimal.Zero, repository.ErrVoucherNotFound
 	}
 
 	if !voucher.IsActive {
@@ -696,6 +754,15 @@ func (vs *VoucherService) SaveVoucher(ctx context.Context, userID uuid.UUID, req
 	voucher, err := vs.vr.GetVoucherByCode(ctx, req.VoucherCode)
 	if err != nil {
 		return nil, err
+	}
+	// holders_only: không tự lưu được — "lưu" là con đường để người ngoài tự cấp quyền cho mình,
+	// nên chỉ người ĐÃ giữ (được cấp) mới đi tiếp. Người khác nhận lỗi như mã không tồn tại.
+	usable, err := vs.voucherUsableBy(ctx, voucher, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !usable {
+		return nil, repository.ErrVoucherNotFound
 	}
 	userVoucher := &model.UserVoucher{
 		UserID:    userID,

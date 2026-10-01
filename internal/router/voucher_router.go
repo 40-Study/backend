@@ -13,7 +13,8 @@ func SetupVoucherRoutes(api fiber.Router, cfg *config.Config, voucherHandler *ha
 
 	// Public routes
 	vouchers.Get("/public", voucherHandler.GetPublicVouchers)
-	vouchers.Get("/code/:code", voucherHandler.GetVoucherByCode)
+	// OptionalAuth: biết người xem (nếu có token) để voucher holders_only chỉ lộ cho người giữ nó.
+	vouchers.Get("/code/:code", middleware.OptionalAuth(cfg, rdb), voucherHandler.GetVoucherByCode)
 
 	// Protected routes - require auth
 	auth := middleware.AuthMiddleware(cfg, rdb)

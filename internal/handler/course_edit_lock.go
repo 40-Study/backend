@@ -24,3 +24,20 @@ func writeCourseLocked(c *fiber.Ctx, err error) bool {
 	})
 	return true
 }
+
+// DiscountPriceInvalidCode — mã lỗi 400 khi discount_price không nằm trong (0, price). Web đọc mã
+// này để hiện thông báo tiếng Việt ở đúng ô nhập thay vì chuỗi tiếng Anh của backend.
+const DiscountPriceInvalidCode = "DISCOUNT_PRICE_INVALID"
+
+// writeDiscountPriceInvalid ghi 400 nếu err là service.ErrDiscountPriceInvalid; trả false để
+// handler đi tiếp các nhánh lỗi cũ. Dùng chung cho tạo và sửa khoá học.
+func writeDiscountPriceInvalid(c *fiber.Ctx, err error) bool {
+	if !errors.Is(err, service.ErrDiscountPriceInvalid) {
+		return false
+	}
+	_ = c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+		"message": service.ErrDiscountPriceInvalid.Error(),
+		"code":    DiscountPriceInvalidCode,
+	})
+	return true
+}

@@ -55,7 +55,21 @@ func (c *TransactionClient) Close() error {
 	return c.conn.Close()
 }
 
-// CheckTransactionResult represents the result of checking a transaction
+// BankTransaction — một giao dịch ghi có khớp mã thanh toán.
+type BankTransaction struct {
+	TransactionID   string
+	Amount          string
+	Currency        string
+	Description     string
+	TransactionDate string
+}
+
+// CheckTransactionResult represents the result of checking a transaction.
+//
+// TransactionID/Amount/Currency/Description/TransactionDate là giao dịch khớp ĐẦU TIÊN (hợp đồng cũ,
+// coin_service vẫn dùng). Transactions là MỌI giao dịch khớp (L1): khách có thể chuyển nhiều lần vào
+// cùng một mã, và lần thứ hai trở đi trước đây không bao giờ tới được Go nên luồng cờ hoàn tiền muộn
+// không bật. Đọc qua AllTransactions để tương thích service Python cũ chưa trả danh sách.
 type CheckTransactionResult struct {
 	Found           bool
 	TransactionID   string
@@ -65,6 +79,26 @@ type CheckTransactionResult struct {
 	TransactionDate string
 	Status          string
 	ErrorMessage    string
+	Transactions    []BankTransaction
+}
+
+// AllTransactions trả mọi giao dịch khớp theo thứ tự sao kê. Service Python cũ không gửi danh sách:
+// khi đó (Found=true) dựng một phần tử từ các field đầu tiên, nên caller không phải rẽ nhánh theo phiên
+// bản server. Found=false thì rỗng.
+func (r *CheckTransactionResult) AllTransactions() []BankTransaction {
+	if r == nil || !r.Found {
+		return nil
+	}
+	if len(r.Transactions) > 0 {
+		return r.Transactions
+	}
+	return []BankTransaction{{
+		TransactionID:   r.TransactionID,
+		Amount:          r.Amount,
+		Currency:        r.Currency,
+		Description:     r.Description,
+		TransactionDate: r.TransactionDate,
+	}}
 }
 
 // CheckTransaction checks if a transaction exists with the given payment code
@@ -80,7 +114,7 @@ func (c *TransactionClient) CheckTransaction(ctx context.Context, paymentCode st
 		return nil, fmt.Errorf("failed to check transaction: %w", err)
 	}
 
-	return &CheckTransactionResult{
+	result := &CheckTransactionResult{
 		Found:           resp.Found,
 		TransactionID:   resp.TransactionId,
 		Amount:          resp.Amount,
@@ -89,7 +123,20 @@ func (c *TransactionClient) CheckTransaction(ctx context.Context, paymentCode st
 		TransactionDate: resp.TransactionDate,
 		Status:          resp.Status,
 		ErrorMessage:    resp.ErrorMessage,
-	}, nil
+	}
+	for _, t := range resp.Transactions {
+		if t == nil {
+			continue
+		}
+		result.Transactions = append(result.Transactions, BankTransaction{
+			TransactionID:   t.TransactionId,
+			Amount:          t.Amount,
+			Currency:        t.Currency,
+			Description:     t.Description,
+			TransactionDate: t.TransactionDate,
+		})
+	}
+	return result, nil
 }
 
 // IsHealthy checks if the transaction service is healthy

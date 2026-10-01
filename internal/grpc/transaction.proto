@@ -30,6 +30,16 @@ message CheckTransactionResponse {
   string transaction_date = 6;
   string status = 7;
   string error_message = 8;
+  // Mọi giao dịch ghi có khớp mã, theo thứ tự sao kê. Field 2-6 giữ nghĩa cũ = giao dịch khớp đầu tiên.
+  repeated MatchedTransaction transactions = 9;
+}
+
+message MatchedTransaction {
+  string transaction_id = 1;
+  string amount = 2;
+  string currency = 3;
+  string description = 4;
+  string transaction_date = 5;
 }
 
 message GetTransactionsRequest {

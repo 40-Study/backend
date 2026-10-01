@@ -39,6 +39,8 @@ type CreateVoucherRequest struct {
 	StartDate *time.Time `json:"start_date"`
 	EndDate   *time.Time `json:"end_date"`
 	IsActive  *bool      `json:"is_active"`
+	// HoldersOnly: nil/false = công khai (mặc định); true = chỉ người đã được cấp/đã lưu mới dùng được.
+	HoldersOnly *bool `json:"holders_only"`
 }
 
 type UpdateVoucherRequest struct {
@@ -62,6 +64,9 @@ type UpdateVoucherRequest struct {
 	StartDate *time.Time `json:"start_date"`
 	EndDate   *time.Time `json:"end_date"`
 	IsActive  *bool      `json:"is_active"`
+	// HoldersOnly: nil = giữ nguyên; true/false = đổi. Bật sau khi voucher đã phát hành thì người đã
+	// lưu/được cấp vẫn dùng được, người chưa có thì không.
+	HoldersOnly *bool `json:"holders_only"`
 }
 
 type GetVouchersRequest struct {
