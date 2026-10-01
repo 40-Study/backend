@@ -174,12 +174,16 @@ func TestS6_PublicProfileRoute_TheoCaiDatRiengTuVaTungVai(t *testing.T) {
 			t.Errorf("%q xem hồ sơ chế độ friends: %d %s, muốn hồ sơ đầy đủ", who, status, raw)
 		}
 	}
-	for _, who := range []string{"", "viewer", "teacher", "stranger"} {
+	for _, who := range []string{"", "viewer", "teacher"} {
 		status, raw := e.do(t, who, "GET", path(e.friendsOnly), "")
 		priv, bio := isPrivate(raw)
 		if status != fiber.StatusOK || !priv || bio != "" || strings.Contains(raw, "bio friendsonly") {
 			t.Errorf("%q (không phải bạn hợp lệ) xem hồ sơ chế độ friends: %d %s, muốn chỉ tên + avatar", who, status, raw)
 		}
+	}
+	// Người ĐÃ chặn chủ hồ sơ: 404 y hệt hồ sơ ẩn (không suy ra được mình bị chặn).
+	if status, raw := e.do(t, "stranger", "GET", path(e.friendsOnly), ""); status != fiber.StatusNotFound {
+		t.Errorf("người bị chặn xem hồ sơ: %d %s, muốn 404", status, raw)
 	}
 	// Ẩn hẳn: khách và người khác 404, chính chủ và admin vẫn xem được.
 	for _, who := range []string{"", "viewer"} {
