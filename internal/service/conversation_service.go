@@ -45,6 +45,11 @@ type ConversationServiceInterface interface {
 // thay vì 400 mặc định như các lỗi khác của CreateDirectConversation.
 var ErrConversationNotAllowed = errors.New("Bạn chỉ có thể nhắn tin với giảng viên của khoá bạn đang học, phụ huynh hoặc con đã liên kết, bạn bè hoặc quản trị viên")
 
+// ErrConversationBlocked: giữa hai người của cuộc trò chuyện trực tiếp (DM 1-1) có chặn ở BẤT KỲ chiều nào nên
+// không gửi/sửa/xoá tin được (lịch sử vẫn đọc được; bỏ chặn thì gửi lại bình thường). Không áp dụng cho chat
+// nhóm. Handler trả 403 + code ERR_CONVERSATION_BLOCKED. Quyết định chủ dự án sau review đối kháng #102 (M2).
+var ErrConversationBlocked = errors.New("Không thể gửi tin nhắn trong cuộc trò chuyện này")
+
 type ConversationService struct {
 	convRepo           *repository.ConversationRepository
 	participantRepo    *repository.ConversationParticipantRepository
@@ -215,6 +220,9 @@ func (s *ConversationService) SendMessage(ctx context.Context, userID, convID uu
 	if err := s.requireParticipant(ctx, convID, userID); err != nil {
 		return nil, err
 	}
+	if err := s.requireDirectNotBlocked(ctx, convID, userID); err != nil {
+		return nil, err
+	}
 
 	msgType := model.MessageTypeText
 	if req.Type != "" {
@@ -269,6 +277,9 @@ func (s *ConversationService) EditMessage(ctx context.Context, userID, convID, m
 	if err := s.requireParticipant(ctx, convID, userID); err != nil {
 		return nil, err
 	}
+	if err := s.requireDirectNotBlocked(ctx, convID, userID); err != nil {
+		return nil, err
+	}
 	msg, err := s.messageRepo.GetByID(ctx, messageID)
 	if err != nil {
 		return nil, err
@@ -303,6 +314,9 @@ func (s *ConversationService) EditMessage(ctx context.Context, userID, convID, m
 func (s *ConversationService) DeleteMessage(ctx context.Context, userID, convID, messageID uuid.UUID) error {
 	// S6: xem EditMessage.
 	if err := s.requireParticipant(ctx, convID, userID); err != nil {
+		return err
+	}
+	if err := s.requireDirectNotBlocked(ctx, convID, userID); err != nil {
 		return err
 	}
 	msg, err := s.messageRepo.GetByID(ctx, messageID)
@@ -606,6 +620,37 @@ func (s *ConversationService) hasConfirmedParentChildRelation(ctx context.Contex
 		return false, err
 	}
 	return rel != nil && rel.Status == model.ParentStudentStatusActive, nil
+}
+
+// requireDirectNotBlocked: trong DM 1-1, nếu giữa hai người có chặn ở BẤT KỲ chiều nào thì trả
+// ErrConversationBlocked (gửi/sửa/xoá tin). Chat nhóm không bị ảnh hưởng. Chưa nối checker (nil) thì bỏ qua:
+// ở app.go checker luôn được nối. Người chặn bị DM khoá cùng người bị chặn để cuộc trò chuyện cũ không còn là
+// kênh quấy rối; lịch sử vẫn đọc được và bỏ chặn thì gửi lại bình thường.
+func (s *ConversationService) requireDirectNotBlocked(ctx context.Context, convID, userID uuid.UUID) error {
+	if s.friendChecker == nil {
+		return nil
+	}
+	direct, err := s.convRepo.IsDirect(ctx, convID)
+	if err != nil || !direct {
+		return err
+	}
+	participants, err := s.participantRepo.ListByConversationID(ctx, convID)
+	if err != nil {
+		return err
+	}
+	for _, p := range participants {
+		if p.UserID == userID {
+			continue
+		}
+		blocked, err := s.friendChecker.IsBlockedEitherWay(ctx, userID, p.UserID)
+		if err != nil {
+			return err
+		}
+		if blocked {
+			return ErrConversationBlocked
+		}
+	}
+	return nil
 }
 
 func (s *ConversationService) requireParticipant(ctx context.Context, convID, userID uuid.UUID) error {

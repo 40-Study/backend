@@ -125,8 +125,9 @@ func TestCreateDirectConversation_ThieuChecker_DongKhongMoCua(t *testing.T) {
 	}
 }
 
-// Giới hạn đã biết (Q3, ghi ở docstring canCreateDirectConversation): guard chỉ áp dụng khi TẠO MỚI. Cuộc trực
-// tiếp đã có vẫn mở sau khi huỷ bạn hoặc chặn. Không phải lỗi; test khoá để thay đổi có chủ đích.
+// Guard chỉ áp dụng khi TẠO MỚI: cuộc trực tiếp đã có vẫn mở (xem lịch sử) sau khi huỷ bạn hoặc chặn. Còn GỬI
+// tin: huỷ bạn không đổi gì, nhưng CHẶN khoá gửi hai chiều (ErrConversationBlocked) — quyết định chủ dự án sau
+// review đối kháng #102 M2, phủ đầy đủ ở conversation_direct_blocked_postgres_test.go.
 func TestCreateDirectConversation_CuocDaCo_VanMoSauKhiHuyBanHoacChan(t *testing.T) {
 	db := pgtestIsolated(t)
 	svc := newConversationServiceWithFriends(db)
@@ -142,5 +143,11 @@ func TestCreateDirectConversation_CuocDaCo_VanMoSauKhiHuyBanHoacChan(t *testing.
 	again, err := svc.CreateDirectConversation(ctx, a, b)
 	if err != nil || again.ID != first.ID {
 		t.Errorf("cuộc đã có phải vẫn mở và trả lại đúng cuộc cũ: err=%v again=%v first=%v", err, again, first)
+	}
+	// Hành vi MỚI: đã chặn (b chặn a ở trên) thì không gửi được tin mới vào cuộc cũ, ở cả hai phía.
+	for who, uid := range map[string]uuid.UUID{"a": a, "b": b} {
+		if _, err := svc.SendMessage(ctx, uid, first.ID, dmText("sau khi chặn")); !errors.Is(err, ErrConversationBlocked) {
+			t.Errorf("%s gửi vào DM cũ sau khi bị chặn: muốn ErrConversationBlocked, nhận %v", who, err)
+		}
 	}
 }

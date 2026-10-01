@@ -19,6 +19,20 @@ func NewMessageHandler(convService service.ConversationServiceInterface) *Messag
 	return &MessageHandler{convService: convService}
 }
 
+// writeConversationBlocked: DM 1-1 có chặn giữa hai người -> ghi 403 + code ERR_CONVERSATION_BLOCKED (web hiển
+// thị "Không thể gửi tin nhắn trong cuộc trò chuyện này"). Trả handled=true khi đã ghi phản hồi (kèm lỗi ghi nếu
+// có); handled=false thì handler xử lý tiếp như cũ. Tách cờ handled khỏi giá trị lỗi vì c.JSON() trả nil khi ghi
+// thành công, không thể dùng nil để nói "chưa xử lý".
+func writeConversationBlocked(c *fiber.Ctx, err error) (handled bool, writeErr error) {
+	if !errors.Is(err, service.ErrConversationBlocked) {
+		return false, nil
+	}
+	return true, c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+		"message": err.Error(),
+		"code":    "ERR_CONVERSATION_BLOCKED",
+	})
+}
+
 // ─── Conversation endpoints ─────────────────────────────────────────────────
 
 // ListConversations - GET /api/conversations
@@ -295,6 +309,9 @@ func (h *MessageHandler) SendMessage(c *fiber.Ctx) error {
 
 	result, err := h.convService.SendMessage(c.Context(), userID, convID, req)
 	if err != nil {
+		if handled, werr := writeConversationBlocked(c, err); handled {
+			return werr
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": err.Error(),
 		})
@@ -343,6 +360,9 @@ func (h *MessageHandler) EditMessage(c *fiber.Ctx) error {
 
 	result, err := h.convService.EditMessage(c.Context(), userID, convID, messageID, req)
 	if err != nil {
+		if handled, werr := writeConversationBlocked(c, err); handled {
+			return werr
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": err.Error(),
 		})
@@ -376,6 +396,9 @@ func (h *MessageHandler) DeleteMessage(c *fiber.Ctx) error {
 	}
 
 	if err := h.convService.DeleteMessage(c.Context(), userID, convID, messageID); err != nil {
+		if handled, werr := writeConversationBlocked(c, err); handled {
+			return werr
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": err.Error(),
 		})
