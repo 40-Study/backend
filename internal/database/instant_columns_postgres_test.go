@@ -3,7 +3,8 @@ package database
 // Cột thời điểm buổi học timestamp -> timestamptz (Postgres thật, schema tạm pgtest.IsolatedSchema, DROP khi xong).
 //
 // Trước bản sửa: model khai `type:timestamp` nên Migrate tạo `timestamp without time zone`, ghi một thời điểm
-// có múi giờ rồi đọc lại ra instant lệch 7 giờ (TestInstantColumns_MigrateTaoTimestamptzVaGiuInstant ĐỎ).
+// có múi giờ rồi đọc lại ra instant lệch 7 giờ (assertInstantColumnsAfterMigrate, gọi từ
+// TestTimeOfDayColumns_MigrateTaoKieuTime, ĐỎ).
 // Bỏ migrateInstantColumnsUp hoặc bỏ `AT TIME ZONE` thì TestInstantColumns_ChuyenDuLieuCuTheoGioVN ĐỎ (phiên
 // UTC cho 20:00Z thay vì 13:00Z). Bỏ migrateInstantColumnsDown/đổi chiều thì TestInstantColumns_HoanTac ĐỎ.
 
@@ -34,12 +35,14 @@ func instantColumnTypes(t *testing.T, db *gorm.DB) map[string]string {
 	return got
 }
 
-func TestInstantColumns_MigrateTaoTimestamptzVaGiuInstant(t *testing.T) {
-	db := pgtest.IsolatedSchema(t, Migrate)
-
+// assertInstantColumnsAfterMigrate kiểm một schema đã Migrate đầy đủ: cột thời điểm là timestamptz và đọc lại
+// đúng instant. Được gọi từ TestTimeOfDayColumns_MigrateTaoKieuTime để dùng chung MỘT lần Migrate đầy đủ (mỗi
+// lần vài chục giây trên CI; package này và package service đã sát giới hạn thời gian của `go test`).
+func assertInstantColumnsAfterMigrate(t *testing.T, db *gorm.DB) {
+	t.Helper()
 	got := instantColumnTypes(t, db)
 	if len(got) != len(instantColumns) {
-		t.Fatalf("thấy %d cột, muốn %d: %v", len(got), len(instantColumns), got)
+		t.Fatalf("thấy %d cột thời điểm, muốn %d: %v", len(got), len(instantColumns), got)
 	}
 	for _, c := range instantColumns {
 		if dt := got[c.table+"."+c.column]; dt != typeTimestamptz {
@@ -47,7 +50,7 @@ func TestInstantColumns_MigrateTaoTimestamptzVaGiuInstant(t *testing.T) {
 		}
 	}
 
-	// Khởi động lại: bước chuyển + AutoMigrate trên cột đã đúng kiểu không lỗi, kiểu giữ nguyên.
+	// Khởi động lại: bước chuyển trên cột đã đúng kiểu không lỗi, kiểu giữ nguyên.
 	if err := migrateInstantColumnsUp(db); err != nil {
 		t.Fatalf("migrateInstantColumnsUp lần 2: %v", err)
 	}
