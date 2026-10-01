@@ -89,30 +89,65 @@ func (pc *PermissionChecker) resolvePermissions(ctx context.Context, userID uuid
 	}
 
 	if activeOrgID != nil {
-		orgRoles, err := pc.userOrgRoleRepo.FindByUserAndOrganization(ctx, userID, *activeOrgID, model.UserOrgRoleStatusActive)
+		orgPerms, err := pc.resolveOrgRolePermissions(ctx, userID, *activeOrgID)
 		if err != nil {
 			return nil, err
 		}
-		for _, uor := range orgRoles {
-			rolePerms, err := pc.roleRepo.GetPermissionsByRoleID(ctx, uor.RoleID)
-			if err != nil {
-				return nil, err
-			}
-			for _, p := range rolePerms {
-				// S6: org role chỉ được mang quyền THUỘC PHẠM VI TỔ CHỨC (SSOT
-				// data/permissions/org_owner_permissions.json). Quyền hệ thống nằm trong một org
-				// role (do gán cũ chưa bị chặn, hoặc ghi thẳng DB) KHÔNG được cộng vào tập quyền,
-				// nếu không ORG_OWNER tự nâng mình thành admin nền tảng: RequirePermissions(
-				// "SYSTEM_SETTINGS_MANAGE"/"PAYMENTS_MANAGE"...) và isAdminActor đều đọc tập này.
-				if !data.IsOrgPermission(p.Name) {
-					continue
-				}
-				perms = append(perms, p.Name)
-			}
-		}
+		perms = append(perms, orgPerms...)
 	}
 
 	return perms, nil
+}
+
+// resolveOrgRolePermissions: quyền user có TRONG MỘT tổ chức, chỉ từ org role đang active. Tách khỏi
+// resolvePermissions để HasOrgRolePermission (không cần JWT active_org_id) dùng đúng bộ lọc S6 này,
+// không chép lại.
+func (pc *PermissionChecker) resolveOrgRolePermissions(ctx context.Context, userID, orgID uuid.UUID) ([]string, error) {
+	var perms []string
+	orgRoles, err := pc.userOrgRoleRepo.FindByUserAndOrganization(ctx, userID, orgID, model.UserOrgRoleStatusActive)
+	if err != nil {
+		return nil, err
+	}
+	for _, uor := range orgRoles {
+		rolePerms, err := pc.roleRepo.GetPermissionsByRoleID(ctx, uor.RoleID)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range rolePerms {
+			// S6: org role chỉ được mang quyền THUỘC PHẠM VI TỔ CHỨC (SSOT
+			// data/permissions/org_owner_permissions.json). Quyền hệ thống nằm trong một org
+			// role (do gán cũ chưa bị chặn, hoặc ghi thẳng DB) KHÔNG được cộng vào tập quyền,
+			// nếu không ORG_OWNER tự nâng mình thành admin nền tảng: RequirePermissions(
+			// "SYSTEM_SETTINGS_MANAGE"/"PAYMENTS_MANAGE"...) và isAdminActor đều đọc tập này.
+			if !data.IsOrgPermission(p.Name) {
+				continue
+			}
+			perms = append(perms, p.Name)
+		}
+	}
+	return perms, nil
+}
+
+// HasOrgRolePermission: user có `permission` qua ORG ROLE đang active trong đúng tổ chức orgID. Cố ý
+// KHÔNG tính system role: vai hệ thống tên ORG_OWNER mang cùng 7 quyền org nhưng không gắn với tổ chức
+// nào, nên dùng HasPermission ở đây sẽ biến nó thành chủ của MỌI tổ chức.
+func (pc *PermissionChecker) HasOrgRolePermission(ctx context.Context, userID, orgID uuid.UUID, permission string) (bool, error) {
+	granted, err := pc.resolveOrgRolePermissions(ctx, userID, orgID)
+	if err != nil {
+		return false, err
+	}
+	return hasAllPermissions(granted, []string{permission}), nil
+}
+
+// IsSystemAdmin: user có quyền quản trị hệ thống (SYSTEM_SETTINGS_MANAGE, cùng permission isAdminActor ở
+// handler) qua system role. Org role không thể cộng quyền này (bộ lọc S6) nên bỏ qua active_org_id không
+// đổi kết quả.
+func (pc *PermissionChecker) IsSystemAdmin(ctx context.Context, userID uuid.UUID) (bool, error) {
+	granted, err := pc.resolveSystemOnlyPermissions(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return hasAllPermissions(granted, []string{"SYSTEM_SETTINGS_MANAGE"}), nil
 }
 
 // resolveSystemOnlyPermissions giống resolvePermissions nhưng CHỈ tính permission từ system

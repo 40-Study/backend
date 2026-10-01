@@ -23,6 +23,10 @@ type ClassRepositoryInterface interface {
 	TeacherClassExists(ctx context.Context, classID, teacherID uuid.UUID) (bool, error)
 	StudentClassExists(ctx context.Context, classID, studentID uuid.UUID) (bool, error)
 	IsUserRelatedToClass(ctx context.Context, classID, userID uuid.UUID) (bool, error)
+	// OrganizationIDsOfClass: các tổ chức mà lớp "thuộc về". Lớp/khoá không có cột organization_id, nên
+	// lớp thuộc tổ chức O khi người tạo lớp, giảng viên chủ khoá hoặc một giảng viên được gán vào lớp
+	// đang là thành viên active của O (user_organization_roles).
+	OrganizationIDsOfClass(ctx context.Context, classID uuid.UUID) ([]uuid.UUID, error)
 
 	// Teacher-Class
 	AssignTeacher(ctx context.Context, tc *model.TeacherClass) error
@@ -185,6 +189,28 @@ func (r *ClassRepository) IsUserRelatedToClass(ctx context.Context, classID, use
 	var exists bool
 	tx := buildIsUserRelatedToClassQuery(r.db.WithContext(ctx), classID, userID, &exists)
 	return exists, tx.Error
+}
+
+// organizationIDsOfClassSQL: tập "nhân sự của lớp" = người tạo lớp + giảng viên chủ khoá + giảng viên được
+// gán; lớp thuộc mọi tổ chức mà một trong số họ đang là thành viên active. Tham số: class_id (x3).
+// Học viên cố ý KHÔNG tính: ghi danh vào lớp không làm lớp thuộc về tổ chức của học viên.
+const organizationIDsOfClassSQL = `
+SELECT DISTINCT uor.organization_id
+FROM user_organization_roles uor
+WHERE uor.status = 'active' AND uor.deleted_at IS NULL
+  AND uor.user_id IN (
+    SELECT cl.created_by FROM classes cl WHERE cl.id = ? AND cl.deleted_at IS NULL AND cl.created_by IS NOT NULL
+    UNION
+    SELECT co.instructor_id FROM classes cl JOIN courses co ON co.id = cl.course_id
+      WHERE cl.id = ? AND cl.deleted_at IS NULL
+    UNION
+    SELECT tc.teacher_id FROM teacher_classes tc WHERE tc.class_id = ?
+  )`
+
+func (r *ClassRepository) OrganizationIDsOfClass(ctx context.Context, classID uuid.UUID) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := r.db.WithContext(ctx).Raw(organizationIDsOfClassSQL, classID, classID, classID).Scan(&ids).Error
+	return ids, err
 }
 
 // Teacher-Class

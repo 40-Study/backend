@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"study.com/v1/internal/model"
 )
 
@@ -127,6 +128,7 @@ func (r *GradeRepository) GetGradesByClassID(ctx context.Context, classID uuid.U
 	var grades []model.Grade
 	err := r.db.WithContext(ctx).
 		Preload("Student").
+		Preload("Grader").
 		Where("class_id = ?", classID).
 		Order("student_id ASC, grade_type ASC").
 		Find(&grades).Error
@@ -137,6 +139,7 @@ func (r *GradeRepository) GetGradesByStudentAndClass(ctx context.Context, studen
 	var grades []model.Grade
 	err := r.db.WithContext(ctx).
 		Preload("Student").
+		Preload("Grader").
 		Where("student_id = ? AND class_id = ?", studentID, classID).
 		Order("grade_type ASC, created_at ASC").
 		Find(&grades).Error
@@ -147,6 +150,7 @@ func (r *GradeRepository) GetGradesByStudentID(ctx context.Context, studentID uu
 	var grades []model.Grade
 	err := r.db.WithContext(ctx).
 		Preload("Class").
+		Preload("Grader").
 		Where("student_id = ?", studentID).
 		Order("created_at DESC").
 		Find(&grades).Error
@@ -154,7 +158,9 @@ func (r *GradeRepository) GetGradesByStudentID(ctx context.Context, studentID uu
 }
 
 func (r *GradeRepository) UpdateGrade(ctx context.Context, grade *model.Grade) error {
-	return r.db.WithContext(ctx).Save(grade).Error
+	// Omit associations: Grader/Student đã Preload sẽ bị GORM dùng để GHI ĐÈ khoá ngoại (graded_by) bằng id
+	// người chấm cũ, nên đổi người chấm khi sửa điểm không có hiệu lực.
+	return r.db.WithContext(ctx).Omit(clause.Associations).Save(grade).Error
 }
 
 func (r *GradeRepository) DeleteGrade(ctx context.Context, id uuid.UUID) error {

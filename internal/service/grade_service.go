@@ -48,26 +48,24 @@ type GradeServiceInterface interface {
 var ErrNotClassTeacher = errors.New("forbidden: not the teacher of this class")
 
 type GradeService struct {
-	repo      repository.GradeRepositoryInterface
-	classRepo repository.ClassRepositoryInterface
-	redis     *redis.Client
+	repo       repository.GradeRepositoryInterface
+	classRepo  repository.ClassRepositoryInterface
+	courseRepo repository.CourseRepositoryInterface
+	authz      ClassAuthorizer
+	redis      *redis.Client
 }
 
-func NewGradeService(repo repository.GradeRepositoryInterface, classRepo repository.ClassRepositoryInterface, redis *redis.Client) *GradeService {
-	return &GradeService{repo: repo, classRepo: classRepo, redis: redis}
+// authz có thể nil (test, hoặc môi trường không có PermissionChecker): khi đó không ai được nâng quyền
+// ngoài người quản lý lớp theo dữ liệu lớp/khoá.
+func NewGradeService(repo repository.GradeRepositoryInterface, classRepo repository.ClassRepositoryInterface, courseRepo repository.CourseRepositoryInterface, authz ClassAuthorizer, redis *redis.Client) *GradeService {
+	return &GradeService{repo: repo, classRepo: classRepo, courseRepo: courseRepo, authz: authz, redis: redis}
 }
 
-// requireClassTeacher dùng lại pattern TeacherCanManageSession (schedule_service.go) — chỉ
-// giáo viên đã được gán vào lớp (teacher_classes) mới được thao tác điểm của lớp đó.
-func (s *GradeService) requireClassTeacher(ctx context.Context, classID, teacherID uuid.UUID) error {
-	allowed, err := s.classRepo.TeacherClassExists(ctx, classID, teacherID)
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return ErrNotClassTeacher
-	}
-	return nil
+// requireClassGrader: ai được chấm điểm và quản bảng điểm của lớp — xem ensureClassGrade (giảng viên lớp,
+// người tạo lớp, instructor khoá, admin hệ thống, chủ/quản trị tổ chức của lớp). Trước đây chỉ tra
+// teacher_classes nên chủ khoá, người tạo lớp và chủ tổ chức đều bị chặn (rà soát phân quyền, câu hỏi 7).
+func (s *GradeService) requireClassGrader(ctx context.Context, classID, userID uuid.UUID) error {
+	return ensureClassGrade(ctx, s.classRepo, s.courseRepo, s.authz, userID, classID)
 }
 
 // requireStudentInClass (lane P): điểm chỉ ghi được cho học viên đang học lớp đó. Trước đây giảng viên
@@ -100,7 +98,7 @@ func (s *GradeService) invalidateGradeCache(ctx context.Context, classID uuid.UU
 // ============================================================================
 
 func (s *GradeService) CreateGradeColumn(ctx context.Context, classID, actorUserID uuid.UUID, req dto.CreateGradeColumnDTO) (*dto.GradeColumnResponseDTO, error) {
-	if err := s.requireClassTeacher(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
 		return nil, err
 	}
 	col := &model.GradeColumn{
@@ -131,7 +129,7 @@ func (s *GradeService) CreateGradeColumn(ctx context.Context, classID, actorUser
 // user đã đăng nhập xem được cấu trúc cột điểm (tên cột, trọng số) của bất kỳ lớp nào. C-13
 // vòng 2 gate được CRUD cột điểm nhưng bỏ sót đúng route GET danh sách này.
 func (s *GradeService) GetGradeColumns(ctx context.Context, classID, actorUserID uuid.UUID) ([]dto.GradeColumnResponseDTO, error) {
-	if err := s.requireClassTeacher(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
 		return nil, err
 	}
 	cols, err := s.repo.GetGradeColumnsByClassID(ctx, classID)
@@ -146,7 +144,7 @@ func (s *GradeService) GetGradeColumns(ctx context.Context, classID, actorUserID
 }
 
 func (s *GradeService) UpdateGradeColumn(ctx context.Context, classID, id, actorUserID uuid.UUID, req dto.UpdateGradeColumnDTO) (*dto.GradeColumnResponseDTO, error) {
-	if err := s.requireClassTeacher(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
 		return nil, err
 	}
 	col, err := s.repo.GetGradeColumnByID(ctx, id)
@@ -185,7 +183,7 @@ func (s *GradeService) UpdateGradeColumn(ctx context.Context, classID, id, actor
 }
 
 func (s *GradeService) DeleteGradeColumn(ctx context.Context, classID, id, actorUserID uuid.UUID) error {
-	if err := s.requireClassTeacher(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
 		return err
 	}
 	col, err := s.repo.GetGradeColumnByID(ctx, id)
@@ -204,7 +202,7 @@ func (s *GradeService) DeleteGradeColumn(ctx context.Context, classID, id, actor
 }
 
 func (s *GradeService) ReorderGradeColumns(ctx context.Context, classID, actorUserID uuid.UUID, req dto.ReorderGradeColumnsDTO) error {
-	if err := s.requireClassTeacher(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
 		return err
 	}
 	ids := make([]uuid.UUID, len(req.ColumnIDs))
@@ -228,7 +226,7 @@ func (s *GradeService) ReorderGradeColumns(ctx context.Context, classID, actorUs
 // ============================================================================
 
 func (s *GradeService) CreateGrade(ctx context.Context, classID, gradedBy uuid.UUID, req dto.CreateGradeDTO) (*dto.GradeResponseDTO, error) {
-	if err := s.requireClassTeacher(ctx, classID, gradedBy); err != nil {
+	if err := s.requireClassGrader(ctx, classID, gradedBy); err != nil {
 		return nil, err
 	}
 
@@ -287,7 +285,7 @@ func (s *GradeService) CreateGrade(ctx context.Context, classID, gradedBy uuid.U
 func (s *GradeService) GetGradesByClass(ctx context.Context, classID, actorUserID uuid.UUID) (*dto.GradeBookDTO, error) {
 	// C-13: gradebook chứa điểm của TOÀN BỘ học sinh trong lớp — chỉ giáo viên của lớp mới
 	// được xem, tránh học sinh dò classID để xem điểm bạn cùng lớp.
-	if err := s.requireClassTeacher(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
 		return nil, err
 	}
 	// Check cache
@@ -361,7 +359,7 @@ func (s *GradeService) GetGradesByClass(ctx context.Context, classID, actorUserI
 func (s *GradeService) GetStudentGrades(ctx context.Context, classID, studentID, requesterID uuid.UUID) ([]dto.GradeResponseDTO, error) {
 	// C-13: chỉ chính học sinh đó hoặc giáo viên của lớp mới được xem điểm.
 	if requesterID != studentID {
-		if err := s.requireClassTeacher(ctx, classID, requesterID); err != nil {
+		if err := s.requireClassGrader(ctx, classID, requesterID); err != nil {
 			return nil, err
 		}
 	}
@@ -383,7 +381,7 @@ func (s *GradeService) UpdateGrade(ctx context.Context, id, gradedBy uuid.UUID, 
 	if err != nil || grade == nil {
 		return nil, errors.New("grade not found")
 	}
-	if err := s.requireClassTeacher(ctx, grade.ClassID, gradedBy); err != nil {
+	if err := s.requireClassGrader(ctx, grade.ClassID, gradedBy); err != nil {
 		return nil, err
 	}
 
@@ -410,6 +408,10 @@ func (s *GradeService) UpdateGrade(ctx context.Context, id, gradedBy uuid.UUID, 
 	}
 
 	s.invalidateGradeCache(ctx, grade.ClassID)
+	// Nạp lại để Grader là người vừa chấm (grade.Grader đang giữ người chấm cũ).
+	if updated, _ := s.repo.GetGradeByID(ctx, grade.ID); updated != nil {
+		return s.mapGradeToDTO(updated), nil
+	}
 	return s.mapGradeToDTO(grade), nil
 }
 
@@ -418,7 +420,7 @@ func (s *GradeService) DeleteGrade(ctx context.Context, id, actorUserID uuid.UUI
 	if err != nil || grade == nil {
 		return errors.New("grade not found")
 	}
-	if err := s.requireClassTeacher(ctx, grade.ClassID, actorUserID); err != nil {
+	if err := s.requireClassGrader(ctx, grade.ClassID, actorUserID); err != nil {
 		return err
 	}
 
@@ -433,7 +435,7 @@ func (s *GradeService) DeleteGrade(ctx context.Context, id, actorUserID uuid.UUI
 func (s *GradeService) BulkCreateGrades(ctx context.Context, classID, gradedBy uuid.UUID, req dto.BulkCreateGradesDTO) ([]dto.GradeResponseDTO, error) {
 	// Kiểm quyền và học viên của CẢ lô trước khi ghi dòng nào (như điểm danh lớp, M-4 review S4),
 	// để một học viên ngoài lớp không làm lô ghi dở dang.
-	if err := s.requireClassTeacher(ctx, classID, gradedBy); err != nil {
+	if err := s.requireClassGrader(ctx, classID, gradedBy); err != nil {
 		return nil, err
 	}
 	for _, gReq := range req.Grades {
@@ -461,7 +463,7 @@ func (s *GradeService) BulkCreateGrades(ctx context.Context, classID, gradedBy u
 // ============================================================================
 
 func (s *GradeService) CalculateFinalGrades(ctx context.Context, classID, actorUserID uuid.UUID) ([]dto.FinalGradeResponseDTO, error) {
-	if err := s.requireClassTeacher(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
 		return nil, err
 	}
 	grades, err := s.repo.GetGradesByClassID(ctx, classID)
@@ -541,7 +543,7 @@ func (s *GradeService) CalculateFinalGrades(ctx context.Context, classID, actorU
 // GetFinalGrades (H-04 residual, review vòng 1): TRƯỚC ĐÂY không kiểm actorUserID -> rò rỉ
 // điểm tổng kết toàn lớp cho bất kỳ user nào đã đăng nhập. Cùng lỗ hổng như GetGradeColumns.
 func (s *GradeService) GetFinalGrades(ctx context.Context, classID, actorUserID uuid.UUID) ([]dto.FinalGradeResponseDTO, error) {
-	if err := s.requireClassTeacher(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
 		return nil, err
 	}
 	fgs, err := s.repo.GetFinalGradesByClassID(ctx, classID)
@@ -557,7 +559,7 @@ func (s *GradeService) GetFinalGrades(ctx context.Context, classID, actorUserID 
 }
 
 func (s *GradeService) UpdateFinalGrade(ctx context.Context, classID, id, actorUserID uuid.UUID, req dto.UpdateFinalGradeDTO) (*dto.FinalGradeResponseDTO, error) {
-	if err := s.requireClassTeacher(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
 		return nil, err
 	}
 	fg, err := s.repo.GetFinalGradeByID(ctx, id)
@@ -588,7 +590,7 @@ func (s *GradeService) UpdateFinalGrade(ctx context.Context, classID, id, actorU
 }
 
 func (s *GradeService) FinalizeFinalGrades(ctx context.Context, classID, userID uuid.UUID) error {
-	if err := s.requireClassTeacher(ctx, classID, userID); err != nil {
+	if err := s.requireClassGrader(ctx, classID, userID); err != nil {
 		return err
 	}
 	if err := s.repo.FinalizeFinalGrades(ctx, classID, userID); err != nil {
@@ -654,6 +656,18 @@ func (s *GradeService) calculateGPA(avg decimal.Decimal) decimal.Decimal {
 // MAPPERS
 // ============================================================================
 
+// graderDisplayName: tên hiển thị của người chấm (họ tên, không có thì username). Rỗng khi Grader chưa
+// được Preload — không bịa tên.
+func graderDisplayName(u *model.User) string {
+	if u == nil || u.ID == uuid.Nil {
+		return ""
+	}
+	if u.FullName != nil && *u.FullName != "" {
+		return *u.FullName
+	}
+	return u.UserName
+}
+
 func (s *GradeService) mapColumnToDTO(col *model.GradeColumn) *dto.GradeColumnResponseDTO {
 	return &dto.GradeColumnResponseDTO{
 		ID:           col.ID,
@@ -676,6 +690,7 @@ func (s *GradeService) mapGradeToDTO(g *model.Grade) *dto.GradeResponseDTO {
 	}
 
 	return &dto.GradeResponseDTO{
+		GradedByName: graderDisplayName(&g.Grader),
 		ID:           g.ID,
 		StudentID:    g.StudentID,
 		StudentName:  name,
