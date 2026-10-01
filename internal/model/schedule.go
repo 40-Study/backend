@@ -16,8 +16,8 @@ type ClassSchedule struct {
 	BaseModel
 	ClassID        uuid.UUID  `gorm:"type:uuid;not null;index" json:"class_id"`
 	DayOfWeek      int        `gorm:"not null;check:day_of_week >= 0 AND day_of_week <= 6" json:"day_of_week"` // 0=Sunday, 1=Monday, ..., 6=Saturday
-	StartTime      string     `gorm:"type:time;not null" json:"start_time"`                                    // VD: "14:00:00"
-	EndTime        string     `gorm:"type:time;not null" json:"end_time"`                                      // VD: "15:30:00"
+	StartTime      TimeOfDay  `gorm:"type:time without time zone;not null" json:"start_time"`                  // VD: "14:00", xem TimeOfDayColumnType
+	EndTime        TimeOfDay  `gorm:"type:time without time zone;not null" json:"end_time"`                    // VD: "15:30"
 	Room           *string    `gorm:"type:varchar(100)" json:"room,omitempty"`
 	IsActive       bool       `gorm:"default:true" json:"is_active"`
 	EffectiveFrom  time.Time  `gorm:"type:date;not null" json:"effective_from"`
@@ -52,8 +52,8 @@ type ClassSession struct {
 	ScheduleID          *uuid.UUID         `gorm:"type:uuid;index" json:"schedule_id,omitempty"` // null = buoi hoc ngoai lich
 	SessionNumber       int                `gorm:"not null" json:"session_number"`              // Buoi thu may
 	Date                time.Time          `gorm:"type:date;not null;index" json:"date"`
-	StartTime           string             `gorm:"type:time;not null" json:"start_time"`
-	EndTime             string             `gorm:"type:time;not null" json:"end_time"`
+	StartTime           TimeOfDay          `gorm:"type:time without time zone;not null" json:"start_time"`
+	EndTime             TimeOfDay          `gorm:"type:time without time zone;not null" json:"end_time"`
 	Status              ClassSessionStatus `gorm:"type:varchar(20);default:'scheduled';check:status IN ('scheduled','in_progress','completed','cancelled')" json:"status"`
 	Topic               *string            `gorm:"type:varchar(500)" json:"topic,omitempty"`
 	Notes               *string            `gorm:"type:text" json:"notes,omitempty"`
@@ -94,7 +94,7 @@ type SessionAttendance struct {
 	Status           AttendanceStatus `gorm:"type:varchar(20);not null;check:status IN ('present','absent','late','excused')" json:"status"`
 	CheckInTime      *time.Time       `json:"check_in_time,omitempty"`
 	CheckOutTime     *time.Time       `json:"check_out_time,omitempty"`
-	ExpectedTime     *string          `gorm:"type:time" json:"expected_time,omitempty"`
+	ExpectedTime     *TimeOfDay       `gorm:"type:time without time zone" json:"expected_time,omitempty"`
 	LateMinutes      int              `gorm:"default:0" json:"late_minutes"`
 	EarlyLeaveMinutes int             `gorm:"default:0" json:"early_leave_minutes"`
 	Location         *string          `gorm:"type:varchar(50)" json:"location,omitempty"` // online, offline, room_name

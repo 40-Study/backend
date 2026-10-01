@@ -12,9 +12,9 @@ type classSpec struct {
 	CourseSlug    string
 	TeacherEmail  string
 	StudentEmails []string
-	Days          []int // 0=Chủ nhật ... 6=Thứ bảy (khớp CHECK day_of_week của class_schedules)
-	StartTime     string
-	EndTime       string
+	Days          []int           // 0=Chủ nhật ... 6=Thứ bảy (khớp CHECK day_of_week của class_schedules)
+	StartTime     model.TimeOfDay // "HH:MM", giờ địa phương
+	EndTime       model.TimeOfDay
 	Room          string
 	Location      string // ghi vào session_attendances.location: online | offline
 	MaxStudents   int
@@ -85,8 +85,8 @@ func reactClassSpec() classSpec {
 		TeacherEmail:  "teacher1@demo.com",
 		StudentEmails: []string{"student1@demo.com", "student2@demo.com"},
 		Days:          []int{1, 3, 5},
-		StartTime:     "19:00:00",
-		EndTime:       "21:00:00",
+		StartTime:     "19:00",
+		EndTime:       "21:00",
 		Room:          "Phòng 301 - 40Study Cầu Giấy",
 		Location:      "offline",
 		MaxStudents:   25,

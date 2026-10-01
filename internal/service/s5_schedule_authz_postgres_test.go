@@ -46,7 +46,7 @@ func newS5ScheduleSvc(e *s4ClassEnv) *ScheduleService {
 
 func s5MakeSchedule(t *testing.T, e *s4ClassEnv, classID uuid.UUID) model.ClassSchedule {
 	t.Helper()
-	sch := model.ClassSchedule{ClassID: classID, DayOfWeek: 1, StartTime: "2026-01-01T08:00:00Z", EndTime: "2026-01-01T09:00:00Z", IsActive: true, EffectiveFrom: time.Now()}
+	sch := model.ClassSchedule{ClassID: classID, DayOfWeek: 1, StartTime: "08:00", EndTime: "09:00", IsActive: true, EffectiveFrom: time.Now()}
 	if err := e.f.db.Create(&sch).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func s5MakeSchedule(t *testing.T, e *s4ClassEnv, classID uuid.UUID) model.ClassS
 
 func s5MakeSession(t *testing.T, e *s4ClassEnv, classID uuid.UUID, n int) model.ClassSession {
 	t.Helper()
-	s := model.ClassSession{ClassID: classID, SessionNumber: n, Date: time.Now().AddDate(0, 0, n), StartTime: "2026-01-01T08:00:00Z", EndTime: "2026-01-01T09:00:00Z", Status: model.SessionScheduled}
+	s := model.ClassSession{ClassID: classID, SessionNumber: n, Date: time.Now().AddDate(0, 0, n), StartTime: "08:00", EndTime: "09:00", Status: model.SessionScheduled}
 	if err := e.f.db.Create(&s).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -86,9 +86,9 @@ func TestS5_Schedule_GhiLichVaBuoiChiNguoiQuanLyLop(t *testing.T) {
 		count()
 		beforeSch, beforeSes := schedules, sessions
 
-		_, err := svc.CreateSchedule(ctx, e.class.ID, a.user.ID, a.isAdmin, dto.CreateClassScheduleDTO{DayOfWeek: 2, StartTime: "2026-01-01T10:00:00Z", EndTime: "2026-01-01T11:00:00Z", EffectiveFrom: "2026-01-01"})
+		_, err := svc.CreateSchedule(ctx, e.class.ID, a.user.ID, a.isAdmin, dto.CreateClassScheduleDTO{DayOfWeek: 2, StartTime: "10:00", EndTime: "11:00", EffectiveFrom: "2026-01-01"})
 		s5WantWrite(t, "CreateSchedule", a, err)
-		_, err2 := svc.CreateSession(ctx, e.class.ID, a.user.ID, a.isAdmin, dto.CreateClassSessionDTO{Date: "2026-10-10", StartTime: "2026-01-01T10:00:00Z", EndTime: "2026-01-01T11:00:00Z"})
+		_, err2 := svc.CreateSession(ctx, e.class.ID, a.user.ID, a.isAdmin, dto.CreateClassSessionDTO{Date: "2026-10-10", StartTime: "10:00", EndTime: "11:00"})
 		s5WantWrite(t, "CreateSession", a, err2)
 		count()
 		if !a.manager && (schedules != beforeSch || sessions != beforeSes) {

@@ -101,7 +101,7 @@ func (s *s5ScheduleSvc) StudentCheckOut(_ context.Context, _, actor uuid.UUID) (
 func TestS5_ScheduleHandler_MaLoiUyQuyenVaTruyenNguoiGoi(t *testing.T) {
 	actor := uuid.New()
 	class, id, session := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	const day = `"2026-01-01T08:00:00Z"`
+	const day = `"08:00"`
 	routes := []struct{ method, path, body string }{
 		{"POST", "/classes/" + class + "/schedules/", `{"day_of_week":1,"start_time":` + day + `,"end_time":` + day + `,"effective_from":"2026-01-01"}`},
 		{"GET", "/classes/" + class + "/schedules/", ``},

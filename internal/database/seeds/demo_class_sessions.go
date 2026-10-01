@@ -50,21 +50,13 @@ func (s *Seeder) upsertDemoSession(spec classSpec, class model.Class, schedule m
 		status = model.SessionCompleted
 	}
 	topic := spec.Topics[(number-1)%len(spec.Topics)]
-	startAt, err := clockStamp(day, spec.StartTime)
-	if err != nil {
-		return model.ClassSession{}, err
-	}
-	endAt, err := clockStamp(day, spec.EndTime)
-	if err != nil {
-		return model.ClassSession{}, err
-	}
 	session := model.ClassSession{
 		ClassID:       class.ID,
 		ScheduleID:    &schedule.ID,
 		SessionNumber: number,
 		Date:          day,
-		StartTime:     startAt,
-		EndTime:       endAt,
+		StartTime:     spec.StartTime,
+		EndTime:       spec.EndTime,
 		Status:        status,
 		Topic:         ptr(fmt.Sprintf("Buổi %d: %s", number, topic)),
 	}
@@ -94,15 +86,11 @@ func (s *Seeder) upsertDemoSession(spec classSpec, class model.Class, schedule m
 func (s *Seeder) upsertDemoAttendance(spec classSpec, session model.ClassSession, day time.Time, teacher, student model.User, number, studentIdx int) error {
 	status, lateMinutes, note := demoAttendancePattern(number, studentIdx)
 
-	expected, err := clockStamp(day, spec.StartTime)
-	if err != nil {
-		return err
-	}
 	att := model.SessionAttendance{
 		SessionID:    session.ID,
 		StudentID:    student.ID,
 		Status:       status,
-		ExpectedTime: ptr(expected),
+		ExpectedTime: ptr(spec.StartTime),
 		LateMinutes:  lateMinutes,
 		Location:     ptr(spec.Location),
 		VerifiedBy:   &teacher.ID,
@@ -150,26 +138,12 @@ func demoAttendancePattern(number, studentIdx int) (model.AttendanceStatus, int,
 	}
 }
 
-// atClock ghép ngày với giờ dạng "HH:MM:SS" (giờ máy chủ). Giờ sai định dạng là lỗi dữ liệu demo:
-// trả lỗi thay vì âm thầm dùng 00:00.
-func atClock(day time.Time, clock string) (time.Time, error) {
-	t, err := time.Parse("15:04:05", clock)
+// atClock ghép ngày với giờ học (giờ máy chủ) để tính giờ vào/ra lớp của điểm danh. Giờ sai định
+// dạng là lỗi dữ liệu demo: trả lỗi thay vì âm thầm dùng 00:00.
+func atClock(day time.Time, clock model.TimeOfDay) (time.Time, error) {
+	t, err := clock.On(day, time.Local)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("giờ demo %q sai định dạng HH:MM:SS: %w", clock, err)
+		return time.Time{}, fmt.Errorf("giờ demo sai: %w", err)
 	}
-	return time.Date(day.Year(), day.Month(), day.Day(), t.Hour(), t.Minute(), 0, 0, time.Local), nil
-}
-
-// clockStamp trả giờ học dưới dạng timestamp RFC3339 (ngày + giờ, múi giờ máy chủ).
-//
-// Vì sao không ghi "19:00:00": model khai `gorm:"type:time"` nhưng GORM coi "time" là kiểu logic
-// schema.Time nên AutoMigrate tạo cột start_time/end_time/expected_time là TIMESTAMPTZ (đã kiểm
-// information_schema trên DB dev) — chuỗi giờ trơn bị Postgres từ chối (SQLSTATE 22007). Test có sẵn
-// (s5_schedule_authz_postgres_test.go) cũng ghi timestamp đầy đủ.
-func clockStamp(day time.Time, clock string) (string, error) {
-	t, err := atClock(day, clock)
-	if err != nil {
-		return "", err
-	}
-	return t.Format(time.RFC3339), nil
+	return t, nil
 }
