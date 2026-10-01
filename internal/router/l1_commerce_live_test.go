@@ -150,8 +150,7 @@ func (e *l1Env) grant(user string, voucherID string) {
 	}
 }
 
-func TestL1Live_HoldersOnlyVoucher(t *testing.T) {
-	e := newL1Env(t)
+func caseTestL1Live_HoldersOnlyVoucher(t *testing.T, e *l1Env) {
 	hiddenID := e.createVoucher("L1VIP", true)
 	e.createVoucher("L1OPEN", false)
 	e.grant("holder", hiddenID)
@@ -206,8 +205,7 @@ func TestL1Live_HoldersOnlyVoucher(t *testing.T) {
 }
 
 // Admin đổi holders_only qua PUT; người không phải admin không tạo/sửa được voucher.
-func TestL1Live_HoldersOnlyAdminUpdate(t *testing.T) {
-	e := newL1Env(t)
+func caseTestL1Live_HoldersOnlyAdminUpdate(t *testing.T, e *l1Env) {
 	id := e.createVoucher("L1TOGGLE", false)
 
 	if r := e.do("PUT", "/api/vouchers/"+id, "admin", `{"holders_only":true}`); r.status != fiber.StatusOK || r.body["holders_only"] != true {
@@ -230,8 +228,7 @@ func TestL1Live_HoldersOnlyAdminUpdate(t *testing.T) {
 	}
 }
 
-func TestL1Live_DiscountPriceValidation(t *testing.T) {
-	e := newL1Env(t)
+func caseTestL1Live_DiscountPriceValidation(t *testing.T, e *l1Env) {
 	create := func(discount string) l1Resp {
 		return e.do("POST", "/api/courses", "teacher", `{"title":"Khoa hoc L1","price":500000,"discount_price":`+discount+`}`)
 	}
@@ -273,3 +270,24 @@ func TestL1Live_DiscountPriceValidation(t *testing.T) {
 		t.Fatalf("null phải xoá khuyến mãi, DB còn %v", c.DiscountPrice)
 	}
 }
+
+// TestL1Live chạy các kịch bản trên MỘT schema Postgres (mỗi schema tạm tốn vài giây để migrate; package
+// service đã sát giới hạn 10 phút mặc định của go test trong CI), mỗi kịch bản là một subtest độc lập.
+func TestL1Live(t *testing.T) {
+	root := newL1Env(t)
+	cases := []struct {
+		name string
+		fn   func(*testing.T, *l1Env)
+	}{
+		{"L1Live_HoldersOnlyVoucher", caseTestL1Live_HoldersOnlyVoucher},
+		{"L1Live_HoldersOnlyAdminUpdate", caseTestL1Live_HoldersOnlyAdminUpdate},
+		{"L1Live_DiscountPriceValidation", caseTestL1Live_DiscountPriceValidation},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) { c.fn(t, root.forT(t)) })
+	}
+}
+
+// forT trả bản sao môi trường gắn với *testing.T của subtest (Fatalf phải gọi trên đúng test đang chạy).
+func (e *l1Env) forT(t *testing.T) *l1Env { c := *e; c.t = t; return &c }

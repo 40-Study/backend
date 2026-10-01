@@ -54,8 +54,7 @@ func mustFlagFor(t *testing.T, reasons []string, txID string) {
 // Ca thật của lỗi: đơn đã huỷ, giao dịch 1 đã gắn cờ, admin đã hoàn xong; khách chuyển thêm lần 2.
 // Sao kê giờ có cả hai: lần 2 phải được gắn cờ (cần hoàn tiền trở lại), lần 1 không bị ghi trùng, và
 // poll lại không ghi thêm.
-func TestCheckAndProcessPayment_SecondTransferAfterRefundIsFlagged(t *testing.T) {
-	f := newOrderFixture(t)
+func caseTestCheckAndProcessPayment_SecondTransferAfterRefundIsFlagged(t *testing.T, f *orderFixture) {
 	student := f.user()
 	ctx := context.Background()
 	orderID, codeExpiry, _ := f.processingWithCodeExpiring(student, "L1 chuyển lần 2", -2*time.Hour)
@@ -105,8 +104,7 @@ func TestCheckAndProcessPayment_SecondTransferAfterRefundIsFlagged(t *testing.T)
 
 // Đơn processing, mã còn hạn: khách chuyển sai số tiền trước rồi chuyển đúng sau. Trước đây chỉ thấy
 // giao dịch đầu (sai tiền) nên đơn kẹt ErrPaymentAmountMismatch; giờ giao dịch đúng hoàn tất đơn.
-func TestCheckAndProcessPayment_CorrectSecondTransferCompletesOrder(t *testing.T) {
-	f := newOrderFixture(t)
+func caseTestCheckAndProcessPayment_CorrectSecondTransferCompletesOrder(t *testing.T, f *orderFixture) {
 	student := f.user()
 	orderID, _, _ := f.processingWithCodeExpiring(student, "L1 sai tiền rồi đúng", time.Hour)
 	wrong := grpc.BankTransaction{TransactionID: "L1-WRONG", Amount: "100000", TransactionDate: bankDate(time.Now().Add(-2 * time.Minute))}
@@ -127,8 +125,7 @@ func TestCheckAndProcessPayment_CorrectSecondTransferCompletesOrder(t *testing.T
 }
 
 // Đơn processing đã quá hạn mã, cả hai lần chuyển đều về SAU hạn: chốt expired và cả hai lần đều có cờ.
-func TestCheckAndProcessPayment_BothLateTransfersFlaggedWhenOrderExpires(t *testing.T) {
-	f := newOrderFixture(t)
+func caseTestCheckAndProcessPayment_BothLateTransfersFlaggedWhenOrderExpires(t *testing.T, f *orderFixture) {
 	student := f.user()
 	orderID, codeExpiry := f.processingWithExpiredCode(student, "L1 hai lần chuyển muộn")
 	tx1 := grpc.BankTransaction{TransactionID: "L1-LATE1", Amount: "499000", TransactionDate: bankDate(codeExpiry.Add(2 * time.Minute))}
@@ -152,8 +149,7 @@ func TestCheckAndProcessPayment_BothLateTransfersFlaggedWhenOrderExpires(t *test
 
 // Tương thích ngược: service Python cũ không gửi danh sách, chỉ các field đơn lẻ -> hành vi cũ
 // (đúng một cờ cho giao dịch đó).
-func TestCheckAndProcessPayment_OldServerWithoutTransactionListStillWorks(t *testing.T) {
-	f := newOrderFixture(t)
+func caseTestCheckAndProcessPayment_OldServerWithoutTransactionListStillWorks(t *testing.T, f *orderFixture) {
 	student := f.user()
 	ctx := context.Background()
 	orderID, codeExpiry, _ := f.processingWithCodeExpiring(student, "L1 server cũ", -2*time.Hour)
@@ -171,3 +167,25 @@ func TestCheckAndProcessPayment_OldServerWithoutTransactionListStillWorks(t *tes
 }
 
 func ptrOrder(o model.Order) *model.Order { return &o }
+
+// TestPaymentMultiTransaction chạy các kịch bản trên MỘT schema Postgres (mỗi schema tạm tốn vài giây để migrate; package
+// service đã sát giới hạn 10 phút mặc định của go test trong CI), mỗi kịch bản là một subtest độc lập.
+func TestPaymentMultiTransaction(t *testing.T) {
+	root := newOrderFixture(t)
+	cases := []struct {
+		name string
+		fn   func(*testing.T, *orderFixture)
+	}{
+		{"CheckAndProcessPayment_SecondTransferAfterRefundIsFlagged", caseTestCheckAndProcessPayment_SecondTransferAfterRefundIsFlagged},
+		{"CheckAndProcessPayment_CorrectSecondTransferCompletesOrder", caseTestCheckAndProcessPayment_CorrectSecondTransferCompletesOrder},
+		{"CheckAndProcessPayment_BothLateTransfersFlaggedWhenOrderExpires", caseTestCheckAndProcessPayment_BothLateTransfersFlaggedWhenOrderExpires},
+		{"CheckAndProcessPayment_OldServerWithoutTransactionListStillWorks", caseTestCheckAndProcessPayment_OldServerWithoutTransactionListStillWorks},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) { c.fn(t, root.forT(t)) })
+	}
+}
+
+// forT trả bản sao fixture gắn với *testing.T của subtest (Fatalf phải gọi trên đúng test đang chạy).
+func (f *orderFixture) forT(t *testing.T) *orderFixture { c := *f; c.t = t; return &c }

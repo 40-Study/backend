@@ -47,8 +47,7 @@ func (f *contestFixture) grant(vs *VoucherService, user, voucher uuid.UUID) {
 // Người chưa giữ voucher dành riêng nhập mã khi đặt đơn: nhận ĐÚNG lỗi của mã không tồn tại; sau khi
 // được cấp thì áp dụng bình thường. Thử cả voucher đã hết hạn để chứng minh thứ tự kiểm: holders_only
 // đứng TRƯỚC "hết hạn", nếu không lỗi khác nhau sẽ lộ mã có thật.
-func TestValidateAndApplyVoucher_HoldersOnly(t *testing.T) {
-	f := newContestFixture(t)
+func caseTestValidateAndApplyVoucher_HoldersOnly(t *testing.T, f *contestFixture) {
 	vs := newTestVoucherService(f)
 	ctx := context.Background()
 	stranger, holder := f.user("student"), f.user("student")
@@ -78,8 +77,7 @@ func TestValidateAndApplyVoucher_HoldersOnly(t *testing.T) {
 }
 
 // Mặc định công khai: voucher không bật holders_only áp dụng cho bất kỳ ai như cũ.
-func TestValidateAndApplyVoucher_PublicStaysPublic(t *testing.T) {
-	f := newContestFixture(t)
+func caseTestValidateAndApplyVoucher_PublicStaysPublic(t *testing.T, f *contestFixture) {
 	vs := newTestVoucherService(f)
 	v := f.holdersVoucher(false, nil)
 	_, discount, err := vs.ValidateAndApplyVoucher(context.Background(), v.Code, f.user("student"), decimal.NewFromInt(200000), "")
@@ -90,8 +88,7 @@ func TestValidateAndApplyVoucher_PublicStaysPublic(t *testing.T) {
 
 // Tự lưu không phải cửa hậu: người ngoài POST /vouchers/:id/save một voucher dành riêng nhận lỗi
 // không-tồn-tại và KHÔNG có dòng user_vouchers nào được tạo (nếu tạo được thì tự cấp quyền cho mình).
-func TestSaveVoucher_HoldersOnlyCannotSelfSave(t *testing.T) {
-	f := newContestFixture(t)
+func caseTestSaveVoucher_HoldersOnlyCannotSelfSave(t *testing.T, f *contestFixture) {
 	vs := newTestVoucherService(f)
 	ctx := context.Background()
 	stranger, holder := f.user("student"), f.user("student")
@@ -116,8 +113,7 @@ func TestSaveVoucher_HoldersOnlyCannotSelfSave(t *testing.T) {
 }
 
 // Tra mã công khai: khách và người ngoài nhận lỗi như mã không tồn tại; người giữ thấy được.
-func TestGetVoucherByCodeForViewer_HoldersOnly(t *testing.T) {
-	f := newContestFixture(t)
+func caseTestGetVoucherByCodeForViewer_HoldersOnly(t *testing.T, f *contestFixture) {
 	vs := newTestVoucherService(f)
 	ctx := context.Background()
 	stranger, holder := f.user("student"), f.user("student")
@@ -139,8 +135,7 @@ func TestGetVoucherByCodeForViewer_HoldersOnly(t *testing.T) {
 }
 
 // Danh sách công khai không bao giờ có voucher dành riêng, kể cả đang còn hạn và bật.
-func TestGetPublicVouchers_ExcludesHoldersOnly(t *testing.T) {
-	f := newContestFixture(t)
+func caseTestGetPublicVouchers_ExcludesHoldersOnly(t *testing.T, f *contestFixture) {
 	vs := newTestVoucherService(f)
 	hidden := f.holdersVoucher(true, nil)
 	shown := f.holdersVoucher(false, nil)
@@ -162,8 +157,7 @@ func TestGetPublicVouchers_ExcludesHoldersOnly(t *testing.T) {
 }
 
 // Admin đặt holders_only lúc tạo và đổi lúc sửa; bỏ trống = công khai (mặc định). Cột not null default false.
-func TestVoucherAdmin_HoldersOnlyCreateUpdateDefault(t *testing.T) {
-	f := newContestFixture(t)
+func caseTestVoucherAdmin_HoldersOnlyCreateUpdateDefault(t *testing.T, f *contestFixture) {
 	vs := newTestVoucherService(f)
 	ctx := context.Background()
 	amount := 10000.0
@@ -209,8 +203,7 @@ func TestVoucherAdmin_HoldersOnlyCreateUpdateDefault(t *testing.T) {
 }
 
 // Migration: cột có, NOT NULL, mặc định false; hàng chèn không nhắc tới cột này vẫn là công khai.
-func TestVoucherHoldersOnlyColumn_NotNullDefaultFalse(t *testing.T) {
-	f := newContestFixture(t)
+func caseTestVoucherHoldersOnlyColumn_NotNullDefaultFalse(t *testing.T, f *contestFixture) {
 	var col struct {
 		IsNullable    string
 		ColumnDefault string
@@ -229,3 +222,28 @@ func TestVoucherHoldersOnlyColumn_NotNullDefaultFalse(t *testing.T) {
 		t.Fatalf("voucher chèn không nhắc holders_only phải công khai")
 	}
 }
+
+// TestVoucherHoldersOnly chạy các kịch bản trên MỘT schema Postgres (mỗi schema tạm tốn vài giây để migrate; package
+// service đã sát giới hạn 10 phút mặc định của go test trong CI), mỗi kịch bản là một subtest độc lập.
+func TestVoucherHoldersOnly(t *testing.T) {
+	root := newContestFixture(t)
+	cases := []struct {
+		name string
+		fn   func(*testing.T, *contestFixture)
+	}{
+		{"ValidateAndApplyVoucher_HoldersOnly", caseTestValidateAndApplyVoucher_HoldersOnly},
+		{"ValidateAndApplyVoucher_PublicStaysPublic", caseTestValidateAndApplyVoucher_PublicStaysPublic},
+		{"SaveVoucher_HoldersOnlyCannotSelfSave", caseTestSaveVoucher_HoldersOnlyCannotSelfSave},
+		{"GetVoucherByCodeForViewer_HoldersOnly", caseTestGetVoucherByCodeForViewer_HoldersOnly},
+		{"GetPublicVouchers_ExcludesHoldersOnly", caseTestGetPublicVouchers_ExcludesHoldersOnly},
+		{"VoucherAdmin_HoldersOnlyCreateUpdateDefault", caseTestVoucherAdmin_HoldersOnlyCreateUpdateDefault},
+		{"VoucherHoldersOnlyColumn_NotNullDefaultFalse", caseTestVoucherHoldersOnlyColumn_NotNullDefaultFalse},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) { c.fn(t, root.forT(t)) })
+	}
+}
+
+// forT trả bản sao fixture gắn với *testing.T của subtest (Fatalf phải gọi trên đúng test đang chạy).
+func (f *contestFixture) forT(t *testing.T) *contestFixture { c := *f; c.t = t; return &c }
