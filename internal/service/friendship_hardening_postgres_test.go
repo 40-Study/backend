@@ -8,6 +8,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"study.com/v1/internal/constants"
@@ -254,5 +255,35 @@ func TestFriendship_TimKiem_KhongLoPhanTruocEmail(t *testing.T) {
 	res, _ = fx.svc.Search(ctx, me, "zork-normal", 20)
 	if len(res.Users) != 1 || res.Users[0].UserID != normal || res.Users[0].UserName != "zork-normal" {
 		t.Errorf("tài khoản thường vẫn tìm và trả user_name như cũ: %+v", res.Users)
+	}
+}
+
+// Quyết định chủ dự án (sau review): huỷ lời mời KHÔNG tạo cooldown ở chiều ngược lại, và cooldown dài chỉ bật
+// khi bị TỪ CHỐI. Với chính người huỷ chỉ còn cooldown rất ngắn (chống gửi-huỷ-gửi quấy rối vì dòng bị tái sử dụng
+// nên không tính thêm vào hạn mức), nên sau vài phút gửi lại được. Trước khi sửa cooldown này là 1 giờ.
+func TestFriendship_Huy_KhongCooldownChieuNguoc_VaNguoiHuyChiChoNgan(t *testing.T) {
+	fx := newFriendFx(t)
+	ctx := t.Context()
+	a, b := fx.student("a"), fx.student("b")
+	id := fx.send(a, b)
+	if err := fx.svc.CancelRequest(ctx, a, id); err != nil {
+		t.Fatal(err)
+	}
+	// Chiều ngược lại (người nhận cũ chủ động gửi cho người đã huỷ): không bị cooldown.
+	if _, err := fx.svc.SendRequest(ctx, b, a); err != nil {
+		t.Errorf("sau khi a huỷ, b vẫn phải gửi được cho a ngay: %v", err)
+	}
+
+	// Chiều người huỷ: chỉ cooldown ngắn, hết sau vài phút (không phải 1 giờ).
+	c, d := fx.student("c"), fx.student("d")
+	id2 := fx.send(c, d)
+	if err := fx.svc.CancelRequest(ctx, c, id2); err != nil {
+		t.Fatal(err)
+	}
+	_, err := fx.svc.SendRequest(ctx, c, d)
+	wantErr(t, err, ErrFriendRequestCooldown, "gửi lại ngay sau khi tự huỷ vẫn bị cooldown ngắn (chống gửi-huỷ-gửi)")
+	fx.age(c, d, 6*time.Minute)
+	if _, err := fx.svc.SendRequest(ctx, c, d); err != nil {
+		t.Errorf("sau 6 phút người huỷ phải gửi lại được: %v", err)
 	}
 }
