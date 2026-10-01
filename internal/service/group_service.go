@@ -538,6 +538,7 @@ func (s *GroupService) ListMembers(ctx context.Context, requesterID, groupID uui
 			ID:        m.ID,
 			UserID:    m.UserID,
 			UserName:  m.User.UserName,
+			FullName:  m.User.FullName,
 			AvatarURL: m.User.AvatarURL,
 			Role:      string(m.Role),
 			Status:    string(m.Status),
