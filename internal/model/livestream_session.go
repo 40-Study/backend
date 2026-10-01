@@ -26,27 +26,27 @@ const (
 
 type LivestreamSession struct {
 	BaseModel
-	Title       string                  `gorm:"type:varchar(255);not null" json:"title"`
-	Description *string                 `gorm:"type:text" json:"description,omitempty"`
-	HostID          uuid.UUID  `gorm:"type:uuid;not null;index" json:"host_id"`
-	ClassID         uuid.UUID  `gorm:"type:uuid;not null;index" json:"class_id"`
-	CourseID        *uuid.UUID `gorm:"type:uuid;index" json:"course_id,omitempty"`
-	LessonContentID *uuid.UUID `gorm:"type:uuid;index" json:"lesson_content_id,omitempty"`
-	RoomName    string                  `gorm:"type:varchar(100);uniqueIndex;not null" json:"room_name"`
-	Status      LivestreamSessionStatus `gorm:"type:varchar(20);default:'scheduled';index" json:"status"`
-	StartedAt   *time.Time              `gorm:"type:timestamp" json:"started_at,omitempty"`
-	EndedAt     *time.Time              `gorm:"type:timestamp" json:"ended_at,omitempty"`
-	ScheduledAt *time.Time              `gorm:"type:timestamp" json:"scheduled_at,omitempty"`
-	MaxViewers  int64                   `gorm:"default:1000" json:"max_viewers"`
-	IsRecorded  bool                    `gorm:"default:true" json:"is_recorded"`
+	Title           string                  `gorm:"type:varchar(255);not null" json:"title"`
+	Description     *string                 `gorm:"type:text" json:"description,omitempty"`
+	HostID          uuid.UUID               `gorm:"type:uuid;not null;index" json:"host_id"`
+	ClassID         uuid.UUID               `gorm:"type:uuid;not null;index" json:"class_id"`
+	CourseID        *uuid.UUID              `gorm:"type:uuid;index" json:"course_id,omitempty"`
+	LessonContentID *uuid.UUID              `gorm:"type:uuid;index" json:"lesson_content_id,omitempty"`
+	RoomName        string                  `gorm:"type:varchar(100);uniqueIndex;not null" json:"room_name"`
+	Status          LivestreamSessionStatus `gorm:"type:varchar(20);default:'scheduled';index" json:"status"`
+	StartedAt       *time.Time              `gorm:"type:timestamptz" json:"started_at,omitempty"`
+	EndedAt         *time.Time              `gorm:"type:timestamptz" json:"ended_at,omitempty"`
+	ScheduledAt     *time.Time              `gorm:"type:timestamptz" json:"scheduled_at,omitempty"`
+	MaxViewers      int64                   `gorm:"default:1000" json:"max_viewers"`
+	IsRecorded      bool                    `gorm:"default:true" json:"is_recorded"`
 
-	Settings      LivestreamSettings   `gorm:"type:jsonb;serializer:json;default:'{}'" json:"settings"`
-	Class  *Class  `gorm:"foreignKey:ClassID" json:"class,omitempty"`
-	Course *Course `gorm:"foreignKey:CourseID" json:"course,omitempty"`
-	Participants  []Participant        `gorm:"foreignKey:SessionID;constraint:OnDelete:CASCADE" json:"participants,omitempty"`
-	Assignments   []Assignment         `gorm:"foreignKey:SessionID;constraint:OnDelete:CASCADE" json:"assignments,omitempty"`
-	ChatMessages  []ChatMessage        `gorm:"foreignKey:SessionID;constraint:OnDelete:CASCADE" json:"chat_messages,omitempty"`
-	Analytics     *LivestreamAnalytics `gorm:"foreignKey:SessionID" json:"analytics,omitempty"`
+	Settings     LivestreamSettings   `gorm:"type:jsonb;serializer:json;default:'{}'" json:"settings"`
+	Class        *Class               `gorm:"foreignKey:ClassID" json:"class,omitempty"`
+	Course       *Course              `gorm:"foreignKey:CourseID" json:"course,omitempty"`
+	Participants []Participant        `gorm:"foreignKey:SessionID;constraint:OnDelete:CASCADE" json:"participants,omitempty"`
+	Assignments  []Assignment         `gorm:"foreignKey:SessionID;constraint:OnDelete:CASCADE" json:"assignments,omitempty"`
+	ChatMessages []ChatMessage        `gorm:"foreignKey:SessionID;constraint:OnDelete:CASCADE" json:"chat_messages,omitempty"`
+	Analytics    *LivestreamAnalytics `gorm:"foreignKey:SessionID" json:"analytics,omitempty"`
 }
 
 func (LivestreamSession) TableName() string {
@@ -75,8 +75,8 @@ type Participant struct {
 	// (RemoveParticipant) — không đổi gì trong DB, nên người bị kick gọi lại POST /:id/join là
 	// vào lại được ngay (resolveJoinRole vẫn thấy đúng quan hệ lớp/khoá). Cột nullable, GORM
 	// AutoMigrate tự thêm — không cần migration tay.
-	IsKicked  bool       `gorm:"default:false" json:"is_kicked"`
-	KickedAt  *time.Time `gorm:"type:timestamp" json:"kicked_at,omitempty"`
+	IsKicked bool       `gorm:"default:false" json:"is_kicked"`
+	KickedAt *time.Time `gorm:"type:timestamp" json:"kicked_at,omitempty"`
 
 	Session *LivestreamSession `gorm:"foreignKey:SessionID" json:"-"`
 	User    *User              `gorm:"foreignKey:UserID" json:"-"`
