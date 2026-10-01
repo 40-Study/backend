@@ -207,6 +207,17 @@ func (c *Client) Subscribe(channel string) {
 	c.channelMu.Unlock()
 
 	c.Hub.SubscribeToChannel(c, channel)
+
+	// Kiểm lại quyền SAU khi đã đăng ký: nếu người dùng bị gỡ khỏi nhóm (EvictUserFromChannel) đúng giữa lần
+	// kiểm đầu và lúc đăng ký, lần evict đó không thấy kết nối này nên kết nối sẽ nhận tin tới khi ngắt. Kiểm lại
+	// sau đăng ký đóng khe đó: evict trước đăng ký -> quyền đã mất -> tự gỡ; evict sau đăng ký -> evict gỡ được.
+	if c.authorizer != nil {
+		if allowed, err := c.authorizer.CanSubscribe(c.UserID, channel); err != nil || !allowed {
+			c.Unsubscribe(channel)
+			c.SendError("subscribe_denied", "Permission denied for channel: "+channel)
+			return
+		}
+	}
 	log.Printf("[WS] User %s subscribed to channel: %s", c.UserID, channel)
 }
 

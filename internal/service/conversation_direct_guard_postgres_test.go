@@ -83,8 +83,9 @@ func guardMakeAdmin(t *testing.T, db *gorm.DB, userID uuid.UUID) {
 	}
 }
 
-// TestCreateDirectConversation_QuanHeHopLe_ChoTao — mỗi quan hệ hợp lệ (a/b/d — (c) bạn bè chưa
-// có bảng dữ liệu, xem docstring canCreateDirectConversation) phải cho tạo được cuộc trò chuyện.
+// TestCreateDirectConversation_QuanHeHopLe_ChoTao — mỗi quan hệ hợp lệ (a/b/d) phải cho tạo được cuộc
+// trò chuyện; nhánh (c) bạn bè có file riêng conversation_direct_guard_friends_postgres_test.go (bạn
+// ACCEPTED cho qua, PENDING/DECLINED/CANCELLED/chặn/chưa nối checker thì không).
 // Xoá/vô hiệu canCreateDirectConversation (hoặc bỏ lời gọi nó khỏi CreateDirectConversation) sẽ
 // không làm case này đỏ (guard tháo ra thì mọi cặp đều cho qua) — case NgườiLạ bên dưới mới là
 // case chứng minh guard có tác dụng thật.

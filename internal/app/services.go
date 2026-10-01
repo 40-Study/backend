@@ -556,6 +556,11 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Friendship: service.NewFriendshipService(repos.Friendship, repos.UserBlock),
 	}
 	s.Friendship.SetNotifier(s.Notification)
+	// Plan 260930 phase 05: bạn bè mở khoá nhắn tin trực tiếp/mời vào nhóm (qua Conversation), hồ sơ chế độ
+	// `friends`, và thông báo group_added khi được thêm vào nhóm.
+	s.Conversation.SetFriendshipChecker(s.Friendship)
+	s.UserStats.SetFriendshipChecker(s.Friendship)
+	s.Group.SetNotifier(s.Notification)
 	// Lane S2: moi vao nhom dung chung guard nhan tin cua Conversation (Lane G).
 	s.Group.SetInviteGuard(s.Conversation)
 	s.Group.SetChannelEvictor(notifier)

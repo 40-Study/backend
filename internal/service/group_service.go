@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,7 +26,8 @@ type GroupServiceInterface interface {
 	JoinGroup(ctx context.Context, userID, groupID uuid.UUID, message *string) (interface{}, error)
 	LeaveGroup(ctx context.Context, userID, groupID uuid.UUID) error
 
-	ListMembers(ctx context.Context, requesterID, groupID uuid.UUID, page, pageSize int) (*dto.GroupMemberListResponse, error)
+	// status: "" hoặc ACTIVE (mặc định) | BANNED (chỉ OWNER/ADMIN).
+	ListMembers(ctx context.Context, requesterID, groupID uuid.UUID, status string, page, pageSize int) (*dto.GroupMemberListResponse, error)
 	InviteMembers(ctx context.Context, inviterID, groupID uuid.UUID, userIDs []uuid.UUID) (*dto.InviteMembersResult, error)
 	UpdateMemberRole(ctx context.Context, requesterID, groupID, targetUserID uuid.UUID, role string) error
 	RemoveMember(ctx context.Context, requesterID, groupID, targetUserID uuid.UUID) error
@@ -46,8 +49,15 @@ type GroupInviteGuard interface {
 // ErrGroupInviteGuardMissing - loi cau hinh: chua gan guard thi tu choi moi, khong mo cua.
 var ErrGroupInviteGuardMissing = errors.New("group invite guard is not configured")
 
+// GroupNotifier gửi thông báo cho người vừa được thêm vào nhóm (NotificationService cài đặt). Tuỳ chọn:
+// nil = bỏ qua. Lỗi gửi chỉ được log, không làm hỏng việc thêm thành viên.
+type GroupNotifier interface {
+	SendNotification(req dto.CreateNotificationDTO) error
+}
+
 type GroupService struct {
 	inviteGuard     GroupInviteGuard
+	notifier        GroupNotifier
 	evictor         ChannelEvictor
 	groupRepo       *repository.GroupRepository
 	memberRepo      *repository.GroupMemberRepository
@@ -74,6 +84,29 @@ func NewGroupService(
 
 // SetInviteGuard gan guard moi thanh vien (xem GroupInviteGuard).
 func (s *GroupService) SetInviteGuard(g GroupInviteGuard) { s.inviteGuard = g }
+
+// SetNotifier nối bộ gửi thông báo group_added (xem GroupNotifier).
+func (s *GroupService) SetNotifier(n GroupNotifier) { s.notifier = n }
+
+// notifyGroupAdded báo cho những người vừa được thêm vào nhóm (một lần gọi cho cả lô). Tham chiếu là nhóm
+// (reference_type "group"): thông báo không mang slug nên web điều hướng tới /groups.
+func (s *GroupService) notifyGroupAdded(group *model.Group, userIDs []uuid.UUID) {
+	if s.notifier == nil || len(userIDs) == 0 {
+		return
+	}
+	refType, refID := "group", group.ID
+	err := s.notifier.SendNotification(dto.CreateNotificationDTO{
+		Title:            "Bạn được thêm vào nhóm",
+		Content:          "Bạn đã được thêm vào nhóm \"" + group.Name + "\".",
+		NotificationType: model.NotificationTypeGroupAdded,
+		ReferenceType:    &refType,
+		ReferenceID:      &refID,
+		UserIDs:          userIDs,
+	})
+	if err != nil {
+		log.Printf("group: gửi thông báo group_added (nhóm %s) lỗi: %v", group.ID, err)
+	}
+}
 
 // ChannelEvictor ngừng phát kênh WebSocket cho một user (socket.Notifier cài đặt). Tuỳ chọn: nil = bỏ qua.
 type ChannelEvictor interface {
@@ -259,7 +292,19 @@ func (s *GroupService) GetGroupBySlug(ctx context.Context, slug string, userID *
 		}
 	}
 
-	return s.toGroupResponse(group, userID), nil
+	resp := s.toGroupResponse(group, userID)
+	// Người xem đã đăng nhập, chưa là thành viên: cho biết đã có yêu cầu xin vào đang chờ chưa (web hiện
+	// "Đã gửi yêu cầu" thay vì "Xin tham gia"). Nhóm SECRET đã bị chặn ở trên nên không lộ qua đây.
+	if userID != nil && resp.MyRole == nil {
+		pending, err := s.joinRequestRepo.GetPendingByGroupAndUser(ctx, group.ID, *userID)
+		if err != nil {
+			return nil, err
+		}
+		if pending != nil {
+			resp.MyJoinRequest = &dto.MyJoinRequestBrief{ID: pending.ID, Status: string(model.JoinRequestPending)}
+		}
+	}
+	return resp, nil
 }
 
 func (s *GroupService) ListGroups(ctx context.Context, keyword, privacy string, page, pageSize int) (*dto.GroupListResponse, error) {
@@ -346,46 +391,22 @@ func (s *GroupService) JoinGroup(ctx context.Context, userID, groupID uuid.UUID,
 	}
 	if existing != nil {
 		if existing.Status == model.GroupMemberActive {
-			return nil, errors.New("already a member of this group")
+			return nil, ErrGroupAlreadyMember
 		}
 		if existing.Status == model.GroupMemberBanned {
-			return nil, errors.New("you are banned from this group")
+			return nil, ErrGroupBanned
 		}
 	}
 
 	if group.MemberCount >= group.MaxMembers {
-		return nil, errors.New("group is full")
+		return nil, ErrGroupFull
 	}
 
 	// PUBLIC -> join directly
 	if group.Privacy == model.GroupPrivacyPublic {
-		now := time.Now()
-		member := &model.GroupMember{
-			GroupID:  groupID,
-			UserID:   userID,
-			Role:     model.GroupRoleMember,
-			Status:   model.GroupMemberActive,
-			JoinedAt: &now,
+		if err := s.activateMember(ctx, groupID, userID, nil); err != nil {
+			return nil, err
 		}
-
-		if existing != nil {
-			existing.Status = model.GroupMemberActive
-			existing.Role = model.GroupRoleMember
-			existing.JoinedAt = &now
-			if err := s.memberRepo.Update(ctx, existing); err != nil {
-				return nil, err
-			}
-		} else {
-			if err := s.memberRepo.Create(ctx, member); err != nil {
-				return nil, err
-			}
-		}
-
-		_ = s.groupRepo.IncrementMemberCount(ctx, groupID)
-
-		// Add to group conversation
-		s.addToGroupConversation(ctx, groupID, userID)
-
 		return map[string]string{"status": "joined"}, nil
 	}
 
@@ -395,17 +416,34 @@ func (s *GroupService) JoinGroup(ctx context.Context, userID, groupID uuid.UUID,
 		return nil, err
 	}
 	if pendingReq != nil {
-		return nil, errors.New("you already have a pending join request")
+		return nil, ErrGroupJoinRequestExists
 	}
 
-	joinReq := &model.GroupJoinRequest{
-		GroupID: groupID,
-		UserID:  userID,
-		Message: message,
-		Status:  model.JoinRequestPending,
-	}
-	if err := s.joinRequestRepo.Create(ctx, joinReq); err != nil {
+	// group_join_requests unique theo (group_id, user_id): người từng bị từ chối, hoặc từng được duyệt rồi rời
+	// nhóm, còn một dòng cũ không ở trạng thái chờ. Chèn dòng mới sẽ vi phạm unique và họ không bao giờ xin
+	// vào lại được; dùng lại dòng cũ và đặt về trạng thái chờ.
+	joinReq, err := s.joinRequestRepo.GetByGroupAndUser(ctx, groupID, userID)
+	if err != nil {
 		return nil, err
+	}
+	if joinReq != nil {
+		joinReq.Status = model.JoinRequestPending
+		joinReq.Message = message
+		joinReq.ReviewedBy, joinReq.ReviewedAt, joinReq.RejectionReason = nil, nil, nil
+		joinReq.CreatedAt = time.Now() // thứ tự danh sách chờ duyệt theo lần xin gần nhất
+		if err := s.joinRequestRepo.Update(ctx, joinReq); err != nil {
+			return nil, err
+		}
+	} else {
+		joinReq = &model.GroupJoinRequest{
+			GroupID: groupID,
+			UserID:  userID,
+			Message: message,
+			Status:  model.JoinRequestPending,
+		}
+		if err := s.joinRequestRepo.Create(ctx, joinReq); err != nil {
+			return nil, err
+		}
 	}
 
 	return map[string]string{"status": "pending", "request_id": joinReq.ID.String()}, nil
@@ -424,9 +462,14 @@ func (s *GroupService) LeaveGroup(ctx context.Context, userID, groupID uuid.UUID
 		return errors.New("owner cannot leave the group, transfer ownership first")
 	}
 
-	member.Status = model.GroupMemberLeft
-	if err := s.memberRepo.Update(ctx, member); err != nil {
+	// Chuyển khỏi ACTIVE nguyên tử và chỉ giảm member_count khi CHÍNH request này chuyển được: hai lần rời đồng
+	// thời không còn trừ hai lần (review #102 vòng 2, NEW-2).
+	moved, err := s.memberRepo.MoveFromActive(ctx, member.ID, model.GroupMemberLeft)
+	if err != nil {
 		return err
+	}
+	if !moved {
+		return errors.New("not a member of this group")
 	}
 
 	_ = s.groupRepo.DecrementMemberCount(ctx, groupID)
@@ -440,7 +483,32 @@ func (s *GroupService) LeaveGroup(ctx context.Context, userID, groupID uuid.UUID
 // ErrGroupNotFound (S5): nhóm không tồn tại HOẶC là nhóm SECRET mà người gọi không phải thành viên (404, không phân biệt).
 var ErrGroupNotFound = errors.New("group not found")
 
-func (s *GroupService) ListMembers(ctx context.Context, requesterID, groupID uuid.UUID, page, pageSize int) (*dto.GroupMemberListResponse, error) {
+// Lỗi nhóm có `code` riêng (contract-api.md §2). Thông điệp giữ nguyên câu tiếng Anh cũ vì web đang khớp
+// theo câu ở những nơi chưa đọc `code` (web/src/lib/error-messages.ts).
+var (
+	ErrGroupAlreadyMember     = errors.New("already a member of this group")
+	ErrGroupBanned            = errors.New("you are banned from this group")
+	ErrGroupFull              = errors.New("group is full")
+	ErrGroupJoinRequestExists = errors.New("you already have a pending join request")
+	// ErrGroupForbidden: người gọi không đủ quyền xem (403), khác ErrGroupNotFound (404 không lộ tồn tại).
+	ErrGroupForbidden = errors.New("insufficient permissions")
+	// ErrGroupInvalidMemberStatus: ?status= của danh sách thành viên ngoài ACTIVE|BANNED (400).
+	ErrGroupInvalidMemberStatus = errors.New("status must be ACTIVE or BANNED")
+)
+
+// hiddenMemberFullName — tên hiển thị của thành viên có hồ sơ `hidden` với người xem không cùng nhóm.
+const hiddenMemberFullName = "Học viên"
+
+func (s *GroupService) ListMembers(ctx context.Context, requesterID, groupID uuid.UUID, status string, page, pageSize int) (*dto.GroupMemberListResponse, error) {
+	wanted := model.GroupMemberActive
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "", string(model.GroupMemberActive):
+	case string(model.GroupMemberBanned):
+		wanted = model.GroupMemberBanned
+	default:
+		return nil, ErrGroupInvalidMemberStatus
+	}
+
 	// S5: nhóm SECRET bị ẩn khỏi danh sách nhóm (group_repository.go) nên danh sách thành viên cũng chỉ thành viên xem được;
 	// trước đây mọi tài khoản đăng nhập liệt kê được tên và avatar thành viên của nhóm SECRET bằng id.
 	group, err := s.groupRepo.GetByID(ctx, groupID)
@@ -450,26 +518,53 @@ func (s *GroupService) ListMembers(ctx context.Context, requesterID, groupID uui
 	if group == nil {
 		return nil, ErrGroupNotFound
 	}
-	if group.Privacy == model.GroupPrivacySecret {
-		member, err := s.memberRepo.GetActiveByGroupAndUser(ctx, groupID, requesterID)
-		if err != nil {
-			return nil, err
-		}
-		if member == nil {
-			return nil, ErrGroupNotFound
-		}
+	requester, err := s.memberRepo.GetActiveByGroupAndUser(ctx, groupID, requesterID)
+	if err != nil {
+		return nil, err
 	}
-	members, total, err := s.memberRepo.ListByGroupID(ctx, groupID, page, pageSize)
+	if group.Privacy == model.GroupPrivacySecret && requester == nil {
+		return nil, ErrGroupNotFound
+	}
+	// Q10: nhóm PRIVATE cho người ngoài thấy tên và mô tả để xin vào, nhưng KHÔNG thấy tên/avatar thành viên
+	// (đa số là học sinh): 403, không phải 404 vì nhóm vẫn tồn tại và tìm được.
+	if group.Privacy == model.GroupPrivacyPrivate && requester == nil {
+		return nil, ErrGroupForbidden
+	}
+	// Danh sách bị cấm chỉ OWNER/ADMIN: người bị cấm là dữ liệu quản trị, thành viên thường không cần thấy.
+	if wanted == model.GroupMemberBanned &&
+		(requester == nil || (requester.Role != model.GroupRoleOwner && requester.Role != model.GroupRoleAdmin)) {
+		return nil, ErrGroupForbidden
+	}
+	members, total, err := s.memberRepo.ListByGroupID(ctx, groupID, wanted, page, pageSize)
 	if err != nil {
 		return nil, err
 	}
 
+	// Người xem KHÔNG phải thành viên ACTIVE (nhóm PUBLIC mở cho mọi tài khoản đăng nhập) chỉ thấy thành viên có
+	// hồ sơ `hidden` dưới dạng ẩn danh; thành viên cùng nhóm vẫn thấy tên thật.
+	var hidden map[uuid.UUID]bool
+	if requester == nil && len(members) > 0 {
+		ids := make([]uuid.UUID, len(members))
+		for i, m := range members {
+			ids[i] = m.UserID
+		}
+		if hidden, err = s.memberRepo.HiddenProfileUserIDs(ctx, ids); err != nil {
+			return nil, err
+		}
+	}
 	responses := make([]dto.GroupMemberResponse, len(members))
 	for i, m := range members {
+		if hidden[m.UserID] {
+			anon := hiddenMemberFullName
+			responses[i] = dto.GroupMemberResponse{ID: m.ID, UserID: m.UserID, FullName: &anon,
+				Role: string(m.Role), Status: string(m.Status), JoinedAt: m.JoinedAt}
+			continue
+		}
 		responses[i] = dto.GroupMemberResponse{
 			ID:        m.ID,
 			UserID:    m.UserID,
 			UserName:  m.User.UserName,
+			FullName:  m.User.FullName,
 			AvatarURL: m.User.AvatarURL,
 			Role:      string(m.Role),
 			Status:    string(m.Status),
@@ -503,9 +598,16 @@ func (s *GroupService) InviteMembers(ctx context.Context, inviterID, groupID uui
 	}
 
 	result := &dto.InviteMembersResult{Invited: []uuid.UUID{}, Rejected: []dto.InviteRejection{}}
+	seen := make(map[uuid.UUID]bool, len(userIDs))
 	for _, uid := range userIDs {
+		if seen[uid] { // cùng một id lặp trong request: chỉ xử lý lần đầu, không báo "đã là thành viên" giả
+			continue
+		}
+		seen[uid] = true
+
 		// Guard nhan tin (Lane G): nguoi moi phai co quan he hop le voi nguoi moi; admin di qua.
-		// Loi ha tang -> tra loi, khong duoc coi la "cho phep".
+		// Loi ha tang -> tra loi, khong duoc coi la "cho phep". Guard chạy TRƯỚC mọi kiểm tra trạng thái
+		// thành viên: người lạ không được biết một người khác đã ở trong nhóm hay đã bị cấm.
 		allowed, gerr := s.inviteGuard.CanStartDirectConversation(ctx, inviterID, uid)
 		if gerr != nil {
 			return nil, gerr
@@ -515,31 +617,23 @@ func (s *GroupService) InviteMembers(ctx context.Context, inviterID, groupID uui
 			continue
 		}
 
-		existing, err := s.memberRepo.GetByGroupAndUser(ctx, groupID, uid)
-		if err != nil {
-			continue
+		// activateMember dùng chung với join/approve: kích hoạt lại cả người đã rời (trước đây chèn dòng mới
+		// vi phạm unique và bị bỏ qua im lặng), kiểm sức chứa, không nuốt lỗi hạ tầng.
+		switch err := s.activateMember(ctx, groupID, uid, &inviterID); {
+		case err == nil:
+			result.Invited = append(result.Invited, uid)
+		case errors.Is(err, ErrGroupAlreadyMember):
+			result.Rejected = append(result.Rejected, dto.InviteRejection{UserID: uid, Code: dto.GroupAlreadyMemberCode})
+		case errors.Is(err, ErrGroupBanned):
+			result.Rejected = append(result.Rejected, dto.InviteRejection{UserID: uid, Code: dto.GroupMemberBannedCode})
+		case errors.Is(err, ErrGroupFull):
+			result.Rejected = append(result.Rejected, dto.InviteRejection{UserID: uid, Code: dto.GroupFullCode})
+		default:
+			return nil, err
 		}
-		if existing != nil && (existing.Status == model.GroupMemberActive || existing.Status == model.GroupMemberInvited) {
-			continue
-		}
-
-		now := time.Now()
-		member := &model.GroupMember{
-			GroupID:   groupID,
-			UserID:    uid,
-			Role:      model.GroupRoleMember,
-			Status:    model.GroupMemberActive,
-			InvitedBy: &inviterID,
-			JoinedAt:  &now,
-		}
-		if err := s.memberRepo.Create(ctx, member); err != nil {
-			continue
-		}
-		_ = s.groupRepo.IncrementMemberCount(ctx, groupID)
-		s.addToGroupConversation(ctx, groupID, uid)
-		result.Invited = append(result.Invited, uid)
 	}
 
+	s.notifyGroupAdded(group, result.Invited)
 	return result, nil
 }
 
@@ -581,9 +675,12 @@ func (s *GroupService) RemoveMember(ctx context.Context, requesterID, groupID, t
 		return errors.New("cannot remove the owner")
 	}
 
-	member.Status = model.GroupMemberLeft
-	if err := s.memberRepo.Update(ctx, member); err != nil {
+	moved, err := s.memberRepo.MoveFromActive(ctx, member.ID, model.GroupMemberLeft)
+	if err != nil {
 		return err
+	}
+	if !moved {
+		return errors.New("member not found")
 	}
 
 	_ = s.groupRepo.DecrementMemberCount(ctx, groupID)
@@ -606,13 +703,22 @@ func (s *GroupService) BanMember(ctx context.Context, requesterID, groupID, targ
 		return errors.New("cannot ban the owner")
 	}
 
-	wasActive := member.Status == model.GroupMemberActive
-	member.Status = model.GroupMemberBanned
-	if err := s.memberRepo.Update(ctx, member); err != nil {
-		return err
+	// ACTIVE -> BANNED nguyên tử, chỉ giảm đếm khi chính request này chuyển được. Dòng không còn ACTIVE (rời
+	// trước, hoặc request khác đã chuyển) thì vẫn đặt BANNED nhưng KHÔNG giảm đếm lần nữa.
+	moved := false
+	if member.Status == model.GroupMemberActive {
+		var err error
+		if moved, err = s.memberRepo.MoveFromActive(ctx, member.ID, model.GroupMemberBanned); err != nil {
+			return err
+		}
 	}
-
-	if wasActive {
+	if !moved {
+		member.Status = model.GroupMemberBanned
+		if err := s.memberRepo.Update(ctx, member); err != nil {
+			return err
+		}
+	}
+	if moved {
 		_ = s.groupRepo.DecrementMemberCount(ctx, groupID)
 	}
 	// Bị cấm thì luôn gỡ khỏi hội thoại, kể cả khi trạng thái trước đó không phải ACTIVE.
@@ -697,29 +803,18 @@ func (s *GroupService) ApproveRequest(ctx context.Context, requesterID, groupID,
 		return errors.New("request is not pending")
 	}
 
+	// Thêm thành viên TRƯỚC khi đánh dấu APPROVED: nhóm đầy hoặc người xin đã bị cấm thì yêu cầu phải còn
+	// nguyên trạng thái chờ (không có yêu cầu "đã duyệt" mà người đó không vào được nhóm). Đã là thành viên
+	// (duyệt lại sau lần lỗi trước) thì vẫn chốt yêu cầu, không báo lỗi.
+	if err := s.activateMember(ctx, groupID, req.UserID, nil); err != nil && !errors.Is(err, ErrGroupAlreadyMember) {
+		return err
+	}
+
 	now := time.Now()
 	req.Status = model.JoinRequestApproved
 	req.ReviewedBy = &requesterID
 	req.ReviewedAt = &now
-	if err := s.joinRequestRepo.Update(ctx, req); err != nil {
-		return err
-	}
-
-	// Add as member
-	member := &model.GroupMember{
-		GroupID:  groupID,
-		UserID:   req.UserID,
-		Role:     model.GroupRoleMember,
-		Status:   model.GroupMemberActive,
-		JoinedAt: &now,
-	}
-	if err := s.memberRepo.Create(ctx, member); err != nil {
-		return err
-	}
-
-	_ = s.groupRepo.IncrementMemberCount(ctx, groupID)
-	s.addToGroupConversation(ctx, groupID, req.UserID)
-	return nil
+	return s.joinRequestRepo.Update(ctx, req)
 }
 
 func (s *GroupService) RejectRequest(ctx context.Context, requesterID, groupID, requestID uuid.UUID, reason *string) error {
@@ -790,27 +885,106 @@ func (s *GroupService) removeFromGroupConversation(ctx context.Context, groupID,
 	return nil
 }
 
-func (s *GroupService) addToGroupConversation(ctx context.Context, groupID, userID uuid.UUID) {
+// activateMember đưa userID vào nhóm ở trạng thái ACTIVE với vai trò MEMBER: dùng chung cho vào nhóm công
+// khai (join), mời (invite) và duyệt yêu cầu (approve) để ba đường không còn lệch nhau.
+//
+//   - Đã ACTIVE -> ErrGroupAlreadyMember; đang BANNED -> ErrGroupBanned (dù mời hay duyệt đều không vượt được).
+//   - Giữ chỗ bằng câu UPDATE nguyên tử (TryReserveMemberSlot) nên không ai vượt max_members; ghi member
+//     lỗi thì trả lại chỗ. Hết chỗ -> ErrGroupFull.
+//   - Dòng cũ (LEFT/INVITED/PENDING) được kích hoạt lại thay vì chèn dòng mới (unique group_id+user_id),
+//     và vai trò đặt lại về MEMBER: người từng là ADMIN rồi rời nhóm không được lấy lại quyền cũ.
+//   - Thêm vào hội thoại nhóm; lỗi ở bước này được trả ra, không nuốt.
+func (s *GroupService) activateMember(ctx context.Context, groupID, userID uuid.UUID, invitedBy *uuid.UUID) error {
+	existing, err := s.memberRepo.GetByGroupAndUser(ctx, groupID, userID)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		switch existing.Status {
+		case model.GroupMemberActive:
+			return ErrGroupAlreadyMember
+		case model.GroupMemberBanned:
+			return ErrGroupBanned
+		}
+	}
+
+	reserved, err := s.groupRepo.TryReserveMemberSlot(ctx, groupID)
+	if err != nil {
+		return err
+	}
+	if !reserved {
+		return ErrGroupFull
+	}
+
+	now := time.Now()
+	var writeErr error
+	if existing != nil {
+		// Chuyển trạng thái NGUYÊN TỬ (UPDATE ... WHERE status IN (LEFT, INVITED, PENDING)): hai request đồng thời
+		// cho cùng một dòng cũ chỉ có MỘT bên chuyển được. Bên thua trả lại chỗ đã giữ, nếu không member_count
+		// trôi +1 mỗi lần (review #102 M3: rời rồi vào hai lần song song để bơm đếm tới max_members).
+		moved, err := s.memberRepo.Reactivate(ctx, existing.ID, invitedBy, now)
+		if err != nil {
+			_ = s.groupRepo.DecrementMemberCount(ctx, groupID)
+			return err
+		}
+		if !moved {
+			_ = s.groupRepo.DecrementMemberCount(ctx, groupID)
+			cur, err := s.memberRepo.GetByGroupAndUser(ctx, groupID, userID)
+			if err != nil {
+				return err
+			}
+			if cur != nil && cur.Status == model.GroupMemberBanned {
+				return ErrGroupBanned
+			}
+			return ErrGroupAlreadyMember
+		}
+	} else {
+		writeErr = s.memberRepo.Create(ctx, &model.GroupMember{
+			GroupID:   groupID,
+			UserID:    userID,
+			Role:      model.GroupRoleMember,
+			Status:    model.GroupMemberActive,
+			InvitedBy: invitedBy,
+			JoinedAt:  &now,
+		})
+	}
+	if writeErr != nil {
+		_ = s.groupRepo.DecrementMemberCount(ctx, groupID) // trả lại chỗ đã giữ
+		return writeErr
+	}
+	return s.addToGroupConversation(ctx, groupID, userID)
+}
+
+func (s *GroupService) addToGroupConversation(ctx context.Context, groupID, userID uuid.UUID) error {
 	conv, err := s.convRepo.GetByGroupID(ctx, groupID)
-	if err != nil || conv == nil {
-		return
+	if err != nil {
+		return err
+	}
+	if conv == nil {
+		return nil
 	}
 
 	existing, err := s.participantRepo.GetByConvAndUser(ctx, conv.ID, userID)
-	if err != nil || existing != nil {
-		return
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
 	}
 	// Vào lại nhóm sau khi đã rời: kích hoạt lại dòng cũ thay vì chèn dòng mới (chỉ mục duy nhất).
-	if rejoined, err := s.participantRepo.Rejoin(ctx, conv.ID, userID); err != nil || rejoined {
-		return
+	rejoined, err := s.participantRepo.Rejoin(ctx, conv.ID, userID)
+	if err != nil {
+		return err
+	}
+	if rejoined {
+		return nil
 	}
 
-	participant := &model.ConversationParticipant{
+	return s.participantRepo.Create(ctx, &model.ConversationParticipant{
 		ConversationID: conv.ID,
 		UserID:         userID,
 		JoinedAt:       time.Now(),
-	}
-	_ = s.participantRepo.Create(ctx, participant)
+	})
 }
 
 func (s *GroupService) toGroupResponse(group *model.Group, userID *uuid.UUID) *dto.GroupResponse {

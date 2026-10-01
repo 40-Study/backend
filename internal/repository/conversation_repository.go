@@ -70,6 +70,14 @@ func (r *ConversationRepository) GetByID(ctx context.Context, id uuid.UUID) (*mo
 	return &conv, nil
 }
 
+// IsDirect — cuộc trò chuyện có phải DM 1-1 không (một truy vấn đếm nhẹ, dùng ở đường gửi tin).
+func (r *ConversationRepository) IsDirect(ctx context.Context, id uuid.UUID) (bool, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Model(&model.Conversation{}).
+		Where("id = ? AND type = ?", id, model.ConversationTypeDirect).Count(&n).Error
+	return n > 0, err
+}
+
 func (r *ConversationRepository) GetDirectBetweenUsers(ctx context.Context, userID1, userID2 uuid.UUID) (*model.Conversation, error) {
 	var conv model.Conversation
 	err := r.db.WithContext(ctx).
