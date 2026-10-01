@@ -92,17 +92,19 @@ func TestFriendsSchema_NangCapVaRollbackCheckLoaiThongBao(t *testing.T) {
 	}
 	mustExec(t, exec, `INSERT INTO notifications (user_id, title, content, notification_type) VALUES ('00000000-0000-0000-0000-00000000000a', 't', 'c', 'group_added')`)
 	var def string
-	db.Raw(`SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'chk_notifications_notification_type'`).Scan(&def)
+	db.Raw(`SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'chk_notifications_notification_type' AND conrelid = 'notifications'::regclass`).Scan(&def)
 	for _, typ := range []string{"friend_request", "friend_accepted", "group_added"} {
 		if !strings.Contains(def, "'"+typ+"'") {
 			t.Fatalf("constraint sau nâng cấp thiếu %s: %s", typ, def)
 		}
 	}
 
+	// pg_constraint là catalog TOÀN CỤC: không giới hạn conrelid thì dòng của schema test song song khác (cùng tên constraint,
+	// đã validated) có thể bị đọc nhầm, làm test flaky. 'notifications'::regclass phân giải theo search_path của kết nối.
 	// Rollback: bản backend cũ boot lại với danh sách 11 giá trị trong khi DB đã có dòng group_added.
 	mustExec(t, exec, buildCheckConstraintSQL("notifications", "chk_notifications_notification_type", "notification_type", oldTypes))
 	var validated bool
-	db.Raw(`SELECT convalidated FROM pg_constraint WHERE conname = 'chk_notifications_notification_type'`).Scan(&validated)
+	db.Raw(`SELECT convalidated FROM pg_constraint WHERE conname = 'chk_notifications_notification_type' AND conrelid = 'notifications'::regclass`).Scan(&validated)
 	if validated {
 		t.Fatal("còn dòng group_added mà constraint 11 giá trị lại báo validated")
 	}
