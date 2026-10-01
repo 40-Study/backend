@@ -6,6 +6,8 @@ package service
 import (
 	"testing"
 
+	"github.com/google/uuid"
+	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 )
 

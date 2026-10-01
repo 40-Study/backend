@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/repository"
 )
 
 func dmText(s string) dto.SendMessageRequest { return dto.SendMessageRequest{Content: &s, Type: "TEXT"} }

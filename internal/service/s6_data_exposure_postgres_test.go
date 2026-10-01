@@ -324,7 +324,7 @@ func TestS6_PublicProfile_TheoCaiDatRiengTu(t *testing.T) {
 	friendsWantFull := map[string]*uuid.UUID{"bạn (chiều gửi)": &friendA.ID, "bạn (chiều nhận)": &friendB.ID, "chính chủ": &friendsOwner.ID}
 	friendsWantPrivate := map[string]*uuid.UUID{
 		"khách": nil, "người lạ": &viewer.ID, "lời mời PENDING": &pendingV.ID, "lời mời DECLINED": &declinedV.ID,
-		"lời mời CANCELLED": &cancelledV.ID, "bạn đã bị chặn": &blockedFriend.ID,
+		"lời mời CANCELLED": &cancelledV.ID,
 	}
 	for name, id := range friendsWantFull {
 		got, err := svc.GetPublicProfile(ctx, friendsOwner.ID, id, false)
@@ -340,6 +340,10 @@ func TestS6_PublicProfile_TheoCaiDatRiengTu(t *testing.T) {
 		if err != nil || got == nil || !got.IsPrivate || got.Bio != nil || got.UserName != friendsOwner.UserName {
 			t.Errorf("friends: %s chỉ được thấy tên + avatar: err=%v got=%+v", name, err, got)
 		}
+	}
+	// Người ĐÃ chặn chủ hồ sơ: hồ sơ biến mất y hệt hồ sơ hidden (404), để không suy ra được mình bị chặn.
+	if got, err := svc.GetPublicProfile(ctx, friendsOwner.ID, &blockedFriend.ID, false); err != ErrPublicProfileNotFound {
+		t.Errorf("friends: bạn đã bị chặn phải nhận 404 như hồ sơ ẩn: err=%v got=%+v", err, got)
 	}
 	// Chưa nối checker: đóng chứ không mở cửa — cả bạn thật cũng chỉ thấy bản rút gọn.
 	bare := NewUserStatsService(repository.NewUserStatsRepository(f.db), repository.NewUserPreferenceRepository(f.db))
