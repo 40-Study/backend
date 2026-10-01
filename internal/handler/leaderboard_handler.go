@@ -55,7 +55,8 @@ func (h *LeaderboardHandler) GetLeaderboard(c *fiber.Ctx) error {
 		if errors.Is(err, service.ErrInvalidLeaderboardPeriod) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		// Lỗi khác (DB/SQL...) không được lộ ra client: log phía server, trả thông điệp chung.
+		return RespondServiceError(c, err, "Không thể tải bảng xếp hạng")
 	}
 	return c.JSON(fiber.Map{"data": resp})
 }
@@ -78,7 +79,8 @@ func (h *LeaderboardHandler) GetMyRank(c *fiber.Ctx) error {
 		if errors.Is(err, service.ErrInvalidLeaderboardPeriod) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		// Lỗi khác (DB/SQL...) không được lộ ra client: log phía server, trả thông điệp chung.
+		return RespondServiceError(c, err, "Không thể tải thứ hạng của bạn")
 	}
 	return c.JSON(fiber.Map{"data": resp})
 }
