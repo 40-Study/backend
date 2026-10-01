@@ -19,19 +19,23 @@ type ConversationBrief struct {
 }
 
 type ConversationResponse struct {
-	ID            uuid.UUID                `json:"id"`
-	Type          string                   `json:"type"`
-	Name          *string                  `json:"name,omitempty"`
-	GroupID       *uuid.UUID               `json:"group_id,omitempty"`
-	LastMessage   *MessageResponse         `json:"last_message,omitempty"`
-	LastMessageAt *time.Time               `json:"last_message_at,omitempty"`
-	MessageCount  int64                    `json:"message_count"`
-	UnreadCount   int                      `json:"unread_count"`
-	IsMuted       bool                     `json:"is_muted"`
-	IsPinned      bool                     `json:"is_pinned"`
-	Participants  []ParticipantResponse    `json:"participants,omitempty"`
-	CreatedAt     time.Time                `json:"created_at"`
-	UpdatedAt     time.Time                `json:"updated_at"`
+	ID            uuid.UUID        `json:"id"`
+	Type          string           `json:"type"`
+	Name          *string          `json:"name,omitempty"`
+	GroupID       *uuid.UUID       `json:"group_id,omitempty"`
+	LastMessage   *MessageResponse `json:"last_message,omitempty"`
+	LastMessageAt *time.Time       `json:"last_message_at,omitempty"`
+	MessageCount  int64            `json:"message_count"`
+	UnreadCount   int              `json:"unread_count"`
+	IsMuted       bool             `json:"is_muted"`
+	IsPinned      bool             `json:"is_pinned"`
+	// IsBlocked chỉ có ở GET /conversations/:id và POST /conversations/direct của DM 1-1: true khi giữa hai người có
+	// chặn ở BẤT KỲ chiều nào (web khoá ô nhập ngay khi mở). Con trỏ + omitempty để danh sách và chat nhóm không trả
+	// một "false" không được tính. Chỉ là cờ, cố ý KHÔNG nói ai chặn ai.
+	IsBlocked    *bool                 `json:"is_blocked,omitempty"`
+	Participants []ParticipantResponse `json:"participants,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
+	UpdatedAt    time.Time             `json:"updated_at"`
 }
 
 type ConversationListResponse struct {
@@ -42,11 +46,11 @@ type ConversationListResponse struct {
 }
 
 type ParticipantResponse struct {
-	UserID    uuid.UUID  `json:"user_id"`
-	UserName  string     `json:"user_name"`
-	AvatarURL *string    `json:"avatar_url,omitempty"`
-	IsOnline  bool       `json:"is_online"`
-	JoinedAt  time.Time  `json:"joined_at"`
+	UserID     uuid.UUID  `json:"user_id"`
+	UserName   string     `json:"user_name"`
+	AvatarURL  *string    `json:"avatar_url,omitempty"`
+	IsOnline   bool       `json:"is_online"`
+	JoinedAt   time.Time  `json:"joined_at"`
 	LastReadAt *time.Time `json:"last_read_at,omitempty"`
 }
 
@@ -66,30 +70,35 @@ type EditMessageRequest struct {
 }
 
 type MessageResponse struct {
-	ID             uuid.UUID                  `json:"id"`
-	ConversationID uuid.UUID                  `json:"conversation_id"`
-	SenderID       *uuid.UUID                 `json:"sender_id,omitempty"`
-	SenderName     string                     `json:"sender_name"`
-	SenderAvatar   *string                    `json:"sender_avatar,omitempty"`
-	Type           string                     `json:"type"`
-	Content        *string                    `json:"content,omitempty"`
-	Metadata       interface{}                `json:"metadata,omitempty"`
-	ReplyTo        *MessageReplyResponse      `json:"reply_to,omitempty"`
-	Status         string                     `json:"status"`
-	IsEdited       bool                       `json:"is_edited"`
-	EditedAt       *time.Time                 `json:"edited_at,omitempty"`
-	IsPinned       bool                       `json:"is_pinned"`
-	Reactions      []MessageReactionResponse  `json:"reactions,omitempty"`
+	ID             uuid.UUID  `json:"id"`
+	ConversationID uuid.UUID  `json:"conversation_id"`
+	SenderID       *uuid.UUID `json:"sender_id,omitempty"`
+	SenderName     string     `json:"sender_name"`
+	// SenderFullName là họ tên hiển thị của người gửi (web ưu tiên hơn sender_name = user_name, đồng nhất với danh
+	// sách thành viên nhóm); bỏ trống khi người gửi chưa có họ tên.
+	SenderFullName *string                     `json:"sender_full_name,omitempty"`
+	SenderAvatar   *string                     `json:"sender_avatar,omitempty"`
+	Type           string                      `json:"type"`
+	Content        *string                     `json:"content,omitempty"`
+	Metadata       interface{}                 `json:"metadata,omitempty"`
+	ReplyTo        *MessageReplyResponse       `json:"reply_to,omitempty"`
+	Status         string                      `json:"status"`
+	IsEdited       bool                        `json:"is_edited"`
+	EditedAt       *time.Time                  `json:"edited_at,omitempty"`
+	IsPinned       bool                        `json:"is_pinned"`
+	Reactions      []MessageReactionResponse   `json:"reactions,omitempty"`
 	Attachments    []MessageAttachmentResponse `json:"attachments,omitempty"`
-	CreatedAt      time.Time                  `json:"created_at"`
+	CreatedAt      time.Time                   `json:"created_at"`
 }
 
 type MessageReplyResponse struct {
 	ID         uuid.UUID  `json:"id"`
 	SenderID   *uuid.UUID `json:"sender_id,omitempty"`
 	SenderName string     `json:"sender_name"`
-	Content    *string    `json:"content,omitempty"`
-	Type       string     `json:"type"`
+	// SenderFullName: như MessageResponse.SenderFullName, cho dòng "trả lời ...".
+	SenderFullName *string `json:"sender_full_name,omitempty"`
+	Content        *string `json:"content,omitempty"`
+	Type           string  `json:"type"`
 }
 
 type MessageListResponse struct {
@@ -119,8 +128,8 @@ type AddReactionRequest struct {
 }
 
 type UnreadCountResponse struct {
-	TotalUnread    int                        `json:"total_unread"`
-	Conversations  []ConversationUnreadCount  `json:"conversations"`
+	TotalUnread   int                       `json:"total_unread"`
+	Conversations []ConversationUnreadCount `json:"conversations"`
 }
 
 type ConversationUnreadCount struct {

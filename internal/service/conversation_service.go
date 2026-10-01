@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,6 +50,11 @@ var ErrConversationNotAllowed = errors.New("Bạn chỉ có thể nhắn tin v�
 // không gửi/sửa/xoá tin được (lịch sử vẫn đọc được; bỏ chặn thì gửi lại bình thường). Không áp dụng cho chat
 // nhóm. Handler trả 403 + code ERR_CONVERSATION_BLOCKED. Quyết định chủ dự án sau review đối kháng #102 (M2).
 var ErrConversationBlocked = errors.New("Không thể gửi tin nhắn trong cuộc trò chuyện này")
+
+// ErrNotParticipant: người gọi không (còn) là participant của hội thoại (đã rời/bị gỡ, chưa từng vào, hoặc hội thoại
+// không tồn tại: ba trường hợp cố ý cho cùng một lỗi để không lộ sự tồn tại). Handler trả 404, đúng quy tắc
+// "không xem được thì 404" như GetConversation.
+var ErrNotParticipant = errors.New("not a participant of this conversation")
 
 type ConversationService struct {
 	convRepo           *repository.ConversationRepository
@@ -125,6 +131,9 @@ func (s *ConversationService) CreateDirectConversation(ctx context.Context, user
 	}
 	if existing != nil {
 		resp := s.toConversationResponse(existing, userID)
+		if err := s.fillDirectBlocked(ctx, &resp, existing, userID); err != nil {
+			return nil, err
+		}
 		return &resp, nil
 	}
 
@@ -162,6 +171,10 @@ func (s *ConversationService) CreateDirectConversation(ctx context.Context, user
 	}
 
 	resp := s.toConversationResponse(conv, userID)
+	// Người tạo là admin có thể vượt guard chặn (canCreateDirectConversation), nên cuộc mới cũng cần cờ.
+	if err := s.fillDirectBlocked(ctx, &resp, conv, userID); err != nil {
+		return nil, err
+	}
 	return &resp, nil
 }
 
@@ -179,6 +192,9 @@ func (s *ConversationService) GetConversation(ctx context.Context, userID, convI
 	}
 
 	resp := s.toConversationResponse(conv, userID)
+	if err := s.fillDirectBlocked(ctx, &resp, conv, userID); err != nil {
+		return nil, err
+	}
 	return &resp, nil
 }
 
@@ -665,15 +681,44 @@ func (s *ConversationService) requireDirectNotBlocked(ctx context.Context, convI
 	return nil
 }
 
+// fillDirectBlocked gắn cờ IsBlocked cho phản hồi chi tiết của DM 1-1. Dùng lại ĐÚNG quy tắc khoá gửi
+// (requireDirectNotBlocked) làm SSOT nên cờ không bao giờ lệch với việc gửi có bị khoá hay không. Chat nhóm, hoặc
+// chưa nối checker (nil), thì không gắn: cờ vắng mặt chứ không phải "false".
+func (s *ConversationService) fillDirectBlocked(ctx context.Context, resp *dto.ConversationResponse, conv *model.Conversation, userID uuid.UUID) error {
+	if s.friendChecker == nil || conv.Type != model.ConversationTypeDirect {
+		return nil
+	}
+	blocked := false
+	if err := s.requireDirectNotBlocked(ctx, conv.ID, userID); errors.Is(err, ErrConversationBlocked) {
+		blocked = true
+	} else if err != nil {
+		return err
+	}
+	resp.IsBlocked = &blocked
+	return nil
+}
+
 func (s *ConversationService) requireParticipant(ctx context.Context, convID, userID uuid.UUID) error {
 	p, err := s.participantRepo.GetByConvAndUser(ctx, convID, userID)
 	if err != nil {
 		return err
 	}
 	if p == nil {
-		return errors.New("not a participant of this conversation")
+		return ErrNotParticipant
 	}
 	return nil
+}
+
+// senderFullName: họ tên hiển thị của người gửi, đã cắt khoảng trắng; nil khi chưa có để web rơi về user_name.
+func senderFullName(u *model.User) *string {
+	if u == nil || u.FullName == nil {
+		return nil
+	}
+	name := strings.TrimSpace(*u.FullName)
+	if name == "" {
+		return nil
+	}
+	return &name
 }
 
 func (s *ConversationService) toConversationResponse(conv *model.Conversation, userID uuid.UUID) dto.ConversationResponse {
@@ -739,6 +784,7 @@ func (s *ConversationService) toMessageResponse(msg *model.Message) dto.MessageR
 
 	if msg.Sender != nil {
 		resp.SenderName = msg.Sender.UserName
+		resp.SenderFullName = senderFullName(msg.Sender)
 		resp.SenderAvatar = msg.Sender.AvatarURL
 	}
 
@@ -751,6 +797,7 @@ func (s *ConversationService) toMessageResponse(msg *model.Message) dto.MessageR
 		if msg.ReplyTo.Sender != nil {
 			reply.SenderID = msg.ReplyTo.SenderID
 			reply.SenderName = msg.ReplyTo.Sender.UserName
+			reply.SenderFullName = senderFullName(msg.ReplyTo.Sender)
 		}
 		resp.ReplyTo = reply
 	}
