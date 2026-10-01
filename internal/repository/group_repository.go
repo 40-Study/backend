@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -221,6 +222,26 @@ func (r *GroupMemberRepository) GetActiveByGroupAndUser(ctx context.Context, gro
 
 func (r *GroupMemberRepository) Update(ctx context.Context, member *model.GroupMember) error {
 	return r.db.WithContext(ctx).Save(member).Error
+}
+
+// Reactivate chuyển dòng thành viên cũ (LEFT/INVITED/PENDING) sang ACTIVE với vai trò MEMBER bằng MỘT câu
+// UPDATE có điều kiện trạng thái và trả true CHỈ KHI chính câu này thực hiện việc chuyển (RowsAffected = 1).
+// Hai request đồng thời cho cùng một dòng: đúng một bên thấy true, bên kia false. Người gọi chỉ giữ chỗ
+// (member_count) khi nhận true, nên đếm không trôi. BANNED và ACTIVE không bao giờ bị ghi đè ở đây.
+func (r *GroupMemberRepository) Reactivate(ctx context.Context, id uuid.UUID, invitedBy *uuid.UUID, now time.Time) (bool, error) {
+	updates := map[string]any{
+		"status":    model.GroupMemberActive,
+		"role":      model.GroupRoleMember,
+		"joined_at": now,
+	}
+	if invitedBy != nil {
+		updates["invited_by"] = *invitedBy
+	}
+	res := r.db.WithContext(ctx).Model(&model.GroupMember{}).
+		Where("id = ? AND status IN ?", id,
+			[]model.GroupMemberStatus{model.GroupMemberLeft, model.GroupMemberInvited, model.GroupMemberPending}).
+		Updates(updates)
+	return res.RowsAffected == 1, res.Error
 }
 
 func (r *GroupMemberRepository) Delete(ctx context.Context, id uuid.UUID) error {

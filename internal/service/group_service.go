@@ -880,13 +880,25 @@ func (s *GroupService) activateMember(ctx context.Context, groupID, userID uuid.
 	now := time.Now()
 	var writeErr error
 	if existing != nil {
-		existing.Status = model.GroupMemberActive
-		existing.Role = model.GroupRoleMember
-		existing.JoinedAt = &now
-		if invitedBy != nil {
-			existing.InvitedBy = invitedBy
+		// Chuyển trạng thái NGUYÊN TỬ (UPDATE ... WHERE status IN (LEFT, INVITED, PENDING)): hai request đồng thời
+		// cho cùng một dòng cũ chỉ có MỘT bên chuyển được. Bên thua trả lại chỗ đã giữ, nếu không member_count
+		// trôi +1 mỗi lần (review #102 M3: rời rồi vào hai lần song song để bơm đếm tới max_members).
+		moved, err := s.memberRepo.Reactivate(ctx, existing.ID, invitedBy, now)
+		if err != nil {
+			_ = s.groupRepo.DecrementMemberCount(ctx, groupID)
+			return err
 		}
-		writeErr = s.memberRepo.Update(ctx, existing)
+		if !moved {
+			_ = s.groupRepo.DecrementMemberCount(ctx, groupID)
+			cur, err := s.memberRepo.GetByGroupAndUser(ctx, groupID, userID)
+			if err != nil {
+				return err
+			}
+			if cur != nil && cur.Status == model.GroupMemberBanned {
+				return ErrGroupBanned
+			}
+			return ErrGroupAlreadyMember
+		}
 	} else {
 		writeErr = s.memberRepo.Create(ctx, &model.GroupMember{
 			GroupID:   groupID,

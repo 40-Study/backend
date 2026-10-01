@@ -261,6 +261,15 @@ func (c *FiberClient) subscribe(channel string) {
 	c.channelMu.Unlock()
 
 	c.Hub.SubscribeToChannel(c.hubClient, channel)
+
+	// Kiểm lại quyền SAU khi đăng ký (xem Client.Subscribe): đóng khe giữa kiểm quyền và đăng ký khi người dùng
+	// bị gỡ khỏi nhóm đúng lúc đó.
+	if c.authorizer != nil {
+		if allowed, err := c.authorizer.CanSubscribe(c.UserID, channel); err != nil || !allowed {
+			c.unsubscribe(channel)
+			c.sendError("subscribe_denied", "You don't have permission to subscribe to this channel")
+		}
+	}
 }
 
 func (c *FiberClient) unsubscribe(channel string) {
