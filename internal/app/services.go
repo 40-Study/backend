@@ -552,6 +552,8 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 	// Lane S2: moi vao nhom dung chung guard nhan tin cua Conversation (Lane G).
 	s.Group.SetInviteGuard(s.Conversation)
 	s.Group.SetChannelEvictor(notifier)
+	// Phụ huynh có liên kết active được xem chứng chỉ của con (GET /certificates/:id).
+	s.Certificate.SetParentLinkChecker(repos.ParentStudent)
 	wireContest(s, repos)
 	return s
 }

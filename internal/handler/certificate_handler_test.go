@@ -6,12 +6,14 @@ import (
 	"errors"
 	"io"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/service"
 )
 
 // ============================================================================
@@ -19,7 +21,7 @@ import (
 // ============================================================================
 
 type stubCertificateService struct {
-	getByIDFn func(ctx context.Context, id uuid.UUID) (*dto.CertificateResponseDTO, error)
+	getByIDFn func(ctx context.Context, id, viewerID uuid.UUID, isAdmin bool) (*dto.CertificateResponseDTO, error)
 	listFn    func(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.CertificateListDTO, error)
 	verifyFn  func(ctx context.Context, number string) (*dto.VerifyCertificateResponseDTO, error)
 
@@ -40,11 +42,11 @@ func (s *stubCertificateService) GetMyCertificates(ctx context.Context, userID u
 	return &dto.CertificateListDTO{Data: []dto.CertificateResponseDTO{}}, nil
 }
 
-func (s *stubCertificateService) GetCertificateByID(ctx context.Context, id uuid.UUID) (*dto.CertificateResponseDTO, error) {
+func (s *stubCertificateService) GetCertificateByID(ctx context.Context, id, viewerID uuid.UUID, isAdmin bool) (*dto.CertificateResponseDTO, error) {
 	if s.getByIDFn != nil {
-		return s.getByIDFn(ctx, id)
+		return s.getByIDFn(ctx, id, viewerID, isAdmin)
 	}
-	return nil, errors.New("certificate not found")
+	return nil, service.ErrCertificateNotFound
 }
 
 func (s *stubCertificateService) VerifyCertificate(ctx context.Context, number string) (*dto.VerifyCertificateResponseDTO, error) {
@@ -100,7 +102,7 @@ func TestVerifyCertificate_ValidNumber(t *testing.T) {
 	}
 
 	app := fiber.New()
-	h := NewCertificateHandler(svc)
+	h := NewCertificateHandler(svc, nil)
 	app.Get("/certificates/verify/:number", h.VerifyCertificate)
 
 	resp, err := app.Test(httptest.NewRequest("GET", "/certificates/verify/CERT-2026-0001", nil))
@@ -144,7 +146,7 @@ func TestVerifyCertificate_NotFound(t *testing.T) {
 	}
 
 	app := fiber.New()
-	h := NewCertificateHandler(svc)
+	h := NewCertificateHandler(svc, nil)
 	app.Get("/certificates/verify/:number", h.VerifyCertificate)
 
 	resp, _ := app.Test(httptest.NewRequest("GET", "/certificates/verify/SAI", nil))
@@ -176,7 +178,7 @@ func TestGetMyCertificates_ReturnsDataArrayNotCertificates(t *testing.T) {
 	}
 
 	app := fiber.New()
-	h := NewCertificateHandler(svc)
+	h := NewCertificateHandler(svc, nil)
 	app.Get("/certificates", func(c *fiber.Ctx) error {
 		c.Locals("user_id", uuid.New())
 		return h.GetMyCertificates(c)
@@ -209,7 +211,7 @@ func TestGetMyCertificates_ReturnsDataArrayNotCertificates(t *testing.T) {
 
 func TestGetMyCertificates_Unauthorized(t *testing.T) {
 	app := fiber.New()
-	h := NewCertificateHandler(&stubCertificateService{})
+	h := NewCertificateHandler(&stubCertificateService{}, nil)
 	// Khong set user_id trong Locals -> mo phong request thieu auth
 	app.Get("/certificates", h.GetMyCertificates)
 
@@ -225,7 +227,7 @@ func TestGetMyCertificates_Unauthorized(t *testing.T) {
 
 func TestGetCertificateByID_InvalidUUID(t *testing.T) {
 	app := fiber.New()
-	h := NewCertificateHandler(&stubCertificateService{})
+	h := NewCertificateHandler(&stubCertificateService{}, nil)
 	app.Get("/certificates/:id", h.GetCertificateByID)
 
 	resp, _ := app.Test(httptest.NewRequest("GET", "/certificates/khong-phai-uuid", nil))
@@ -237,13 +239,13 @@ func TestGetCertificateByID_InvalidUUID(t *testing.T) {
 func TestGetCertificateByID_FlatFields(t *testing.T) {
 	cert := sampleCert()
 	svc := &stubCertificateService{
-		getByIDFn: func(ctx context.Context, id uuid.UUID) (*dto.CertificateResponseDTO, error) {
+		getByIDFn: func(ctx context.Context, id, viewerID uuid.UUID, isAdmin bool) (*dto.CertificateResponseDTO, error) {
 			return cert, nil
 		},
 	}
 
 	app := fiber.New()
-	h := NewCertificateHandler(svc)
+	h := NewCertificateHandler(svc, nil)
 	app.Get("/certificates/:id", func(c *fiber.Ctx) error {
 		c.Locals("user_id", cert.UserID)
 		return h.GetCertificateByID(c)
@@ -265,18 +267,27 @@ func TestGetCertificateByID_FlatFields(t *testing.T) {
 	}
 }
 
+// Handler phai truyen DUNG nguoi goi xuong service (service quyet dinh quyen) va doi
+// ErrCertificateNotFound thanh 404 khong kem data — khong lo chung chi user khac.
 func TestGetCertificateByID_RejectsDifferentUser(t *testing.T) {
 	cert := sampleCert()
+	caller := uuid.New()
+	var gotViewer uuid.UUID
+	gotAdmin := true
 	svc := &stubCertificateService{
-		getByIDFn: func(ctx context.Context, id uuid.UUID) (*dto.CertificateResponseDTO, error) {
+		getByIDFn: func(ctx context.Context, id, viewerID uuid.UUID, isAdmin bool) (*dto.CertificateResponseDTO, error) {
+			gotViewer, gotAdmin = viewerID, isAdmin
+			if viewerID != cert.UserID && !isAdmin {
+				return nil, service.ErrCertificateNotFound
+			}
 			return cert, nil
 		},
 	}
 
 	app := fiber.New()
-	h := NewCertificateHandler(svc)
+	h := NewCertificateHandler(svc, nil)
 	app.Get("/certificates/:id", func(c *fiber.Ctx) error {
-		c.Locals("user_id", uuid.New())
+		c.Locals("user_id", caller)
 		return h.GetCertificateByID(c)
 	})
 
@@ -284,9 +295,40 @@ func TestGetCertificateByID_RejectsDifferentUser(t *testing.T) {
 	if resp.StatusCode != fiber.StatusNotFound {
 		t.Fatalf("status = %d, muon 404 de khong lo chung chi user khac", resp.StatusCode)
 	}
+	if gotViewer != caller {
+		t.Errorf("viewerID truyen xuong service = %s, muon user_id nguoi goi %s", gotViewer, caller)
+	}
+	if gotAdmin {
+		t.Error("permChecker nil thi isAdmin phai false (fail-closed)")
+	}
 
 	body := decodeBody(t, resp.Body)
 	if _, exists := body["data"]; exists {
 		t.Error("response IDOR khong duoc kem data chung chi")
+	}
+}
+
+// Loi khong xac dinh (DB...) tra 500 chung, khong lo err.Error() ra client.
+func TestGetCertificateByID_UnknownErrorIs500WithoutDetail(t *testing.T) {
+	svc := &stubCertificateService{
+		getByIDFn: func(ctx context.Context, id, viewerID uuid.UUID, isAdmin bool) (*dto.CertificateResponseDTO, error) {
+			return nil, errors.New("pq: connection refused secret-host")
+		},
+	}
+
+	app := fiber.New()
+	h := NewCertificateHandler(svc, nil)
+	app.Get("/certificates/:id", func(c *fiber.Ctx) error {
+		c.Locals("user_id", uuid.New())
+		return h.GetCertificateByID(c)
+	})
+
+	resp, _ := app.Test(httptest.NewRequest("GET", "/certificates/"+uuid.New().String(), nil))
+	if resp.StatusCode != fiber.StatusInternalServerError {
+		t.Fatalf("status = %d, muon 500", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(raw), "secret-host") {
+		t.Errorf("response lo chi tiet loi noi bo: %s", raw)
 	}
 }

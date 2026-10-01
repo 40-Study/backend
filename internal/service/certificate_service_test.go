@@ -15,6 +15,9 @@ type certificateRepoStub struct {
 	existing  *model.Certificate
 	lookupErr error
 	createErr error
+	// byID/byIDErr: kết quả GetCertificateByID (mặc định nil, nil = không tồn tại).
+	byID    *model.Certificate
+	byIDErr error
 }
 
 func (s *certificateRepoStub) CreateCertificate(_ context.Context, _ *model.Certificate) error {
@@ -23,7 +26,7 @@ func (s *certificateRepoStub) CreateCertificate(_ context.Context, _ *model.Cert
 }
 
 func (s *certificateRepoStub) GetCertificateByID(context.Context, uuid.UUID) (*model.Certificate, error) {
-	return nil, nil
+	return s.byID, s.byIDErr
 }
 
 func (s *certificateRepoStub) GetCertificateByNumber(context.Context, string) (*model.Certificate, error) {

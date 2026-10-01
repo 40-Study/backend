@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"study.com/v1/internal/apperr"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
@@ -19,7 +20,9 @@ import (
 type CertificateServiceInterface interface {
 	IssueCertificate(ctx context.Context, userID, courseID, enrollmentID uuid.UUID) (*dto.CertificateResponseDTO, error)
 	GetMyCertificates(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.CertificateListDTO, error)
-	GetCertificateByID(ctx context.Context, id uuid.UUID) (*dto.CertificateResponseDTO, error)
+	// GetCertificateByID: viewerID/isAdmin quyết định ai được xem — chủ chứng chỉ, admin hệ thống,
+	// phụ huynh có liên kết active với học viên. Còn lại trả ErrCertificateNotFound (404).
+	GetCertificateByID(ctx context.Context, id, viewerID uuid.UUID, isAdmin bool) (*dto.CertificateResponseDTO, error)
 	VerifyCertificate(ctx context.Context, number string) (*dto.VerifyCertificateResponseDTO, error)
 }
 
@@ -35,7 +38,25 @@ type CertificateService struct {
 	enrollmentRepo CertificateEnrollmentRepository
 	redis          *redis.Client
 	rabbitMQ       *rabbitmq_queue.RabbitMQService
+	// parentLinks: cho phụ huynh đã liên kết active xem chứng chỉ của con. nil = không phụ huynh nào
+	// được xem (fail-closed) — nối qua SetParentLinkChecker.
+	parentLinks CertificateParentLinkChecker
 }
+
+// CertificateParentLinkChecker trả true khi parentID đang là phụ huynh có liên kết ACTIVE của
+// studentID (ParentStudentRepository.HasActiveParent).
+type CertificateParentLinkChecker interface {
+	HasActiveParent(ctx context.Context, parentID, studentID uuid.UUID) (bool, error)
+}
+
+// SetParentLinkChecker nối kiểm tra liên kết phụ huynh-học viên.
+func (s *CertificateService) SetParentLinkChecker(c CertificateParentLinkChecker) {
+	s.parentLinks = c
+}
+
+// ErrCertificateNotFound gộp "chứng chỉ không tồn tại / đã thu hồi" và "người gọi không được xem"
+// thành MỘT lỗi 404 — không cho dò sự tồn tại chứng chỉ của người khác theo id.
+var ErrCertificateNotFound = apperr.NotFound("Certificate not found")
 
 func NewCertificateService(
 	repo repository.CertificateRepositoryInterface,
@@ -288,13 +309,32 @@ func (s *CertificateService) GetMyCertificates(ctx context.Context, userID uuid.
 	return &dto.CertificateListDTO{Data: data, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
-func (s *CertificateService) GetCertificateByID(ctx context.Context, id uuid.UUID) (*dto.CertificateResponseDTO, error) {
+func (s *CertificateService) GetCertificateByID(ctx context.Context, id, viewerID uuid.UUID, isAdmin bool) (*dto.CertificateResponseDTO, error) {
 	cert, err := s.repo.GetCertificateByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get certificate %s: %w", id, err)
+	}
 	// Đã thu hồi (hoàn tiền) coi như không tồn tại với chủ sở hữu: không xem, không tải được nữa.
-	if err != nil || cert == nil || cert.RevokedAt != nil {
-		return nil, errors.New("certificate not found")
+	if cert == nil || cert.RevokedAt != nil {
+		return nil, ErrCertificateNotFound
+	}
+	if !s.canViewCertificate(ctx, cert.UserID, viewerID, isAdmin) {
+		return nil, ErrCertificateNotFound
 	}
 	return s.mapCertToDTO(cert), nil
+}
+
+// canViewCertificate: chủ chứng chỉ, admin hệ thống, hoặc phụ huynh có liên kết active với chủ.
+// Lỗi khi tra liên kết phụ huynh = không được xem (fail-closed, cùng luật với quiz attempt).
+func (s *CertificateService) canViewCertificate(ctx context.Context, ownerID, viewerID uuid.UUID, isAdmin bool) bool {
+	if viewerID == ownerID || isAdmin {
+		return true
+	}
+	if s.parentLinks == nil {
+		return false
+	}
+	linked, err := s.parentLinks.HasActiveParent(ctx, viewerID, ownerID)
+	return err == nil && linked
 }
 
 func (s *CertificateService) VerifyCertificate(ctx context.Context, number string) (*dto.VerifyCertificateResponseDTO, error) {

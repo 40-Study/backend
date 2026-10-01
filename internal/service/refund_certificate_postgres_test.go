@@ -80,7 +80,7 @@ func TestRefundOrder_RevokesCourseCertificate(t *testing.T) {
 	if err != nil || list.Total != 0 || len(list.Data) != 0 {
 		t.Fatalf("sau hoàn tiền: list=%+v err=%v, muốn 0 chứng chỉ", list, err)
 	}
-	if _, err := rc.certSvc.GetCertificateByID(ctx, stored.ID); err == nil {
+	if _, err := rc.certSvc.GetCertificateByID(ctx, stored.ID, rc.student, false); err == nil {
 		t.Fatalf("GetCertificateByID chứng chỉ đã thu hồi: muốn lỗi not found")
 	}
 	v, err := rc.certSvc.VerifyCertificate(ctx, rc.number)

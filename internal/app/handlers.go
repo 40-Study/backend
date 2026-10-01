@@ -230,7 +230,7 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		Review: handler.NewReviewHandler(services.Review),
 
 		// ===== Certificate =====
-		Certificate: handler.NewCertificateHandler(services.Certificate),
+		Certificate: handler.NewCertificateHandler(services.Certificate, permChecker),
 
 		// ===== Report =====
 		Report: handler.NewReportHandler(services.Report, permChecker),
