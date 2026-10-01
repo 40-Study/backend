@@ -207,57 +207,157 @@ func TestFriendship_NguoiBiChan_KhongSuyRaMinhBiChan(t *testing.T) {
 	}
 }
 
-// MINOR 4: lọc vai trò là allowlist. Học viên mang thêm BẤT KỲ vai trò hệ thống nào khác (kể cả vai trò tự tạo
-// sau này) đều bị loại, cả khi gọi API lẫn khi bị tìm kiếm/được mời.
-func TestFriendship_VaiTro_Allowlist_VaiTroTuyChon_BiLoai(t *testing.T) {
+// Vòng 2 NEW-1: tài khoản có vai STUDENT dùng được bạn bè kể cả khi mang vai phụ (PARENT, TEACHER_APPLICANT,
+// ORG_OWNER, vai tuỳ chọn); chỉ loại TEACHER đã duyệt và SYSTEM_ADMIN. Trước khi sửa (allowlist cứng) mọi vai
+// phụ bị loại, kể cả khỏi Chặn.
+func TestFriendship_VaiPhu_VanDungDuoc_ChiLoaiGiaoVienVaAdmin(t *testing.T) {
 	fx := newFriendFx(t)
 	ctx := t.Context()
 	plain := fx.student("plain")
-	mentor := fx.user("mentor", "STUDENT", "CUSTOM_MENTOR")
-	fx.db.Model(&model.User{}).Where("id = ?", mentor).Update("user_name", "zzmentor")
-
-	_, err := fx.svc.SendRequest(ctx, mentor, plain)
-	wantErr(t, err, ErrFriendRoleNotAllowed, "học viên kèm vai trò tự tạo gọi API")
-	_, err = fx.svc.SendRequest(ctx, plain, mentor)
-	wantErr(t, err, ErrFriendUserNotFound, "gửi lời mời cho học viên kèm vai trò tự tạo")
-	if res, _ := fx.svc.Search(ctx, plain, "zzmentor", 20); len(res.Users) != 0 {
-		t.Errorf("học viên kèm vai trò tự tạo không được hiện trong tìm kiếm: %+v", res.Users)
+	for _, role := range []string{"PARENT", "TEACHER_APPLICANT", "ORG_OWNER", "CUSTOM_MENTOR"} {
+		u := fx.user("sub-"+role, "STUDENT", role)
+		if _, err := fx.svc.SendRequest(ctx, u, plain); err != nil {
+			t.Errorf("học viên mang vai phụ %s phải kết bạn được: %v", role, err)
+		}
 	}
-	if _, err := fx.svc.SendRequest(ctx, plain, fx.student("ok")); err != nil {
-		t.Errorf("học viên thuần phải vẫn dùng được: %v", err)
+	for _, role := range []string{"TEACHER", "SYSTEM_ADMIN"} {
+		u := fx.user("adult-"+role, "STUDENT", role)
+		_, err := fx.svc.SendRequest(ctx, u, plain)
+		wantErr(t, err, ErrFriendRoleNotAllowed, "học viên mang vai "+role)
+		_, err = fx.svc.SendRequest(ctx, plain, u)
+		wantErr(t, err, ErrFriendUserNotFound, "gửi lời mời cho tài khoản mang vai "+role)
 	}
 }
 
-// MINOR 5: tài khoản Google có user_name = phần trước @ của email. Không được khớp và không được trả giá trị
-// đó trong tìm kiếm (lộ một phần email); khớp theo họ tên vẫn được nhưng user_name trả rỗng.
-func TestFriendship_TimKiem_KhongLoPhanTruocEmail(t *testing.T) {
+// Vòng 2 NEW-1: học viên tự thêm vai PARENT/TEACHER_APPLICANT KHÔNG né được lệnh chặn: chặn người mang vai phụ
+// vẫn được, người chặn mang vai phụ vẫn chặn/bỏ chặn/xem danh sách chặn/huỷ kết bạn được. Khoá DM tương ứng được
+// kiểm ở conversation_direct_blocked_postgres_test.go (PR nhắn tin).
+func TestFriendship_Chan_KhongNeDuocBangVaiPhu(t *testing.T) {
+	fx := newFriendFx(t)
+	ctx := t.Context()
+	s, x := fx.student("s"), fx.student("x")
+	fx.befriend(s, x)
+	// x tự thêm vai phụ SAU khi đã là bạn (đường tự cấp: POST /auth/me/profiles).
+	for _, role := range []string{"PARENT", "TEACHER_APPLICANT"} {
+		if err := fx.db.Create(&model.UserSystemRole{UserID: x, SystemRoleID: fx.role(role), Status: model.UserSystemRoleStatusActive}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := fx.svc.Block(ctx, s, x); err != nil {
+		t.Fatalf("chặn người mang vai phụ phải được (trước đây 404): %v", err)
+	}
+	if ok, _ := fx.svc.IsBlockedEitherWay(ctx, s, x); !ok {
+		t.Error("lệnh chặn phải có hiệu lực (khoá DM kiểm ở test của PR nhắn tin)")
+	}
+	// Tài khoản chỉ có vai giáo viên (không STUDENT) cũng chặn được: thao tác an toàn không phụ thuộc allowlist.
+	if err := fx.svc.Block(ctx, fx.user("tchr", "TEACHER"), s); err != nil {
+		t.Errorf("giáo viên phải chặn được: %v", err)
+	}
+	// Người chặn cũng tự thêm vai phụ: vẫn xem/bỏ chặn được.
+	if err := fx.db.Create(&model.UserSystemRole{UserID: s, SystemRoleID: fx.role("PARENT"), Status: model.UserSystemRoleStatusActive}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if list, err := fx.svc.ListBlocks(ctx, s, 1, 20); err != nil || list.TotalCount != 1 {
+		t.Errorf("người chặn mang vai phụ phải xem được danh sách chặn: %v %+v", err, list)
+	}
+	if err := fx.svc.Unblock(ctx, s, x); err != nil {
+		t.Errorf("người chặn mang vai phụ phải bỏ chặn được: %v", err)
+	}
+	// Huỷ kết bạn của tài khoản mang vai phụ.
+	y := fx.student("y")
+	fx.befriend(s, y)
+	if err := fx.svc.Unfriend(ctx, s, y); err != nil {
+		t.Errorf("huỷ kết bạn của tài khoản mang vai phụ phải được: %v", err)
+	}
+}
+
+// Vòng 2 NEW-6: DELETE /friends/requests/:id của người bị từ chối và của người bị chặn phải cho CÙNG một kết
+// quả (không suy ra mình bị từ chối hay bị chặn).
+func TestFriendship_Huy_BiTuChoiVaBiChan_CungKetQua(t *testing.T) {
+	fx := newFriendFx(t)
+	ctx := t.Context()
+	a, b, c, d := fx.student("a"), fx.student("b"), fx.student("c"), fx.student("d")
+	declinedID := fx.send(a, b)
+	if _, err := fx.svc.DeclineRequest(ctx, b, declinedID); err != nil {
+		t.Fatal(err)
+	}
+	blockedID := fx.send(c, d)
+	if err := fx.svc.Block(ctx, d, c); err != nil {
+		t.Fatal(err)
+	}
+	errDeclined := fx.svc.CancelRequest(ctx, a, declinedID)
+	errBlocked := fx.svc.CancelRequest(ctx, c, blockedID)
+	wantErr(t, errDeclined, ErrFriendRequestNotFound, "huỷ lời mời đã bị từ chối")
+	wantErr(t, errBlocked, ErrFriendRequestNotFound, "huỷ lời mời của người bị chặn")
+}
+
+// Vòng 2 mục 7: cooldown trả kèm thời gian còn phải chờ (retry_after) và vẫn khớp ErrFriendRequestCooldown.
+func TestFriendship_Cooldown_KemThoiGianConLai(t *testing.T) {
+	fx := newFriendFx(t)
+	ctx := t.Context()
+	a, b := fx.student("a"), fx.student("b")
+	id := fx.send(a, b)
+	if _, err := fx.svc.DeclineRequest(ctx, b, id); err != nil {
+		t.Fatal(err)
+	}
+	_, err := fx.svc.SendRequest(ctx, a, b)
+	var cd *FriendCooldownError
+	if !errors.As(err, &cd) || !errors.Is(err, ErrFriendRequestCooldown) {
+		t.Fatalf("muốn FriendCooldownError khớp ErrFriendRequestCooldown, nhận %v", err)
+	}
+	if cd.RetryAfter <= 6*24*time.Hour || cd.RetryAfter > constants.FriendDeclineCooldown {
+		t.Errorf("retry_after sau từ chối vừa xong phải gần 7 ngày, nhận %v", cd.RetryAfter)
+	}
+}
+
+// MINOR 5 / vòng 2 NEW-5: che user_name dạng email-prefix chỉ khi tài khoản là Google VÀ trùng prefix email, và
+// nhất quán ở MỌI response bạn bè (gửi lời mời, danh sách lời mời, danh sách chặn, danh sách bạn, tìm kiếm).
+func TestFriendship_UserNameEmailPrefix_CheNhatQuan_ChiVoiGoogle(t *testing.T) {
 	fx := newFriendFx(t)
 	ctx := t.Context()
 	me := fx.student("me")
-	g := fx.student("g")
+	g := fx.student("g") // tài khoản Google: user_name = phần trước @
 	if err := fx.db.Model(&model.User{}).Where("id = ?", g).
 		Updates(map[string]any{"email": "zork.peter99@gmail.test", "user_name": "zork.peter99", "full_name": "Quill Hansen"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	normal := fx.namedStudent("zork-normal", "Zork Normal")
+	if err := fx.db.Create(&model.UserOAuthProvider{UserID: g, Provider: "google", ProviderUserID: "gid-" + g.String()}).Error; err != nil {
+		t.Fatal(err)
+	}
+	self := fx.student("self") // tự đặt user_name trùng prefix email nhưng KHÔNG phải Google: không che
+	if err := fx.db.Model(&model.User{}).Where("id = ?", self).
+		Updates(map[string]any{"email": "tutu.chon@mail.test", "user_name": "tutu.chon", "full_name": "Tu Chon"}).Error; err != nil {
+		t.Fatal(err)
+	}
 
-	res, _ := fx.svc.Search(ctx, me, "zork.peter", 20)
-	if len(res.Users) != 0 {
-		t.Errorf("tìm theo phần trước @ của email không được ra người dùng: %+v", res.Users)
+	if res, _ := fx.svc.Search(ctx, me, "zork.peter", 20); len(res.Users) != 0 {
+		t.Errorf("tìm theo phần trước @ của tài khoản Google không được ra người dùng: %+v", res.Users)
 	}
-	res, _ = fx.svc.Search(ctx, me, "Quill", 20)
-	if len(res.Users) != 1 || res.Users[0].UserID != g {
-		t.Fatalf("tìm theo họ tên phải ra đúng người: %+v", res.Users)
+	if res, _ := fx.svc.Search(ctx, me, "tutu.chon", 20); len(res.Users) != 1 || res.Users[0].UserName != "tutu.chon" {
+		t.Errorf("người tự đặt user_name không phải Google không bị che nhầm: %+v", res.Users)
 	}
-	if res.Users[0].UserName != "" {
-		t.Errorf("user_name sinh từ email không được trả về: %q", res.Users[0].UserName)
+	out, err := fx.svc.SendRequest(ctx, me, g)
+	if err != nil {
+		t.Fatal(err)
 	}
-	res, _ = fx.svc.Search(ctx, me, "zork-normal", 20)
-	if len(res.Users) != 1 || res.Users[0].UserID != normal || res.Users[0].UserName != "zork-normal" {
-		t.Errorf("tài khoản thường vẫn tìm và trả user_name như cũ: %+v", res.Users)
+	if out.Result.User.UserName != "" {
+		t.Errorf("SendRequest lộ user_name email-prefix: %q", out.Result.User.UserName)
+	}
+	if reqs, _ := fx.svc.ListRequests(ctx, me, "outgoing", 1, 20); len(reqs.Requests) != 1 || reqs.Requests[0].User.UserName != "" {
+		t.Errorf("danh sách lời mời đi lộ user_name: %+v", reqs.Requests)
+	}
+	fx.befriend(me, fx.student("other"))
+	if err := fx.svc.Block(ctx, me, g); err != nil {
+		t.Fatal(err)
+	}
+	if bl, _ := fx.svc.ListBlocks(ctx, me, 1, 20); len(bl.Blocks) != 1 || bl.Blocks[0].User.UserName != "" {
+		t.Errorf("danh sách chặn lộ user_name: %+v", bl.Blocks)
+	}
+	fx.befriend(g, fx.student("friend2"))
+	if fl, _ := fx.svc.ListFriends(ctx, g, "", 1, 20); len(fl.Friends) != 1 || fl.Friends[0].User.UserName == "" {
+		t.Errorf("danh sách bạn của người khác vẫn hiện user_name thường: %+v", fl.Friends)
 	}
 }
-
 // Quyết định chủ dự án (sau review): huỷ lời mời KHÔNG tạo cooldown ở chiều ngược lại, và cooldown dài chỉ bật
 // khi bị TỪ CHỐI. Với chính người huỷ chỉ còn cooldown rất ngắn (chống gửi-huỷ-gửi quấy rối vì dòng bị tái sử dụng
 // nên không tính thêm vào hạn mức), nên sau vài phút gửi lại được. Trước khi sửa cooldown này là 1 giờ.

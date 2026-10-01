@@ -269,6 +269,13 @@ func TestFriendRoutes_TuChoi_ThuHoi_TuChapNhan(t *testing.T) {
 	if strings.Contains(strings.ToLower(r.Body.Message), "từ chối") {
 		t.Errorf("thông điệp cooldown không được nói 'bị từ chối': %q", r.Body.Message)
 	}
+	// 409 cooldown kèm retry_after (giây) để web đếm ngược: vừa bị từ chối nên gần 7 ngày (604800s).
+	var cd struct {
+		RetryAfter int64 `json:"retry_after"`
+	}
+	if err := json.Unmarshal([]byte(r.Raw), &cd); err != nil || cd.RetryAfter < 6*24*3600 || cd.RetryAfter > 7*24*3600 {
+		t.Errorf("409 cooldown phải có retry_after gần 7 ngày (giây), nhận %s", r.Raw)
+	}
 
 	cid := e.send("carol", "dave")
 	r = e.do("carol", "DELETE", "/api/friends/requests/"+cid, "")
@@ -311,8 +318,17 @@ func TestFriendRoutes_VaiTro_VaKhach_MoiEndpoint(t *testing.T) {
 	}
 	for _, ep := range endpoints {
 		name := ep.method + " " + ep.path
+		// Thao tác an toàn (huỷ kết bạn, chặn, bỏ chặn, danh sách chặn) áp dụng cho mọi tài khoản còn hoạt động.
+		safety := (ep.method == "DELETE" && ep.path == "/api/friends/"+uid) || strings.Contains(ep.path, "/friends/blocks")
 		for _, who := range []string{"parent", "teacher", "admin"} {
-			e.expect(e.do(who, ep.method, ep.path, ep.body), 403, "FRIEND_ROLE_NOT_ALLOWED", who+" gọi "+name)
+			r := e.do(who, ep.method, ep.path, ep.body)
+			if safety {
+				if r.Status == 403 && r.Body.Code == "FRIEND_ROLE_NOT_ALLOWED" {
+					t.Errorf("%s gọi %s: thao tác an toàn không được đòi vai học viên: %s", who, name, r.Raw)
+				}
+				continue
+			}
+			e.expect(r, 403, "FRIEND_ROLE_NOT_ALLOWED", who+" gọi "+name)
 		}
 		e.expect(e.do("", ep.method, ep.path, ep.body), 401, "", "khách gọi "+name)
 	}

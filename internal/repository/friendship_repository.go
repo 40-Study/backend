@@ -23,7 +23,7 @@ const eligibleStudentSQL = `u.is_active = TRUE AND u.deleted_at IS NULL
 		AND sr.deleted_at IS NULL AND sr.name = 'STUDENT')
 	AND NOT EXISTS (SELECT 1 FROM user_system_roles usr JOIN system_roles sr ON sr.id = usr.system_role_id
 		WHERE usr.user_id = u.id AND usr.status = 'active' AND usr.deleted_at IS NULL
-		AND sr.deleted_at IS NULL AND sr.name <> 'STUDENT')`
+		AND sr.deleted_at IS NULL AND sr.name IN ('TEACHER', 'SYSTEM_ADMIN'))`
 
 // FriendUserRow — cột công khai của một học viên (KHÔNG có email/phone).
 type FriendUserRow struct {
@@ -51,7 +51,15 @@ type FriendRequestRow struct {
 // FriendSearchRow — kết quả tìm kiếm (chưa gắn relationship).
 type FriendSearchRow = FriendUserRow
 
-const friendUserColumns = "u.id AS user_id, u.user_name, u.full_name, u.avatar_url"
+// emailPrefixUserNameSQL — user_name của tài khoản đăng ký bằng Google được sinh từ phần trước '@' của email
+// (thirdparty/oauth), nên hiển thị nó là lộ một phần email. CHỈ che khi tài khoản có liên kết Google VÀ user_name
+// trùng phần trước '@' (không che nhầm người tự đặt user_name giống prefix email).
+const emailPrefixUserNameSQL = `(lower(u.user_name) = lower(split_part(u.email, '@', 1))
+	AND EXISTS (SELECT 1 FROM user_oauth_providers op WHERE op.user_id = u.id AND op.provider = 'google'))`
+
+// friendUserColumns — cột công khai của một học viên; user_name được che bằng emailPrefixUserNameSQL ở MỌI
+// response bạn bè (gửi lời mời, danh sách lời mời/chặn/bạn, tìm kiếm) qua một chỗ duy nhất.
+const friendUserColumns = "u.id AS user_id, CASE WHEN " + emailPrefixUserNameSQL + " THEN '' ELSE u.user_name END AS user_name, u.full_name, u.avatar_url"
 
 type FriendshipRepository struct {
 	db *gorm.DB
@@ -200,6 +208,20 @@ func (r *FriendshipRepository) FindEligibleTarget(ctx context.Context, userID uu
 	return &row, nil
 }
 
+// FindActiveUser đọc một tài khoản còn hoạt động, KHÔNG xét vai trò (dùng cho Chặn/Bỏ chặn/Huỷ kết bạn).
+func (r *FriendshipRepository) FindActiveUser(ctx context.Context, userID uuid.UUID) (*FriendUserRow, error) {
+	var row FriendUserRow
+	res := r.db.WithContext(ctx).Table("users u").Select(friendUserColumns).
+		Where("u.id = ? AND u.is_active = TRUE AND u.deleted_at IS NULL", userID).Limit(1).Scan(&row)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, nil
+	}
+	return &row, nil
+}
+
 const notHiddenSQL = `NOT EXISTS (SELECT 1 FROM user_preferences up WHERE up.user_id = u.id AND up.profile_visibility = 'hidden')`
 
 // Từ khoá tìm kiếm đi qua escapeLike (contest_repository.go) để "50%" hay "a_b" tìm đúng chuỗi đã gõ.
@@ -212,11 +234,11 @@ func (r *FriendshipRepository) SearchStudents(ctx context.Context, viewerID uuid
 	// Tài khoản đăng ký bằng Google có user_name = phần trước '@' của email (thirdparty/oauth): khớp hay trả giá
 	// trị đó là lộ một phần email và cho phép quét danh bạ theo tiền tố email. Với tài khoản đó tìm kiếm chỉ
 	// khớp theo họ tên và user_name trả rỗng (web hiển thị full_name).
-	emailDerived := "lower(u.user_name) = lower(split_part(u.email, '@', 1))"
+	emailDerived := emailPrefixUserNameSQL
 	err := r.db.WithContext(ctx).Table("users u").
-		Select("u.id AS user_id, CASE WHEN "+emailDerived+" THEN '' ELSE u.user_name END AS user_name, u.full_name, u.avatar_url").
+		Select(friendUserColumns).
 		Where("u.id <> ? AND "+eligibleStudentSQL+" AND "+notHiddenSQL, viewerID).
-		Where(`((NOT (`+emailDerived+`) AND u.user_name ILIKE ? ESCAPE '\') OR u.full_name ILIKE ? ESCAPE '\')`, like, like).
+		Where(`((NOT `+emailDerived+` AND u.user_name ILIKE ? ESCAPE '\') OR u.full_name ILIKE ? ESCAPE '\')`, like, like).
 		Where(`NOT EXISTS (SELECT 1 FROM user_blocks b WHERE (b.blocker_id = ? AND b.blocked_id = u.id) OR (b.blocker_id = u.id AND b.blocked_id = ?))`, viewerID, viewerID).
 		Order("u.user_name ASC, u.id ASC").Limit(limit).Scan(&rows).Error
 	return rows, err

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"math"
 	"log"
 	"strconv"
 
@@ -50,7 +51,13 @@ var friendErrors = []struct {
 func (h *FriendshipHandler) fail(c *fiber.Ctx, err error) error {
 	for _, m := range friendErrors {
 		if errors.Is(err, m.err) {
-			return c.Status(m.status).JSON(fiber.Map{"message": m.msg, "code": m.code})
+			body := fiber.Map{"message": m.msg, "code": m.code}
+			// Cooldown: báo số giây còn phải chờ để web hiển thị đếm ngược (làm tròn lên).
+			var cd *service.FriendCooldownError
+			if errors.As(err, &cd) {
+				body["retry_after"] = int64(math.Ceil(cd.RetryAfter.Seconds()))
+			}
+			return c.Status(m.status).JSON(body)
 		}
 	}
 	// Lỗi hạ tầng: ghi log, không trả chi tiết nội bộ ra client.

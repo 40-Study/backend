@@ -188,7 +188,7 @@ func (s *FriendshipService) Relationship(ctx context.Context, me, otherID uuid.U
 
 // ListBlocks — GET /friends/blocks.
 func (s *FriendshipService) ListBlocks(ctx context.Context, me uuid.UUID, page, limit int) (*dto.FriendBlockListResponse, error) {
-	if _, err := s.requireStudent(ctx, me); err != nil {
+	if _, err := s.requireActive(ctx, me); err != nil {
 		return nil, err
 	}
 	page, limit = normalizeFriendPage(page, limit)
@@ -208,13 +208,15 @@ func (s *FriendshipService) ListBlocks(ctx context.Context, me uuid.UUID, page, 
 // lịch sử DECLINED/CANCELLED được giữ để block -> unblock không xoá cooldown và hạn mức. Chặn lại người đã
 // chặn là thao tác idempotent.
 func (s *FriendshipService) Block(ctx context.Context, me, targetID uuid.UUID) error {
-	if _, err := s.requireStudent(ctx, me); err != nil {
+	if _, err := s.requireActive(ctx, me); err != nil {
 		return err
 	}
 	if me == targetID {
 		return ErrFriendSelfRequest
 	}
-	target, err := s.repo.FindEligibleTarget(ctx, targetID, false)
+	// Chặn áp dụng cho MỌI tài khoản còn hoạt động, không phụ thuộc allowlist vai trò: người dùng tự thêm được
+	// vai phụ (PARENT, TEACHER_APPLICANT...) cho mình, nếu đòi "học viên thuần" thì né được lệnh chặn và khoá DM.
+	target, err := s.repo.FindActiveUser(ctx, targetID)
 	if err != nil {
 		return err
 	}
@@ -234,7 +236,7 @@ func (s *FriendshipService) Block(ctx context.Context, me, targetID uuid.UUID) e
 
 // Unblock — DELETE /friends/blocks/:userId (idempotent). Bỏ chặn KHÔNG khôi phục tình bạn.
 func (s *FriendshipService) Unblock(ctx context.Context, me, targetID uuid.UUID) error {
-	if _, err := s.requireStudent(ctx, me); err != nil {
+	if _, err := s.requireActive(ctx, me); err != nil {
 		return err
 	}
 	return s.blocks.Delete(ctx, me, targetID)
@@ -247,6 +249,11 @@ func (s *FriendshipService) AreFriends(ctx context.Context, a, b uuid.UUID) (boo
 		return false, err
 	}
 	return row.Status == model.FriendshipStatusAccepted, nil
+}
+
+// IsBlockedBy — blocker có đang chặn blocked không (một chiều; FriendshipChecker).
+func (s *FriendshipService) IsBlockedBy(ctx context.Context, blocker, blocked uuid.UUID) (bool, error) {
+	return s.blocks.IsBlockedBy(ctx, blocker, blocked)
 }
 
 // IsBlockedEitherWay — có block ở bất kỳ chiều nào giữa a và b (FriendshipChecker).

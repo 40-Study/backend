@@ -64,9 +64,19 @@ func TestFriendship_ChiHocVien_MoiThaoTac(t *testing.T) {
 		"Block":      func(ctx context.Context, me uuid.UUID) error { return fx.svc.Block(ctx, me, student) },
 		"Unblock":    func(ctx context.Context, me uuid.UUID) error { return fx.svc.Unblock(ctx, me, student) },
 	}
+	// Thao tác an toàn (chặn, bỏ chặn, danh sách chặn, huỷ kết bạn) áp dụng cho MỌI tài khoản còn hoạt động,
+	// không phụ thuộc vai trò: nếu không thì tự thêm vai phụ là né được lệnh chặn. Chỉ tài khoản bị khoá bị từ chối.
+	safety := map[string]bool{"Unfriend": true, "ListBlocks": true, "Block": true, "Unblock": true}
 	for who, me := range callers {
 		for name, op := range ops {
-			wantErr(t, op(t.Context(), me), ErrFriendRoleNotAllowed, who+" gọi "+name)
+			err := op(t.Context(), me)
+			if safety[name] && who != "học viên bị khoá" {
+				if err == ErrFriendRoleNotAllowed {
+					t.Errorf("%s gọi %s: thao tác an toàn không được đòi vai học viên", who, name)
+				}
+				continue
+			}
+			wantErr(t, err, ErrFriendRoleNotAllowed, who+" gọi "+name)
 		}
 	}
 }
@@ -458,7 +468,10 @@ func TestFriendship_Chan_XoaLoiMoiDangCho_Va_TuChanMinh(t *testing.T) {
 		t.Errorf("chặn phải huỷ lời mời đang chờ (chiều c->a), nhận %+v", r)
 	}
 	wantErr(t, fx.svc.Block(ctx, a, a), ErrFriendSelfRequest, "tự chặn mình")
-	wantErr(t, fx.svc.Block(ctx, a, fx.user("gv", "TEACHER")), ErrFriendUserNotFound, "chặn giáo viên")
+	// Chặn áp dụng cho mọi tài khoản còn hoạt động (kể cả giáo viên): không phụ thuộc allowlist vai trò.
+	if err := fx.svc.Block(ctx, a, fx.user("gv", "TEACHER")); err != nil {
+		t.Errorf("chặn giáo viên phải được: %v", err)
+	}
 	wantErr(t, fx.svc.Block(ctx, a, uuid.New()), ErrFriendUserNotFound, "chặn id không tồn tại")
 }
 

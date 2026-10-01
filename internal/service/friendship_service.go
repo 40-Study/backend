@@ -34,12 +34,21 @@ var (
 	ErrFriendInvalidDirection = errors.New("friend: invalid direction")
 )
 
+// FriendCooldownError là ErrFriendRequestCooldown kèm thời gian còn phải chờ (handler trả `retry_after` giây).
+// errors.Is(err, ErrFriendRequestCooldown) vẫn đúng.
+type FriendCooldownError struct{ RetryAfter time.Duration }
+
+func (e *FriendCooldownError) Error() string        { return ErrFriendRequestCooldown.Error() }
+func (e *FriendCooldownError) Is(target error) bool { return target == ErrFriendRequestCooldown }
+
 // FriendshipChecker — phần Bạn bè mà nơi khác cần (tạo DM, mời vào nhóm, hồ sơ chế độ `friends`).
 // Interface hẹp để Conversation/UserStats không phụ thuộc cả FriendshipService. AreFriends CHỈ nhận
 // ACCEPTED: PENDING/DECLINED/CANCELLED tuyệt đối không được coi là bạn.
 type FriendshipChecker interface {
 	AreFriends(ctx context.Context, a, b uuid.UUID) (bool, error)
 	IsBlockedEitherWay(ctx context.Context, a, b uuid.UUID) (bool, error)
+	// IsBlockedBy — blocker có chặn blocked không (một chiều): hồ sơ công khai giấu mình khỏi người ĐÃ chặn mình.
+	IsBlockedBy(ctx context.Context, blocker, blocked uuid.UUID) (bool, error)
 }
 
 // FriendNotifier — phần NotificationService dùng để báo lời mời/chấp nhận. Lỗi gửi chỉ log.
@@ -72,6 +81,20 @@ func (s *FriendshipService) SetNotifier(n FriendNotifier) { s.notifier = n }
 // (dùng làm tên hiển thị trong thông báo).
 func (s *FriendshipService) requireStudent(ctx context.Context, userID uuid.UUID) (*repository.FriendUserRow, error) {
 	me, err := s.repo.FindEligibleTarget(ctx, userID, false)
+	if err != nil {
+		return nil, err
+	}
+	if me == nil {
+		return nil, ErrFriendRoleNotAllowed
+	}
+	return me, nil
+}
+
+// requireActive — cửa cho các thao tác an toàn (Chặn, Bỏ chặn, Danh sách chặn, Huỷ kết bạn): chỉ cần tài khoản còn
+// hoạt động, KHÔNG đòi "học viên thuần". Tài khoản mang vai phụ (PARENT, TEACHER_APPLICANT, ORG_OWNER) hay thậm
+// chí giáo viên vẫn phải chặn/bỏ chặn được và không ai né được lệnh chặn bằng cách tự thêm vai.
+func (s *FriendshipService) requireActive(ctx context.Context, userID uuid.UUID) (*repository.FriendUserRow, error) {
+	me, err := s.repo.FindActiveUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +275,7 @@ func (s *FriendshipService) applySend(ctx context.Context, tx *repository.Friend
 				wait = constants.FriendCancelCooldown
 			}
 			if now.Before(existing.RespondedAt.Add(wait)) {
-				return nil, false, ErrFriendRequestCooldown
+				return nil, false, &FriendCooldownError{RetryAfter: existing.RespondedAt.Add(wait).Sub(now)}
 			}
 		}
 		if err := checkFriendCaps(ctx, tx, me, targetID); err != nil {
@@ -392,7 +415,9 @@ func (s *FriendshipService) CancelRequest(ctx context.Context, me, requestID uui
 		if err != nil {
 			return err
 		}
-		if row == nil || row.RequesterID != me || row.Status == model.FriendshipStatusCancelled {
+		// Dòng CANCELLED (kể cả do bị chặn) và DECLINED đều "không tồn tại" với người huỷ: trả cùng một kết quả để
+		// không suy ra mình bị từ chối hay bị chặn.
+		if row == nil || row.RequesterID != me || row.Status == model.FriendshipStatusCancelled || row.Status == model.FriendshipStatusDeclined {
 			return ErrFriendRequestNotFound
 		}
 		if row.Status != model.FriendshipStatusPending {
@@ -407,7 +432,7 @@ func (s *FriendshipService) CancelRequest(ctx context.Context, me, requestID uui
 
 // Unfriend — DELETE /friends/:userId. Xoá hẳn dòng ACCEPTED (kết bạn lại được ngay).
 func (s *FriendshipService) Unfriend(ctx context.Context, me, otherID uuid.UUID) error {
-	if _, err := s.requireStudent(ctx, me); err != nil {
+	if _, err := s.requireActive(ctx, me); err != nil {
 		return err
 	}
 	n, err := s.repo.DeleteAcceptedPair(ctx, me, otherID)
