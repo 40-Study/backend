@@ -392,6 +392,27 @@ func RunPostMigrations(db *gorm.DB) error {
 				  );
 			`,
 		},
+		{
+			// Bạn bè/nhóm (plan 260930): thêm friend_request, friend_accepted, group_added vào CHECK loại thông
+			// báo. DB đã có constraint cũ (AutoMigrate chỉ tạo khi thiếu theo TÊN), nên đồng bộ theo
+			// model.NotificationTypes. Dùng mẫu NOT VALID + VALIDATE của buildCheckConstraintSQL: rollback
+			// về bản backend cũ (không biết 3 giá trị này) vẫn khởi động được dù đã có dòng mang giá trị mới.
+			name: "sync chk_notifications_notification_type to model.NotificationTypes (friends/groups)",
+			sql: buildCheckConstraintSQL("notifications", "chk_notifications_notification_type",
+				"notification_type", model.NotificationTypes),
+		},
+		{
+			name: "chk_friendships_status (friends)",
+			sql: buildCheckConstraintSQL("friendships", "chk_friendships_status",
+				"status", model.FriendshipStatuses),
+		},
+		{
+			// Mỗi CẶP học viên đúng một dòng, bất kể chiều gửi: chặn trùng hai chiều (A->B và B->A cùng lúc)
+			// ở tầng DB. GORM không khai báo được index biểu thức nên tạo ở đây.
+			name: "uq_friendships_pair (friends)",
+			sql: `CREATE UNIQUE INDEX IF NOT EXISTS uq_friendships_pair
+				ON friendships (LEAST(requester_id, addressee_id), GREATEST(requester_id, addressee_id))`,
+		},
 	}
 	statements = append(statements, contestPostMigrations()...)
 

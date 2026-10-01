@@ -125,6 +125,9 @@ type Handlers struct {
 
 	// ===== Personal Event =====
 	PersonalEvent *handler.PersonalEventHandler
+
+	// ===== Friends =====
+	Friendship *handler.FriendshipHandler
 }
 
 // C-12/H-11 (audit 260909 vòng 2): permChecker được tiêm vào đây để CourseHandler/
@@ -249,5 +252,8 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 
 		// ===== Personal Event =====
 		PersonalEvent: handler.NewPersonalEventHandler(services.PersonalEvent),
+
+		// ===== Friends =====
+		Friendship: handler.NewFriendshipHandler(services.Friendship),
 	}
 }

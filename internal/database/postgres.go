@@ -239,6 +239,10 @@ func Migrate(db *gorm.DB) error {
 
 		// ===== 27. Personal Calendar Events (phụ thuộc User) =====
 		&model.PersonalEvent{},
+
+		// ===== 28. Friends (phụ thuộc User) =====
+		&model.Friendship{},
+		&model.UserBlock{},
 	); err != nil {
 		return err
 	}

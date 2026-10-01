@@ -262,6 +262,8 @@ func New() (*App, error) {
 	router.SetupWithdrawalRoutes(fiberApp.Group("/api"), resources.Config, handlers.Withdrawal, resources.Redis, permChecker)
 	// QA vòng 2 lane E: liên kết phụ huynh-học sinh do phụ huynh khởi xướng — cùng lý do đăng ký riêng.
 	router.SetupParentLinkRoutes(fiberApp.Group("/api"), resources.Config, handlers.ParentLink, resources.Redis)
+	// Bạn bè (phase 01 plan 260930): đăng ký riêng, cùng lý do.
+	router.SetupFriendRoutes(fiberApp.Group("/api"), resources.Config, handlers.Friendship, resources.Redis)
 
 	return &App{
 		Resources: resources,
