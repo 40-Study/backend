@@ -462,9 +462,14 @@ func (s *GroupService) LeaveGroup(ctx context.Context, userID, groupID uuid.UUID
 		return errors.New("owner cannot leave the group, transfer ownership first")
 	}
 
-	member.Status = model.GroupMemberLeft
-	if err := s.memberRepo.Update(ctx, member); err != nil {
+	// Chuyển khỏi ACTIVE nguyên tử và chỉ giảm member_count khi CHÍNH request này chuyển được: hai lần rời đồng
+	// thời không còn trừ hai lần (review #102 vòng 2, NEW-2).
+	moved, err := s.memberRepo.MoveFromActive(ctx, member.ID, model.GroupMemberLeft)
+	if err != nil {
 		return err
+	}
+	if !moved {
+		return errors.New("not a member of this group")
 	}
 
 	_ = s.groupRepo.DecrementMemberCount(ctx, groupID)
@@ -490,6 +495,9 @@ var (
 	// ErrGroupInvalidMemberStatus: ?status= của danh sách thành viên ngoài ACTIVE|BANNED (400).
 	ErrGroupInvalidMemberStatus = errors.New("status must be ACTIVE or BANNED")
 )
+
+// hiddenMemberFullName — tên hiển thị của thành viên có hồ sơ `hidden` với người xem không cùng nhóm.
+const hiddenMemberFullName = "Học viên"
 
 func (s *GroupService) ListMembers(ctx context.Context, requesterID, groupID uuid.UUID, status string, page, pageSize int) (*dto.GroupMemberListResponse, error) {
 	wanted := model.GroupMemberActive
@@ -532,8 +540,26 @@ func (s *GroupService) ListMembers(ctx context.Context, requesterID, groupID uui
 		return nil, err
 	}
 
+	// Người xem KHÔNG phải thành viên ACTIVE (nhóm PUBLIC mở cho mọi tài khoản đăng nhập) chỉ thấy thành viên có
+	// hồ sơ `hidden` dưới dạng ẩn danh; thành viên cùng nhóm vẫn thấy tên thật.
+	var hidden map[uuid.UUID]bool
+	if requester == nil && len(members) > 0 {
+		ids := make([]uuid.UUID, len(members))
+		for i, m := range members {
+			ids[i] = m.UserID
+		}
+		if hidden, err = s.memberRepo.HiddenProfileUserIDs(ctx, ids); err != nil {
+			return nil, err
+		}
+	}
 	responses := make([]dto.GroupMemberResponse, len(members))
 	for i, m := range members {
+		if hidden[m.UserID] {
+			anon := hiddenMemberFullName
+			responses[i] = dto.GroupMemberResponse{ID: m.ID, UserID: m.UserID, FullName: &anon,
+				Role: string(m.Role), Status: string(m.Status), JoinedAt: m.JoinedAt}
+			continue
+		}
 		responses[i] = dto.GroupMemberResponse{
 			ID:        m.ID,
 			UserID:    m.UserID,
@@ -649,9 +675,12 @@ func (s *GroupService) RemoveMember(ctx context.Context, requesterID, groupID, t
 		return errors.New("cannot remove the owner")
 	}
 
-	member.Status = model.GroupMemberLeft
-	if err := s.memberRepo.Update(ctx, member); err != nil {
+	moved, err := s.memberRepo.MoveFromActive(ctx, member.ID, model.GroupMemberLeft)
+	if err != nil {
 		return err
+	}
+	if !moved {
+		return errors.New("member not found")
 	}
 
 	_ = s.groupRepo.DecrementMemberCount(ctx, groupID)
@@ -674,13 +703,22 @@ func (s *GroupService) BanMember(ctx context.Context, requesterID, groupID, targ
 		return errors.New("cannot ban the owner")
 	}
 
-	wasActive := member.Status == model.GroupMemberActive
-	member.Status = model.GroupMemberBanned
-	if err := s.memberRepo.Update(ctx, member); err != nil {
-		return err
+	// ACTIVE -> BANNED nguyên tử, chỉ giảm đếm khi chính request này chuyển được. Dòng không còn ACTIVE (rời
+	// trước, hoặc request khác đã chuyển) thì vẫn đặt BANNED nhưng KHÔNG giảm đếm lần nữa.
+	moved := false
+	if member.Status == model.GroupMemberActive {
+		var err error
+		if moved, err = s.memberRepo.MoveFromActive(ctx, member.ID, model.GroupMemberBanned); err != nil {
+			return err
+		}
 	}
-
-	if wasActive {
+	if !moved {
+		member.Status = model.GroupMemberBanned
+		if err := s.memberRepo.Update(ctx, member); err != nil {
+			return err
+		}
+	}
+	if moved {
 		_ = s.groupRepo.DecrementMemberCount(ctx, groupID)
 	}
 	// Bị cấm thì luôn gỡ khỏi hội thoại, kể cả khi trạng thái trước đó không phải ACTIVE.

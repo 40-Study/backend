@@ -433,6 +433,9 @@ func (h *MessageHandler) PinMessage(c *fiber.Ctx) error {
 	}
 
 	if err := h.convService.PinMessage(c.Context(), userID, convID, messageID); err != nil {
+		if handled, werr := writeConversationBlocked(c, err); handled {
+			return werr
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": err.Error(),
 		})
@@ -465,6 +468,9 @@ func (h *MessageHandler) UnpinMessage(c *fiber.Ctx) error {
 	}
 
 	if err := h.convService.UnpinMessage(c.Context(), userID, convID, messageID); err != nil {
+		if handled, werr := writeConversationBlocked(c, err); handled {
+			return werr
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": err.Error(),
 		})
@@ -513,6 +519,9 @@ func (h *MessageHandler) AddReaction(c *fiber.Ctx) error {
 	}
 
 	if err := h.convService.AddReaction(c.Context(), userID, convID, messageID, req.Emoji); err != nil {
+		if handled, werr := writeConversationBlocked(c, err); handled {
+			return werr
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": err.Error(),
 		})
@@ -547,6 +556,9 @@ func (h *MessageHandler) RemoveReaction(c *fiber.Ctx) error {
 	emoji := c.Params("emoji")
 
 	if err := h.convService.RemoveReaction(c.Context(), userID, convID, messageID, emoji); err != nil {
+		if handled, werr := writeConversationBlocked(c, err); handled {
+			return werr
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": err.Error(),
 		})

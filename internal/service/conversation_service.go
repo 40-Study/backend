@@ -373,6 +373,9 @@ func (s *ConversationService) PinMessage(ctx context.Context, userID, convID, me
 	if err := s.requireParticipant(ctx, convID, userID); err != nil {
 		return err
 	}
+	if err := s.requireDirectNotBlocked(ctx, convID, userID); err != nil {
+		return err
+	}
 
 	msg, err := s.messageRepo.GetByID(ctx, messageID)
 	if err != nil {
@@ -396,6 +399,9 @@ func (s *ConversationService) UnpinMessage(ctx context.Context, userID, convID, 
 	if err := s.requireParticipant(ctx, convID, userID); err != nil {
 		return err
 	}
+	if err := s.requireDirectNotBlocked(ctx, convID, userID); err != nil {
+		return err
+	}
 
 	msg, err := s.messageRepo.GetByID(ctx, messageID)
 	if err != nil {
@@ -417,6 +423,9 @@ func (s *ConversationService) UnpinMessage(ctx context.Context, userID, convID, 
 
 func (s *ConversationService) AddReaction(ctx context.Context, userID, convID, messageID uuid.UUID, emoji string) error {
 	if err := s.requireParticipant(ctx, convID, userID); err != nil {
+		return err
+	}
+	if err := s.requireDirectNotBlocked(ctx, convID, userID); err != nil {
 		return err
 	}
 
@@ -443,6 +452,9 @@ func (s *ConversationService) AddReaction(ctx context.Context, userID, convID, m
 
 func (s *ConversationService) RemoveReaction(ctx context.Context, userID, convID, messageID uuid.UUID, emoji string) error {
 	if err := s.requireParticipant(ctx, convID, userID); err != nil {
+		return err
+	}
+	if err := s.requireDirectNotBlocked(ctx, convID, userID); err != nil {
 		return err
 	}
 
@@ -526,9 +538,9 @@ func (s *ConversationService) GetUnreadCount(ctx context.Context, userID uuid.UU
 //   - (d) một trong hai là SYSTEM_ADMIN.
 //
 // Chặn (user_blocks, một trong hai chiều) thắng MỌI nhánh trừ admin: người đã chặn nhau không tạo được
-// cuộc trò chuyện mới dù còn quan hệ khác. Đây chỉ là guard lúc TẠO MỚI: cuộc trực tiếp đã tồn tại vẫn mở
-// (CreateDirectConversation trả lại cuộc cũ trước khi tới guard) nên chặn/huỷ bạn KHÔNG khoá cuộc cũ —
-// giới hạn đã biết (Q3), cần biết khi báo cáo cho chủ dự án.
+// cuộc trò chuyện mới dù còn quan hệ khác. Đây chỉ là guard lúc TẠO MỚI: cuộc trực tiếp đã tồn tại vẫn mở để
+// đọc lịch sử (CreateDirectConversation trả lại cuộc cũ trước khi tới guard). Huỷ bạn không đổi gì, còn CHẶN
+// khoá gửi/sửa/xoá/reaction/ghim trong cuộc cũ ở cả hai chiều (requireDirectNotBlocked).
 func (s *ConversationService) canCreateDirectConversation(ctx context.Context, userA, userB uuid.UUID) (bool, error) {
 	isAdminA, err := s.isSystemAdmin(ctx, userA)
 	if err != nil {

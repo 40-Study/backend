@@ -105,3 +105,36 @@ func TestGroupMember_DongThoi_JoinHaiLan_KhongTroiMemberCount(t *testing.T) {
 		}
 	}
 }
+
+// Vòng 2 NEW-2: rời nhóm hai lần đồng thời (hoặc rời cùng lúc bị gỡ) trước đây trừ member_count hai lần (đếm thiếu,
+// mở đường vượt max_members). Nay chuyển khỏi ACTIVE nguyên tử và chỉ giảm đếm khi chính request đó chuyển được.
+func TestGroupMember_DongThoi_RoiHaiLan_HoacRoiVaGo_KhongTruHaiLan(t *testing.T) {
+	fx := newGroupFx(t)
+	admin := fx.adminOwner()
+	g := fx.group(admin, model.GroupPrivacyPublic, 500)
+	const rounds = 40
+	for i := 0; i < rounds; i++ {
+		u := guardUser(t, fx.db, "leaver")
+		if _, err := fx.svc.JoinGroup(t.Context(), u, g.ID, nil); err != nil {
+			t.Fatal(err)
+		}
+		second := func() error { return fx.svc.LeaveGroup(t.Context(), u, g.ID) }
+		if i%2 == 1 { // nửa số vòng: rời đồng thời với bị chủ nhóm gỡ
+			second = func() error { return fx.svc.RemoveMember(t.Context(), admin, g.ID, u) }
+		}
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		errs := make([]error, 2)
+		wg.Add(2)
+		go func() { defer wg.Done(); <-start; errs[0] = fx.svc.LeaveGroup(t.Context(), u, g.ID) }()
+		go func() { defer wg.Done(); <-start; errs[1] = second() }()
+		close(start)
+		wg.Wait()
+		if (errs[0] == nil) == (errs[1] == nil) {
+			t.Fatalf("vòng %d: đúng một request chuyển được khỏi ACTIVE, nhận %v / %v", i, errs[0], errs[1])
+		}
+		if stored, active := fx.memberCountDrift(g.ID); int64(stored) != active {
+			t.Fatalf("vòng %d: member_count trôi: lưu %d nhưng ACTIVE thật %d", i, stored, active)
+		}
+	}
+}

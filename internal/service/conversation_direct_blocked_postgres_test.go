@@ -94,3 +94,83 @@ func TestGroupConversation_Chan_KhongKhoaChatNhom(t *testing.T) {
 		}
 	}
 }
+
+// Vòng 2 NEW-3: reaction và ghim cũng bị khoá trong DM bị chặn (reaction đẩy event vào kênh DM nên là kênh tương tác).
+func TestDirectConversation_Chan_KhoaReactionVaGhim(t *testing.T) {
+	db := pgtestIsolated(t)
+	svc := newConversationServiceWithFriends(db)
+	ctx := t.Context()
+	a, b := guardUser(t, db, "rx-a"), guardUser(t, db, "rx-b")
+	guardFriendship(t, db, a, b, model.FriendshipStatusAccepted)
+	conv, err := svc.CreateDirectConversation(ctx, a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := svc.SendMessage(ctx, a, conv.ID, dmText("tin cũ"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AddReaction(ctx, b, conv.ID, m.ID, "👍"); err != nil {
+		t.Fatalf("tiền đề: reaction khi chưa chặn phải được: %v", err)
+	}
+	guardBlock(t, db, a, b)
+	for who, uid := range map[string]uuid.UUID{"a": a, "b": b} {
+		if err := svc.AddReaction(ctx, uid, conv.ID, m.ID, "❤️"); err != ErrConversationBlocked {
+			t.Errorf("%s thả reaction trong DM bị chặn: muốn ErrConversationBlocked, nhận %v", who, err)
+		}
+		if err := svc.RemoveReaction(ctx, uid, conv.ID, m.ID, "👍"); err != ErrConversationBlocked {
+			t.Errorf("%s gỡ reaction trong DM bị chặn: muốn ErrConversationBlocked, nhận %v", who, err)
+		}
+		if err := svc.PinMessage(ctx, uid, conv.ID, m.ID); err != ErrConversationBlocked {
+			t.Errorf("%s ghim trong DM bị chặn: muốn ErrConversationBlocked, nhận %v", who, err)
+		}
+		if err := svc.UnpinMessage(ctx, uid, conv.ID, m.ID); err != ErrConversationBlocked {
+			t.Errorf("%s bỏ ghim trong DM bị chặn: muốn ErrConversationBlocked, nhận %v", who, err)
+		}
+	}
+}
+
+// Vòng 2 NEW-1: người bị chặn tự thêm vai phụ (PARENT, TEACHER_APPLICANT) SAU khi đã là bạn vẫn không né được
+// khoá DM; người chặn mang vai phụ vẫn chặn/bỏ chặn được.
+func TestDirectConversation_Chan_KhongNeDuocBangVaiPhu(t *testing.T) {
+	db := pgtestIsolated(t)
+	svc := newConversationServiceWithFriends(db)
+	fr := NewFriendshipService(repository.NewFriendshipRepository(db), repository.NewUserBlockRepository(db))
+	ctx := t.Context()
+	s, x := guardUser(t, db, "vp-s"), guardUser(t, db, "vp-x")
+	for _, u := range []uuid.UUID{s, x} {
+		studentRole := model.SystemRole{Name: "STUDENT", Status: "active"}
+		if err := db.Where("name = ?", "STUDENT").FirstOrCreate(&studentRole).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Create(&model.UserSystemRole{UserID: u, SystemRoleID: studentRole.ID, Status: model.UserSystemRoleStatusActive}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	guardFriendship(t, db, s, x, model.FriendshipStatusAccepted)
+	conv, err := svc.CreateDirectConversation(ctx, s, x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{"PARENT", "TEACHER_APPLICANT"} {
+		r := model.SystemRole{Name: role, Status: "active"}
+		if err := db.Where("name = ?", role).FirstOrCreate(&r).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Create(&model.UserSystemRole{UserID: x, SystemRoleID: r.ID, Status: model.UserSystemRoleStatusActive}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := fr.Block(ctx, s, x); err != nil {
+		t.Fatalf("chặn người mang vai phụ phải được (trước đây 404 USER_NOT_FOUND): %v", err)
+	}
+	if _, err := svc.SendMessage(ctx, x, conv.ID, dmText("sau khi bị chặn")); err != ErrConversationBlocked {
+		t.Errorf("người bị chặn mang vai phụ vẫn gửi được: %v", err)
+	}
+	if err := fr.Unblock(ctx, s, x); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SendMessage(ctx, x, conv.ID, dmText("sau khi bỏ chặn")); err != nil {
+		t.Errorf("bỏ chặn thì gửi lại được: %v", err)
+	}
+}

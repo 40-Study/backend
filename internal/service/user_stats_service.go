@@ -97,6 +97,17 @@ func (s *UserStatsService) GetPublicProfile(ctx context.Context, userID uuid.UUI
 
 	isSelf := viewerID != nil && *viewerID == userID
 	if !isSelf && !viewerIsAdmin {
+		// Người ĐÃ chặn mình thì hồ sơ biến mất y hệt hồ sơ `hidden` (404): nếu hồ sơ công khai vẫn hiện trong khi
+		// tìm kiếm và gửi lời mời đều giấu, người bị chặn suy ra được mình bị chặn (review vòng 2, NEW-6).
+		if viewerID != nil && s.friendChecker != nil {
+			blockedByOwner, err := s.friendChecker.IsBlockedBy(ctx, userID, *viewerID)
+			if err != nil {
+				return nil, err
+			}
+			if blockedByOwner {
+				return nil, ErrPublicProfileNotFound
+			}
+		}
 		visibility, err := s.profileVisibility(userID)
 		if err != nil {
 			return nil, err
