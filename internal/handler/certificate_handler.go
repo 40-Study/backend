@@ -3,15 +3,19 @@ package handler
 import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 )
 
 type CertificateHandler struct {
 	service service.CertificateServiceInterface
+	// permChecker: tính isAdmin cho GetCertificateByID (admin hệ thống xem được chứng chỉ bất kỳ).
+	// nil = không ai là admin (fail-closed).
+	permChecker *middleware.PermissionChecker
 }
 
-func NewCertificateHandler(service service.CertificateServiceInterface) *CertificateHandler {
-	return &CertificateHandler{service: service}
+func NewCertificateHandler(service service.CertificateServiceInterface, permChecker *middleware.PermissionChecker) *CertificateHandler {
+	return &CertificateHandler{service: service, permChecker: permChecker}
 }
 
 func (h *CertificateHandler) IssueCertificate(c *fiber.Ctx) error {
@@ -104,18 +108,12 @@ func (h *CertificateHandler) GetCertificateByID(c *fiber.Ctx) error {
 		})
 	}
 
-	certificate, err := h.service.GetCertificateByID(c.Context(), id)
+	// Quyền xem (chủ / admin / phụ huynh liên kết active) kiểm ở service; không được xem và không
+	// tồn tại cùng trả 404 (ErrCertificateNotFound) để tránh IDOR.
+	isAdmin := isAdminActor(c, h.permChecker, userID)
+	certificate, err := h.service.GetCertificateByID(c.Context(), id, userID, isAdmin)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Certificate not found",
-			"error":   err.Error(),
-		})
-	}
-	if certificate.UserID != userID {
-		// Không phân biệt "không tồn tại" và "không sở hữu" để tránh IDOR.
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Certificate not found",
-		})
+		return RespondServiceError(c, err, "Failed to retrieve certificate")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
