@@ -10,9 +10,15 @@ import (
 	"study.com/v1/internal/model"
 )
 
-// SeedDemoContests — MVP "Cuộc thi" (contract §1.7 bước 5): 1 cuộc thi đang diễn ra (không khoá
-// khoá học) và 1 cuộc thi đã chốt có 2 người đạt giải, đều do teacher1 tạo, mỗi cuộc thi 1 quiz
-// standalone riêng (quiz chỉ gắn được 1 cuộc thi). Idempotent theo slug/tiêu đề quiz.
+// SeedDemoContests seed dữ liệu cho mọi tab của trang "Cuộc thi" trên web:
+//   - Danh sách công khai (GET /contests, chỉ PUBLISHED + is_public): 2 UPCOMING, 1 ACTIVE, 1 ENDED
+//     (chưa chốt), 1 FINALIZED — phase tính từ thời gian (model.ContestPhaseAt).
+//   - Hàng chờ duyệt của admin: 1 PENDING_REVIEW; trang giáo viên của teacher2: 1 DRAFT.
+//   - "Cuộc thi của tôi" (/contests/me, theo contest_participants): student1 ở UPCOMING, ACTIVE,
+//     ENDED và FINALIZED.
+//
+// Mỗi cuộc thi có quiz standalone riêng (quiz_id unique, FK RESTRICT) với câu hỏi thật.
+// Idempotent theo slug cuộc thi / tiêu đề quiz / cặp (contest, user).
 func (s *Seeder) SeedDemoContests(users map[string]model.User) error {
 	log.Println("Seeding demo contests...")
 	teacher, admin := users["teacher1@demo.com"], users["admin@demo.com"]
@@ -22,7 +28,7 @@ func (s *Seeder) SeedDemoContests(users map[string]model.User) error {
 	}
 	now := time.Now()
 
-	activeQuiz, err := s.seedContestQuiz("Đề thi demo: Git cơ bản (đang diễn ra)", teacher.ID)
+	activeQuiz, err := s.seedContestQuiz("Đề thi demo: Git cơ bản (đang diễn ra)", teacher.ID, demoQuizQuestions)
 	if err != nil {
 		return err
 	}
@@ -36,11 +42,11 @@ func (s *Seeder) SeedDemoContests(users map[string]model.User) error {
 		Attrs(active).FirstOrCreate(&active).Error; err != nil {
 		return fmt.Errorf("seed active contest: %w", err)
 	}
-	if err := s.seedContestPrizes(active.ID); err != nil {
+	if err := s.seedContestPrizeRanges(active.ID, []contestPrizeSpec{{1, 3}}); err != nil {
 		return err
 	}
 
-	doneQuiz, err := s.seedContestQuiz("Đề thi demo: Git cơ bản (đã chốt)", teacher.ID)
+	doneQuiz, err := s.seedContestQuiz("Đề thi demo: Git cơ bản (đã chốt)", teacher.ID, demoQuizQuestions)
 	if err != nil {
 		return err
 	}
@@ -54,7 +60,7 @@ func (s *Seeder) SeedDemoContests(users map[string]model.User) error {
 	if err := s.db.Where("slug = ?", done.Slug).Attrs(done).FirstOrCreate(&done).Error; err != nil {
 		return fmt.Errorf("seed finalized contest: %w", err)
 	}
-	if err := s.seedContestPrizes(done.ID); err != nil {
+	if err := s.seedContestPrizeRanges(done.ID, []contestPrizeSpec{{1, 3}}); err != nil {
 		return err
 	}
 	for i, u := range []model.User{s1, s2} {
@@ -62,11 +68,55 @@ func (s *Seeder) SeedDemoContests(users map[string]model.User) error {
 			return err
 		}
 	}
-	log.Println("Seeded 2 demo contests")
+
+	bySlug := map[string]model.Contest{active.Slug: active, done.Slug: done}
+	for _, spec := range demoExtraContests {
+		c, err := s.upsertDemoContest(spec, users, admin.ID, now)
+		if err != nil {
+			return err
+		}
+		bySlug[c.Slug] = c
+	}
+	if err := s.seedDemoContestJoins(bySlug, users); err != nil {
+		return err
+	}
+	log.Printf("Seeded %d demo contests\n", len(bySlug))
 	return nil
 }
 
-func (s *Seeder) seedContestQuiz(title string, teacherID uuid.UUID) (uuid.UUID, error) {
+// upsertDemoContest tạo (hoặc tìm theo slug) một cuộc thi từ spec, kèm quiz và giải thưởng.
+func (s *Seeder) upsertDemoContest(spec contestSeedSpec, users map[string]model.User, adminID uuid.UUID, now time.Time) (model.Contest, error) {
+	creator := users[spec.CreatorEmail]
+	if creator.ID == uuid.Nil {
+		return model.Contest{}, fmt.Errorf("demo contest %s: thiếu tài khoản %s", spec.Slug, spec.CreatorEmail)
+	}
+	quizID, err := s.seedContestQuiz(spec.QuizTitle, creator.ID, spec.Questions)
+	if err != nil {
+		return model.Contest{}, err
+	}
+	startAt, endAt := now.Add(spec.StartOffset), now.Add(spec.EndOffset)
+	c := model.Contest{Slug: spec.Slug, Title: spec.Title, Description: ptr(spec.Description),
+		Type: model.ContestTypeQuiz, Status: spec.Status, StartTime: startAt, EndTime: endAt,
+		DurationMinutes: ptr(spec.DurationMinutes), MaxParticipants: spec.MaxParticipants, IsPublic: true,
+		CreatedBy: creator.ID, QuizID: &quizID, CertificateMinPercentage: ptr(decimal.NewFromInt(50))}
+	switch spec.Status {
+	case model.ContestStatusPublished:
+		c.SubmittedAt, c.ReviewedBy, c.ReviewedAt = ptr(startAt.Add(-48*time.Hour)), &adminID, ptr(startAt.Add(-24*time.Hour))
+	case model.ContestStatusPendingReview:
+		c.SubmittedAt = ptr(now.Add(-2 * time.Hour))
+	}
+	q := s.db.Where("slug = ?", spec.Slug)
+	if spec.ReassignWindow {
+		q = q.Assign(map[string]interface{}{"start_time": startAt, "end_time": endAt})
+	}
+	if err := q.Attrs(c).FirstOrCreate(&c).Error; err != nil {
+		return model.Contest{}, fmt.Errorf("seed contest %s: %w", spec.Slug, err)
+	}
+	return c, s.seedContestPrizeRanges(c.ID, spec.Prizes)
+}
+
+// seedContestQuiz tạo quiz standalone (không gắn lesson/course) cho một cuộc thi, tra theo tiêu đề.
+func (s *Seeder) seedContestQuiz(title string, teacherID uuid.UUID, questions []demoQuestionSpec) (uuid.UUID, error) {
 	quiz := model.Quiz{Title: title, PassPercentage: rating(50), TriggerType: "manual"}
 	if err := s.db.Where("title = ? AND lesson_id IS NULL AND course_id IS NULL", title).
 		Attrs(quiz).FirstOrCreate(&quiz).Error; err != nil {
@@ -76,15 +126,51 @@ func (s *Seeder) seedContestQuiz(title string, teacherID uuid.UUID) (uuid.UUID, 
 	if err := s.db.Exec("UPDATE quizzes SET created_by = ? WHERE id = ?", teacherID, quiz.ID).Error; err != nil {
 		return uuid.Nil, fmt.Errorf("seed contest quiz owner: %w", err)
 	}
-	return quiz.ID, s.seedQuizQuestions(quiz.ID)
+	return quiz.ID, s.seedContestQuestionSet(quiz.ID, questions)
 }
 
-func (s *Seeder) seedContestPrizes(contestID uuid.UUID) error {
+// seedContestQuestionSet ghi câu hỏi/đáp án theo thứ tự trong spec (display_order = vị trí + 1
+// khi spec không tự khai Order). Tra theo (quiz_id, display_order) nên chạy lại không nhân bản.
+func (s *Seeder) seedContestQuestionSet(quizID uuid.UUID, specs []demoQuestionSpec) error {
+	for i, q := range specs {
+		order := q.Order
+		if order == 0 {
+			order = i + 1
+		}
+		question := model.Question{QuizID: quizID, QuestionText: q.Text, QuestionType: q.Type,
+			Points: rating(1), DisplayOrder: order}
+		if err := s.db.Where("quiz_id = ? AND display_order = ?", quizID, order).
+			Attrs(question).FirstOrCreate(&question).Error; err != nil {
+			return fmt.Errorf("seed contest question %d: %w", order, err)
+		}
+		for j, a := range q.Answers {
+			aOrder := a.Order
+			if aOrder == 0 {
+				aOrder = j + 1
+			}
+			answer := model.QuestionAnswer{QuestionID: question.ID, AnswerText: a.Text, IsCorrect: a.IsCorrect, DisplayOrder: aOrder}
+			if err := s.db.Where("question_id = ? AND display_order = ?", question.ID, aOrder).
+				Attrs(answer).FirstOrCreate(&answer).Error; err != nil {
+				return fmt.Errorf("seed contest answer %d: %w", aOrder, err)
+			}
+		}
+	}
+	return nil
+}
+
+// seedContestPrizeRanges chỉ ghi giải khi cuộc thi chưa có giải nào (không đè giải admin đã sửa).
+func (s *Seeder) seedContestPrizeRanges(contestID uuid.UUID, ranges []contestPrizeSpec) error {
 	var n int64
 	if err := s.db.Model(&model.ContestPrize{}).Where("contest_id = ?", contestID).Count(&n).Error; err != nil || n > 0 {
 		return err
 	}
-	return s.db.Create(&model.ContestPrize{ContestID: contestID, RankFrom: 1, RankTo: 3, GrantCertificate: true}).Error
+	for _, r := range ranges {
+		p := model.ContestPrize{ContestID: contestID, RankFrom: r.From, RankTo: r.To, GrantCertificate: true}
+		if err := s.db.Create(&p).Error; err != nil {
+			return fmt.Errorf("seed contest prize: %w", err)
+		}
+	}
+	return nil
 }
 
 // seedContestWinner — attempt đã nộp + participant có hạng + award có số chứng nhận.

@@ -58,6 +58,28 @@ func (s *Seeder) SeedDemoData() error {
 		return fmt.Errorf("demo family links: %w", err)
 	}
 
+	// Seed 30/09: phủ các trang đang trống. Bốn bước độc lập với nhau, chỉ cần users/courses/ghi danh ở trên.
+	// Diễn đàn + hỏi đáp theo bài học (trang /discussions).
+	if err := s.SeedDemoDiscussions(users, courses); err != nil {
+		return fmt.Errorf("demo discussions: %w", err)
+	}
+
+	// Lớp học, lịch/buổi học, điểm danh, livestream theo lớp, bài tập, bài nộp, điểm.
+	if err := s.SeedDemoClasses(users, courses); err != nil {
+		return fmt.Errorf("demo classes: %w", err)
+	}
+
+	// Thông báo, thành tích, bảng xếp hạng, xu, chứng chỉ, voucher của tôi, đánh giá, wishlist, ghi chú.
+	// Cần voucher (SeedDemoVouchers) và ghi danh đã hoàn thành (SeedDemoEnrollments) ở trên.
+	if err := s.SeedDemoEngagement(users, courses); err != nil {
+		return fmt.Errorf("demo engagement: %w", err)
+	}
+
+	// Nhóm, tin nhắn, đơn hàng + ví/rút tiền giáo viên, bài tập code, lịch cá nhân, báo cáo kiểm duyệt.
+	if err := s.SeedDemoSocialAndPayouts(users, courses); err != nil {
+		return fmt.Errorf("demo social and payouts: %w", err)
+	}
+
 	log.Println("=== Demo data seeded successfully ===")
 	return nil
 }
