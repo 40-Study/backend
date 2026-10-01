@@ -176,6 +176,24 @@ func (UserAchievementProgress) TableName() string {
 // LEADERBOARD - Bảng xếp hạng
 // ============================================================================
 
+// Các kỳ xếp hạng hợp lệ — SSOT cho validate ở service/handler, khớp CHECK constraint period_type bên dưới.
+// Chưa có kỳ "daily": bảng không lưu theo ngày, nên giá trị này bị từ chối thay vì âm thầm trả kỳ khác.
+const (
+	LeaderboardPeriodWeekly  = "weekly"
+	LeaderboardPeriodMonthly = "monthly"
+	LeaderboardPeriodAllTime = "all_time"
+)
+
+// IsValidLeaderboardPeriodType báo p có phải một kỳ xếp hạng được hỗ trợ không.
+func IsValidLeaderboardPeriodType(p string) bool {
+	switch p {
+	case LeaderboardPeriodWeekly, LeaderboardPeriodMonthly, LeaderboardPeriodAllTime:
+		return true
+	default:
+		return false
+	}
+}
+
 // LeaderboardEntry lưu thứ hạng theo tuần/tháng
 type LeaderboardEntry struct {
 	ID               uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
