@@ -245,8 +245,8 @@ type Voucher struct {
 	CanStack bool `gorm:"type:bool;default:false" json:"can_stack"`
 
 	// Date range
-	StartDate *time.Time `gorm:"type:timestamp" json:"start_date,omitempty"`
-	EndDate   *time.Time `gorm:"type:timestamp" json:"end_date,omitempty"`
+	StartDate *time.Time `gorm:"type:timestamptz" json:"start_date,omitempty"`
+	EndDate   *time.Time `gorm:"type:timestamptz" json:"end_date,omitempty"`
 
 	// Status
 	IsActive bool `gorm:"type:bool;default:true" json:"is_active"`
@@ -300,7 +300,7 @@ type UserVoucher struct {
 	UserID    uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
 	VoucherID uuid.UUID `gorm:"type:uuid;not null;index" json:"voucher_id"`
 	Source    string    `gorm:"type:varchar(50)" json:"source"` // manual, admin_grant, event_reward
-	SavedAt   time.Time `gorm:"type:timestamp;not null" json:"saved_at"`
+	SavedAt   time.Time `gorm:"type:timestamptz;not null" json:"saved_at"`
 	Notes     string    `gorm:"type:text" json:"notes"`
 
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`

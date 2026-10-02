@@ -88,12 +88,14 @@ func NewLeaderboardRepository(db *gorm.DB) *LeaderboardRepository {
 
 // LeaderboardRow is a flattened result row
 type LeaderboardRow struct {
-	UserID   uuid.UUID `json:"user_id"`
-	UserName string    `json:"user_name"`
-	FullName *string   `json:"full_name"`
-	AvatarURL *string  `json:"avatar_url"`
-	Points   int       `json:"points"`
-	Rank     int       `json:"rank"`
+	UserID    uuid.UUID `json:"user_id"`
+	UserName  string    `json:"user_name"`
+	FullName  *string   `json:"full_name"`
+	AvatarURL *string   `json:"avatar_url"`
+	Points    int       `json:"points"`
+	// LeaderboardDisplay: cài đặt riêng tư của chủ dòng (user_preferences.leaderboard_display); chưa có dòng cài đặt = name.
+	LeaderboardDisplay string `json:"-"`
+	Rank               int    `json:"rank"`
 }
 
 // GetTopUsers returns ranked users for the given period/type up to limit.
@@ -108,10 +110,12 @@ func (r *LeaderboardRepository) GetTopUsers(ctx context.Context, periodType stri
 				u.user_name,
 				u.full_name,
 				u.avatar_url,
+				COALESCE(upr.leaderboard_display, 'name')           AS leaderboard_display,
 				COALESCE(up.total_points, 0)                       AS points,
 				RANK() OVER (ORDER BY COALESCE(up.total_points, 0) DESC) AS rank
 			FROM users u
 			LEFT JOIN user_points up ON up.user_id = u.id
+			LEFT JOIN user_preferences upr ON upr.user_id = u.id
 			WHERE u.is_active = true
 			ORDER BY points DESC
 			LIMIT ?`
@@ -126,9 +130,11 @@ func (r *LeaderboardRepository) GetTopUsers(ctx context.Context, periodType stri
 			u.user_name,
 			u.full_name,
 			u.avatar_url,
+			COALESCE(upr.leaderboard_display, 'name')           AS leaderboard_display,
 			COALESCE(le.points, 0)                     AS points,
 			RANK() OVER (ORDER BY COALESCE(le.points, 0) DESC) AS rank
 		FROM users u
+		LEFT JOIN user_preferences upr ON upr.user_id = u.id
 		INNER JOIN leaderboard_entries le ON le.user_id = u.id
 			AND le.period_type = ?
 			AND le.period     = ?
@@ -145,17 +151,19 @@ func (r *LeaderboardRepository) GetUserRank(ctx context.Context, userID uuid.UUI
 
 	if periodType == "all_time" {
 		sql := `
-			SELECT sub.user_id, sub.user_name, sub.full_name, sub.avatar_url, sub.points, sub.rank
+			SELECT sub.user_id, sub.user_name, sub.full_name, sub.avatar_url, sub.points, sub.leaderboard_display, sub.rank
 			FROM (
 				SELECT
 					u.id                                               AS user_id,
 					u.user_name,
 					u.full_name,
 					u.avatar_url,
+					COALESCE(upr.leaderboard_display, 'name')           AS leaderboard_display,
 					COALESCE(up.total_points, 0)                       AS points,
 					RANK() OVER (ORDER BY COALESCE(up.total_points, 0) DESC) AS rank
 				FROM users u
 				LEFT JOIN user_points up ON up.user_id = u.id
+				LEFT JOIN user_preferences upr ON upr.user_id = u.id
 				WHERE u.is_active = true
 			) sub
 			WHERE sub.user_id = ?`
@@ -170,16 +178,18 @@ func (r *LeaderboardRepository) GetUserRank(ctx context.Context, userID uuid.UUI
 	}
 
 	sql := `
-		SELECT sub.user_id, sub.user_name, sub.full_name, sub.avatar_url, sub.points, sub.rank
+		SELECT sub.user_id, sub.user_name, sub.full_name, sub.avatar_url, sub.points, sub.leaderboard_display, sub.rank
 		FROM (
 			SELECT
 				u.id                                       AS user_id,
 				u.user_name,
 				u.full_name,
 				u.avatar_url,
+				COALESCE(upr.leaderboard_display, 'name')           AS leaderboard_display,
 				COALESCE(le.points, 0)                     AS points,
 				RANK() OVER (ORDER BY COALESCE(le.points, 0) DESC) AS rank
 			FROM users u
+			LEFT JOIN user_preferences upr ON upr.user_id = u.id
 			INNER JOIN leaderboard_entries le ON le.user_id = u.id
 				AND le.period_type = ?
 				AND le.period     = ?

@@ -5,8 +5,7 @@ package database
 // Trước bản sửa: model khai `type:timestamp` nên Migrate tạo `timestamp without time zone`, ghi một thời điểm
 // có múi giờ rồi đọc lại ra instant lệch 7 giờ (assertInstantColumnsAfterMigrate, gọi từ
 // TestTimeOfDayColumns_MigrateTaoKieuTime, ĐỎ).
-// Bỏ migrateInstantColumnsUp hoặc bỏ `AT TIME ZONE` thì TestInstantColumns_ChuyenDuLieuCuTheoGioVN ĐỎ (phiên
-// UTC cho 20:00Z thay vì 13:00Z). Bỏ migrateInstantColumnsDown/đổi chiều thì TestInstantColumns_HoanTac ĐỎ.
+// Bỏ migrateInstantColumnsUp hoặc bỏ `AT TIME ZONE` thì TestInstantColumns_ChuyenDuLieuCuTheoMuiGioNguon ĐỎ. Bỏ migrateInstantColumnsDown/đổi chiều thì TestInstantColumns_HoanTac ĐỎ.
 
 import (
 	"testing"
@@ -24,19 +23,29 @@ const (
 	typeTimestamptz = "timestamp with time zone"
 )
 
+// instantColumnTypes: kiểu hiện tại của các cột trong instantColumns CÓ trong schema hiện tại (bảng chưa tạo thì
+// không xuất hiện), khoá "bảng.cột".
 func instantColumnTypes(t *testing.T, db *gorm.DB) map[string]string {
 	t.Helper()
+	tables := make([]string, 0, len(instantColumns))
+	want := make(map[string]bool, len(instantColumns))
+	for _, c := range instantColumns {
+		if !want[c.table+"."+c.column] {
+			tables = append(tables, c.table)
+		}
+		want[c.table+"."+c.column] = true
+	}
 	type col struct{ TableName, ColumnName, DataType string }
 	var cols []col
 	if err := db.Raw(`SELECT table_name, column_name, data_type FROM information_schema.columns
-		WHERE table_schema = current_schema()
-		  AND table_name IN ('class_lesson_contents','livestream_sessions')
-		  AND column_name IN ('open_date','due_date','scheduled_at','end_at','started_at','ended_at')`).Scan(&cols).Error; err != nil {
+		WHERE table_schema = current_schema() AND table_name IN ?`, tables).Scan(&cols).Error; err != nil {
 		t.Fatal(err)
 	}
 	got := make(map[string]string, len(cols))
 	for _, c := range cols {
-		got[c.TableName+"."+c.ColumnName] = c.DataType
+		if k := c.TableName + "." + c.ColumnName; want[k] {
+			got[k] = c.DataType
+		}
 	}
 	return got
 }
@@ -88,9 +97,9 @@ const legacyInstantTables = `
 	INSERT INTO livestream_sessions VALUES (1, '2026-10-08 20:00:00', NULL, NULL);
 `
 
-// DB cũ: cột timestamp chứa giờ đồng hồ VN (đúng như seed). Sau chuyển phải là đúng instant (20:00 VN =
-// 13:00Z) kể cả khi kết nối chạy migration ở múi giờ UTC; NULL giữ NULL; chạy lại không đổi gì.
-func TestInstantColumns_ChuyenDuLieuCuTheoGioVN(t *testing.T) {
+// DB cũ: cột timestamp chứa giờ đồng hồ UTC (API nhận RFC3339, web gửi toISOString). Sau chuyển phải
+// giữ đúng instant (20:00 đồng hồ UTC = 20:00Z, KHÔNG phải 13:00Z) kể cả khi kết nối chạy migration ở múi giờ UTC; NULL giữ NULL; chạy lại không đổi gì.
+func TestInstantColumns_ChuyenDuLieuCuTheoMuiGioNguon(t *testing.T) {
 	db := pgtest.IsolatedSchema(t, func(*gorm.DB) error { return nil })
 	if err := db.Exec(legacyInstantTables).Error; err != nil {
 		t.Fatal(err)
@@ -127,11 +136,11 @@ func TestInstantColumns_ChuyenDuLieuCuTheoGioVN(t *testing.T) {
 		return *v
 	}
 	want := map[string]string{
-		`SELECT to_char(scheduled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM class_lesson_contents WHERE id = 1`: "2026-10-08 13:00",
-		`SELECT to_char(end_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM class_lesson_contents WHERE id = 1`:       "2026-10-08 14:30",
-		`SELECT to_char(due_date AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM class_lesson_contents WHERE id = 1`:     "2026-10-30 16:59",
+		`SELECT to_char(scheduled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM class_lesson_contents WHERE id = 1`: "2026-10-08 20:00",
+		`SELECT to_char(end_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM class_lesson_contents WHERE id = 1`:       "2026-10-08 21:30",
+		`SELECT to_char(due_date AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM class_lesson_contents WHERE id = 1`:     "2026-10-30 23:59",
 		`SELECT to_char(open_date AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM class_lesson_contents WHERE id = 1`:    "NULL",
-		`SELECT to_char(scheduled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM livestream_sessions WHERE id = 1`:   "2026-10-08 13:00",
+		`SELECT to_char(scheduled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM livestream_sessions WHERE id = 1`:   "2026-10-08 20:00",
 		`SELECT to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM livestream_sessions WHERE id = 1`:     "NULL",
 	}
 	for q, w := range want {
@@ -141,7 +150,7 @@ func TestInstantColumns_ChuyenDuLieuCuTheoGioVN(t *testing.T) {
 	}
 }
 
-// Down: timestamptz -> timestamp theo giờ VN, trả đúng giờ đồng hồ ban đầu; down rồi up không mất dữ liệu.
+// Down: timestamptz -> timestamp theo múi giờ nguồn của cột, trả đúng giờ đồng hồ ban đầu; down rồi up không mất dữ liệu.
 func TestInstantColumns_HoanTac(t *testing.T) {
 	db := pgtest.IsolatedSchema(t, func(*gorm.DB) error { return nil })
 	if err := db.Exec(legacyInstantTables).Error; err != nil {
@@ -171,14 +180,14 @@ func TestInstantColumns_HoanTac(t *testing.T) {
 	}
 	var wall string
 	if err := db.Raw(`SELECT scheduled_at::text FROM class_lesson_contents WHERE id = 1`).Scan(&wall).Error; err != nil || wall != "2026-10-08 20:00:00" {
-		t.Errorf("sau down scheduled_at = %q (%v), muốn giờ đồng hồ VN ban đầu 2026-10-08 20:00:00", wall, err)
+		t.Errorf("sau down scheduled_at = %q (%v), muốn giờ đồng hồ ban đầu 2026-10-08 20:00:00", wall, err)
 	}
 	if err := migrateInstantColumnsUp(db); err != nil {
 		t.Fatal(err)
 	}
 	var inst string
-	if err := db.Raw(`SELECT to_char(scheduled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM class_lesson_contents WHERE id = 1`).Scan(&inst).Error; err != nil || inst != "2026-10-08 13:00" {
-		t.Errorf("down rồi up: %q (%v), muốn 2026-10-08 13:00", inst, err)
+	if err := db.Raw(`SELECT to_char(scheduled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM class_lesson_contents WHERE id = 1`).Scan(&inst).Error; err != nil || inst != "2026-10-08 20:00" {
+		t.Errorf("down rồi up: %q (%v), muốn 2026-10-08 20:00", inst, err)
 	}
 }
 

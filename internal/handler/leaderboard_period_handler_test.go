@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/service"
 )
 
 type stubLeaderboardService struct {
@@ -19,7 +20,7 @@ type stubLeaderboardService struct {
 	periodType string
 }
 
-func (s *stubLeaderboardService) GetLeaderboard(ctx context.Context, periodType string, limit int) (*dto.LeaderboardResponse, error) {
+func (s *stubLeaderboardService) GetLeaderboard(ctx context.Context, periodType string, limit int, _ *service.LeaderboardViewer) (*dto.LeaderboardResponse, error) {
 	s.calls++
 	s.periodType = periodType
 	return &dto.LeaderboardResponse{PeriodType: periodType}, nil
@@ -67,7 +68,7 @@ func TestLeaderboardHandler_PeriodQuery(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(ep.name+"/"+tc.name, func(t *testing.T) {
 				svc := &stubLeaderboardService{}
-				app := ep.mount(NewLeaderboardHandler(svc))
+				app := ep.mount(NewLeaderboardHandler(svc, nil))
 
 				resp, err := app.Test(httptest.NewRequest("GET", ep.path+tc.query, nil))
 				if err != nil {

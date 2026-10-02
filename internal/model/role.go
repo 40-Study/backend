@@ -6,6 +6,9 @@ import (
 	"github.com/google/uuid"
 )
 
+// RoleStatusActive: chỉ org role có status này mới được cộng quyền (PermissionChecker.resolveOrgRolePermissions).
+const RoleStatusActive = "active"
+
 type Role struct {
 	BaseModel
 	Name           string         `gorm:"type:varchar(100);not null;uniqueIndex:idx_role_name_org" json:"name"`

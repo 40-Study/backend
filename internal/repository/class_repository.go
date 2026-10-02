@@ -190,11 +190,15 @@ func (r *ClassRepository) IsUserRelatedToClass(ctx context.Context, classID, use
 	return exists, tx.Error
 }
 
-// ActiveOrgMemberExists: userID đang giữ ít nhất một org role ACTIVE trong tổ chức orgID.
+// ActiveOrgMemberExists: userID đang giữ ít nhất một org role ACTIVE trong tổ chức orgID, và tổ chức CHƯA bị xoá
+// mềm. Xoá mềm (DeleteOrganization mặc định) không chạy FK SET NULL và không gỡ user_organization_roles, nên nếu
+// không join organizations thì chủ cũ vẫn tạo được lớp vào tổ chức đã xoá.
 func (r *ClassRepository) ActiveOrgMemberExists(ctx context.Context, userID, orgID uuid.UUID) (bool, error) {
 	var n int64
 	err := r.db.WithContext(ctx).Model(&model.UserOrganizationRole{}).
-		Where("user_id = ? AND organization_id = ? AND status = ?", userID, orgID, model.UserOrgRoleStatusActive).
+		Joins("JOIN organizations ON organizations.id = user_organization_roles.organization_id AND organizations.deleted_at IS NULL").
+		Where("user_organization_roles.user_id = ? AND user_organization_roles.organization_id = ? AND user_organization_roles.status = ?",
+			userID, orgID, model.UserOrgRoleStatusActive).
 		Count(&n).Error
 	return n > 0, err
 }

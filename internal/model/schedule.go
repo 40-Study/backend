@@ -156,12 +156,12 @@ type ExtensionRequest struct {
 	StudentID      uuid.UUID              `gorm:"type:uuid;not null;index" json:"student_id"`
 	Reason         string                 `gorm:"type:text;not null" json:"reason"`
 	RequestedDays  int                    `gorm:"not null" json:"requested_days"`
-	RequestedUntil *time.Time             `gorm:"type:timestamp" json:"requested_until,omitempty"`
+	RequestedUntil *time.Time             `gorm:"type:timestamptz" json:"requested_until,omitempty"`
 	Status         ExtensionRequestStatus `gorm:"type:varchar(20);default:'pending';check:status IN ('pending','approved','rejected')" json:"status"`
 	ReviewedBy     *uuid.UUID             `gorm:"type:uuid" json:"reviewed_by,omitempty"`
 	ReviewedAt     *time.Time             `json:"reviewed_at,omitempty"`
 	ReviewNote     *string                `gorm:"type:text" json:"review_note,omitempty"`
-	ApprovedUntil  *time.Time             `gorm:"type:timestamp" json:"approved_until,omitempty"` // Deadline moi neu approved
+	ApprovedUntil  *time.Time             `gorm:"type:timestamptz" json:"approved_until,omitempty"` // Deadline moi neu approved
 
 	// Relationships
 	Assignment *Assignment `gorm:"foreignKey:AssignmentID;constraint:OnDelete:CASCADE" json:"-"`

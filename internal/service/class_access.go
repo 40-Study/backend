@@ -148,8 +148,18 @@ type ClassAuthorizer interface {
 // orgManagesClass: lớp thuộc một tổ chức (classes.organization_id) và userID có vai quản trị
 // (orgClassManagePermission) TRONG CHÍNH tổ chức đó. Lớp cá nhân (organization_id NULL) không bao giờ thuộc
 // quyền của chủ tổ chức nào: thêm một giảng viên vào tổ chức không kéo lớp cá nhân của họ vào phạm vi.
-func orgManagesClass(ctx context.Context, authz ClassAuthorizer, userID uuid.UUID, class *model.Class) (bool, error) {
+//
+// Tổ chức đã bị xoá MỀM thì không còn ai là chủ của nó: lớp vẫn giữ organization_id (FK SET NULL chỉ chạy khi xoá
+// cứng) và user_organization_roles không bị gỡ, nên phải kiểm deleted_at tường minh ở đây.
+func orgManagesClass(ctx context.Context, classRepo repository.ClassRepositoryInterface, authz ClassAuthorizer, userID uuid.UUID, class *model.Class) (bool, error) {
 	if authz == nil || class == nil || class.OrganizationID == nil {
+		return false, nil
+	}
+	live, err := classRepo.OrganizationExists(ctx, *class.OrganizationID)
+	if err != nil {
+		return false, fmt.Errorf("failed to verify organization: %w", err)
+	}
+	if !live {
 		return false, nil
 	}
 	ok, err := authz.HasOrgRolePermission(ctx, userID, *class.OrganizationID, orgClassManagePermission)
@@ -179,7 +189,7 @@ func ensureClassGrade(ctx context.Context, classRepo repository.ClassRepositoryI
 	if err != nil {
 		return fmt.Errorf("failed to load class: %w", err)
 	}
-	managed, err := orgManagesClass(ctx, authz, userID, class)
+	managed, err := orgManagesClass(ctx, classRepo, authz, userID, class)
 	if err != nil {
 		return err
 	}
