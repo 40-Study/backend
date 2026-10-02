@@ -103,6 +103,14 @@ type ReconcileSweepResult struct {
 	// Errors — số lần đối chiếu lỗi, gồm cả ngân hàng không trả lời (BankErrors) và lỗi DB.
 	Errors     int
 	BankErrors int
+	// OrderErrors (L9 mục 1) — lần tra lỗi RIÊNG của một đơn đã lỗi ở lượt trước trong khi ngân hàng vẫn trả lời các
+	// đơn khác: đếm vào Errors nhưng không vào BankErrors và không vào ngắt mạch.
+	OrderErrors int
+	// SkippedKnownFailing (L9 mục 1) — đơn đã lỗi lượt trước bị để sang lượt sau vì vượt reconcileMaxKnownFailingPerSweep.
+	SkippedKnownFailing int
+	// DeferredExpiry (L9 mục 6) — đơn processing đã quá hạn mã + unverifiedExpiryAfter mà ngân hàng không trả lời nên
+	// job nền hoãn chốt expired (người dùng bấm kiểm tra vẫn chốt được). Đếm riêng để thấy đơn đang chờ vì hoãn.
+	DeferredExpiry int
 	// BankDown — lượt quét dừng sớm vì ngân hàng lỗi reconcileMaxConsecutiveBankErrors lần liên tiếp.
 	BankDown         bool
 	LimitReached     bool
@@ -151,8 +159,12 @@ func (s *PaymentService) RunReconcileSweep(ctx context.Context) error {
 	sweepCtx, cancel := context.WithTimeout(ctx, reconcileSweepTimeout)
 	defer cancel()
 	res, err := s.ReconcileSweep(sweepCtx, time.Now())
-	log.Printf("[PAYMENT-SWEEP] xong: đơn chờ=%d đơn hoàn tất=%d (không còn mã=%d) khoản dư mới=%d lỗi=%d (ngân hàng=%d) chạm trần=%t err=%v",
-		res.Processing, res.Completed, res.CompletedWithoutCode, res.ExtraFlagged, res.Errors, res.BankErrors, res.LimitReached, err)
+	log.Printf("[PAYMENT-SWEEP] xong: đơn chờ=%d đơn hoàn tất=%d (không còn mã=%d) khoản dư mới=%d lỗi=%d (ngân hàng=%d, riêng đơn=%d) hoãn chốt=%d để sang lượt sau=%d chạm trần=%t err=%v",
+		res.Processing, res.Completed, res.CompletedWithoutCode, res.ExtraFlagged, res.Errors, res.BankErrors, res.OrderErrors,
+		res.DeferredExpiry, res.SkippedKnownFailing, res.LimitReached, err)
+	if res.DeferredExpiry > 0 {
+		log.Printf("[PAYMENT-SWEEP] INFO: %d đơn đã quá hạn mã mà ngân hàng không trả lời nên job hoãn chốt expired; sẽ chốt khi ngân hàng trả lời được, hoặc khi người dùng bấm kiểm tra thanh toán", res.DeferredExpiry)
+	}
 	if res.BankDown {
 		log.Printf("[PAYMENT-SWEEP] CẢNH BÁO: ngân hàng/dịch vụ giao dịch lỗi %d lần liên tiếp, lượt quét dừng sớm; chu kỳ sau sẽ thử lại", reconcileMaxConsecutiveBankErrors)
 	}
@@ -196,10 +208,50 @@ func (s *PaymentService) ReconcileSweep(ctx context.Context, now time.Time) (Rec
 		log.Printf("[PAYMENT-SWEEP] %d đơn hoàn tất trong cửa sổ không còn mã thanh toán (hoàn tất trước khi có payment_code): không tra lại được, bỏ qua", lost)
 	}
 
-	// bankFailed ghi nhận một lần tra ngân hàng lỗi và trả true khi đã tới ngưỡng ngắt mạch.
+	// L9 mục 1: đơn từng lỗi ở lượt trước xếp sau, xem payment_sweep_failures.go.
+	live := make(map[uuid.UUID]bool, len(processing)+len(completed))
+	for i := range processing {
+		live[processing[i].ID] = true
+	}
+	for i := range completed {
+		live[completed[i].ID] = true
+	}
+	s.sweepFailures.retainOnly(live)
+	s.sweepFailures.failedLast(processing)
+	s.sweepFailures.failedLast(completed)
+
 	consecutiveBankErrors := 0
-	bankFailed := func() bool {
+	bankAnswered := false // ngân hàng đã trả lời được ít nhất một đơn trong lượt này
+	knownFailingTried := 0
+
+	// skipKnownFailing: đơn đã lỗi lần trước, ngân hàng đang trả lời bình thường, và đã dùng hết lượt thử cho loại
+	// đơn này: để lượt sau (xoay vòng) thay vì tốn tiếp.
+	skipKnownFailing := func(id uuid.UUID) bool {
+		if bankAnswered && knownFailingTried >= reconcileMaxKnownFailingPerSweep && s.sweepFailures.has(id) {
+			res.SkippedKnownFailing++
+			return true
+		}
+		return false
+	}
+	// answered ghi nhận ngân hàng đã trả lời đơn id (đặt lại bộ đếm lỗi liên tiếp, đơn khỏi sổ lỗi).
+	answered := func(id uuid.UUID) {
+		bankAnswered = true
+		consecutiveBankErrors = 0
+		s.sweepFailures.clear(id)
+	}
+	// bankFailed ghi nhận một lần tra ngân hàng lỗi cho đơn id và trả true khi phải dừng lượt quét (ngắt mạch).
+	//   - đơn đã lỗi lần trước mà ngân hàng vẫn trả lời đơn khác trong lượt này: lỗi riêng đơn, KHÔNG tính vào ngắt
+	//     mạch (không phải ngân hàng chết);
+	//   - còn lại là lỗi chưa quy được cho đơn nào: tính vào ngắt mạch.
+	bankFailed := func(id uuid.UUID) bool {
 		res.Errors++
+		known := s.sweepFailures.has(id)
+		s.sweepFailures.recordFailure(id, time.Now())
+		if known && bankAnswered {
+			knownFailingTried++
+			res.OrderErrors++
+			return false
+		}
 		res.BankErrors++
 		consecutiveBankErrors++
 		if consecutiveBankErrors >= reconcileMaxConsecutiveBankErrors {
@@ -214,52 +266,62 @@ func (s *PaymentService) ReconcileSweep(ctx context.Context, now time.Time) (Rec
 		if ctx.Err() != nil {
 			return res, ctx.Err()
 		}
+		o := &processing[i]
+		if skipKnownFailing(o.ID) {
+			continue
+		}
 		if budget == 0 {
 			res.LimitReached = true
 			return res, nil
 		}
 		budget--
-		o := &processing[i]
 		// Đúng luồng người dùng bấm "kiểm tra thanh toán" (hoàn tất, chốt hết hạn, gắn cờ...), quyền
 		// admin vì đây là tác vụ hệ thống.
-		resp, err := s.checkAndProcessPayment(ctx, o.ID, o.UserID, true, reconcileOptions{deferUnverifiedExpiry: true})
+		resp, err := s.checkAndProcessPayment(ctx, o.ID, o.UserID, true, reconcileOptions{
+			deferUnverifiedExpiry: true,
+			onExpiryDeferred:      func() { res.DeferredExpiry++ },
+		})
 		res.Processing++
 		switch {
 		case resp != nil && resp.BankUnavailable:
 			// Ngân hàng lỗi KHÔNG trả error mà trả BankUnavailable: phải đếm ở đây.
-			if bankFailed() {
+			if bankFailed(o.ID) {
 				return res, nil
 			}
 		case err != nil && !isBenignSweepError(err):
 			res.Errors++
 			log.Printf("[PAYMENT-SWEEP] order=%s đối chiếu lỗi: %v", o.ID, err)
 		default:
-			consecutiveBankErrors = 0
+			answered(o.ID)
 		}
 	}
 	for i := range completed {
 		if ctx.Err() != nil {
 			return res, ctx.Err()
 		}
+		o := &completed[i]
+		if skipKnownFailing(o.ID) {
+			continue
+		}
 		if budget == 0 {
 			res.LimitReached = true
 			return res, nil
 		}
 		budget--
-		flagged, bankAnswered, err := s.reconcileCompletedExtras(ctx, &completed[i])
+		flagged, asked, err := s.reconcileCompletedExtras(ctx, o)
 		res.ExtraFlagged += flagged
 		res.Completed++
 		switch {
 		case errors.Is(err, errBankLookupFailed):
-			log.Printf("[PAYMENT-SWEEP] order=%s tra lại đơn hoàn tất lỗi: %v", completed[i].ID, err)
-			if bankFailed() {
+			log.Printf("[PAYMENT-SWEEP] order=%s tra lại đơn hoàn tất lỗi: %v", o.ID, err)
+			if bankFailed(o.ID) {
 				return res, nil
 			}
 		case err != nil:
 			res.Errors++
-			log.Printf("[PAYMENT-SWEEP] order=%s tra lại đơn hoàn tất lỗi: %v", completed[i].ID, err)
-		case bankAnswered:
-			consecutiveBankErrors = 0
+			log.Printf("[PAYMENT-SWEEP] order=%s tra lại đơn hoàn tất lỗi: %v", o.ID, err)
+		case asked:
+			answered(o.ID)
 		}
 		// Không lỗi nhưng ngân hàng cũng không được hỏi (đơn không có bản ghi usage) thì KHÔNG phải bằng chứng
 		// ngân hàng đã sống lại, nên không đặt lại bộ đếm: đơn như vậy xen kẽ sẽ che mất chuỗi lỗi liên tiếp.

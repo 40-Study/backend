@@ -94,6 +94,8 @@ type PaymentService struct {
 	sweepLocker SweepLocker
 	// sweepInterval — chu kỳ job (SetSweepInterval) để khoá phân tán theo khung chu kỳ.
 	sweepInterval time.Duration
+	// sweepFailures (L9 mục 1): đơn từng tra ngân hàng lỗi ở lượt quét trước — xem payment_sweep_failures.go.
+	sweepFailures bankFailureLedger
 }
 
 // M3-09 (review vòng 3b, bổ sung vòng 4; Minor vòng 4b/5 xóa nốt paymentEventRepo): TRƯỚC ĐÂY
@@ -387,6 +389,9 @@ type reconcileOptions struct {
 	// nhìn thấy đơn kẹt); job nền thì không, vì nó chạy lặp khi ngân hàng chết và sẽ chốt hàng loạt đơn mà không
 	// ai xác minh được, trong khi ngân hàng sống lại là xác minh được và chốt đúng (hoặc hoàn tất nếu có tiền).
 	deferUnverifiedExpiry bool
+	// onExpiryDeferred (L9 mục 6): gọi mỗi khi deferUnverifiedExpiry thật sự hoãn một lần chốt (đơn đã quá hạn
+	// unverifiedExpiryAfter mà ngân hàng không trả lời), để job đếm được số đơn đang chờ vì hoãn.
+	onExpiryDeferred func()
 }
 
 func (s *PaymentService) checkAndProcessPayment(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool, opts reconcileOptions) (*dto.PaymentStatusResponse, error) {

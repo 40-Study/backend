@@ -52,7 +52,7 @@ func InitResources() (*Resources, error) {
 		return nil, err
 	}
 
-	if err := database.MigrateAtStartup(db); err != nil {
+	if err := database.MigrateAtStartup(db, cfg.MigrateLockTimeout()); err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
 		return nil, err
 	}

@@ -112,6 +112,9 @@ type Config struct {
 	// chờ và đơn vừa hoàn tất. Mặc định 10; hợp lệ 1-59 (cron theo phút), ngoài khoảng thì
 	// LoadConfig báo lỗi lúc khởi động thay vì lặng lẽ đổi giá trị.
 	PaymentReconcileIntervalMinutes int `mapstructure:"PAYMENT_RECONCILE_INTERVAL_MINUTES"`
+	// MigrateLockTimeoutMinutes (L9 mục 3): thời gian tối đa (phút) một tiến trình khởi động chờ khoá migrate khi
+	// tiến trình khác đang migrate. Mặc định 10; hợp lệ 1-1440. Hết giờ thì khởi động dừng với lỗi rõ ràng.
+	MigrateLockTimeoutMinutes int `mapstructure:"MIGRATE_LOCK_TIMEOUT_MINUTES"`
 
 	// OAuth Providers
 	GitHub   GithubOAuthConfig
@@ -143,6 +146,23 @@ func validatePaymentReconcileInterval(minutes int) (int, error) {
 		return 0, fmt.Errorf("PAYMENT_RECONCILE_INTERVAL_MINUTES must be between 1 and 59, got %d", minutes)
 	}
 	return minutes, nil
+}
+
+// DefaultMigrateLockTimeoutMinutes — mặc định của MIGRATE_LOCK_TIMEOUT_MINUTES.
+const DefaultMigrateLockTimeoutMinutes = 10
+
+// validateMigrateLockTimeout là hàm thuần để unit test: 1-1440 phút (một ngày là trần hợp lý cho một lần chờ
+// migration; không có "vô hạn" vì đó chính là lỗi mà giới hạn này sửa).
+func validateMigrateLockTimeout(minutes int) (int, error) {
+	if minutes < 1 || minutes > 1440 {
+		return 0, fmt.Errorf("MIGRATE_LOCK_TIMEOUT_MINUTES must be between 1 and 1440, got %d", minutes)
+	}
+	return minutes, nil
+}
+
+// MigrateLockTimeout — thời gian chờ khoá migrate lúc khởi động (xem MigrateLockTimeoutMinutes).
+func (c *Config) MigrateLockTimeout() time.Duration {
+	return time.Duration(c.MigrateLockTimeoutMinutes) * time.Minute
 }
 
 // parseWithdrawalMinAmount là hàm thuần để unit test: chỉ chấp nhận số dương.
@@ -190,6 +210,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("TRANSACTION_SERVICE_PORT", "50051")
 	viper.SetDefault("TRANSACTION_SERVICE_TOKEN", "")
 	viper.SetDefault("PAYMENT_RECONCILE_INTERVAL_MINUTES", DefaultPaymentReconcileIntervalMinutes)
+	viper.SetDefault("MIGRATE_LOCK_TIMEOUT_MINUTES", DefaultMigrateLockTimeoutMinutes)
 
 	// GITHUB
 	viper.SetDefault("GITHUB_CLIENT_ID", "")
@@ -287,6 +308,12 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 	config.PaymentReconcileIntervalMinutes = reconcileMinutes
+
+	lockMinutes, err := validateMigrateLockTimeout(config.MigrateLockTimeoutMinutes)
+	if err != nil {
+		return nil, err
+	}
+	config.MigrateLockTimeoutMinutes = lockMinutes
 
 	// Set JWT expiration durations
 	accessMinutes := viper.GetInt("JWT_ACCESS_EXPIRATION_MINUTES")

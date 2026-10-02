@@ -30,6 +30,11 @@ func tableRowCounts(t *testing.T, f *orderFixture) map[string]int64 {
 }
 
 func TestAPISchemaReuse_ResetEqualsFreshMigrate(t *testing.T) {
+	// Test này chứng minh chính cơ chế dùng lại schema (lượt sau nhận đúng schema lượt trước). PGTEST_REUSE=0 là lối
+	// thoát có chủ đích: mỗi test một schema mới, nên "không dùng lại" là hành vi đúng, không phải lỗi (L9 mục 4).
+	if !pgtest.ReuseEnabled() {
+		t.Skip("PGTEST_REUSE=0: cơ chế dùng lại schema đang tắt, không có gì để so sánh")
+	}
 	var reusedSchema string
 	t.Run("dirty", func(t *testing.T) {
 		f := newOrderFixture(t)

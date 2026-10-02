@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +26,10 @@ var (
 	// "expired"). Field cũ TRƯỚC ĐÂY không có call site nào (dead), giờ dùng lại đúng mục đích.
 	ErrOrderConflict = errors.New("order conflict")
 )
+
+// paymentCodeMaxLen — độ rộng cột orders.payment_code (varchar(64), xem model.Order.PaymentCode). Giữ khớp với tag
+// gorm đó: đổi một nơi mà không đổi nơi kia thì UpdatePaymentInfo lại chép mã không vừa cột.
+const paymentCodeMaxLen = 64
 
 // OrderRepository - Repository for Order
 type OrderRepository struct {
@@ -165,7 +170,13 @@ func (r *OrderRepository) buildUpdatePaymentInfoQuery(orderID uuid.UUID, payment
 		// (job đối chiếu không tra lại được khoản chuyển dư). Vì vậy chép mã sang payment_code NGAY TRONG
 		// CÙNG câu UPDATE: vế phải của SET luôn đọc giá trị CŨ của dòng nên payment_transaction_id ở đây
 		// vẫn là mã thanh toán. Chỉ điền khi payment_code còn trống: mã đã có thì bất biến, không đụng.
-		"payment_code": gorm.Expr("CASE WHEN payment_code IS NULL OR payment_code = '' THEN NULLIF(payment_transaction_id, '') ELSE payment_code END"),
+		// L9 mục 2: payment_code là varchar(64) còn payment_transaction_id là varchar(255). Mã dài hơn 64 không vừa
+		// cột: chép vào sẽ làm UPDATE lỗi SQLSTATE 22001 và rollback cả giao dịch hoàn tất dù khách đã trả tiền.
+		// Mã thanh toán do hệ thống sinh luôn ngắn, nên đó chỉ là dữ liệu bất thường: bỏ qua việc chép (đơn vẫn hoàn
+		// tất, payment_code để trống) và UpdatePaymentInfo ghi log để người vận hành thấy.
+		"payment_code": gorm.Expr(
+			"CASE WHEN (payment_code IS NULL OR payment_code = '') AND COALESCE(length(payment_transaction_id), 0) <= ? "+
+				"THEN NULLIF(payment_transaction_id, '') ELSE payment_code END", paymentCodeMaxLen),
 	}
 	// M-02 (review vòng 5): UPDATE CÓ ĐIỀU KIỆN — WHERE status IN ('pending','processing') —
 	// thay vì vô điều kiện như trước. Đơn phải đang ở 1 trong 2 trạng thái "còn sống" này mới
@@ -176,9 +187,31 @@ func (r *OrderRepository) buildUpdatePaymentInfoQuery(orderID uuid.UUID, payment
 		Updates(updates)
 }
 
+// logOverlongLegacyCode ghi log khi câu UPDATE hoàn tất sẽ BỎ QUA việc chép payment_transaction_id sang payment_code
+// vì mã dài hơn cột (xem buildUpdatePaymentInfoQuery). SQL không log được nên đọc trước điều kiện đó; chỉ để chẩn
+// đoán, nên lỗi đọc không chặn việc hoàn tất (câu UPDATE tự bảo vệ, không phụ thuộc kết quả đọc này).
+func (r *OrderRepository) logOverlongLegacyCode(orderID uuid.UUID) {
+	var probe struct {
+		TxLen     int
+		CodeEmpty bool
+	}
+	err := r.db.Model(&model.Order{}).
+		Select("COALESCE(length(payment_transaction_id), 0) AS tx_len, (payment_code IS NULL OR payment_code = '') AS code_empty").
+		Where("id = ? AND status IN ('pending','processing')", orderID).
+		Take(&probe).Error
+	if err != nil {
+		return
+	}
+	if probe.CodeEmpty && probe.TxLen > paymentCodeMaxLen {
+		log.Printf("[PAYMENT-CODE] order=%s payment_transaction_id dài %d ký tự (> %d của cột payment_code): không chép sang payment_code, đơn vẫn hoàn tất nhưng sẽ không tra lại được khoản chuyển dư",
+			orderID, probe.TxLen, paymentCodeMaxLen)
+	}
+}
+
 // UpdatePaymentInfo - Update payment information. Trả ErrOrderConflict nếu đơn không còn ở
 // "pending"/"processing" tại thời điểm UPDATE thật thực thi (xem comment ErrOrderConflict).
 func (r *OrderRepository) UpdatePaymentInfo(orderID uuid.UUID, paymentMethod, paymentGateway, transactionID string, paidAt time.Time) error {
+	r.logOverlongLegacyCode(orderID)
 	result := r.buildUpdatePaymentInfoQuery(orderID, paymentMethod, paymentGateway, transactionID, paidAt)
 	if result.Error != nil {
 		return result.Error
