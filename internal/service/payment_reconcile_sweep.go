@@ -40,12 +40,22 @@ const (
 	// bất thường (mỗi lần tra cứu tối đa bankLookupTimeout).
 	reconcileMaxLookupsPerSweep = 150
 
+	// reconcileMaxConsecutiveBankErrors — số lần tra ngân hàng lỗi LIÊN TIẾP thì dừng lượt quét. Python/ngân hàng
+	// chết thì mỗi lời gọi chờ tới bankLookupTimeout (10s) rồi lỗi: không dừng thì lượt quét kéo dài tới
+	// reconcileSweepTimeout và mỗi chu kỳ lặp lại vô ích. Chu kỳ sau thử lại từ đầu.
+	reconcileMaxConsecutiveBankErrors = 3
+
 	reconcileLockKey = "payment:reconcile-sweep:lock"
 	// reconcileLockTTL — khoá tự hết hạn để tiến trình chết giữa chừng không chặn mãi.
 	reconcileLockTTL = 10 * time.Minute
 	// reconcileSweepTimeout — một lượt phải xong trước khi khoá hết hạn.
 	reconcileSweepTimeout = reconcileLockTTL - time.Minute
+	// defaultReconcileSweepInterval — chu kỳ khi không cấu hình (SetSweepInterval).
+	defaultReconcileSweepInterval = 10 * time.Minute
 )
+
+// errBankLookupFailed — lần tra ngân hàng không cho kết quả tin được (gRPC lỗi, timeout, Python báo error).
+var errBankLookupFailed = errors.New("bank lookup failed")
 
 // SweepLocker — khoá phân tán cho job quét. TryLock trả ok=false khi nơi khác đang giữ khoá.
 type SweepLocker interface {
@@ -79,14 +89,31 @@ func (l *RedisSweepLocker) TryLock(ctx context.Context, key string, ttl time.Dur
 // SetSweepLocker gắn khoá phân tán cho RunReconcileSweep. Không gắn thì chỉ có khoá trong tiến trình.
 func (s *PaymentService) SetSweepLocker(l SweepLocker) { s.sweepLocker = l }
 
+// SetSweepInterval cho biết chu kỳ của job (cùng giá trị đăng ký asynq) để khoá phân tán theo khung chu kỳ.
+func (s *PaymentService) SetSweepInterval(d time.Duration) { s.sweepInterval = d }
+
 // ReconcileSweepResult — số liệu một lượt quét (để log và test).
 type ReconcileSweepResult struct {
-	Processing       int // đơn chờ đã đối chiếu
-	Completed        int // đơn hoàn tất đã tra lại
-	ExtraFlagged     int // khoản chuyển dư mới được gắn cờ ở đơn hoàn tất
-	Errors           int
+	Processing int // đơn chờ đã đối chiếu
+	Completed  int // đơn hoàn tất đã tra lại
+	// CompletedWithoutCode — đơn hoàn tất trong cửa sổ nhưng không còn mã thanh toán (hoàn tất trước khi có
+	// cột payment_code): không tra được nên bỏ qua.
+	CompletedWithoutCode int
+	ExtraFlagged         int // khoản chuyển dư mới được gắn cờ ở đơn hoàn tất
+	// Errors — số lần đối chiếu lỗi, gồm cả ngân hàng không trả lời (BankErrors) và lỗi DB.
+	Errors     int
+	BankErrors int
+	// BankDown — lượt quét dừng sớm vì ngân hàng lỗi reconcileMaxConsecutiveBankErrors lần liên tiếp.
+	BankDown         bool
 	LimitReached     bool
 	SkippedNoBankSvc bool
+}
+
+// sweepSlotKey — khoá theo KHUNG chu kỳ: mọi instance trong cùng một khung chu kỳ cho cùng một key nên chỉ
+// instance đến trước quét. asynq scheduler đăng ký cron ở mỗi instance nên mỗi chu kỳ sinh nhiều task, và
+// khoá "đang chạy" (nhả khi xong) không chặn được task đến SAU khi lượt đầu đã xong.
+func sweepSlotKey(now time.Time, interval time.Duration) string {
+	return fmt.Sprintf("%s:slot:%d", reconcileLockKey, now.Unix()/int64(interval.Seconds()))
 }
 
 // RunReconcileSweep — điểm vào của job nền: khoá chống chạy chồng rồi ReconcileSweep. Khoá đang bị
@@ -99,6 +126,17 @@ func (s *PaymentService) RunReconcileSweep(ctx context.Context) error {
 	defer s.sweepMu.Unlock()
 
 	if s.sweepLocker != nil {
+		interval := s.sweepInterval
+		if interval < time.Minute {
+			interval = defaultReconcileSweepInterval
+		}
+		// Khoá khung chu kỳ: KHÔNG nhả khi xong (tự hết hạn cùng khung), nên task đến sau trong cùng chu kỳ bỏ qua.
+		if _, ok, err := s.sweepLocker.TryLock(ctx, sweepSlotKey(time.Now(), interval), interval); err != nil {
+			return fmt.Errorf("payment reconcile sweep slot lock: %w", err)
+		} else if !ok {
+			log.Printf("[PAYMENT-SWEEP] bỏ qua: chu kỳ này đã được một instance quét")
+			return nil
+		}
 		release, ok, err := s.sweepLocker.TryLock(ctx, reconcileLockKey, reconcileLockTTL)
 		if err != nil {
 			return fmt.Errorf("payment reconcile sweep lock: %w", err)
@@ -113,8 +151,11 @@ func (s *PaymentService) RunReconcileSweep(ctx context.Context) error {
 	sweepCtx, cancel := context.WithTimeout(ctx, reconcileSweepTimeout)
 	defer cancel()
 	res, err := s.ReconcileSweep(sweepCtx, time.Now())
-	log.Printf("[PAYMENT-SWEEP] xong: đơn chờ=%d đơn hoàn tất=%d khoản dư mới=%d lỗi=%d chạm trần=%t err=%v",
-		res.Processing, res.Completed, res.ExtraFlagged, res.Errors, res.LimitReached, err)
+	log.Printf("[PAYMENT-SWEEP] xong: đơn chờ=%d đơn hoàn tất=%d (không còn mã=%d) khoản dư mới=%d lỗi=%d (ngân hàng=%d) chạm trần=%t err=%v",
+		res.Processing, res.Completed, res.CompletedWithoutCode, res.ExtraFlagged, res.Errors, res.BankErrors, res.LimitReached, err)
+	if res.BankDown {
+		log.Printf("[PAYMENT-SWEEP] CẢNH BÁO: ngân hàng/dịch vụ giao dịch lỗi %d lần liên tiếp, lượt quét dừng sớm; chu kỳ sau sẽ thử lại", reconcileMaxConsecutiveBankErrors)
+	}
 	return err
 }
 
@@ -138,12 +179,34 @@ func (s *PaymentService) ReconcileSweep(ctx context.Context, now time.Time) (Rec
 		Order("created_at ASC").Limit(reconcileMaxLookupsPerSweep).Find(&processing).Error; err != nil {
 		return res, fmt.Errorf("list processing orders: %w", err)
 	}
+	// Đơn hoàn tất phải tra bằng MÃ THANH TOÁN (payment_code): payment_transaction_id của chúng là mã giao dịch
+	// ngân hàng, không nằm trong nội dung chuyển khoản nên ngân hàng luôn trả not_found.
 	var completed []model.Order
+	completedWindow := now.Add(-reconcileCompletedWindow)
 	if err := db.WithContext(ctx).
-		Where("status = ? AND payment_transaction_id IS NOT NULL AND payment_transaction_id <> '' AND paid_at > ?",
-			"completed", now.Add(-reconcileCompletedWindow)).
+		Where("status = ? AND payment_code IS NOT NULL AND payment_code <> '' AND paid_at > ?", "completed", completedWindow).
 		Order("paid_at ASC").Limit(reconcileMaxLookupsPerSweep).Find(&completed).Error; err != nil {
 		return res, fmt.Errorf("list completed orders: %w", err)
+	}
+	var lost int64
+	if err := db.WithContext(ctx).Model(&model.Order{}).
+		Where("status = ? AND (payment_code IS NULL OR payment_code = '') AND paid_at > ?", "completed", completedWindow).
+		Count(&lost).Error; err == nil && lost > 0 {
+		res.CompletedWithoutCode = int(lost)
+		log.Printf("[PAYMENT-SWEEP] %d đơn hoàn tất trong cửa sổ không còn mã thanh toán (hoàn tất trước khi có payment_code): không tra lại được, bỏ qua", lost)
+	}
+
+	// bankFailed ghi nhận một lần tra ngân hàng lỗi và trả true khi đã tới ngưỡng ngắt mạch.
+	consecutiveBankErrors := 0
+	bankFailed := func() bool {
+		res.Errors++
+		res.BankErrors++
+		consecutiveBankErrors++
+		if consecutiveBankErrors >= reconcileMaxConsecutiveBankErrors {
+			res.BankDown = true
+			return true
+		}
+		return false
 	}
 
 	budget := reconcileMaxLookupsPerSweep
@@ -159,11 +222,20 @@ func (s *PaymentService) ReconcileSweep(ctx context.Context, now time.Time) (Rec
 		o := &processing[i]
 		// Đúng luồng người dùng bấm "kiểm tra thanh toán" (hoàn tất, chốt hết hạn, gắn cờ...), quyền
 		// admin vì đây là tác vụ hệ thống.
-		if _, err := s.CheckAndProcessPayment(ctx, o.ID, o.UserID, true); err != nil && !isBenignSweepError(err) {
+		resp, err := s.CheckAndProcessPayment(ctx, o.ID, o.UserID, true)
+		res.Processing++
+		switch {
+		case resp != nil && resp.BankUnavailable:
+			// Ngân hàng lỗi KHÔNG trả error mà trả BankUnavailable: phải đếm ở đây.
+			if bankFailed() {
+				return res, nil
+			}
+		case err != nil && !isBenignSweepError(err):
 			res.Errors++
 			log.Printf("[PAYMENT-SWEEP] order=%s đối chiếu lỗi: %v", o.ID, err)
+		default:
+			consecutiveBankErrors = 0
 		}
-		res.Processing++
 	}
 	for i := range completed {
 		if ctx.Err() != nil {
@@ -175,12 +247,20 @@ func (s *PaymentService) ReconcileSweep(ctx context.Context, now time.Time) (Rec
 		}
 		budget--
 		flagged, err := s.reconcileCompletedExtras(ctx, &completed[i])
-		if err != nil {
-			res.Errors++
-			log.Printf("[PAYMENT-SWEEP] order=%s tra lại đơn hoàn tất lỗi: %v", completed[i].ID, err)
-		}
 		res.ExtraFlagged += flagged
 		res.Completed++
+		switch {
+		case errors.Is(err, errBankLookupFailed):
+			log.Printf("[PAYMENT-SWEEP] order=%s tra lại đơn hoàn tất lỗi: %v", completed[i].ID, err)
+			if bankFailed() {
+				return res, nil
+			}
+		case err != nil:
+			res.Errors++
+			log.Printf("[PAYMENT-SWEEP] order=%s tra lại đơn hoàn tất lỗi: %v", completed[i].ID, err)
+		default:
+			consecutiveBankErrors = 0
+		}
 	}
 	return res, nil
 }
@@ -217,7 +297,8 @@ func (s *PaymentService) flagExtraTransfers(ctx context.Context, order *model.Or
 // thì KHÔNG biết giao dịch nào là khoản đã thanh toán, nên không gắn cờ gì — tránh bật cờ hoàn tiền
 // nhầm cho chính khoản đã trả.
 func (s *PaymentService) reconcileCompletedExtras(ctx context.Context, order *model.Order) (int, error) {
-	if order.Status != "completed" || !hasPaymentCode(order) {
+	// Mã thanh toán (không phải payment_transaction_id, xem paymentCodeOf): đơn mất mã thì không tra được.
+	if order.Status != "completed" || paymentCodeOf(order) == "" {
 		return 0, nil
 	}
 	var usedIDs []string
@@ -233,7 +314,7 @@ func (s *PaymentService) reconcileCompletedExtras(ctx context.Context, order *mo
 
 	result, err := s.lookupBankTransaction(ctx, order, time.Now())
 	if err != nil || result == nil || result.Status == "error" {
-		return 0, fmt.Errorf("bank lookup: %s", bankErrorDetail(err, result))
+		return 0, fmt.Errorf("%w: %s", errBankLookupFailed, bankErrorDetail(err, result))
 	}
 	if !result.Found {
 		return 0, nil

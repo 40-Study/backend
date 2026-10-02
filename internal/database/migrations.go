@@ -433,6 +433,10 @@ func RunPostMigrations(db *gorm.DB) error {
 	if err := runCourseDiscountPriceCleanup(db); err != nil {
 		return err
 	}
+	// Chép mã thanh toán của đơn chưa hoàn tất sang orders.payment_code, xem order_payment_code_backfill.go.
+	if err := runOrderPaymentCodeBackfill(db); err != nil {
+		return err
+	}
 
 	// Đổi user_name cũ của tài khoản Google đang trùng prefix email (issue #105), xem google_user_name_backfill.go.
 	if err := runGoogleUserNameBackfill(db); err != nil {

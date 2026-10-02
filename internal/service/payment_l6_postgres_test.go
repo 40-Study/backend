@@ -9,12 +9,14 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/grpc"
 	"study.com/v1/internal/model"
@@ -287,6 +289,87 @@ func caseTestReconcileSweep_CompletesWaitingAndFlagsExtraTransfers(t *testing.T,
 	}
 }
 
+// codeAwareBank mô phỏng service Python thật: chỉ trả giao dịch khi mã gửi lên ĐÚNG mã thanh toán (nằm trong
+// nội dung chuyển khoản). fakeBankLookup bỏ qua tham số mã nên che mất lỗi tra bằng sai mã (review L6 MAJOR).
+type codeAwareBank struct {
+	code   string
+	result *grpc.CheckTransactionResult
+	mu     sync.Mutex
+	asked  []string
+}
+
+func (b *codeAwareBank) CheckTransaction(_ context.Context, code string, _, _ time.Time) (*grpc.CheckTransactionResult, error) {
+	b.mu.Lock()
+	b.asked = append(b.asked, code)
+	b.mu.Unlock()
+	if code == b.code {
+		return b.result, nil
+	}
+	return bankNotFound, nil
+}
+
+func (b *codeAwareBank) IsHealthy(context.Context) (bool, error) { return true, nil }
+
+func (b *codeAwareBank) askedCodes() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.asked...)
+}
+
+func (f *orderFixture) orderCodes(orderID uuid.UUID) (txID, code string) {
+	f.t.Helper()
+	o := f.loadOrder(orderID)
+	if o.PaymentTransactionID != nil {
+		txID = *o.PaymentTransactionID
+	}
+	if o.PaymentCode != nil {
+		code = *o.PaymentCode
+	}
+	return txID, code
+}
+
+// Review L6 MAJOR: hoàn tất đơn ghi đè payment_transaction_id bằng mã giao dịch ngân hàng, nên sweep đơn completed
+// từng tra bằng mã giao dịch và không bao giờ thấy khoản chuyển dư. Repro đúng kịch bản review: đơn chờ hoàn tất
+// qua CheckAndProcessPayment thật, khách chuyển thêm, sweep phải gắn cờ bằng cách tra theo MÃ THANH TOÁN.
+func caseTestReconcileSweep_CompletedOrderIsLookedUpByPaymentCode(t *testing.T, f *orderFixture) {
+	f.parkExistingOrders()
+	student := f.user()
+	ctx := context.Background()
+
+	orderID, _, _ := f.processingWithCodeExpiring(student, "L6 tra đúng mã", time.Hour)
+	paid := grpc.BankTransaction{TransactionID: "L6-C1", Amount: "499000", TransactionDate: bankDate(time.Now().Add(-time.Minute))}
+	if _, err := f.paymentServiceWith(&codeAwareBank{code: "PAYQA-FINAL", result: bankPaidMany(paid)}, nil).
+		CheckAndProcessPayment(ctx, orderID, student, false); err != nil {
+		t.Fatalf("hoàn tất đơn: %v", err)
+	}
+	if txID, code := f.orderCodes(orderID); txID != "L6-C1" || code != "PAYQA-FINAL" {
+		t.Fatalf("sau hoàn tất: payment_transaction_id=%q payment_code=%q, muốn mã giao dịch L6-C1 và mã thanh toán PAYQA-FINAL còn nguyên", txID, code)
+	}
+
+	// Đơn cũ hoàn tất trước khi có cột payment_code: mã đã mất, KHÔNG được tra bằng mã giao dịch thay thế.
+	legacy, _, _ := f.processingWithCodeExpiring(student, "L6 đơn cũ mất mã", time.Hour)
+	f.exec("UPDATE orders SET status = 'completed', paid_at = now(), payment_transaction_id = 'FT-LEGACY', payment_code = NULL WHERE id = ?", legacy)
+	// Có usage để guard "đơn mất mã" là thứ duy nhất ngăn lần tra (không có usage thì bị bỏ qua từ trước, che mất lỗi).
+	f.exec("INSERT INTO bank_transaction_usages (bank_transaction_id, reference_type, reference_id, created_at) VALUES ('FT-LEGACY', 'order', ?, now())", legacy)
+
+	extra := grpc.BankTransaction{TransactionID: "L6-C2", Amount: "499000", TransactionDate: bankDate(time.Now())}
+	bank := &codeAwareBank{code: "PAYQA-FINAL", result: bankPaidMany(paid, extra)}
+	res, err := f.paymentServiceWith(bank, nil).ReconcileSweep(ctx, time.Now())
+	if err != nil || res.ExtraFlagged != 1 || res.Errors != 0 {
+		t.Fatalf("sweep: res=%+v err=%v, muốn 1 khoản dư được gắn cờ, 0 lỗi (mã đã hỏi ngân hàng: %v)", res, err, bank.askedCodes())
+	}
+	// Đơn cũ mất mã bị loại ngay ở truy vấn (không tốn ngân sách tra, được đếm riêng), không chỉ ở guard sau đó.
+	if res.Completed != 1 || res.CompletedWithoutCode != 1 {
+		t.Fatalf("sweep: Completed=%d CompletedWithoutCode=%d, muốn 1 đơn có mã được tra và 1 đơn mất mã bị đếm riêng", res.Completed, res.CompletedWithoutCode)
+	}
+	mustFlagFor(t, lateFlagReasons(f, orderID), "L6-C2")
+	for _, c := range bank.askedCodes() {
+		if c != "PAYQA-FINAL" {
+			t.Errorf("gửi sang ngân hàng mã %q, muốn chỉ mã thanh toán PAYQA-FINAL (đơn cũ mất mã phải bị bỏ qua)", c)
+		}
+	}
+}
+
 // Đơn completed không có bank_transaction_usage (đơn cũ / hoàn tất đường khác): không biết giao dịch nào
 // là khoản đã trả nên KHÔNG gắn cờ nhầm cho chính khoản đã thanh toán.
 func caseTestReconcileSweep_CompletedWithoutUsageIsNotFlagged(t *testing.T, f *orderFixture) {
@@ -336,19 +419,165 @@ func caseTestReconcileSweep_WindowAndMissingBankService(t *testing.T, f *orderFi
 	}
 }
 
+// Review L6 MINOR: Python/ngân hàng chết thì lượt quét phải dừng sau vài lỗi liên tiếp (không gọi hết mọi đơn,
+// mỗi lời gọi chờ tới 10s), đếm lỗi ngân hàng vào Errors, và RunReconcileSweep không trả lỗi (không để asynq retry).
+func caseTestReconcileSweep_StopsAfterConsecutiveBankErrors(t *testing.T, f *orderFixture) {
+	f.parkExistingOrders()
+	student := f.user()
+	ctx := context.Background()
+	for i := 0; i < 5; i++ {
+		f.processingWithCodeExpiring(student, "L6 ngân hàng chết", time.Hour)
+	}
+	bank := &fakeBankLookup{result: bankError}
+	pay := f.paymentServiceWith(bank, nil)
+
+	res, err := pay.ReconcileSweep(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if !res.BankDown || res.BankErrors != reconcileMaxConsecutiveBankErrors || res.Errors != reconcileMaxConsecutiveBankErrors {
+		t.Fatalf("res=%+v, muốn BankDown và đúng %d lỗi ngân hàng được đếm vào Errors", res, reconcileMaxConsecutiveBankErrors)
+	}
+	if got := bank.calls.Load(); int(got) != reconcileMaxConsecutiveBankErrors {
+		t.Fatalf("gọi ngân hàng %d lần, muốn dừng ở %d (5 đơn chờ)", got, reconcileMaxConsecutiveBankErrors)
+	}
+	if err := pay.RunReconcileSweep(ctx); err != nil {
+		t.Fatalf("RunReconcileSweep khi ngân hàng chết phải trả nil (không retry), nhận %v", err)
+	}
+}
+
+// Một lần ngân hàng thành công xen giữa thì bộ đếm lỗi liên tiếp được đặt lại (không ngắt mạch oan).
+func caseTestReconcileSweep_BankErrorsMustBeConsecutive(t *testing.T, f *orderFixture) {
+	f.parkExistingOrders()
+	student := f.user()
+	for i := 0; i < 5; i++ {
+		f.processingWithCodeExpiring(student, "L6 lỗi không liên tiếp", time.Hour)
+	}
+	// lỗi, lỗi, thành công (không có giao dịch), lỗi, lỗi: không lần nào đủ 3 lỗi LIÊN TIẾP.
+	bank := &fakeBankLookup{seq: []*grpc.CheckTransactionResult{bankError, bankError, bankNotFound, bankError, bankError}}
+	res, err := f.paymentServiceWith(bank, nil).ReconcileSweep(context.Background(), time.Now())
+	if err != nil || res.BankDown || res.BankErrors != 4 || bank.calls.Load() != 5 {
+		t.Fatalf("res=%+v err=%v calls=%d, muốn quét đủ 5 đơn, 4 lỗi ngân hàng, không ngắt mạch", res, err, bank.calls.Load())
+	}
+}
+
+// Review L6 MINOR: lateRefundEligible nay gồm completed/refunded, nên danh sách đơn của học viên không được
+// tốn một truy vấn history cho MỖI đơn đã hoàn tất: phải đúng một truy vấn cho cả trang.
+func caseTestUserOrderList_LateRefundHistoryIsOneQuery(t *testing.T, f *orderFixture) {
+	student := f.user()
+	const orders = 4
+	for i := 0; i < orders; i++ {
+		id, _, _ := f.processingWithCodeExpiring(student, "L6 N+1", time.Hour)
+		f.exec("UPDATE orders SET status = 'completed', paid_at = now() WHERE id = ?", id)
+	}
+	var queries atomic.Int32
+	name := "l6:count-history-queries-" + uuid.NewString()
+	if err := f.db.Callback().Query().After("gorm:query").Register(name, func(tx *gorm.DB) {
+		if strings.Contains(tx.Statement.SQL.String(), "order_status_hist") {
+			queries.Add(1)
+		}
+	}); err != nil {
+		t.Fatalf("đăng ký bộ đếm truy vấn: %v", err)
+	}
+	defer func() { _ = f.db.Callback().Query().Remove(name) }()
+
+	list, err := f.svc.GetUserOrders(context.Background(), student, 1, 10, "")
+	if err != nil || len(list.Orders) != orders {
+		t.Fatalf("GetUserOrders: %d đơn, err=%v, muốn %d", len(list.Orders), err, orders)
+	}
+	if got := queries.Load(); got != 1 {
+		t.Fatalf("%d đơn completed tốn %d truy vấn history, muốn đúng 1 cho cả trang (N+1)", orders, got)
+	}
+}
+
+// Dữ liệu cũ discount_price = 0 không được làm đơn hàng thành 0đ (EffectivePrice ở đường tính tiền thật).
+func caseTestCreateOrder_ZeroDiscountPriceChargesFullPrice(t *testing.T, f *orderFixture) {
+	student := f.user()
+	course := f.course("L6 giảm 0")
+	f.exec("UPDATE courses SET discount_price = 0 WHERE id = ?", course)
+	order := f.createOrder(student, course)
+	if order.TotalAmount.String() != "499000" {
+		t.Fatalf("khoá có discount_price = 0: đơn tính %s, muốn giá gốc 499000 (0 là dữ liệu cũ = không khuyến mãi)", order.TotalAmount)
+	}
+}
+
+// paymentCodeOf: payment_code là nguồn chính; đơn chưa hoàn tất mà chưa có payment_code dùng payment_transaction_id
+// (còn là mã thanh toán); đơn completed/refunded KHÔNG được rơi về payment_transaction_id (lúc đó là mã giao dịch
+// ngân hàng, tra bằng nó luôn not_found).
+func TestPaymentCodeOf(t *testing.T) {
+	s := func(v string) *string { return &v }
+	cases := []struct {
+		name   string
+		status string
+		txID   *string
+		code   *string
+		want   string
+	}{
+		{"payment_code thắng payment_transaction_id", "completed", s("FT-BANK"), s("PAY-1"), "PAY-1"},
+		{"processing chưa backfill rơi về payment_transaction_id", "processing", s("PAY-2"), nil, "PAY-2"},
+		{"expired chưa backfill rơi về payment_transaction_id", "expired", s("PAY-3"), nil, "PAY-3"},
+		{"completed mất mã KHÔNG rơi về mã giao dịch", "completed", s("FT-BANK"), nil, ""},
+		{"refunded mất mã KHÔNG rơi về mã giao dịch", "refunded", s("FT-BANK"), nil, ""},
+		{"payment_code rỗng coi như không có", "completed", s("FT-BANK"), s(""), ""},
+		{"chưa cấp mã", "pending", nil, nil, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			o := &model.Order{Status: c.status, PaymentTransactionID: c.txID, PaymentCode: c.code}
+			if got := paymentCodeOf(o); got != c.want {
+				t.Fatalf("paymentCodeOf = %q, muốn %q", got, c.want)
+			}
+		})
+	}
+}
+
+// sweepSlotKey: cùng khung chu kỳ cùng key (nhiều instance chỉ quét một lần), khung khác thì key khác.
+func TestSweepSlotKey(t *testing.T) {
+	base := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	iv := 10 * time.Minute
+	if sweepSlotKey(base, iv) != sweepSlotKey(base.Add(9*time.Minute+59*time.Second), iv) {
+		t.Error("hai thời điểm trong cùng khung 10 phút phải cùng key")
+	}
+	if sweepSlotKey(base, iv) == sweepSlotKey(base.Add(10*time.Minute), iv) {
+		t.Error("khung kế tiếp phải khác key")
+	}
+	if sweepSlotKey(base, iv) == sweepSlotKey(base, 7*time.Minute) {
+		t.Error("khoảng chu kỳ khác phải cho key khác để đổi cấu hình không dính khung cũ")
+	}
+}
+
 // fakeSweepLocker — SweepLocker giả: busy = true mô phỏng instance khác đang giữ khoá.
 type fakeSweepLocker struct {
 	busy     bool
 	acquired atomic.Int32
 	released atomic.Int32
+
+	mu   sync.Mutex
+	held map[string]bool // như Redis SET NX: một key đã giữ thì lần lấy sau thất bại tới khi được nhả
+	keys []string
 }
 
-func (l *fakeSweepLocker) TryLock(context.Context, string, time.Duration) (func(), bool, error) {
+func (l *fakeSweepLocker) TryLock(_ context.Context, key string, _ time.Duration) (func(), bool, error) {
 	if l.busy {
 		return nil, false, nil
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.held == nil {
+		l.held = map[string]bool{}
+	}
+	if l.held[key] {
+		return nil, false, nil
+	}
+	l.held[key] = true
+	l.keys = append(l.keys, key)
 	l.acquired.Add(1)
-	return func() { l.released.Add(1) }, true, nil
+	return func() {
+		l.mu.Lock()
+		delete(l.held, key)
+		l.mu.Unlock()
+		l.released.Add(1)
+	}, true, nil
 }
 
 // blockingBank chặn CheckTransaction tới khi release để dựng tình huống hai lượt quét chồng nhau.
@@ -388,8 +617,14 @@ func caseTestRunReconcileSweep_DoesNotOverlap(t *testing.T, f *orderFixture) {
 	if err := pay.RunReconcileSweep(ctx); err != nil || bank.calls.Load() == 0 {
 		t.Fatalf("khoá rảnh: err=%v bankCalls=%d, muốn có chạy", err, bank.calls.Load())
 	}
-	if free.acquired.Load() != 1 || free.released.Load() != 1 {
-		t.Fatalf("khoá lấy=%d nhả=%d, muốn 1/1", free.acquired.Load(), free.released.Load())
+	// Hai khoá: khung chu kỳ (giữ tới hết hạn, không nhả) và khoá đang chạy (nhả khi xong).
+	if free.acquired.Load() != 2 || free.released.Load() != 1 {
+		t.Fatalf("khoá lấy=%d nhả=%d, muốn 2/1 (khung chu kỳ giữ, khoá đang chạy nhả)", free.acquired.Load(), free.released.Load())
+	}
+	// Nhiều instance: task đến SAU khi lượt đầu đã xong, cùng khung chu kỳ, phải bỏ qua (không gọi ngân hàng nữa).
+	before := bank.calls.Load()
+	if err := pay.RunReconcileSweep(ctx); err != nil || bank.calls.Load() != before {
+		t.Fatalf("task thứ hai cùng chu kỳ: err=%v bankCalls %d -> %d, muốn bỏ qua", err, before, bank.calls.Load())
 	}
 
 	// 3. Hai lượt chồng nhau trong cùng tiến trình: lượt hai bỏ qua, ngân hàng chỉ bị gọi bởi lượt một.
@@ -425,8 +660,13 @@ func TestPaymentL6(t *testing.T) {
 		{"OrderDetail_LateRefundItemsOnlyForAdmin", caseTestOrderDetail_LateRefundItemsOnlyForAdmin},
 		{"ProcessingOrder_ExtraTransferIsFlaggedForRefund", caseTestProcessingOrder_ExtraTransferIsFlaggedForRefund},
 		{"ReconcileSweep_CompletesWaitingAndFlagsExtraTransfers", caseTestReconcileSweep_CompletesWaitingAndFlagsExtraTransfers},
+		{"ReconcileSweep_CompletedOrderIsLookedUpByPaymentCode", caseTestReconcileSweep_CompletedOrderIsLookedUpByPaymentCode},
 		{"ReconcileSweep_CompletedWithoutUsageIsNotFlagged", caseTestReconcileSweep_CompletedWithoutUsageIsNotFlagged},
 		{"ReconcileSweep_WindowAndMissingBankService", caseTestReconcileSweep_WindowAndMissingBankService},
+		{"ReconcileSweep_StopsAfterConsecutiveBankErrors", caseTestReconcileSweep_StopsAfterConsecutiveBankErrors},
+		{"ReconcileSweep_BankErrorsMustBeConsecutive", caseTestReconcileSweep_BankErrorsMustBeConsecutive},
+		{"UserOrderList_LateRefundHistoryIsOneQuery", caseTestUserOrderList_LateRefundHistoryIsOneQuery},
+		{"CreateOrder_ZeroDiscountPriceChargesFullPrice", caseTestCreateOrder_ZeroDiscountPriceChargesFullPrice},
 		{"RunReconcileSweep_DoesNotOverlap", caseTestRunReconcileSweep_DoesNotOverlap},
 	}
 	for _, c := range cases {

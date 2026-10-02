@@ -5,6 +5,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -77,6 +78,8 @@ func TestMarkLatePaymentRefunded_ErrorMapping(t *testing.T) {
 	}{
 		"không có cờ tiền về muộn": {service.ErrLateRefundNotNeeded, fiber.StatusBadRequest, "refund_not_needed"},
 		"đơn không tồn tại":        {service.ErrOrderNotFound, fiber.StatusNotFound, "not_found"},
+		// Service bọc lỗi kèm mã lạ (fmt.Errorf("%w: %q")): handler phải nhận ra bằng errors.Is, trả 400 chứ không 500.
+		"mã giao dịch hoàn lạ": {fmt.Errorf("%w: %q", service.ErrLateRefundUnknownRef, "FT-LA"), fiber.StatusBadRequest, "unknown_late_payment"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

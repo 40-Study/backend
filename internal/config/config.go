@@ -136,7 +136,8 @@ const DefaultWithdrawalMinAmount = "100000"
 // DefaultPaymentReconcileIntervalMinutes — mặc định của PAYMENT_RECONCILE_INTERVAL_MINUTES.
 const DefaultPaymentReconcileIntervalMinutes = 10
 
-// validatePaymentReconcileInterval là hàm thuần để unit test: 1-59 phút (cron `*/N * * * *`).
+// validatePaymentReconcileInterval là hàm thuần để unit test: 1-59 phút. Job đăng ký "@every Nm" nên đều với
+// mọi N; trần 59 chỉ giữ chu kỳ ở mức phút hợp lý cho một job đối chiếu.
 func validatePaymentReconcileInterval(minutes int) (int, error) {
 	if minutes < 1 || minutes > 59 {
 		return 0, fmt.Errorf("PAYMENT_RECONCILE_INTERVAL_MINUTES must be between 1 and 59, got %d", minutes)

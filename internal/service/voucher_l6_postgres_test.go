@@ -38,6 +38,16 @@ func caseTestUnsaveVoucher_HoldersOnlyIsNotRemovable(t *testing.T, f *contestFix
 		t.Fatalf("người giữ mất quyền tra voucher sau khi bị từ chối bỏ lưu: %v", err)
 	}
 
+	// Người KHÔNG giữ voucher dành riêng: cùng lỗi với voucher không tồn tại (không xác nhận UUID là voucher dành
+	// riêng), và không đụng tới quyền của người giữ thật.
+	stranger := f.user("student")
+	if err := vs.UnsaveVoucher(ctx, stranger, private.ID); !errors.Is(err, ErrUserVoucherNotFound) {
+		t.Fatalf("người lạ bỏ lưu voucher dành riêng: nhận %v, muốn ErrUserVoucherNotFound (không lộ voucher)", err)
+	}
+	if err := vs.UnsaveVoucher(ctx, stranger, uuid.New()); !errors.Is(err, ErrUserVoucherNotFound) {
+		t.Fatalf("voucher không tồn tại: nhận %v, muốn cùng ErrUserVoucherNotFound", err)
+	}
+
 	// Voucher công khai: tự lưu rồi bỏ lưu bình thường.
 	pub := f.holdersVoucher(false, nil)
 	if _, err := vs.SaveVoucher(ctx, holder, &dto.SaveVoucherRequest{VoucherCode: pub.Code}); err != nil {

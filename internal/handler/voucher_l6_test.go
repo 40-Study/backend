@@ -65,6 +65,22 @@ func TestUnsaveVoucher_HoldersOnlyReturns403WithCode(t *testing.T) {
 	}
 }
 
+// Người không giữ voucher (hoặc voucher không tồn tại) nhận cùng 404, không phải 403 "dành riêng": 403 sẽ xác
+// nhận một UUID là voucher holders_only cho người lạ.
+func TestUnsaveVoucher_NotHolderGets404(t *testing.T) {
+	stub := &unsaveStub{unsaveErr: service.ErrUserVoucherNotFound}
+	h := NewVoucherHandler(stub)
+	app := fiber.New()
+	app.Delete("/vouchers/:id/save", func(c *fiber.Ctx) error {
+		c.Locals("user_id", uuid.New())
+		return h.UnsaveVoucher(c)
+	})
+	status, body := call(t, app, "DELETE", "/vouchers/"+uuid.NewString()+"/save")
+	if status != fiber.StatusNotFound || body["code"] != "ERR_VOUCHER_NOT_FOUND" {
+		t.Fatalf("status=%d body=%v, muốn 404 ERR_VOUCHER_NOT_FOUND", status, body)
+	}
+}
+
 // Danh sách admin trả limit/offset ĐÃ chuẩn hoá để web phân trang theo (không phải số client gửi).
 func TestGetAllVouchers_EchoesNormalisedLimit(t *testing.T) {
 	stub := &unsaveStub{}

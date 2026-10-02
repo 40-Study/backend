@@ -92,6 +92,8 @@ type PaymentService struct {
 	// sweepMu + sweepLocker (L6 mục 5): chống job nền đối chiếu chạy chồng — xem payment_reconcile_sweep.go.
 	sweepMu     sync.Mutex
 	sweepLocker SweepLocker
+	// sweepInterval — chu kỳ job (SetSweepInterval) để khoá phân tán theo khung chu kỳ.
+	sweepInterval time.Duration
 }
 
 // M3-09 (review vòng 3b, bổ sung vòng 4; Minor vòng 4b/5 xóa nốt paymentEventRepo): TRƯỚC ĐÂY

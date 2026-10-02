@@ -114,10 +114,16 @@ func (s *PaymentService) lookupBankTransaction(ctx context.Context, order *model
 	if s.transactionService == nil {
 		return nil, errors.New("transaction service unavailable")
 	}
+	// Mã THANH TOÁN, không phải payment_transaction_id (sau khi hoàn tất cột đó là mã giao dịch ngân hàng,
+	// service Python khớp theo mã nằm trong nội dung chuyển khoản nên tra bằng nó luôn not_found).
+	code := paymentCodeOf(order)
+	if code == "" {
+		return nil, errors.New("order has no payment code to look up")
+	}
 	fromTime, toTime := bankLookupWindow(order, now)
 	lookupCtx, cancel := context.WithTimeout(ctx, bankLookupTimeout)
 	defer cancel()
-	return s.transactionService.CheckTransaction(lookupCtx, *order.PaymentTransactionID, fromTime, toTime)
+	return s.transactionService.CheckTransaction(lookupCtx, code, fromTime, toTime)
 }
 
 // reconcileIssuedOrder — bộ quyết định DUY NHẤT cho đơn đã cấp mã (processing/expired/cancelled).
@@ -408,12 +414,20 @@ func (s *PaymentService) flagRefundNeeded(ctx context.Context, order *model.Orde
 	return true
 }
 
+// lateFlagReasonTail — phần đuôi (chỉ để người đọc) của Reason dòng cờ. Đơn completed đã được thanh toán
+// bằng một giao dịch khác, nên khoản này là chuyển DƯ chứ không phải trả muộn: không nói "mã hết hạn".
+func lateFlagReasonTail(order *model.Order) string {
+	if order.Status == "completed" || order.Status == "refunded" {
+		return fmt.Sprintf(" for order already %s via a different transaction (extra transfer to the same payment code). Order is unchanged; refund this transfer manually.", order.Status)
+	}
+	return fmt.Sprintf(" for order already %s (payment code expired at %s). Order is NOT restored; refund manually.",
+		order.Status, paymentCodeDeadline(order).Format(time.RFC3339))
+}
+
 // recordRefundFlag — thân của flagRefundNeeded; trả true CHỈ khi vừa ghi một dòng cờ MỚI (false khi
 // giao dịch đã có cờ từ trước, hoặc ghi lỗi). Job quét dùng giá trị này để đếm khoản mới.
 func (s *PaymentService) recordRefundFlag(ctx context.Context, order *model.Order, result *grpc.CheckTransactionResult) bool {
-	note := lateFlagReasonHead(result.TransactionID, result.Amount, result.TransactionDate) +
-		fmt.Sprintf(" for order already %s (payment code expired at %s). Order is NOT restored; refund manually.",
-			order.Status, paymentCodeDeadline(order).Format(time.RFC3339))
+	note := lateFlagReasonHead(result.TransactionID, result.Amount, result.TransactionDate) + lateFlagReasonTail(order)
 	var recorded bool
 	txErr := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
 		txDB := txRepo.TxDB()

@@ -114,6 +114,7 @@ func (r *OrderRepository) buildUpdatePaymentCodeQuery(orderID uuid.UUID, payment
 	updates := map[string]interface{}{
 		"status":                  "processing",
 		"payment_transaction_id":  paymentCode,
+		"payment_code":            paymentCode, // bản bất biến: payment_transaction_id sẽ bị mã giao dịch ghi đè
 		"payment_code_expired_at": expiredAt,
 	}
 	// B-03 (review vòng 5): UPDATE CÓ ĐIỀU KIỆN thay vì vô điều kiện như trước — 2 request tạo

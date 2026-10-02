@@ -32,6 +32,14 @@ func EveryNMinutes(n int) Frequency {
 	return Frequency(fmt.Sprintf("*/%d * * * *", n))
 }
 
+// EveryInterval tạo frequency chạy cách đều mỗi d kể từ lúc scheduler khởi động ("@every 7m"). Khác
+// EveryNMinutes: cron `*/N` với N không chia hết 60 chạy không đều (N=7: khoảng cách 7 phút rồi 4 phút).
+//
+//	EveryInterval(10*time.Minute) → "@every 10m0s"
+func EveryInterval(d time.Duration) Frequency {
+	return Frequency("@every " + d.String())
+}
+
 // EveryNHours tạo frequency chạy mỗi N giờ (phút 0).
 //
 //	EveryNHours(2) → "0 */2 * * *"
@@ -92,13 +100,13 @@ func (q *Queue) Handle(taskType string, fn TaskFunc) {
 	})
 }
 
-func (q *Queue) Schedule(taskType string, freq Frequency, fn TaskFunc, queue string) error {
+func (q *Queue) Schedule(taskType string, freq Frequency, fn TaskFunc, queue string, opts ...asynq.Option) error {
 	q.Handle(taskType, fn)
 
 	_, err := q.scheduler.Register(
 		string(freq),
 		asynq.NewTask(taskType, nil),
-		asynq.Queue(queue),
+		append([]asynq.Option{asynq.Queue(queue)}, opts...)...,
 	)
 	if err != nil {
 		return fmt.Errorf("register periodic task %s: %w", taskType, err)

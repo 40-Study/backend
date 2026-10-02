@@ -111,6 +111,24 @@ func hasPaymentCode(order *model.Order) bool {
 	return order.PaymentTransactionID != nil && *order.PaymentTransactionID != ""
 }
 
+// paymentCodeOf trả MÃ THANH TOÁN (nội dung chuyển khoản) của đơn để tra ngân hàng, "" nếu không còn biết.
+// payment_code là nguồn chính. Đơn chưa hoàn tất mà chưa có payment_code (cấp mã trước khi có cột đó, chưa
+// backfill) thì payment_transaction_id vẫn là mã thanh toán. Đơn completed/refunded KHÔNG được rơi về
+// payment_transaction_id: lúc đó nó là mã giao dịch ngân hàng, tra bằng nó luôn ra not_found (và tốn một lần
+// đăng nhập MB mỗi lần gọi), nên đơn cũ mất mã trả "" thay vì tra sai.
+func paymentCodeOf(order *model.Order) string {
+	if order.PaymentCode != nil && *order.PaymentCode != "" {
+		return *order.PaymentCode
+	}
+	if order.Status == "completed" || order.Status == "refunded" {
+		return ""
+	}
+	if order.PaymentTransactionID != nil {
+		return *order.PaymentTransactionID
+	}
+	return ""
+}
+
 // M3-09 (review vòng 3b, bổ sung vòng 4): TRƯỚC ĐÂY NewOrderService còn nhận couponRepo/
 // enrollmentRepo/orderHistoryRepo — cả 3 đã 0 lần được đọc trong order_service.go (grep xác
 // nhận): couponRepo bỏ hẳn sau khi CompleteOrder (dùng flow coupon cũ) bị xóa ở vòng 3b;
@@ -606,6 +624,8 @@ func (s *OrderService) GetUserOrders(ctx context.Context, userID uuid.UUID, page
 		return nil, err
 	}
 
+	// Một truy vấn history cho cả trang: lateRefundEligible gồm completed/refunded nên gọi từng đơn là N+1.
+	lateSummaries := lateRefundSummaries(s.orderRepo.TxDB(), orders)
 	orderResponses := make([]dto.OrderResponse, 0, len(orders))
 	for i := range orders {
 		// B2 (QA vòng 2 N3): trước đây `items, _ :=` nuốt lỗi, trả đơn không có dòng nào như thể
@@ -615,7 +635,7 @@ func (s *OrderService) GetUserOrders(ctx context.Context, userID uuid.UUID, page
 			return nil, err
 		}
 		// Danh sách "đơn của tôi" luôn là góc nhìn học viên: ẩn lý do hoàn tiền nội bộ.
-		orderResponses = append(orderResponses, *hideInternalRefundFields(s.toOrderResponse(&orders[i], items)))
+		orderResponses = append(orderResponses, *hideInternalRefundFields(s.toOrderResponseWith(&orders[i], items, lateSummaries[orders[i].ID])))
 	}
 
 	totalPages := int(total) / limit
@@ -902,6 +922,12 @@ func (s *OrderService) getCoursesByIDs(ctx context.Context, ids []uuid.UUID) ([]
 }
 
 func (s *OrderService) toOrderResponse(order *model.Order, items []model.OrderItem) *dto.OrderResponse {
+	return s.toOrderResponseWith(order, items, lateRefundSummaryOf(s.orderRepo.TxDB(), order))
+}
+
+// toOrderResponseWith — như toOrderResponse nhưng nhận sẵn lateSummary, để danh sách đơn gom MỘT truy vấn
+// history cho cả trang (lateRefundSummaries) thay vì một truy vấn mỗi đơn.
+func (s *OrderService) toOrderResponseWith(order *model.Order, items []model.OrderItem, lateSummary lateRefundSummary) *dto.OrderResponse {
 	itemResponses := make([]dto.OrderItemResponse, 0, len(items))
 	for _, item := range items {
 		itemResponses = append(itemResponses, dto.OrderItemResponse{
@@ -914,7 +940,6 @@ func (s *OrderService) toOrderResponse(order *model.Order, items []model.OrderIt
 		})
 	}
 
-	lateSummary := lateRefundSummaryOf(s.orderRepo.TxDB(), order)
 	needRefund, lateRefundedAt := lateRefundStateOf(lateSummary)
 	response := &dto.OrderResponse{
 		ID:             order.ID,

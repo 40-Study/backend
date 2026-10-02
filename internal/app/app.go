@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -69,6 +70,7 @@ func New() (*App, error) {
 		if resources.Redis != nil {
 			services.Payment.SetSweepLocker(service.NewRedisSweepLocker(resources.Redis))
 		}
+		services.Payment.SetSweepInterval(time.Duration(resources.Config.PaymentReconcileIntervalMinutes) * time.Minute) // cùng chu kỳ với lịch ngay dưới: khoá phân tán theo khung chu kỳ
 		if err := asynq_queue.RegisterPaymentReconcile(resources.Queue, resources.Config.PaymentReconcileIntervalMinutes, services.Payment.RunReconcileSweep); err != nil {
 			log.Printf("Warning: Failed to register payment reconcile job: %v", err)
 		}

@@ -82,7 +82,8 @@ func (f *orderFixture) processingWithCodeExpiring(student uuid.UUID, title strin
 	codeExpiry = time.Now().Add(offset).Truncate(time.Second)
 	// Đơn thật tạo TRƯỚC khi cấp mã (hạn mã <= created_at + 24h): cửa sổ tra cứu cố định (vòng 4)
 	// tính từ ngày cấp mã nên created_at phải nằm trước hạn mã như dữ liệu thật.
-	f.exec("UPDATE orders SET status = 'processing', payment_transaction_id = 'PAYQA-FINAL', payment_code_expired_at = ?, created_at = ? WHERE id = ?",
+	// payment_code giống UpdatePaymentCode thật: mã bất biến, còn nguyên khi payment_transaction_id bị mã giao dịch ghi đè.
+	f.exec("UPDATE orders SET status = 'processing', payment_transaction_id = 'PAYQA-FINAL', payment_code = 'PAYQA-FINAL', payment_code_expired_at = ?, created_at = ? WHERE id = ?",
 		codeExpiry, codeExpiry.Add(-23*time.Hour), order.ID)
 	return order.ID, codeExpiry, courseID
 }
