@@ -113,7 +113,7 @@ type Config struct {
 	// LoadConfig báo lỗi lúc khởi động thay vì lặng lẽ đổi giá trị.
 	PaymentReconcileIntervalMinutes int `mapstructure:"PAYMENT_RECONCILE_INTERVAL_MINUTES"`
 	// MigrateLockTimeoutMinutes (L9 mục 3): thời gian tối đa (phút) một tiến trình khởi động chờ khoá migrate khi
-	// tiến trình khác đang migrate. Mặc định 10; hợp lệ 1-1440. Hết giờ thì khởi động dừng với lỗi rõ ràng.
+	// tiến trình khác đang migrate. Mặc định 45 (một lần migrate local từng mất ~30 phút); hợp lệ 1-1440. Hết giờ thì khởi động dừng với lỗi rõ ràng.
 	MigrateLockTimeoutMinutes int `mapstructure:"MIGRATE_LOCK_TIMEOUT_MINUTES"`
 
 	// OAuth Providers
@@ -149,7 +149,7 @@ func validatePaymentReconcileInterval(minutes int) (int, error) {
 }
 
 // DefaultMigrateLockTimeoutMinutes — mặc định của MIGRATE_LOCK_TIMEOUT_MINUTES.
-const DefaultMigrateLockTimeoutMinutes = 10
+const DefaultMigrateLockTimeoutMinutes = 45
 
 // validateMigrateLockTimeout là hàm thuần để unit test: 1-1440 phút (một ngày là trần hợp lý cho một lần chờ
 // migration; không có "vô hạn" vì đó chính là lỗi mà giới hạn này sửa).
