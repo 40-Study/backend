@@ -222,7 +222,7 @@ func (s *PaymentService) ReconcileSweep(ctx context.Context, now time.Time) (Rec
 		o := &processing[i]
 		// Đúng luồng người dùng bấm "kiểm tra thanh toán" (hoàn tất, chốt hết hạn, gắn cờ...), quyền
 		// admin vì đây là tác vụ hệ thống.
-		resp, err := s.CheckAndProcessPayment(ctx, o.ID, o.UserID, true)
+		resp, err := s.checkAndProcessPayment(ctx, o.ID, o.UserID, true, reconcileOptions{deferUnverifiedExpiry: true})
 		res.Processing++
 		switch {
 		case resp != nil && resp.BankUnavailable:
@@ -246,7 +246,7 @@ func (s *PaymentService) ReconcileSweep(ctx context.Context, now time.Time) (Rec
 			return res, nil
 		}
 		budget--
-		flagged, err := s.reconcileCompletedExtras(ctx, &completed[i])
+		flagged, bankAnswered, err := s.reconcileCompletedExtras(ctx, &completed[i])
 		res.ExtraFlagged += flagged
 		res.Completed++
 		switch {
@@ -258,9 +258,11 @@ func (s *PaymentService) ReconcileSweep(ctx context.Context, now time.Time) (Rec
 		case err != nil:
 			res.Errors++
 			log.Printf("[PAYMENT-SWEEP] order=%s tra lại đơn hoàn tất lỗi: %v", completed[i].ID, err)
-		default:
+		case bankAnswered:
 			consecutiveBankErrors = 0
 		}
+		// Không lỗi nhưng ngân hàng cũng không được hỏi (đơn không có bản ghi usage) thì KHÔNG phải bằng chứng
+		// ngân hàng đã sống lại, nên không đặt lại bộ đếm: đơn như vậy xen kẽ sẽ che mất chuỗi lỗi liên tiếp.
 	}
 	return res, nil
 }
@@ -291,40 +293,40 @@ func (s *PaymentService) flagExtraTransfers(ctx context.Context, order *model.Or
 
 // reconcileCompletedExtras tra lại ngân hàng cho một đơn ĐÃ hoàn tất: giao dịch khớp mã mà đơn không
 // dùng (không có trong bank_transaction_usages của đơn này) là khoản chuyển thêm → cờ cần hoàn tiền.
-// Trả số khoản vừa gắn cờ mới.
+// Trả số khoản vừa gắn cờ mới và bankAnswered = true CHỈ khi ngân hàng đã trả lời được (kể cả "không thấy
+// giao dịch"); các nhánh bỏ qua không hỏi ngân hàng trả false để job không coi đó là bằng chứng ngân hàng sống.
 //
 // An toàn: đơn hoàn tất không có bản ghi usage nào (đơn cũ trước M-06, hoặc hoàn tất bằng đường khác)
 // thì KHÔNG biết giao dịch nào là khoản đã thanh toán, nên không gắn cờ gì — tránh bật cờ hoàn tiền
 // nhầm cho chính khoản đã trả.
-func (s *PaymentService) reconcileCompletedExtras(ctx context.Context, order *model.Order) (int, error) {
+func (s *PaymentService) reconcileCompletedExtras(ctx context.Context, order *model.Order) (flagged int, bankAnswered bool, err error) {
 	// Mã thanh toán (không phải payment_transaction_id, xem paymentCodeOf): đơn mất mã thì không tra được.
 	if order.Status != "completed" || paymentCodeOf(order) == "" {
-		return 0, nil
+		return 0, false, nil
 	}
 	var usedIDs []string
 	if err := s.orderRepo.TxDB().WithContext(ctx).Model(&model.BankTransactionUsage{}).
 		Where("reference_type = ? AND reference_id = ?", "order", order.ID).
 		Pluck("bank_transaction_id", &usedIDs).Error; err != nil {
-		return 0, fmt.Errorf("read bank transaction usages: %w", err)
+		return 0, false, fmt.Errorf("read bank transaction usages: %w", err)
 	}
 	if len(usedIDs) == 0 {
 		log.Printf("[PAYMENT-SWEEP] order=%s hoàn tất nhưng không có bank_transaction_usage: không xác định được giao dịch thừa, bỏ qua", order.ID)
-		return 0, nil
+		return 0, false, nil
 	}
 
 	result, err := s.lookupBankTransaction(ctx, order, time.Now())
 	if err != nil || result == nil || result.Status == "error" {
-		return 0, fmt.Errorf("%w: %s", errBankLookupFailed, bankErrorDetail(err, result))
+		return 0, false, fmt.Errorf("%w: %s", errBankLookupFailed, bankErrorDetail(err, result))
 	}
 	if !result.Found {
-		return 0, nil
+		return 0, true, nil
 	}
 	used := map[string]bool{}
 	for _, id := range usedIDs {
 		used[id] = true
 	}
 	completed := *order
-	flagged := 0
 	for _, tx := range transactionResults(result) {
 		if tx.TransactionID == "" || used[tx.TransactionID] {
 			continue
@@ -334,5 +336,5 @@ func (s *PaymentService) reconcileCompletedExtras(ctx context.Context, order *mo
 			log.Printf("[PAYMENT-EXTRA-TRANSFER] order=%s đã hoàn tất, nhận thêm tx=%s amount=%s cùng mã: đã bật cờ cần hoàn tiền", order.ID, tx.TransactionID, tx.Amount)
 		}
 	}
-	return flagged, nil
+	return flagged, true, nil
 }

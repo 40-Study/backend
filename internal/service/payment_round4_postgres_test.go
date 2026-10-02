@@ -225,7 +225,7 @@ func TestCompletePaidOrder_CancelWonTheRaceFlagsRefund(t *testing.T) {
 	f.exec("UPDATE orders SET status = 'cancelled' WHERE id = ?", orderID)
 	pay := f.paymentServiceWith(&fakeBankLookup{result: bankPaid(time.Now())}, nil)
 
-	st, err := pay.reconcileIssuedOrder(context.Background(), &stale)
+	st, err := pay.reconcileIssuedOrder(context.Background(), &stale, reconcileOptions{})
 	if err != nil || st.Status != "cancelled" || !st.LatePaymentReceived {
 		t.Fatalf("resp=%+v err=%v, muốn cancelled + cờ hoàn tiền", st, err)
 	}

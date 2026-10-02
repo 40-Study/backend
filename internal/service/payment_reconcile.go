@@ -17,6 +17,8 @@ package service
 //      không hoàn tất mà gắn cờ hoàn tiền; hoàn tất thắng thì huỷ đọc lại và báo đã thanh toán.
 //   D. Không kẹt vĩnh viễn: đơn processing quá hạn mã + unverifiedExpiryAfter mà ngân hàng vẫn lỗi
 //      → expired + history unverified_expiry + [PAYMENT-ALERT]. Tiền về sau đó: gắn cờ hoàn tiền (A).
+//      Chỉ khi NGƯỜI DÙNG/ADMIN bấm kiểm tra; job nền (reconcileOptions.deferUnverifiedExpiry, L8 mục 5) không
+//      chốt theo cách này mà chờ lượt sau.
 
 import (
 	"context"
@@ -128,7 +130,7 @@ func (s *PaymentService) lookupBankTransaction(ctx context.Context, order *model
 
 // reconcileIssuedOrder — bộ quyết định DUY NHẤT cho đơn đã cấp mã (processing/expired/cancelled).
 // Caller bảo đảm hasPaymentCode(order).
-func (s *PaymentService) reconcileIssuedOrder(ctx context.Context, order *model.Order) (*dto.PaymentStatusResponse, error) {
+func (s *PaymentService) reconcileIssuedOrder(ctx context.Context, order *model.Order, opts reconcileOptions) (*dto.PaymentStatusResponse, error) {
 	now := time.Now()
 	deadline := paymentCodeDeadline(order)
 	codeExpired := now.After(deadline)
@@ -156,7 +158,7 @@ func (s *PaymentService) reconcileIssuedOrder(ctx context.Context, order *model.
 	// cho web phân biệt "ngân hàng lỗi, thử lại sau" với "chưa có giao dịch".
 	if err != nil || result == nil || result.Status == "error" {
 		log.Printf("[PAYMENT-CHECK] order=%s status=%s chưa đối chiếu được với ngân hàng (err=%v)", order.ID, order.Status, bankErrorDetail(err, result))
-		if processing && now.After(deadline.Add(unverifiedExpiryAfter)) {
+		if processing && !opts.deferUnverifiedExpiry && now.After(deadline.Add(unverifiedExpiryAfter)) {
 			resp, expErr := s.expireUnverified(ctx, order, deadline, bankErrorDetail(err, result))
 			if resp != nil {
 				resp.BankUnavailable = true
