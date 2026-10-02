@@ -184,25 +184,81 @@ func (s *PaymentService) reconcileIssuedOrder(ctx context.Context, order *model.
 		return &dto.PaymentStatusResponse{OrderID: order.ID, Status: "expired", Amount: order.TotalAmount}, nil
 	}
 
+	// Khách có thể chuyển nhiều lần vào cùng một mã: xử lý TỪNG giao dịch khớp (L1), không chỉ giao
+	// dịch đầu của sao kê. Dedupe theo mã giao dịch nằm sẵn ở flagRefundNeeded (đơn đã đóng) và ở
+	// bank_transaction_usages (hoàn tất đơn), nên poll lại cùng sao kê không ghi trùng.
+	txs := transactionResults(result)
+
 	// Quyết định 1: đơn đã đóng KHÔNG BAO GIỜ được khôi phục. Mọi giao dịch khớp mã → cần hoàn tiền.
 	if !processing {
-		flagged := s.flagRefundNeeded(ctx, order, result)
+		flagged := false
+		for _, tx := range txs {
+			if s.flagRefundNeeded(ctx, order, tx) {
+				flagged = true
+			}
+		}
 		return current(func(r *dto.PaymentStatusResponse) { r.LatePaymentReceived = flagged }), nil
 	}
 
-	amount, _ := decimal.NewFromString(result.Amount)
-	amountMatches := amount.Compare(order.TotalAmount) == 0
-	paidAt, dateKnown := parseBankTransactionDate(result.TransactionDate)
-	// Trong hạn: khớp tiền VÀ (mã còn hạn lúc đối chiếu, hoặc ngân hàng ghi nhận <= hạn mã).
-	if amountMatches && (!codeExpired || (dateKnown && !paidAt.After(deadline))) {
-		return s.completePaidOrder(ctx, order, result)
+	// Đơn processing: giao dịch ĐẦU TIÊN đủ điều kiện hoàn tất đơn (khớp tiền VÀ trong hạn). Khách
+	// chuyển sai số tiền trước rồi chuyển đúng sau thì lần đúng vẫn hoàn tất được đơn.
+	for _, tx := range txs {
+		amountMatches, paidAt, dateKnown := evaluateBankTransaction(tx, order)
+		// Trong hạn: khớp tiền VÀ (mã còn hạn lúc đối chiếu, hoặc ngân hàng ghi nhận <= hạn mã).
+		if amountMatches && (!codeExpired || (dateKnown && !paidAt.After(deadline))) {
+			for _, other := range txs {
+				if other != tx {
+					log.Printf("[PAYMENT-EXTRA-TRANSFER] order=%s hoàn tất bằng tx=%s, còn giao dịch khác tx=%s amount=%s cùng mã: kiểm tra hoàn tiền thủ công", order.ID, tx.TransactionID, other.TransactionID, other.Amount)
+				}
+			}
+			return s.completePaidOrder(ctx, order, tx)
+		}
 	}
 	if !codeExpired {
 		// Sai số tiền khi mã còn hạn: giữ nguyên hành vi cũ (lỗi, đơn không đổi); đến hạn thì nhánh
 		// dưới chốt expired + cờ hoàn tiền.
 		return nil, ErrPaymentAmountMismatch
 	}
-	return s.expireWithLatePayment(ctx, order, result, paidAt, dateKnown, amountMatches)
+	first := txs[0]
+	amountMatches, paidAt, dateKnown := evaluateBankTransaction(first, order)
+	resp, err := s.expireWithLatePayment(ctx, order, first, paidAt, dateKnown, amountMatches)
+	if err != nil {
+		return resp, err
+	}
+	// Đơn đã chốt expired kèm cờ cho giao dịch đầu; các giao dịch còn lại cũng là tiền cần hoàn.
+	for _, tx := range txs[1:] {
+		s.flagRefundNeeded(ctx, order, tx)
+	}
+	return resp, nil
+}
+
+// transactionResults tách một kết quả tra cứu thành từng kết quả cho MỖI giao dịch khớp (cùng Status),
+// để các hàm đối chiếu vốn nhận một giao dịch (completePaidOrder, flagRefundNeeded...) dùng lại nguyên
+// vẹn. Kết quả từ service Python cũ (không có danh sách) cho đúng một phần tử — hành vi cũ.
+// Caller đã kiểm result.Found.
+func transactionResults(result *grpc.CheckTransactionResult) []*grpc.CheckTransactionResult {
+	all := result.AllTransactions()
+	out := make([]*grpc.CheckTransactionResult, 0, len(all))
+	for _, t := range all {
+		out = append(out, &grpc.CheckTransactionResult{
+			Found:           true,
+			Status:          result.Status,
+			TransactionID:   t.TransactionID,
+			Amount:          t.Amount,
+			Currency:        t.Currency,
+			Description:     t.Description,
+			TransactionDate: t.TransactionDate,
+		})
+	}
+	return out
+}
+
+// evaluateBankTransaction — số tiền có khớp tổng đơn không, và ngày ghi nhận của giao dịch (dateKnown
+// = false khi không đọc được).
+func evaluateBankTransaction(tx *grpc.CheckTransactionResult, order *model.Order) (amountMatches bool, paidAt time.Time, dateKnown bool) {
+	amount, _ := decimal.NewFromString(tx.Amount)
+	paidAt, dateKnown = parseBankTransactionDate(tx.TransactionDate)
+	return amount.Compare(order.TotalAmount) == 0, paidAt, dateKnown
 }
 
 func bankErrorDetail(err error, result *grpc.CheckTransactionResult) string {

@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/repository"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
@@ -82,7 +84,10 @@ func (h *VoucherHandler) GetVoucherByCode(c *fiber.Ctx) error {
 		})
 	}
 
-	voucher, err := h.voucherService.GetVoucherByCode(c.Context(), code)
+	// Route công khai + OptionalAuth: khách → uuid.Nil. Voucher holders_only chỉ trả cho người đã
+	// giữ nó; người khác nhận 404 y hệt mã không tồn tại.
+	viewerID, _ := getAuthUserID(c)
+	voucher, err := h.voucherService.GetVoucherByCodeForViewer(c.Context(), code, viewerID)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"code":    "ERR_NOT_FOUND",
@@ -303,6 +308,14 @@ func (h *VoucherHandler) SaveVoucher(c *fiber.Ctx) error {
 	}
 
 	savedVoucher, err := h.voucherService.SaveVoucher(c.Context(), userID, &req)
+	if errors.Is(err, repository.ErrVoucherNotFound) {
+		// Voucher holders_only mà user chưa giữ: cùng 404 với voucher không tồn tại (đã trả ở bước
+		// tra theo ID phía trên), không lộ mã có thật.
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"code":    "ERR_NOT_FOUND",
+			"message": "Voucher not found",
+		})
+	}
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"code":    "ERR_SAVE_VOUCHER",

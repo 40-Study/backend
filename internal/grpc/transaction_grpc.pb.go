@@ -2,6 +2,7 @@ package grpc
 
 import (
 	context "context"
+	fmt "fmt"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -188,7 +189,26 @@ type CheckTransactionResponse struct {
 	TransactionDate   string `protobuf:"bytes,6,opt,name=transaction_date,json=transactionDate" json:"transaction_date,omitempty"`
 	Status            string `protobuf:"bytes,7,opt,name=status" json:"status,omitempty"`
 	ErrorMessage      string `protobuf:"bytes,8,opt,name=error_message,json=errorMessage" json:"error_message,omitempty"`
+	// Transactions (field 9, L1): MỌI giao dịch ghi có khớp mã, theo thứ tự sao kê. Các field 2-6 ở
+	// trên giữ nguyên nghĩa cũ = giao dịch khớp ĐẦU TIÊN (tương thích ngược: server cũ không gửi
+	// field 9, client cũ bỏ qua nó).
+	Transactions []*MatchedTransaction `protobuf:"bytes,9,rep,name=transactions" json:"transactions,omitempty"`
 }
+
+// MatchedTransaction — một giao dịch khớp mã thanh toán trong CheckTransactionResponse.Transactions.
+type MatchedTransaction struct {
+	TransactionId   string `protobuf:"bytes,1,opt,name=transaction_id,json=transactionId" json:"transaction_id,omitempty"`
+	Amount          string `protobuf:"bytes,2,opt,name=amount" json:"amount,omitempty"`
+	Currency        string `protobuf:"bytes,3,opt,name=currency" json:"currency,omitempty"`
+	Description     string `protobuf:"bytes,4,opt,name=description" json:"description,omitempty"`
+	TransactionDate string `protobuf:"bytes,5,opt,name=transaction_date,json=transactionDate" json:"transaction_date,omitempty"`
+}
+
+func (m *MatchedTransaction) Reset() { *m = MatchedTransaction{} }
+func (m *MatchedTransaction) String() string {
+	return fmt.Sprintf("MatchedTransaction{id=%s amount=%s}", m.TransactionId, m.Amount)
+}
+func (*MatchedTransaction) ProtoMessage() {}
 
 func (m *CheckTransactionResponse) Reset()         { *m = CheckTransactionResponse{} }
 func (m *CheckTransactionResponse) String() string { return m.String() }

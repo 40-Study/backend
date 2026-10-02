@@ -74,6 +74,9 @@ func (h *CourseHandler) CreateCourse(c *fiber.Ctx) error {
 
 	course, err := h.service.CreateCourse(c.Context(), req)
 	if err != nil {
+		if writeDiscountPriceInvalid(c, err) {
+			return nil
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create course",
 			"error":   err.Error(),
@@ -282,7 +285,7 @@ func (h *CourseHandler) UpdateCourse(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 	course, err := h.service.UpdateCourse(c.Context(), id, userID, isAdmin, req)
 	if err != nil {
-		if writeCourseLocked(c, err) {
+		if writeCourseLocked(c, err) || writeDiscountPriceInvalid(c, err) {
 			return nil
 		}
 		if err == service.ErrNotCourseOwner {

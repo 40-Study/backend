@@ -246,6 +246,10 @@ func (r *VoucherRepository) GetPublicVouchers(ctx context.Context, limit, offset
 	now := time.Now()
 	query := r.db.WithContext(ctx).Model(&model.Voucher{}).Where("is_active = ?", true).Where("deleted_at IS NULL")
 
+	// Voucher "dành riêng" (holders_only) không bao giờ liệt kê công khai: người chưa được cấp
+	// không được biết nó tồn tại. Người đã có xem trong GET /vouchers/me.
+	query = query.Where("holders_only = ?", false)
+
 	// Not expired
 	query = query.Where("(end_date IS NULL OR end_date > ?)", now)
 	// Has started
@@ -272,6 +276,19 @@ func (r *VoucherRepository) GetPublicVouchers(ctx context.Context, limit, offset
 // CreateUserVoucher - Create user voucher (save)
 func (r *VoucherRepository) CreateUserVoucher(ctx context.Context, userVoucher *model.UserVoucher) error {
 	return r.db.WithContext(ctx).Create(userVoucher).Error
+}
+
+// UserHoldsVoucher — user có dòng user_vouchers (chưa xoá mềm) cho voucher này không, tức đã được
+// cấp (vd thưởng cuộc thi) hoặc đã tự lưu. Nguồn duy nhất của khái niệm "người giữ voucher" cho
+// voucher holders_only.
+func (r *VoucherRepository) UserHoldsVoucher(ctx context.Context, userID, voucherID uuid.UUID) (bool, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Model(&model.UserVoucher{}).
+		Where("user_id = ? AND voucher_id = ?", userID, voucherID).Count(&n).Error
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // GetUserVoucherByUserAndVoucher - Get user's saved voucher

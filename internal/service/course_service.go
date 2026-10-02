@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -14,6 +15,20 @@ import (
 // ErrNotCourseOwner được handler ánh xạ sang HTTP 403 — dùng chung message với
 // pattern "forbidden: not the owner" đã có sẵn ở discussion_service.go/review_service.go.
 var ErrNotCourseOwner = errors.New("forbidden: not the owner")
+
+// ErrDiscountPriceInvalid (L1, quyết định 02/10): discount_price phải > 0 và < price. Muốn bỏ khuyến
+// mãi thì gửi null (UpdateCourseDTO.UnmarshalJSON → DiscountPriceCleared), KHÔNG gửi 0. Trước đây
+// giá khuyến mãi >= giá gốc vẫn được lưu rồi bị EffectivePrice âm thầm bỏ qua, nên giảng viên tưởng
+// đã giảm giá mà người học vẫn trả giá gốc. Handler ánh xạ sang 400 DISCOUNT_PRICE_INVALID.
+var ErrDiscountPriceInvalid = errors.New("discount_price must be greater than 0 and less than price; send null to remove the discount")
+
+// validateDiscountPrice kiểm discount có hợp lệ so với price không (0 < discount < price).
+func validateDiscountPrice(price, discount decimal.Decimal) error {
+	if !discount.IsPositive() || !discount.LessThan(price) {
+		return ErrDiscountPriceInvalid
+	}
+	return nil
+}
 
 // ErrCourseLockedForReview (Q5, QA vòng 2 — D3): khoá đang chờ duyệt thì KHÔNG ai được sửa thông
 // tin, chương, bài hay nội dung bài (kể cả admin): admin phải duyệt đúng nội dung giảng viên đã
@@ -110,6 +125,13 @@ func NewCourseService(
 }
 
 func (s *CourseService) CreateCourse(ctx context.Context, req dto.CreateCourseDTO) (*dto.CourseResponseDTO, error) {
+	// Kiểm giá TRƯỚC mọi truy vấn: lỗi đầu vào không cần chạm DB. Tạo mới gửi null/bỏ trống = không
+	// khuyến mãi (hợp lệ), chỉ giá trị có mặt mới bị kiểm.
+	if req.DiscountPrice != nil {
+		if err := validateDiscountPrice(req.Price, *req.DiscountPrice); err != nil {
+			return nil, err
+		}
+	}
 	if req.CategoryID != nil {
 		exists, err := s.categoryRepo.Exists(ctx, *req.CategoryID)
 		if err != nil {
@@ -353,6 +375,25 @@ func (s *CourseService) UpdateCourse(ctx context.Context, id, actorUserID uuid.U
 	}
 	if err := ensureCourseEditable(course); err != nil {
 		return nil, err
+	}
+
+	// Giá khuyến mãi phải > 0 và < giá (sau cập nhật). Hai trường hợp cần kiểm: (1) request gửi
+	// discount_price mới → so với giá sau cập nhật; (2) request đổi giá mà khoá đang có khuyến mãi
+	// (không bị xoá cùng request) → khuyến mãi cũ không được thành >= giá mới. Request chỉ sửa
+	// tiêu đề... thì KHÔNG kiểm gì, để dữ liệu cũ lệch không chặn việc sửa không liên quan.
+	priceAfter := course.Price
+	if req.Price != nil {
+		priceAfter = *req.Price
+	}
+	switch {
+	case req.DiscountPrice != nil:
+		if err := validateDiscountPrice(priceAfter, *req.DiscountPrice); err != nil {
+			return nil, err
+		}
+	case req.Price != nil && !req.DiscountPriceCleared && course.DiscountPrice != nil:
+		if err := validateDiscountPrice(priceAfter, *course.DiscountPrice); err != nil {
+			return nil, err
+		}
 	}
 
 	if req.CategoryID != nil {

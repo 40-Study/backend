@@ -245,6 +245,12 @@ type Voucher struct {
 	// Status
 	IsActive bool `gorm:"type:bool;default:true" json:"is_active"`
 
+	// HoldersOnly (L1, quyết định 02/10): true = voucher "dành riêng" — chỉ user đã được cấp (vd
+	// phần thưởng cuộc thi) hoặc đã lưu vào ví (bảng user_vouchers) mới áp dụng được. Người khác
+	// nhập mã nhận đúng lỗi của mã không tồn tại, nên không dò ra mã có thật. Không nằm trong
+	// danh sách /vouchers/public. not null + default false: voucher cũ vẫn công khai như trước.
+	HoldersOnly bool `gorm:"type:bool;not null;default:false" json:"holders_only"`
+
 	// Soft delete
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 

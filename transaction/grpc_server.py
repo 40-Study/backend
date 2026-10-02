@@ -1,3 +1,4 @@
+import decimal
 import grpc
 import hmac
 import time
@@ -58,6 +59,40 @@ def get_mbbank_client():
     return mbbank.MBBank(username=USERNAME, password=PASSWORD)
 
 
+def _mentions_payment_code(trans, payment_code):
+    """Mã thanh toán có nằm trong nội dung chuyển khoản (description hoặc addDescription) không."""
+    description = getattr(trans, 'description', '') or ''
+    add_description = getattr(trans, 'addDescription', '') or ''
+    return payment_code in description or payment_code in add_description
+
+
+def _is_credit(trans):
+    """Giao dịch có ghi có (tiền VÀO tài khoản) không.
+
+    Bắt buộc khi trả MỌI giao dịch khớp: nội dung chuyển khoản hoàn tiền của admin cũng chứa mã đơn,
+    nhưng là giao dịch ghi nợ (credit 0). Nếu coi là tiền khách chuyển thì backend Go gắn cờ "cần hoàn
+    tiền" cho chính khoản hoàn đó, và đơn không bao giờ hết cờ. Không đọc được số tiền thì GIỮ giao
+    dịch lại (để Go tự đối chiếu số tiền), không giấu một khoản có thể là tiền thật.
+    """
+    raw = str(getattr(trans, 'creditAmount', '') or '').strip().replace(',', '')
+    if raw == '':
+        return False
+    try:
+        return decimal.Decimal(raw) > 0
+    except decimal.InvalidOperation:
+        return True
+
+
+def _to_matched_transaction(trans):
+    return transaction_pb2.MatchedTransaction(
+        transaction_id=getattr(trans, 'refNo', '') or '',
+        amount=getattr(trans, 'creditAmount', '0') or '0',
+        currency="VND",
+        description=getattr(trans, 'description', '') or '',
+        transaction_date=getattr(trans, 'transactionDate', '') or '',
+    )
+
+
 class TransactionServicer(transaction_pb2_grpc.TransactionServiceServicer):
     """gRPC Service implementation for MB Bank transactions"""
 
@@ -87,25 +122,27 @@ class TransactionServicer(transaction_pb2_grpc.TransactionServiceServicer):
                 to_date=to_dt
             )
 
-            if hasattr(transactions, 'transactionHistoryList') and transactions.transactionHistoryList:
-                for trans in transactions.transactionHistoryList:
-                    description = getattr(trans, 'description', '')
-                    add_description = getattr(trans, 'addDescription', '')
-
-                    if payment_code in description or payment_code in add_description:
-                        # Found matching transaction
-                        credit_amount = getattr(trans, 'creditAmount', '0')
-                        transaction_date = getattr(trans, 'transactionDate', '')
-
-                        return transaction_pb2.CheckTransactionResponse(
-                            found=True,
-                            transaction_id=getattr(trans, 'refNo', ''),
-                            amount=credit_amount,
-                            currency="VND",
-                            description=description,
-                            transaction_date=transaction_date,
-                            status="success"
-                        )
+            # Khách có thể chuyển NHIỀU lần vào cùng một mã đơn: trả MỌI giao dịch ghi có khớp mã (field
+            # `transactions`), không dừng ở giao dịch đầu. Trước đây dừng ở giao dịch đầu nên lần chuyển
+            # thứ hai không bao giờ tới được backend Go và cờ hoàn tiền muộn không bật.
+            history = getattr(transactions, 'transactionHistoryList', None) or []
+            matches = [
+                trans for trans in history
+                if _mentions_payment_code(trans, payment_code) and _is_credit(trans)
+            ]
+            if matches:
+                first = _to_matched_transaction(matches[0])
+                return transaction_pb2.CheckTransactionResponse(
+                    # Field 2-6 giữ nghĩa cũ = giao dịch khớp đầu tiên (client cũ vẫn chạy đúng).
+                    found=True,
+                    transaction_id=first.transaction_id,
+                    amount=first.amount,
+                    currency=first.currency,
+                    description=first.description,
+                    transaction_date=first.transaction_date,
+                    status="success",
+                    transactions=[_to_matched_transaction(trans) for trans in matches],
+                )
 
             # No transaction found
             return transaction_pb2.CheckTransactionResponse(
