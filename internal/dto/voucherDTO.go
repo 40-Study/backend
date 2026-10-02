@@ -67,6 +67,14 @@ type UpdateVoucherRequest struct {
 	// HoldersOnly: nil = giữ nguyên; true/false = đổi. Bật sau khi voucher đã phát hành thì người đã
 	// lưu/được cấp vẫn dùng được, người chưa có thì không.
 	HoldersOnly *bool `json:"holders_only"`
+
+	// Cờ xoá (L6 mục 8) — chỉ do UnmarshalJSON đặt (clearable_update_dto.go): trường gửi `null` hoặc ""
+	// nghĩa là XOÁ giá trị (đặt NULL / 0 = không có), vắng mặt = giữ nguyên. Trước đây ô trống ở form
+	// admin không gửi gì nên không xoá được ngày bắt đầu/kết thúc hay trần giảm.
+	StartDateCleared         bool `json:"-"`
+	EndDateCleared           bool `json:"-"`
+	MaxDiscountMoneyCleared  bool `json:"-"`
+	MaxDiscountPointsCleared bool `json:"-"`
 }
 
 type GetVouchersRequest struct {

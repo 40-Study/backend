@@ -43,6 +43,11 @@ func TestUpdateCourse_DiscountPriceMustBePositiveAndBelowPrice(t *testing.T) {
 		{"lớn hơn giá gốc", `{"discount_price":600000}`, true},
 		{"bằng 0 (xoá thì phải gửi null)", `{"discount_price":0}`, true},
 		{"âm", `{"discount_price":-1}`, true},
+		// Cột Postgres là decimal(12,2): 499999.999 lưu thành 500000.00 = giá gốc, nên phải bị từ chối
+		// (L6 mục 1). So sánh trên giá trị đã làm tròn đúng như DB.
+		{"làm tròn 2 chữ số thành bằng giá gốc", `{"discount_price":499999.999}`, true},
+		{"làm tròn 2 chữ số vẫn dưới giá gốc", `{"discount_price":499999.994}`, false},
+		{"làm tròn xuống 0.00", `{"discount_price":0.004}`, true},
 		{"hợp lệ", `{"discount_price":499999}`, false},
 		{"hợp lệ nhỏ", `{"discount_price":1}`, false},
 		{"đổi giá gốc xuống kèm khuyến mãi hợp lệ", `{"price":300000,"discount_price":200000}`, false},

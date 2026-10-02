@@ -123,8 +123,10 @@ func (h *VoucherHandler) GetAllVouchers(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"vouchers":    vouchers,
 		"total_count": total,
-		"limit":       limit,
-		"offset":      offset,
+		// req.Limit/Offset là giá trị service ĐÃ chuẩn hoá (limit ngoài 1-100 về 20): trả đúng thứ
+		// đã dùng để web phân trang theo, không phải số client gửi.
+		"limit":  req.Limit,
+		"offset": req.Offset,
 	})
 }
 
@@ -348,6 +350,21 @@ func (h *VoucherHandler) UnsaveVoucher(c *fiber.Ctx) error {
 	}
 
 	err = h.voucherService.UnsaveVoucher(c.Context(), userID, voucherID)
+	if errors.Is(err, service.ErrUserVoucherNotFound) {
+		// Không giữ voucher này (hoặc voucher không tồn tại): 404 như nhau để không lộ voucher dành riêng qua UUID.
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"code":    "ERR_VOUCHER_NOT_FOUND",
+			"message": "Voucher not found",
+		})
+	}
+	if errors.Is(err, service.ErrHoldersOnlyVoucherNotRemovable) {
+		// L6 mục 6: voucher dành riêng — dòng đã lưu là quyền dùng nên không cho bỏ. 403 kèm mã để web
+		// hiện câu giải thích thay vì lỗi chung.
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"code":    "VOUCHER_HOLDERS_ONLY_NOT_REMOVABLE",
+			"message": "This voucher was granted to you and cannot be removed",
+		})
+	}
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"code":    "ERR_UNSAVE_VOUCHER",

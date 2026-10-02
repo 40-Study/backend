@@ -47,7 +47,13 @@ type Order struct {
 	// của payment intent — DTO tự tính "now + 24h" mỗi lần render, không khớp thời điểm THẬT sự
 	// đã tạo payment intent.
 	PaymentCodeExpiredAt *time.Time `json:"payment_code_expired_at,omitempty"`
-	Notes                *string    `gorm:"type:text" json:"notes,omitempty"`
+	// PaymentCode (L6 review MAJOR): mã thanh toán (nội dung chuyển khoản) của đơn, BẤT BIẾN sau khi cấp.
+	// Trước đây mã chỉ nằm ở payment_transaction_id, cột mà UpdatePaymentInfo ghi đè bằng mã giao dịch
+	// ngân hàng khi đơn hoàn tất; sau đó không còn tra ngân hàng được (service Python khớp theo mã nằm trong
+	// nội dung chuyển khoản, không phải mã giao dịch). Mọi lần tra ngân hàng dùng paymentCodeOf(order).
+	// Đơn hoàn tất TRƯỚC khi có cột này đã mất mã và không khôi phục được (xem migration backfill).
+	PaymentCode *string `gorm:"type:varchar(64)" json:"-"`
+	Notes       *string `gorm:"type:text" json:"notes,omitempty"`
 
 	// PlatformFeePercent/PlatformFeeAmount (tính năng đơn hàng+hoàn tiền+doanh thu, quyết định
 	// chủ dự án 27/09/2026 #2): tỉ lệ phí nền tảng % CHỐT vào đơn NGAY LÚC đơn chuyển "completed"

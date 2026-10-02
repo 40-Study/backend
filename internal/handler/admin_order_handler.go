@@ -225,13 +225,18 @@ func (h *AdminOrderHandler) MarkLatePaymentRefunded(c *fiber.Ctx) error {
 		})
 	}
 
-	resp, err := h.adminOrderService.MarkLatePaymentRefunded(c.Context(), actorID, orderID, req.Note, req.TransactionRef)
+	resp, err := h.adminOrderService.MarkLatePaymentRefunded(c.Context(), actorID, orderID, req.Note, req.TransactionRef, req.Refs)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrOrderNotFound):
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 				"message": "Order not found",
 				"error":   "not_found",
+			})
+		case errors.Is(err, service.ErrLateRefundUnknownRef):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "One or more refunded transactions do not belong to this order",
+				"error":   "unknown_late_payment",
 			})
 		case errors.Is(err, service.ErrLateRefundNotNeeded):
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{

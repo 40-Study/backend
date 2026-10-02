@@ -30,6 +30,12 @@ var (
 	ErrVoucherUsageLimitExceeded   = errors.New("voucher usage limit exceeded")
 	ErrVoucherPerUserLimitExceeded = errors.New("voucher usage limit per user exceeded")
 	ErrVoucherNotFoundByCode       = errors.New("voucher not found")
+	// ErrHoldersOnlyVoucherNotRemovable (L6 mục 6): người giữ voucher holders_only không tự bỏ lưu được.
+	// Handler ánh xạ sang 403 VOUCHER_HOLDERS_ONLY_NOT_REMOVABLE.
+	ErrHoldersOnlyVoucherNotRemovable = errors.New("holders-only voucher cannot be removed by its holder")
+	// ErrUserVoucherNotFound (review L6): người gọi không giữ voucher này, HOẶC voucher không tồn tại. Gộp một
+	// lỗi để UnsaveVoucher không lộ voucher dành riêng qua UUID (handler trả 404 như nhau cho cả hai).
+	ErrUserVoucherNotFound = errors.New("user voucher not found")
 	// ErrVoucherNotMoneyUnit (H2-01, review vòng 3): voucher discount_unit != MONEY (đổi bằng
 	// điểm) không áp dụng được cho đơn hàng tiền mặt — web từ chối rõ ràng
 	// (errorMessage "Voucher này đổi bằng điểm..."), backend trước đây ÂM THẦM trả discount=0
@@ -360,6 +366,19 @@ func (vs *VoucherService) UpdateVoucher(ctx context.Context, voucherID uuid.UUID
 	}
 	if req.EndDate != nil {
 		voucher.EndDate = req.EndDate
+	}
+	// L6 mục 8: gửi null = xoá (đặt NULL / 0 = không có). Áp SAU giá trị mới, giống DiscountPriceCleared.
+	if req.StartDateCleared {
+		voucher.StartDate = nil
+	}
+	if req.EndDateCleared {
+		voucher.EndDate = nil
+	}
+	if req.MaxDiscountMoneyCleared {
+		voucher.MaxDiscountMoney = nil
+	}
+	if req.MaxDiscountPointsCleared {
+		voucher.MaxDiscountPoints = 0
 	}
 	if voucher.StartDate != nil && voucher.EndDate != nil {
 		if !voucher.StartDate.Before(*voucher.EndDate) {
@@ -909,12 +928,21 @@ func (vs *VoucherService) UnsaveVoucher(ctx context.Context, userID uuid.UUID, v
 	if _, err := vs.ur.FindUserByID(ctx, userID); err != nil {
 		return errors.New("user not found")
 	}
-	if _, err := vs.vr.GetVoucherByID(ctx, voucherID); err != nil {
-		return errors.New("voucher not found")
+	// Kiểm NGƯỜI GỌI CÓ GIỮ voucher trước mọi thứ khác: voucher không tồn tại và voucher người này không giữ
+	// cho cùng một lỗi, nếu không 403 "dành riêng" cho người lạ sẽ xác nhận voucher holders_only tồn tại.
+	voucher, err := vs.vr.GetVoucherByID(ctx, voucherID)
+	if err != nil {
+		return ErrUserVoucherNotFound
 	}
 	userVoucher, err := vs.vr.GetUserVoucherByUserAndVoucher(ctx, userID, voucherID)
 	if err != nil {
-		return errors.New("user voucher not found")
+		return ErrUserVoucherNotFound
+	}
+	// L6 mục 6 (quyết định: KHÔNG cho bỏ lưu): với voucher holders_only, dòng user_vouchers CHÍNH là
+	// quyền dùng. Bỏ lưu xoá quyền vĩnh viễn (SaveVoucher sau đó trả 404) nên người thắng cuộc thi bấm
+	// nhầm sẽ mất giải. Voucher công khai bỏ lưu bình thường vì lưu lại được bất cứ lúc nào.
+	if voucher.HoldersOnly {
+		return ErrHoldersOnlyVoucherNotRemovable
 	}
 	return vs.vr.DeleteUserVoucher(ctx, userVoucher.ID)
 }

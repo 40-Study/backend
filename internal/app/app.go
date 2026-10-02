@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -14,6 +15,7 @@ import (
 	asynq_queue "study.com/v1/internal/queue/asynq"
 	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/router"
+	"study.com/v1/internal/service"
 	"study.com/v1/internal/socket"
 	"study.com/v1/internal/utils"
 )
@@ -63,6 +65,16 @@ func New() (*App, error) {
 		return err
 	}
 	asynq_queue.RegisterTasks(resources.Queue, notifier, repos.Class, repos.Enrollment, resources.Redis, livestreamStarter)
+	// L6 mục 5: job nền đối chiếu ngân hàng (đơn chờ + đơn vừa hoàn tất), chu kỳ lấy từ config.
+	if services.Payment != nil {
+		if resources.Redis != nil {
+			services.Payment.SetSweepLocker(service.NewRedisSweepLocker(resources.Redis))
+		}
+		services.Payment.SetSweepInterval(time.Duration(resources.Config.PaymentReconcileIntervalMinutes) * time.Minute) // cùng chu kỳ với lịch ngay dưới: khoá phân tán theo khung chu kỳ
+		if err := asynq_queue.RegisterPaymentReconcile(resources.Queue, resources.Config.PaymentReconcileIntervalMinutes, services.Payment.RunReconcileSweep); err != nil {
+			log.Printf("Warning: Failed to register payment reconcile job: %v", err)
+		}
+	}
 	// M-05 (audit 260909 vòng 2): bọc SafeGo — goroutine chạy suốt vòng đời app, panic bên
 	// trong (vd lỗi kết nối Redis/asynq giữa chừng) trước đây sập cả process.
 	utils.SafeGo(func() { _ = resources.Queue.Start() })

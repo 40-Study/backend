@@ -108,6 +108,10 @@ type Config struct {
 	// TransactionServiceToken (S6): secret dùng chung với service Python — gửi trong metadata gRPC
 	// "x-transaction-token". Rỗng = không gửi (tương thích service chưa bật xác thực).
 	TransactionServiceToken string `mapstructure:"TRANSACTION_SERVICE_TOKEN"`
+	// PaymentReconcileIntervalMinutes (L6 mục 5): chu kỳ (phút) của job nền đối chiếu ngân hàng cho đơn
+	// chờ và đơn vừa hoàn tất. Mặc định 10; hợp lệ 1-59 (cron theo phút), ngoài khoảng thì
+	// LoadConfig báo lỗi lúc khởi động thay vì lặng lẽ đổi giá trị.
+	PaymentReconcileIntervalMinutes int `mapstructure:"PAYMENT_RECONCILE_INTERVAL_MINUTES"`
 
 	// OAuth Providers
 	GitHub   GithubOAuthConfig
@@ -128,6 +132,18 @@ type Config struct {
 
 // DefaultWithdrawalMinAmount — mặc định của WITHDRAWAL_MIN_AMOUNT (VND).
 const DefaultWithdrawalMinAmount = "100000"
+
+// DefaultPaymentReconcileIntervalMinutes — mặc định của PAYMENT_RECONCILE_INTERVAL_MINUTES.
+const DefaultPaymentReconcileIntervalMinutes = 10
+
+// validatePaymentReconcileInterval là hàm thuần để unit test: 1-59 phút. Job đăng ký "@every Nm" nên đều với
+// mọi N; trần 59 chỉ giữ chu kỳ ở mức phút hợp lý cho một job đối chiếu.
+func validatePaymentReconcileInterval(minutes int) (int, error) {
+	if minutes < 1 || minutes > 59 {
+		return 0, fmt.Errorf("PAYMENT_RECONCILE_INTERVAL_MINUTES must be between 1 and 59, got %d", minutes)
+	}
+	return minutes, nil
+}
 
 // parseWithdrawalMinAmount là hàm thuần để unit test: chỉ chấp nhận số dương.
 func parseWithdrawalMinAmount(raw string) (decimal.Decimal, error) {
@@ -173,6 +189,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("TRANSACTION_SERVICE_HOST", "localhost")
 	viper.SetDefault("TRANSACTION_SERVICE_PORT", "50051")
 	viper.SetDefault("TRANSACTION_SERVICE_TOKEN", "")
+	viper.SetDefault("PAYMENT_RECONCILE_INTERVAL_MINUTES", DefaultPaymentReconcileIntervalMinutes)
 
 	// GITHUB
 	viper.SetDefault("GITHUB_CLIENT_ID", "")
@@ -264,6 +281,12 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 	config.WithdrawalMinAmount = minWithdrawal
+
+	reconcileMinutes, err := validatePaymentReconcileInterval(config.PaymentReconcileIntervalMinutes)
+	if err != nil {
+		return nil, err
+	}
+	config.PaymentReconcileIntervalMinutes = reconcileMinutes
 
 	// Set JWT expiration durations
 	accessMinutes := viper.GetInt("JWT_ACCESS_EXPIRATION_MINUTES")

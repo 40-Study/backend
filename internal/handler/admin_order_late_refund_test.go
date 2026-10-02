@@ -5,6 +5,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -22,12 +23,13 @@ type fakeAdminOrderLateRefund struct {
 	err       error
 	gotNote   string
 	gotRef    string
+	gotRefs   []string
 	callCount int
 }
 
-func (f *fakeAdminOrderLateRefund) MarkLatePaymentRefunded(_ context.Context, _, _ uuid.UUID, note, ref string) (*dto.LateRefundResponse, error) {
+func (f *fakeAdminOrderLateRefund) MarkLatePaymentRefunded(_ context.Context, _, _ uuid.UUID, note, ref string, refs []string) (*dto.LateRefundResponse, error) {
 	f.callCount++
-	f.gotNote, f.gotRef = note, ref
+	f.gotNote, f.gotRef, f.gotRefs = note, ref, refs
 	return f.resp, f.err
 }
 
@@ -76,6 +78,8 @@ func TestMarkLatePaymentRefunded_ErrorMapping(t *testing.T) {
 	}{
 		"không có cờ tiền về muộn": {service.ErrLateRefundNotNeeded, fiber.StatusBadRequest, "refund_not_needed"},
 		"đơn không tồn tại":        {service.ErrOrderNotFound, fiber.StatusNotFound, "not_found"},
+		// Service bọc lỗi kèm mã lạ (fmt.Errorf("%w: %q")): handler phải nhận ra bằng errors.Is, trả 400 chứ không 500.
+		"mã giao dịch hoàn lạ": {fmt.Errorf("%w: %q", service.ErrLateRefundUnknownRef, "FT-LA"), fiber.StatusBadRequest, "unknown_late_payment"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
