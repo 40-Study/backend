@@ -32,6 +32,9 @@ type OAuthService struct {
 	// Thay vì hardcode từng provider, dùng map để lookup
 	// Key: "github", "google", "facebook"
 	providers map[string]oauth.OAuthProvider
+
+	// userNameGen thay bộ sinh user_name (chỉ test dùng để ép va chạm); nil = utils.NewSafeUserName.
+	userNameGen func(fullName *string) (string, error)
 }
 
 type OAuthServiceInterface interface {

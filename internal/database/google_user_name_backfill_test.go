@@ -1,10 +1,15 @@
 package database
 
-// Test Postgres THẬT cho migration đổi user_name Google trùng prefix email (issue #105), gọi qua
-// RunPostMigrations như lúc API khởi động. Bỏ lời gọi khỏi RunPostMigrations, bỏ điều kiện provider google,
-// bỏ cửa sổ "tạo bằng Google" hoặc ghi đè không kiểm lại điều kiện thì test ĐỎ.
+// Test Postgres THẬT cho migration đổi user_name Google trùng prefix email (issue #105).
+//   - TestGoogleUserNameBackfill_DoiTenTrungPrefixEmail_*: qua RunPostMigrations như lúc API khởi động. Bỏ lời gọi
+//     khỏi RunPostMigrations, bỏ điều kiện provider google hoặc cửa sổ "tạo bằng Google" thì ĐỎ.
+//   - TestApplyGoogleRenames_KiemLaiDieuKienTrongUpdate: ép tình huống người dùng tự đổi tên GIỮA lúc quét và lúc
+//     ghi (quét -> đổi tên -> ghi). Bỏ điều kiện kiểm lại trong câu UPDATE thì ĐỎ (test tuần tự qua
+//     RunPostMigrations không bắt được việc này).
+//   - TestGoogleUserNameBackfill_NhieuLo_*: nhiều lô, tên không trùng nhau và không trùng tên đang dùng.
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -80,10 +85,10 @@ func TestGoogleUserNameBackfill_DoiTenTrungPrefixEmail_ChayLaiKhongDoiGi(t *test
 		a, b := userNameOf(t, db, leak.ID), userNameOf(t, db, leakCase.ID)
 		if run == 1 {
 			firstA, firstB = a, b
-			if !strings.HasPrefix(a, "nguyenvandat_") {
+			if !regexp.MustCompile(`^nguyenvandat[a-z0-9]{6}$`).MatchString(a) {
 				t.Errorf("tên đổi phải dựa trên họ tên không dấu, nhận %q", a)
 			}
-			if !strings.HasPrefix(b, "hocvien_") {
+			if !regexp.MustCompile(`^hocvien[a-z0-9]{6}$`).MatchString(b) {
 				t.Errorf("không có họ tên: phải dùng 'hocvien_...', nhận %q", b)
 			}
 			if strings.Contains(strings.ToLower(a+b), "nguyen.van.a") || strings.Contains(strings.ToLower(b), "tran") {
@@ -100,5 +105,78 @@ func TestGoogleUserNameBackfill_DoiTenTrungPrefixEmail_ChayLaiKhongDoiGi(t *test
 	}
 	if firstA == firstB {
 		t.Errorf("hai user phải có tên khác nhau: %q", firstA)
+	}
+}
+
+// Quét -> người dùng tự đổi tên -> ghi: dòng đã tự đổi KHÔNG bị ghi đè, dòng còn nguyên thì đổi.
+func TestApplyGoogleRenames_KiemLaiDieuKienTrongUpdate(t *testing.T) {
+	db := pgtest.IsolatedSchema(t, Migrate)
+	stay := gUser(t, db, "giu.nguyen", "giu.nguyen", nil)
+	linkGoogle(t, db, stay.ID, stay.CreatedAt)
+	changedMidway := gUser(t, db, "tu.doi", "tu.doi", nil)
+	linkGoogle(t, db, changedMidway.ID, changedMidway.CreatedAt)
+
+	secs := googleCreatedWindow.Seconds()
+	rows, err := scanGoogleEmailPrefixUsers(db, secs)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("quét: rows=%d err=%v, muốn 2 dòng", len(rows), err)
+	}
+	if err := db.Model(&model.User{}).Where("id = ?", changedMidway.ID).Update("user_name", "ten-tu-chon").Error; err != nil {
+		t.Fatal(err)
+	}
+	plan, err := planGoogleRenames(db, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applyGoogleRenames(db, plan, secs); err != nil {
+		t.Fatal(err)
+	}
+	if got := userNameOf(t, db, changedMidway.ID); got != "ten-tu-chon" {
+		t.Errorf("người vừa tự đổi tên bị ghi đè: %q", got)
+	}
+	if got := userNameOf(t, db, stay.ID); got == "giu.nguyen" {
+		t.Errorf("dòng còn nguyên phải được đổi, vẫn là %q", got)
+	}
+}
+
+// 1.200 dòng = 3 lô: mọi tên mới khác nhau, không trùng tên đang dùng (kể cả khác hoa thường), không còn prefix email.
+func TestGoogleUserNameBackfill_NhieuLo_TenKhacNhauKhongTrung(t *testing.T) {
+	db := pgtest.IsolatedSchema(t, Migrate)
+	if err := db.Exec(`INSERT INTO users (id, email, password_hash, user_name, full_name, created_at, updated_at)
+		SELECT gen_random_uuid(), 'bulk' || g || '@gmail.test', 'x', 'bulk' || g, 'Nguyen Van A', now(), now()
+		FROM generate_series(1, 1200) g`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO user_oauth_providers (id, user_id, provider, provider_user_id, created_at)
+		SELECT gen_random_uuid(), id, 'google', 'p-' || id, created_at FROM users`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := RunPostMigrations(db); err != nil {
+		t.Fatal(err)
+	}
+	var total, distinct, leaked int64
+	db.Raw(`SELECT count(*), count(DISTINCT lower(user_name)),
+		count(*) FILTER (WHERE lower(user_name) = lower(split_part(email, '@', 1))) FROM users`).Row().Scan(&total, &distinct, &leaked)
+	if total != 1200 || distinct != 1200 || leaked != 0 {
+		t.Fatalf("total=%d distinct=%d còn prefix email=%d, muốn 1200/1200/0", total, distinct, leaked)
+	}
+}
+
+func TestNewFreeUserName_TranhTrungVaHetSoLan(t *testing.T) {
+	taken := map[string]struct{}{"da.co": {}}
+	calls := 0
+	gen := func(*string) (string, error) {
+		calls++
+		if calls < 3 {
+			return "DA.CO", nil // trùng không phân biệt hoa thường
+		}
+		return "moi", nil
+	}
+	if got, err := newFreeUserName(nil, taken, gen); err != nil || got != "moi" || calls != 3 {
+		t.Fatalf("got=%q err=%v calls=%d", got, err, calls)
+	}
+	always := func(*string) (string, error) { return "da.co", nil }
+	if _, err := newFreeUserName(nil, taken, always); err == nil {
+		t.Fatal("hết số lần thử phải báo lỗi")
 	}
 }

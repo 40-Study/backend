@@ -49,7 +49,9 @@ func SafeUserNameBase(fullName *string) string {
 	return b.String()
 }
 
-// NewSafeUserName ghép <tên không dấu>_<hậu tố ngẫu nhiên 6 ký tự a-z0-9>. Hậu tố là phần lấy ngẫu nhiên,
+// NewSafeUserName ghép <tên không dấu><hậu tố ngẫu nhiên 6 ký tự a-z0-9>, KHÔNG có dấu gạch dưới: user_name
+// phải qua được validator `alphanum,min=3,max=30` của UpdateMeRequestDto (PUT /users/me), nếu không tài khoản
+// Google không lưu được hồ sơ vì web luôn gửi lại username cũ. Dài tối đa 20+6=26 ký tự. Hậu tố là phần lấy ngẫu nhiên,
 // KHÔNG suy ra từ email. Không đảm bảo duy nhất: người gọi phải kiểm tra tồn tại (user_name không có
 // unique index vì dữ liệu cũ đã trùng tên).
 func NewSafeUserName(fullName *string) (string, error) {
@@ -57,5 +59,5 @@ func NewSafeUserName(fullName *string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return SafeUserNameBase(fullName) + "_" + suffix, nil
+	return SafeUserNameBase(fullName) + suffix, nil
 }

@@ -28,7 +28,7 @@ func TestSafeUserNameBase(t *testing.T) {
 }
 
 func TestNewSafeUserName_DinhDangVaKhacNhau(t *testing.T) {
-	re := regexp.MustCompile(`^[a-z0-9]{1,20}_[a-z0-9]{6}$`)
+	re := regexp.MustCompile(`^[a-z0-9]{7,26}$`)
 	full := "Lê Thị Hoa"
 	seen := map[string]bool{}
 	for i := 0; i < 50; i++ {
@@ -36,7 +36,7 @@ func TestNewSafeUserName_DinhDangVaKhacNhau(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !re.MatchString(n) || !strings.HasPrefix(n, "lethihoa_") {
+		if !re.MatchString(n) || !strings.HasPrefix(n, "lethihoa") {
 			t.Fatalf("định dạng sai: %q", n)
 		}
 		seen[n] = true
