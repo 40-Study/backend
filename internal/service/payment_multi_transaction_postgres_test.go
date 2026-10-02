@@ -65,7 +65,7 @@ func caseTestCheckAndProcessPayment_SecondTransferAfterRefundIsFlagged(t *testin
 	if _, err := f.paymentServiceWith(&fakeBankLookup{result: bankPaidMany(tx1)}, nil).CheckAndProcessPayment(ctx, orderID, student, false); err != nil {
 		t.Fatalf("gắn cờ lần 1: %v", err)
 	}
-	if _, err := f.adminOrderService().MarkLatePaymentRefunded(ctx, uuid.New(), orderID, "đã hoàn lần 1", "FT-REFUND-1"); err != nil {
+	if _, err := f.adminOrderService().MarkLatePaymentRefunded(ctx, uuid.New(), orderID, "đã hoàn lần 1", "FT-REFUND-1", nil); err != nil {
 		t.Fatalf("admin ghi hoàn: %v", err)
 	}
 	if needed, _ := lateRefundState(f.db, ptrOrder(f.loadOrder(orderID))); needed {
@@ -91,7 +91,7 @@ func caseTestCheckAndProcessPayment_SecondTransferAfterRefundIsFlagged(t *testin
 	}
 
 	// Idempotent: admin hoàn lần 2 rồi poll lại cùng sao kê thì không có cờ mới.
-	if _, err := f.adminOrderService().MarkLatePaymentRefunded(ctx, uuid.New(), orderID, "đã hoàn lần 2", "FT-REFUND-2"); err != nil {
+	if _, err := f.adminOrderService().MarkLatePaymentRefunded(ctx, uuid.New(), orderID, "đã hoàn lần 2", "FT-REFUND-2", nil); err != nil {
 		t.Fatalf("admin ghi hoàn 2: %v", err)
 	}
 	if _, err := pay.CheckAndProcessPayment(ctx, orderID, student, false); err != nil {

@@ -22,12 +22,13 @@ type fakeAdminOrderLateRefund struct {
 	err       error
 	gotNote   string
 	gotRef    string
+	gotRefs   []string
 	callCount int
 }
 
-func (f *fakeAdminOrderLateRefund) MarkLatePaymentRefunded(_ context.Context, _, _ uuid.UUID, note, ref string) (*dto.LateRefundResponse, error) {
+func (f *fakeAdminOrderLateRefund) MarkLatePaymentRefunded(_ context.Context, _, _ uuid.UUID, note, ref string, refs []string) (*dto.LateRefundResponse, error) {
 	f.callCount++
-	f.gotNote, f.gotRef = note, ref
+	f.gotNote, f.gotRef, f.gotRefs = note, ref, refs
 	return f.resp, f.err
 }
 

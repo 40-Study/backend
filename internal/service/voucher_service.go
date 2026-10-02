@@ -30,6 +30,9 @@ var (
 	ErrVoucherUsageLimitExceeded   = errors.New("voucher usage limit exceeded")
 	ErrVoucherPerUserLimitExceeded = errors.New("voucher usage limit per user exceeded")
 	ErrVoucherNotFoundByCode       = errors.New("voucher not found")
+	// ErrHoldersOnlyVoucherNotRemovable (L6 mục 6): người giữ voucher holders_only không tự bỏ lưu được.
+	// Handler ánh xạ sang 403 VOUCHER_HOLDERS_ONLY_NOT_REMOVABLE.
+	ErrHoldersOnlyVoucherNotRemovable = errors.New("holders-only voucher cannot be removed by its holder")
 	// ErrVoucherNotMoneyUnit (H2-01, review vòng 3): voucher discount_unit != MONEY (đổi bằng
 	// điểm) không áp dụng được cho đơn hàng tiền mặt — web từ chối rõ ràng
 	// (errorMessage "Voucher này đổi bằng điểm..."), backend trước đây ÂM THẦM trả discount=0
@@ -360,6 +363,19 @@ func (vs *VoucherService) UpdateVoucher(ctx context.Context, voucherID uuid.UUID
 	}
 	if req.EndDate != nil {
 		voucher.EndDate = req.EndDate
+	}
+	// L6 mục 8: gửi null = xoá (đặt NULL / 0 = không có). Áp SAU giá trị mới, giống DiscountPriceCleared.
+	if req.StartDateCleared {
+		voucher.StartDate = nil
+	}
+	if req.EndDateCleared {
+		voucher.EndDate = nil
+	}
+	if req.MaxDiscountMoneyCleared {
+		voucher.MaxDiscountMoney = nil
+	}
+	if req.MaxDiscountPointsCleared {
+		voucher.MaxDiscountPoints = 0
 	}
 	if voucher.StartDate != nil && voucher.EndDate != nil {
 		if !voucher.StartDate.Before(*voucher.EndDate) {
@@ -909,8 +925,15 @@ func (vs *VoucherService) UnsaveVoucher(ctx context.Context, userID uuid.UUID, v
 	if _, err := vs.ur.FindUserByID(ctx, userID); err != nil {
 		return errors.New("user not found")
 	}
-	if _, err := vs.vr.GetVoucherByID(ctx, voucherID); err != nil {
+	voucher, err := vs.vr.GetVoucherByID(ctx, voucherID)
+	if err != nil {
 		return errors.New("voucher not found")
+	}
+	// L6 mục 6 (quyết định: KHÔNG cho bỏ lưu): với voucher holders_only, dòng user_vouchers CHÍNH là
+	// quyền dùng. Bỏ lưu xoá quyền vĩnh viễn (SaveVoucher sau đó trả 404) nên người thắng cuộc thi bấm
+	// nhầm sẽ mất giải. Voucher công khai bỏ lưu bình thường vì lưu lại được bất cứ lúc nào.
+	if voucher.HoldersOnly {
+		return ErrHoldersOnlyVoucherNotRemovable
 	}
 	userVoucher, err := vs.vr.GetUserVoucherByUserAndVoucher(ctx, userID, voucherID)
 	if err != nil {

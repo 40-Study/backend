@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,6 +25,9 @@ var (
 	// ErrLateRefundNotNeeded: đơn không có cờ tiền về muộn (payment_after_expiry) nên không có gì
 	// để ghi nhận hoàn tiền.
 	ErrLateRefundNotNeeded = errors.New("order has no late payment to refund")
+	// ErrLateRefundUnknownRef (L6 mục 3): danh sách khoản cần ghi "đã hoàn" có mã không thuộc khoản
+	// tiền về muộn nào của đơn (gõ sai mã giao dịch) — từ chối thay vì lặng lẽ ghi hoàn nhầm.
+	ErrLateRefundUnknownRef = errors.New("refund reference does not match any late payment of this order")
 )
 
 // AdminOrderServiceInterface — xem context đầy đủ ở phase-02-orders-refund.md (đơn hàng admin +
@@ -31,7 +35,7 @@ var (
 type AdminOrderServiceInterface interface {
 	ListOrders(ctx context.Context, filter repository.AdminOrderFilter) (*dto.AdminOrderListResponse, error)
 	RefundOrder(ctx context.Context, actorID, orderID uuid.UUID, reason, refundMethod, transactionRef string) (*dto.RefundOrderResponse, error)
-	MarkLatePaymentRefunded(ctx context.Context, actorID, orderID uuid.UUID, note, transactionRef string) (*dto.LateRefundResponse, error)
+	MarkLatePaymentRefunded(ctx context.Context, actorID, orderID uuid.UUID, note, transactionRef string, refs []string) (*dto.LateRefundResponse, error)
 	GetRevenueReport(ctx context.Context, from, to time.Time) (*dto.RevenueReportResponse, error)
 }
 
@@ -77,6 +81,8 @@ func (s *AdminOrderService) ListOrders(ctx context.Context, filter repository.Ad
 		limit = 20
 	}
 
+	// Một truy vấn cho cả trang (không N+1): các khoản tiền về muộn của mọi đơn trong trang.
+	lateSummaries := lateRefundSummaries(s.orderRepo.TxDB(), orders)
 	items := make([]dto.AdminOrderListItem, 0, len(orders))
 	for _, order := range orders {
 		itemBriefs := make([]dto.AdminOrderItemBrief, 0, len(order.Items))
@@ -87,7 +93,8 @@ func (s *AdminOrderService) ListOrders(ctx context.Context, filter repository.Ad
 				FinalPrice:  it.FinalPrice,
 			})
 		}
-		needRefund, lateRefundedAt := lateRefundState(s.orderRepo.TxDB(), &order)
+		lateSummary := lateSummaries[order.ID]
+		needRefund, lateRefundedAt := lateRefundStateOf(lateSummary)
 		items = append(items, dto.AdminOrderListItem{
 			ID:             order.ID,
 			OrderNumber:    order.OrderNumber,
@@ -102,6 +109,7 @@ func (s *AdminOrderService) ListOrders(ctx context.Context, filter repository.Ad
 			Items:          itemBriefs,
 			RefundNeeded:   needRefund,
 			LateRefundedAt: lateRefundedAt,
+			LateRefunds:    lateRefundDTO(lateSummary),
 		})
 	}
 
@@ -199,13 +207,18 @@ func (s *AdminOrderService) RefundOrder(ctx context.Context, actorID, orderID uu
 
 // MarkLatePaymentRefunded - POST /api/orders/admin/:id/late-refund.
 //
-// Admin xác nhận ĐÃ chuyển khoản hoàn khoản tiền về muộn cho đơn đã đóng (expired/cancelled, cờ
-// payment_after_expiry). Không đổi trạng thái đơn, không đụng ghi danh (đơn chưa từng hoàn tất nên
-// chưa có gì để thu hồi) — chỉ ghi history late_refund_done để cờ refund_needed tắt.
+// Admin xác nhận ĐÃ chuyển khoản hoàn tiền về muộn cho đơn có cờ payment_after_expiry (đơn đã đóng,
+// hoặc đơn đã hoàn tất nhận chuyển dư). Không đổi trạng thái đơn, không đụng ghi danh — chỉ ghi
+// history late_refund_done.
+//
+// refs (L6 mục 3): các khoản (mã giao dịch ngân hàng) vừa hoàn. Rỗng = hoàn MỌI khoản đang chờ
+// (tương thích client cũ). Chỉ ghi nhận đúng các khoản được nêu: khoản còn lại vẫn cần hoàn, không
+// bị tắt cờ oan. Dòng history liệt kê rõ các khoản đã hoàn (late_refund_items.go).
 //
 // Idempotent: khoá dòng order rồi mới kiểm history (cùng khuôn flagRefundNeeded), nên hai request
-// đồng thời chỉ ghi một dòng; gọi lại trả 200 với already_recorded = true và mốc ghi nhận lần đầu.
-func (s *AdminOrderService) MarkLatePaymentRefunded(ctx context.Context, actorID, orderID uuid.UUID, note, transactionRef string) (*dto.LateRefundResponse, error) {
+// đồng thời chỉ ghi một dòng; khoản đã hoàn rồi thì gọi lại trả 200 với already_recorded = true và
+// mốc ghi nhận lần đầu.
+func (s *AdminOrderService) MarkLatePaymentRefunded(ctx context.Context, actorID, orderID uuid.UUID, note, transactionRef string, refs []string) (*dto.LateRefundResponse, error) {
 	var result *dto.LateRefundResponse
 
 	err := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
@@ -221,27 +234,43 @@ func (s *AdminOrderService) MarkLatePaymentRefunded(ctx context.Context, actorID
 
 		var rows []model.OrderStatusHistory
 		if err := txDB.Where("order_id = ? AND to_status IN ?", order.ID,
-			[]string{latePaymentHistoryStatus, lateRefundDoneHistoryStatus}).
-			Order("created_at ASC").Find(&rows).Error; err != nil {
+			[]string{latePaymentHistoryStatus, lateRefundDoneHistoryStatus}).Find(&rows).Error; err != nil {
 			return err
 		}
-		// rows đã sắp xếp tăng dần: lần cuối mỗi loại là mốc lớn nhất. Khách chuyển thêm SAU lần admin
-		// xác nhận thì cờ mới nhất muộn hơn late_refund_done và đơn lại cần hoàn.
-		var lastFlag, lastDone *time.Time
-		for i := range rows {
-			at := rows[i].CreatedAt
-			switch rows[i].ToStatus {
-			case latePaymentHistoryStatus:
-				lastFlag = &at
-			case lateRefundDoneHistoryStatus:
-				lastDone = &at
-			}
-		}
-		if lastFlag == nil {
+		summary := summarizeLateRefund(rows)
+		if !summary.HasFlags() {
 			return ErrLateRefundNotNeeded
 		}
-		if !lateRefundPending(lastFlag, lastDone) {
-			result = &dto.LateRefundResponse{ID: order.ID, LateRefundedAt: *lastDone, AlreadyRecorded: true}
+
+		// Các khoản sẽ được ghi hoàn lần này.
+		known := map[string]lateRefundItem{}
+		for _, it := range summary.Items {
+			known[it.Ref] = it
+		}
+		var target []string
+		if len(refs) == 0 {
+			target = summary.PendingRefs()
+		} else {
+			seen := map[string]bool{}
+			for _, ref := range refs {
+				ref = strings.TrimSpace(ref)
+				it, ok := known[ref]
+				if !ok {
+					return fmt.Errorf("%w: %q", ErrLateRefundUnknownRef, ref)
+				}
+				if !it.Refunded && !seen[ref] {
+					target = append(target, ref)
+				}
+				seen[ref] = true
+			}
+		}
+		if len(target) == 0 {
+			// Mọi khoản được nêu (hoặc mọi khoản của đơn) đã hoàn từ trước.
+			result = &dto.LateRefundResponse{ID: order.ID, RefundNeeded: summary.Needed(), AlreadyRecorded: true,
+				PendingCount: summary.PendingCount}
+			if summary.LastDoneAt != nil {
+				result.LateRefundedAt = *summary.LastDoneAt
+			}
 			return nil
 		}
 
@@ -254,19 +283,40 @@ func (s *AdminOrderService) MarkLatePaymentRefunded(ctx context.Context, actorID
 			OrderID:    order.ID,
 			FromStatus: order.Status,
 			ToStatus:   lateRefundDoneHistoryStatus,
-			Reason:     fmt.Sprintf("Late payment refunded by admin %s (ref=%s): %s", actorID, transactionRef, note),
+			Reason:     lateDoneMarker(target) + fmt.Sprintf("Late payment refunded by admin %s (ref=%s): %s", actorID, transactionRef, note),
 			Actor:      &actor,
 		}
 		if err := repository.NewOrderStatusHistoryRepository(txDB).Create(history); err != nil {
 			return err
 		}
-		result = &dto.LateRefundResponse{ID: order.ID, LateRefundedAt: now}
+		remaining := summary.PendingCount - len(target)
+		result = &dto.LateRefundResponse{ID: order.ID, RefundNeeded: remaining > 0, LateRefundedAt: now,
+			RefundedRefs: target, PendingCount: remaining}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// lateRefundDTO chuyển danh sách khoản tiền về muộn sang DTO cho trang admin (nil khi đơn không có khoản nào).
+func lateRefundDTO(s lateRefundSummary) *dto.LateRefundSummary {
+	if !s.HasFlags() {
+		return nil
+	}
+	out := &dto.LateRefundSummary{
+		PendingCount:  s.PendingCount,
+		PendingAmount: s.PendingAmount,
+		Items:         make([]dto.LateRefundItem, 0, len(s.Items)),
+	}
+	for _, it := range s.Items {
+		out.Items = append(out.Items, dto.LateRefundItem{
+			Ref: it.Ref, TransactionID: it.TransactionID, Amount: it.Amount,
+			FlaggedAt: it.FlaggedAt, Refunded: it.Refunded, RefundedAt: it.RefundedAt,
+		})
+	}
+	return out
 }
 
 // revokeEnrollmentsForRefund thu hồi enrollment cho từng khoá trong đơn — CHỈ khi đây là đơn

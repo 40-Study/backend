@@ -23,7 +23,13 @@ var ErrNotCourseOwner = errors.New("forbidden: not the owner")
 var ErrDiscountPriceInvalid = errors.New("discount_price must be greater than 0 and less than price; send null to remove the discount")
 
 // validateDiscountPrice kiểm discount có hợp lệ so với price không (0 < discount < price).
+//
+// So sánh trên giá trị ĐÃ LÀM TRÒN 2 chữ số, đúng như cột decimal(12,2) của Postgres (làm tròn
+// half-away-from-zero, giống decimal.Round): 99.999 so với giá 100 sẽ được DB lưu thành 100.00 =
+// giá gốc, tức khuyến mãi vô hiệu mà EffectivePrice âm thầm bỏ qua. Nếu so trước khi làm tròn thì
+// 99.999 < 100 lọt qua validate (L1 MINOR 1).
 func validateDiscountPrice(price, discount decimal.Decimal) error {
+	price, discount = price.Round(2), discount.Round(2)
 	if !discount.IsPositive() || !discount.LessThan(price) {
 		return ErrDiscountPriceInvalid
 	}

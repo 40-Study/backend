@@ -231,7 +231,9 @@ func (r *VoucherRepository) GetAllVouchers(ctx context.Context, limit, offset in
 	}
 
 	// Get paginated results
-	if err := query.Offset(offset).Limit(limit).Order("created_at DESC").Find(&vouchers).Error; err != nil {
+	// id làm khoá phụ: nhiều voucher cùng created_at (tạo hàng loạt/seed) thì offset phân trang
+	// không được nhảy/lặp dòng giữa các trang.
+	if err := query.Offset(offset).Limit(limit).Order("created_at DESC, id DESC").Find(&vouchers).Error; err != nil {
 		return nil, 0, err
 	}
 

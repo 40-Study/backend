@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -87,6 +88,10 @@ type PaymentService struct {
 	// CheckAndProcessPayment. nil-safe (một số test dựng PaymentService không cần fee) — coi như
 	// phí 0% nếu không tiêm.
 	platformSettingRepo repository.PlatformSettingRepositoryInterface
+
+	// sweepMu + sweepLocker (L6 mục 5): chống job nền đối chiếu chạy chồng — xem payment_reconcile_sweep.go.
+	sweepMu     sync.Mutex
+	sweepLocker SweepLocker
 }
 
 // M3-09 (review vòng 3b, bổ sung vòng 4; Minor vòng 4b/5 xóa nốt paymentEventRepo): TRƯỚC ĐÂY
@@ -562,8 +567,9 @@ func (s *PaymentService) expireWithLatePayment(ctx context.Context, order *model
 	if order.PaymentCodeExpiredAt != nil {
 		codeExpiry = order.PaymentCodeExpiredAt.Format(time.RFC3339)
 	}
-	note := fmt.Sprintf("Received bank transaction %s amount %s at %s but payment code expired at %s (amount matches order total %s: %t, date parsed: %t). Refund manually.",
-		result.TransactionID, result.Amount, when, codeExpiry, order.TotalAmount.String(), amountMatches, dateKnown)
+	note := lateFlagReasonHead(result.TransactionID, result.Amount, when) +
+		fmt.Sprintf(" but payment code expired at %s (amount matches order total %s: %t, date parsed: %t). Refund manually.",
+			codeExpiry, order.TotalAmount.String(), amountMatches, dateKnown)
 
 	fromStatus := order.Status
 	var applied bool

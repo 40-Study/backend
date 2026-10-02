@@ -46,6 +46,9 @@ type OrderResponse struct {
 	// LateRefundedAt: admin đã xác nhận hoàn tiền xong cho khoản tiền về muộn (refund_needed khi đó
 	// = false). Web đổi badge "Cần hoàn tiền" thành "Đã hoàn tiền".
 	LateRefundedAt *time.Time `json:"late_refunded_at,omitempty"`
+	// LateRefunds (L6 mục 3): từng khoản tiền về muộn — chỉ admin nhận được (hideInternalRefundFields
+	// bỏ khỏi bản của học viên). refund_needed / late_refunded_at giữ nguyên nghĩa.
+	LateRefunds *LateRefundSummary `json:"late_refunds,omitempty"`
 	// Refund* (B6, QA vòng 2): chỉ có khi đơn đã hoàn tiền — trang chi tiết admin hiển thị dấu vết
 	// đối soát (lý do, mã giao dịch chuyển khoản, thời điểm).
 	RefundReason         *string    `json:"refund_reason,omitempty"`
@@ -193,6 +196,27 @@ type AdminOrderListItem struct {
 	RefundNeeded bool `json:"refund_needed,omitempty"`
 	// LateRefundedAt: xem OrderResponse.LateRefundedAt.
 	LateRefundedAt *time.Time `json:"late_refunded_at,omitempty"`
+	// LateRefunds (L6 mục 3): từng khoản tiền về muộn của đơn (số khoản chờ hoàn, tổng tiền, mã giao
+	// dịch). nil khi đơn chưa từng nhận tiền về muộn. refund_needed / late_refunded_at giữ nguyên nghĩa.
+	LateRefunds *LateRefundSummary `json:"late_refunds,omitempty"`
+}
+
+// LateRefundSummary — các khoản tiền về muộn của một đơn, cho trang admin đơn hàng.
+type LateRefundSummary struct {
+	PendingCount  int              `json:"pending_count"`
+	PendingAmount decimal.Decimal  `json:"pending_amount"`
+	Items         []LateRefundItem `json:"items"`
+}
+
+// LateRefundItem — một khoản tiền về muộn (một giao dịch ngân hàng). Ref là khoá để gửi lại ở
+// LateRefundRequest.Refs: bằng TransactionID, hoặc "history:<id>" khi dòng cũ không có mã giao dịch.
+type LateRefundItem struct {
+	Ref           string     `json:"ref"`
+	TransactionID string     `json:"transaction_id"`
+	Amount        string     `json:"amount"`
+	FlaggedAt     time.Time  `json:"flagged_at"`
+	Refunded      bool       `json:"refunded"`
+	RefundedAt    *time.Time `json:"refunded_at,omitempty"`
 }
 
 // AdminOrderListResponse — envelope phân trang (mẫu OrderListResponse chuẩn mới của 4 phase).
@@ -231,6 +255,9 @@ type RefundOrderResponse struct {
 type LateRefundRequest struct {
 	Note           string `json:"note" validate:"omitempty,max=500"`
 	TransactionRef string `json:"transaction_ref" validate:"omitempty,max=100"`
+	// Refs (L6 mục 3): các khoản (LateRefundItem.Ref) vừa hoàn. Bỏ trống = hoàn mọi khoản đang chờ
+	// (hành vi cũ). Chỉ các khoản được nêu bị tắt cờ; khoản khác vẫn cần hoàn.
+	Refs []string `json:"refs" validate:"omitempty,max=100,dive,max=255"`
 }
 
 // LateRefundResponse — 200 của POST /orders/admin/:id/late-refund. AlreadyRecorded = true khi đơn
@@ -240,6 +267,10 @@ type LateRefundResponse struct {
 	RefundNeeded    bool      `json:"refund_needed"`
 	LateRefundedAt  time.Time `json:"late_refunded_at"`
 	AlreadyRecorded bool      `json:"already_recorded"`
+	// RefundedRefs: các khoản vừa được ghi hoàn trong lần gọi này (rỗng khi already_recorded).
+	// PendingCount: số khoản còn chờ hoàn sau lần gọi (refund_needed = PendingCount > 0).
+	RefundedRefs []string `json:"refunded_refs,omitempty"`
+	PendingCount int      `json:"pending_count"`
 }
 
 // RevenueReportResponse — GET /admin/reports/revenue.

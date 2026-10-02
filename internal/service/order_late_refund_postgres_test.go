@@ -64,7 +64,7 @@ func TestMarkLatePaymentRefunded_ClearsRefundNeededAndRecordsOnce(t *testing.T) 
 		t.Fatalf("trước khi hoàn: refund_needed=%v late_refunded_at=%v, muốn true/nil", needed, at)
 	}
 
-	first, err := admin.MarkLatePaymentRefunded(ctx, actor, orderID, "Đã CK lại cho học viên", "FT-LATE-1")
+	first, err := admin.MarkLatePaymentRefunded(ctx, actor, orderID, "Đã CK lại cho học viên", "FT-LATE-1", nil)
 	if err != nil || first.AlreadyRecorded || first.RefundNeeded {
 		t.Fatalf("lần 1: resp=%+v err=%v, muốn ghi mới, refund_needed=false", first, err)
 	}
@@ -77,7 +77,7 @@ func TestMarkLatePaymentRefunded_ClearsRefundNeededAndRecordsOnce(t *testing.T) 
 	}
 
 	// Idempotent: gọi lại vẫn 200, không ghi thêm dòng, trả lại đúng mốc lần đầu.
-	second, err := admin.MarkLatePaymentRefunded(ctx, actor, orderID, "gọi lại", "FT-LATE-2")
+	second, err := admin.MarkLatePaymentRefunded(ctx, actor, orderID, "gọi lại", "FT-LATE-2", nil)
 	if err != nil || !second.AlreadyRecorded || !second.LateRefundedAt.Equal(first.LateRefundedAt) {
 		t.Fatalf("lần 2: resp=%+v err=%v, muốn already_recorded và cùng mốc %s", second, err, first.LateRefundedAt)
 	}
@@ -102,7 +102,7 @@ func TestMarkLatePaymentRefunded_ConcurrentCallsRecordOneRow(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, errs[i] = admin.MarkLatePaymentRefunded(context.Background(), uuid.New(), orderID, "", "")
+			_, errs[i] = admin.MarkLatePaymentRefunded(context.Background(), uuid.New(), orderID, "", "", nil)
 		}(i)
 	}
 	wg.Wait()
@@ -125,13 +125,13 @@ func TestMarkLatePaymentRefunded_RejectsUnflaggedAndUnknownOrders(t *testing.T) 
 
 	unflagged, _, _ := f.processingWithCodeExpiring(student, "QA-P đơn không cờ", -2*time.Hour)
 	f.exec("UPDATE orders SET status = 'cancelled' WHERE id = ?", unflagged)
-	if _, err := admin.MarkLatePaymentRefunded(ctx, uuid.New(), unflagged, "", ""); !errors.Is(err, ErrLateRefundNotNeeded) {
+	if _, err := admin.MarkLatePaymentRefunded(ctx, uuid.New(), unflagged, "", "", nil); !errors.Is(err, ErrLateRefundNotNeeded) {
 		t.Fatalf("đơn không cờ: err=%v, muốn ErrLateRefundNotNeeded", err)
 	}
 	if n := f.historyCount(unflagged, lateRefundDoneHistoryStatus); n != 0 {
 		t.Fatalf("đơn không cờ bị ghi %d dòng late_refund_done, muốn 0", n)
 	}
-	if _, err := admin.MarkLatePaymentRefunded(ctx, uuid.New(), uuid.New(), "", ""); !errors.Is(err, ErrOrderNotFound) {
+	if _, err := admin.MarkLatePaymentRefunded(ctx, uuid.New(), uuid.New(), "", "", nil); !errors.Is(err, ErrOrderNotFound) {
 		t.Fatalf("đơn không tồn tại: err=%v, muốn ErrOrderNotFound", err)
 	}
 }
@@ -151,7 +151,7 @@ func TestLateRefund_SecondTransferAfterRefundFlagsAgain(t *testing.T) {
 	}
 	admin := f.adminOrderService()
 	actor := uuid.New()
-	if _, err := admin.MarkLatePaymentRefunded(ctx, actor, orderID, "hoàn lần 1", "FT-1"); err != nil {
+	if _, err := admin.MarkLatePaymentRefunded(ctx, actor, orderID, "hoàn lần 1", "FT-1", nil); err != nil {
 		t.Fatalf("hoàn lần 1: %v", err)
 	}
 	if needed, at := f.adminListItem(student, orderID); needed || at == nil {
@@ -190,14 +190,14 @@ func TestLateRefund_SecondTransferAfterRefundFlagsAgain(t *testing.T) {
 	}
 
 	// Admin hoàn khoản thứ hai: ghi mới (không phải already_recorded), rồi gọi lại mới là idempotent.
-	res, err := admin.MarkLatePaymentRefunded(ctx, actor, orderID, "hoàn lần 2", "FT-2")
+	res, err := admin.MarkLatePaymentRefunded(ctx, actor, orderID, "hoàn lần 2", "FT-2", nil)
 	if err != nil || res.AlreadyRecorded {
 		t.Fatalf("hoàn lần 2: resp=%+v err=%v, muốn ghi mới", res, err)
 	}
 	if n := f.historyCount(orderID, lateRefundDoneHistoryStatus); n != 2 {
 		t.Fatalf("late_refund_done = %d, muốn 2", n)
 	}
-	again, err := admin.MarkLatePaymentRefunded(ctx, actor, orderID, "gọi lại", "FT-3")
+	again, err := admin.MarkLatePaymentRefunded(ctx, actor, orderID, "gọi lại", "FT-3", nil)
 	if err != nil || !again.AlreadyRecorded || !again.LateRefundedAt.Equal(res.LateRefundedAt) {
 		t.Fatalf("gọi lại sau hoàn lần 2: resp=%+v err=%v, muốn already_recorded cùng mốc", again, err)
 	}

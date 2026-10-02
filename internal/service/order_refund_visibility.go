@@ -9,6 +9,7 @@ import "study.com/v1/internal/dto"
 func hideInternalRefundFields(resp *dto.OrderResponse) *dto.OrderResponse {
 	if resp != nil {
 		resp.RefundReason = nil
+		resp.LateRefunds = nil // mã giao dịch/số tiền từng khoản là đối soát nội bộ; học viên chỉ cần cờ refund_needed
 	}
 	return resp
 }

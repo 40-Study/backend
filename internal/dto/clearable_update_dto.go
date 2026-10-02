@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
@@ -79,5 +80,52 @@ func (r *UpdateCourseDTO) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("discount_price: %w", err)
 	}
 	r.DiscountPrice = &price
+	return nil
+}
+
+// decodeClearable đọc một trường tuỳ chọn có thể xoá theo quy ước ở đầu file: vắng mặt → (nil, false);
+// null hoặc "" → (nil, true); còn lại giải mã thành *T (lỗi kiểu bị từ chối, không lặng lẽ bỏ qua).
+func decodeClearable[T any](raw json.RawMessage, field string) (value *T, cleared bool, err error) {
+	if len(raw) == 0 {
+		return nil, false, nil
+	}
+	if isJSONNullOrEmptyString(raw) {
+		return nil, true, nil
+	}
+	var v T
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, false, fmt.Errorf("%s: %w", field, err)
+	}
+	return &v, false, nil
+}
+
+// UnmarshalJSON của UpdateVoucherRequest đọc start_date, end_date, max_discount_money và
+// max_discount_points theo quy ước ở trên (L6 mục 8): admin xoá được ngày bắt đầu/kết thúc và trần giảm.
+func (r *UpdateVoucherRequest) UnmarshalJSON(data []byte) error {
+	type plain UpdateVoucherRequest
+	aux := struct {
+		*plain
+		StartDate         json.RawMessage `json:"start_date"`
+		EndDate           json.RawMessage `json:"end_date"`
+		MaxDiscountMoney  json.RawMessage `json:"max_discount_money"`
+		MaxDiscountPoints json.RawMessage `json:"max_discount_points"`
+	}{plain: (*plain)(r)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	var err error
+	if r.StartDate, r.StartDateCleared, err = decodeClearable[time.Time](aux.StartDate, "start_date"); err != nil {
+		return err
+	}
+	if r.EndDate, r.EndDateCleared, err = decodeClearable[time.Time](aux.EndDate, "end_date"); err != nil {
+		return err
+	}
+	if r.MaxDiscountMoney, r.MaxDiscountMoneyCleared, err = decodeClearable[float64](aux.MaxDiscountMoney, "max_discount_money"); err != nil {
+		return err
+	}
+	if r.MaxDiscountPoints, r.MaxDiscountPointsCleared, err = decodeClearable[int32](aux.MaxDiscountPoints, "max_discount_points"); err != nil {
+		return err
+	}
 	return nil
 }

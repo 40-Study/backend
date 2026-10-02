@@ -206,12 +206,17 @@ func (s *PaymentService) reconcileIssuedOrder(ctx context.Context, order *model.
 		amountMatches, paidAt, dateKnown := evaluateBankTransaction(tx, order)
 		// Trong hạn: khớp tiền VÀ (mã còn hạn lúc đối chiếu, hoặc ngân hàng ghi nhận <= hạn mã).
 		if amountMatches && (!codeExpired || (dateKnown && !paidAt.After(deadline))) {
-			for _, other := range txs {
-				if other != tx {
-					log.Printf("[PAYMENT-EXTRA-TRANSFER] order=%s hoàn tất bằng tx=%s, còn giao dịch khác tx=%s amount=%s cùng mã: kiểm tra hoàn tiền thủ công", order.ID, tx.TransactionID, other.TransactionID, other.Amount)
-				}
+			resp, err := s.completePaidOrder(ctx, order, tx)
+			if err != nil {
+				// Chưa hoàn tất được (lỗi hoặc đua): KHÔNG gắn cờ khoản nào ở đây. Lần đối chiếu sau
+				// (đơn completed hoặc đã đóng) xử lý đúng theo trạng thái thật.
+				return resp, err
 			}
-			return s.completePaidOrder(ctx, order, tx)
+			// L6 mục 4: đơn chỉ hoàn tất bằng MỘT giao dịch; mọi giao dịch khác cùng mã (chuyển dư,
+			// hoặc chuyển sai số tiền trước đó) là tiền khách đã chuyển mà đơn không dùng tới, nên bật
+			// cờ cần hoàn tiền y như late-refund, không chỉ ghi log.
+			s.flagExtraTransfers(ctx, order, tx.TransactionID, txs)
+			return resp, nil
 		}
 	}
 	if !codeExpired {
@@ -399,8 +404,16 @@ func (s *PaymentService) expireUnverified(ctx context.Context, order *model.Orde
 // rồi mới kiểm history) + log [PAYMENT-LATE-REFUND-NEEDED]. Không đổi trạng thái, không ghi danh,
 // không đụng voucher. Trả true khi đơn đã có cờ (vừa ghi hoặc từ trước).
 func (s *PaymentService) flagRefundNeeded(ctx context.Context, order *model.Order, result *grpc.CheckTransactionResult) bool {
-	note := fmt.Sprintf("Received bank transaction %s amount %s at %s for order already %s (payment code expired at %s). Order is NOT restored; refund manually.",
-		result.TransactionID, result.Amount, result.TransactionDate, order.Status, paymentCodeDeadline(order).Format(time.RFC3339))
+	s.recordRefundFlag(ctx, order, result)
+	return true
+}
+
+// recordRefundFlag — thân của flagRefundNeeded; trả true CHỈ khi vừa ghi một dòng cờ MỚI (false khi
+// giao dịch đã có cờ từ trước, hoặc ghi lỗi). Job quét dùng giá trị này để đếm khoản mới.
+func (s *PaymentService) recordRefundFlag(ctx context.Context, order *model.Order, result *grpc.CheckTransactionResult) bool {
+	note := lateFlagReasonHead(result.TransactionID, result.Amount, result.TransactionDate) +
+		fmt.Sprintf(" for order already %s (payment code expired at %s). Order is NOT restored; refund manually.",
+			order.Status, paymentCodeDeadline(order).Format(time.RFC3339))
 	var recorded bool
 	txErr := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
 		txDB := txRepo.TxDB()
@@ -422,12 +435,12 @@ func (s *PaymentService) flagRefundNeeded(ctx context.Context, order *model.Orde
 	})
 	if txErr != nil {
 		log.Printf("[PAYMENT-LATE-REFUND-NEEDED] order=%s amount=%s tx=%s: có tiền cho đơn đã đóng nhưng KHÔNG ghi được cờ hoàn tiền: %v", order.ID, result.Amount, result.TransactionID, txErr)
-		return true
+		return false
 	}
 	if recorded {
 		log.Printf("[PAYMENT-LATE-REFUND-NEEDED] order=%s amount=%s tx=%s status=%s: nhận tiền cho đơn đã đóng, cần hoàn tiền thủ công", order.ID, result.Amount, result.TransactionID, order.Status)
 	}
-	return true
+	return recorded
 }
 
 // lateFlagAlreadyRecorded — giao dịch `txID` đã có dòng cờ payment_after_expiry chưa. Idempotent theo
@@ -447,49 +460,77 @@ func lateFlagAlreadyRecorded(prior []model.OrderStatusHistory, txID string) bool
 	return false
 }
 
-// lateRefundPending — còn khoản tiền muộn chưa hoàn: có cờ, và hoặc admin chưa ghi late_refund_done,
-// hoặc cờ mới nhất ghi SAU lần admin xác nhận gần nhất (khách chuyển thêm sau khi đã hoàn).
-func lateRefundPending(lastFlag, lastDone *time.Time) bool {
-	if lastFlag == nil {
-		return false
+// lateRefundEligible — đơn có thể mang khoản tiền về muộn: đơn từng cấp mã chuyển khoản và đã rời
+// trạng thái chờ. expired/cancelled (tiền về sau khi đơn đóng) và completed/refunded (khách chuyển
+// DƯ vào cùng mã khi đơn đã hoàn tất, L6 mục 4). Đơn pending/processing chưa có cờ nên không tốn truy vấn.
+func lateRefundEligible(order *model.Order) bool {
+	switch order.Status {
+	case "expired", "cancelled", "completed", "refunded":
+		return hasPaymentCode(order)
 	}
-	return lastDone == nil || lastFlag.After(*lastDone)
+	return false
 }
 
-// lateRefundState — trạng thái hoàn tiền của đơn đã đóng nhận tiền về muộn, đọc từ history:
-// needed = còn khoản muộn chưa hoàn (xem lateRefundPending); refundedAt != nil khi không còn khoản
-// nào chờ và admin đã ghi nhận (mốc xác nhận gần nhất). Chỉ đơn đã đóng từng có mã mới có thể có cờ
-// nên chỉ những đơn đó tốn 1 truy vấn.
-func lateRefundState(db *gorm.DB, order *model.Order) (needed bool, refundedAt *time.Time) {
-	if db == nil || (order.Status != "expired" && order.Status != "cancelled") || !hasPaymentCode(order) {
-		return false, nil
+// lateRefundSummaryOf đọc history của một đơn rồi dựng danh sách khoản tiền về muộn (xem
+// late_refund_items.go). Lỗi đọc DB chỉ log và coi như không có cờ, đúng hành vi cũ của lateRefundState.
+func lateRefundSummaryOf(db *gorm.DB, order *model.Order) lateRefundSummary {
+	if db == nil || !lateRefundEligible(order) {
+		return lateRefundSummary{}
 	}
-	var rows []struct {
-		ToStatus string
-		LastAt   time.Time
-	}
-	if err := db.Model(&model.OrderStatusHistory{}).
-		Select("to_status, MAX(created_at) AS last_at").
-		Where("order_id = ? AND to_status IN ?", order.ID, []string{latePaymentHistoryStatus, lateRefundDoneHistoryStatus}).
-		Group("to_status").Scan(&rows).Error; err != nil {
+	var rows []model.OrderStatusHistory
+	if err := db.Where("order_id = ? AND to_status IN ?", order.ID,
+		[]string{latePaymentHistoryStatus, lateRefundDoneHistoryStatus}).Find(&rows).Error; err != nil {
 		log.Printf("[PAYMENT-STATUS] order=%s không đọc được cờ hoàn tiền: %v", order.ID, err)
-		return false, nil
+		return lateRefundSummary{}
 	}
-	var lastFlag, lastDone *time.Time
-	for _, r := range rows {
-		at := r.LastAt
-		switch r.ToStatus {
-		case latePaymentHistoryStatus:
-			lastFlag = &at
-		case lateRefundDoneHistoryStatus:
-			lastDone = &at
+	return summarizeLateRefund(rows)
+}
+
+// lateRefundSummaries — như lateRefundSummaryOf nhưng cho cả danh sách đơn bằng MỘT truy vấn (trang
+// admin liệt kê tối đa vài chục đơn, không được N+1). Đơn không đủ điều kiện không có khoá trong map.
+func lateRefundSummaries(db *gorm.DB, orders []model.Order) map[uuid.UUID]lateRefundSummary {
+	out := map[uuid.UUID]lateRefundSummary{}
+	if db == nil {
+		return out
+	}
+	var ids []uuid.UUID
+	for i := range orders {
+		if lateRefundEligible(&orders[i]) {
+			ids = append(ids, orders[i].ID)
 		}
 	}
-	if lastFlag == nil {
+	if len(ids) == 0 {
+		return out
+	}
+	var rows []model.OrderStatusHistory
+	if err := db.Where("order_id IN ? AND to_status IN ?", ids,
+		[]string{latePaymentHistoryStatus, lateRefundDoneHistoryStatus}).Find(&rows).Error; err != nil {
+		log.Printf("[PAYMENT-STATUS] không đọc được cờ hoàn tiền của %d đơn: %v", len(ids), err)
+		return out
+	}
+	byOrder := map[uuid.UUID][]model.OrderStatusHistory{}
+	for _, r := range rows {
+		byOrder[r.OrderID] = append(byOrder[r.OrderID], r)
+	}
+	for _, id := range ids {
+		out[id] = summarizeLateRefund(byOrder[id])
+	}
+	return out
+}
+
+// lateRefundState — trạng thái hoàn tiền của đơn nhận tiền về muộn, đọc từ history: needed = còn
+// ít nhất một khoản chưa hoàn; refundedAt != nil khi đã có cờ, không còn khoản nào chờ và admin đã
+// ghi nhận (mốc xác nhận gần nhất).
+func lateRefundState(db *gorm.DB, order *model.Order) (needed bool, refundedAt *time.Time) {
+	return lateRefundStateOf(lateRefundSummaryOf(db, order))
+}
+
+func lateRefundStateOf(s lateRefundSummary) (needed bool, refundedAt *time.Time) {
+	if !s.HasFlags() {
 		return false, nil
 	}
-	if lateRefundPending(lastFlag, lastDone) {
+	if s.Needed() {
 		return true, nil
 	}
-	return false, lastDone
+	return false, s.LastDoneAt
 }
