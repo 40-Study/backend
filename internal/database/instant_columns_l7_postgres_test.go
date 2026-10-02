@@ -6,8 +6,9 @@ package database
 //   - TestInstantColumns_MoiCotTheoMuiGioNguon: dựng MỌI cột trong instantColumns ở kiểu cũ, chuyển dưới phiên UTC,
 //     kiểm instant của từng cột theo múi giờ nguồn đã khai. Đổi zone của một cột (hoặc bỏ AT TIME ZONE theo cột)
 //     thì ĐỎ; thêm cột vào danh sách mà quên khai múi giờ hợp lệ cũng ĐỎ.
-//   - TestInstantColumns_ChayDongThoiKhongLechGio: nhiều kết nối phiên UTC chạy migration cùng lúc. Trước khi có khoá
-//     advisory + giao dịch, kết nối đến sau ALTER tiếp trên cột đã là timestamptz và lệch 7 giờ (ĐỎ).
+//   - TestInstantColumns_ChayDongThoiKhongLechGio: nhiều kết nối phiên UTC chạy migration cùng lúc, trên cả cột
+//     giờ VN lẫn cột giờ UTC. Trước khi có khoá advisory + giao dịch, kết nối đến sau ALTER tiếp trên cột giờ VN đã là
+//     timestamptz và lệch 7 giờ (ĐỎ); cột UTC phải giữ nguyên.
 
 import (
 	"fmt"
@@ -102,15 +103,22 @@ func TestInstantColumns_MoiCotTheoMuiGioNguon(t *testing.T) {
 		}
 	}
 
-	// Ghim các quyết định đã chốt theo nơi ghi (đổi một dòng ở đây = đổi quyết định, phải sửa cả bảng ở PR):
-	// web gửi toISOString() nên start/end của bài tập là giờ UTC, còn mọi CURRENT_TIMESTAMP/time.Now() là giờ VN.
+	// Ghim các quyết định đã chốt theo ĐƯỜNG GHI THẬT (đổi một dòng ở đây = đổi quyết định, phải sửa cả bảng ở PR):
+	// giá trị do web/API gửi (toISOString, RFC3339 "Z") và time.Now() trên container UTC là giờ UTC; chỉ
+	// CURRENT_TIMESTAMP của phiên Asia/Ho_Chi_Minh là giờ VN.
 	pins := map[string]string{
-		"assignments.start_time":   "2026-10-08 20:00",
-		"assignments.end_time":     "2026-10-08 20:00",
-		"assignments.published_at": "2026-10-08 13:00",
-		"participants.joined_at":   "2026-10-08 13:00",
-		"vouchers.start_date":      "2026-10-08 13:00",
-		"user_vouchers.saved_at":   "2026-10-08 13:00",
+		"assignments.start_time":           "2026-10-08 20:00",
+		"assignments.end_time":             "2026-10-08 20:00",
+		"vouchers.start_date":              "2026-10-08 20:00",
+		"vouchers.end_date":                "2026-10-08 20:00",
+		"user_vouchers.saved_at":           "2026-10-08 20:00",
+		"idempotency_keys.expires_at":      "2026-10-08 20:00",
+		"class_lesson_contents.open_date":  "2026-10-08 20:00",
+		"livestream_sessions.scheduled_at": "2026-10-08 20:00",
+		"assignments.published_at":         "2026-10-08 13:00",
+		"participants.joined_at":           "2026-10-08 13:00",
+		"livestream_sessions.started_at":   "2026-10-08 13:00",
+		"whiteboard_snapshots.saved_at":    "2026-10-08 13:00",
 	}
 	for k, want := range pins {
 		parts := strings.SplitN(k, ".", 2)
@@ -121,17 +129,21 @@ func TestInstantColumns_MoiCotTheoMuiGioNguon(t *testing.T) {
 }
 
 // Nhiều tiến trình migrate cùng DB (API khởi động song song, CI): mọi kết nối chạy ở múi giờ UTC, chờ nhau ở một
-// rào chắn rồi cùng gọi migrate. Kết quả phải là ĐÚNG MỘT lần chuyển (20:00 VN = 13:00Z), không phải chuyển lần hai
-// trên cột đã là timestamptz (13:00Z -> 20:00Z). Lặp vài vòng vì lỗi cũ phụ thuộc thứ tự chạy.
+// rào chắn rồi cùng gọi migrate. Kết quả phải là ĐÚNG MỘT lần chuyển. Có CẢ HAI loại cột: cột giờ VN (started_at,
+// 20:00 VN = 13:00Z) bị lệch nếu chuyển lần hai trên cột đã là timestamptz (13:00Z -> 20:00Z trong phiên UTC), còn cột
+// giờ UTC (scheduled_at, 20:00Z) phải giữ nguyên. Lặp vài vòng vì lỗi cũ phụ thuộc thứ tự chạy.
 func TestInstantColumns_ChayDongThoiKhongLechGio(t *testing.T) {
 	db := pgtest.IsolatedSchema(t, func(*gorm.DB) error { return nil })
 	const rounds, workers = 5, 6
 
 	for round := 1; round <= rounds; round++ {
-		if err := db.Exec("DROP TABLE IF EXISTS class_lesson_contents, livestream_sessions").Error; err != nil {
+		if err := db.Exec("DROP TABLE IF EXISTS class_lesson_contents, livestream_sessions, data_migrations").Error; err != nil {
 			t.Fatal(err)
 		}
 		if err := db.Exec(legacyInstantTables).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Exec("UPDATE livestream_sessions SET started_at = ?::timestamp", legacyValue).Error; err != nil {
 			t.Fatal(err)
 		}
 
@@ -164,11 +176,14 @@ func TestInstantColumns_ChayDongThoiKhongLechGio(t *testing.T) {
 			}
 		}
 
-		if got := instantUTC(t, db, "class_lesson_contents", "scheduled_at"); got != "2026-10-08 13:00" {
-			t.Fatalf("vòng %d: scheduled_at = %s UTC, muốn 2026-10-08 13:00 (lệch giờ do chuyển nhiều lần)", round, got)
-		}
-		if got := instantUTC(t, db, "livestream_sessions", "scheduled_at"); got != "2026-10-08 13:00" {
-			t.Fatalf("vòng %d: livestream_sessions.scheduled_at = %s UTC, muốn 2026-10-08 13:00", round, got)
+		for _, w := range []struct{ table, col, want string }{
+			{"class_lesson_contents", "scheduled_at", "2026-10-08 20:00"}, // cột UTC
+			{"livestream_sessions", "scheduled_at", "2026-10-08 20:00"},   // cột UTC
+			{"livestream_sessions", "started_at", "2026-10-08 13:00"},     // cột giờ VN: lệch nếu chuyển hai lần
+		} {
+			if got := instantUTC(t, db, w.table, w.col); got != w.want {
+				t.Fatalf("vòng %d: %s.%s = %s UTC, muốn %s (lệch giờ do chuyển nhiều lần)", round, w.table, w.col, got, w.want)
+			}
 		}
 	}
 }

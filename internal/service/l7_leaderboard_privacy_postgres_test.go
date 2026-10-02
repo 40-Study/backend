@@ -172,6 +172,31 @@ func TestL7_LeaderboardDisplay_Postgres(t *testing.T) {
 		}
 		check("đang xếp hạng sống", false)
 
+		// Qua ContestService.Leaderboard (đường production): admin và chính chủ thấy tên thật, người lạ thì không.
+		svc := NewContestService(repo, nil, nil, nil)
+		for _, tc := range []struct {
+			name     string
+			actor    *ContestActor
+			wantReal bool
+		}{
+			{"admin", &ContestActor{UserID: viewer.ID, ActiveRole: "SYSTEM_ADMIN", IsAdmin: true}, true},
+			{"chính chủ", &ContestActor{UserID: anon.ID, ActiveRole: "STUDENT"}, true},
+			{"người lạ", &ContestActor{UserID: viewer.ID, ActiveRole: "STUDENT"}, false},
+		} {
+			page, err := svc.Leaderboard(context.Background(), c.ID, tc.actor, 1, 20)
+			if err != nil {
+				t.Fatalf("Leaderboard(%s): %v", tc.name, err)
+			}
+			raw, _ := json.Marshal(page.Items)
+			sawReal := strings.Contains(string(raw), *anon.FullName)
+			if sawReal != tc.wantReal {
+				t.Errorf("BXH cuộc thi cho %s: thấy tên thật = %v, muốn %v: %s", tc.name, sawReal, tc.wantReal, raw)
+			}
+			if !tc.wantReal && !strings.Contains(string(raw), AnonymousLearnerLabel) {
+				t.Errorf("BXH cuộc thi cho %s: thiếu nhãn ẩn danh: %s", tc.name, raw)
+			}
+		}
+
 		for rank, u := range []model.User{anon, open} {
 			if err := repo.SetRankTx(db, c.ID, u.ID, rank+1); err != nil {
 				t.Fatal(err)
