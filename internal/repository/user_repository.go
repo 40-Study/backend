@@ -30,6 +30,9 @@ type UserRepositoryInterface interface {
 	FindUserByEmail(ctx context.Context, email string) (*model.User, error)
 	FindUserByPhone(ctx context.Context, phone string) (*model.User, error)
 	FindUserByID(ctx context.Context, id uuid.UUID) (*model.User, error)
+	// UserNameExists — đã có tài khoản (kể cả đã xoá mềm: tên cũ vẫn có thể còn nằm ở dữ liệu liên quan)
+	// dùng user_name này chưa, so không phân biệt hoa thường. Dùng để sinh user_name OAuth không trùng.
+	UserNameExists(ctx context.Context, userName string) (bool, error)
 	UpdateUser(ctx context.Context, user *model.User) error
 	UpdateUserProfile(ctx context.Context, userID uuid.UUID, updates map[string]interface{}) error
 	UpdatePasswordHash(ctx context.Context, userID uuid.UUID, newPasswordHash string) error
@@ -75,6 +78,12 @@ func (r *UserRepository) FindUserByEmail(ctx context.Context, email string) (*mo
 		return nil, err
 	}
 	return &user, nil
+}
+
+func (r *UserRepository) UserNameExists(ctx context.Context, userName string) (bool, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Unscoped().Model(&model.User{}).Where("lower(user_name) = lower(?)", userName).Limit(1).Count(&n).Error
+	return n > 0, err
 }
 
 func (r *UserRepository) FindUserByPhone(ctx context.Context, phone string) (*model.User, error) {

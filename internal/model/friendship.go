@@ -47,6 +47,11 @@ type Friendship struct {
 	Status      string     `gorm:"type:varchar(20);not null;default:'PENDING';index:idx_friendships_addressee,priority:2;index:idx_friendships_requester,priority:2" json:"status"`
 	RequestedAt time.Time  `gorm:"not null;index:idx_friendships_requester,priority:3" json:"requested_at"`
 	RespondedAt *time.Time `json:"responded_at,omitempty"`
+	// NoticeWindowStart/NoticeCount: bộ đếm trần thông báo lời mời kết bạn của cặp (người gửi hiện tại →
+	// người nhận) trong cửa sổ 24h. Dòng cặp sống qua các lần gửi-huỷ-gửi nên đếm được ở đây; API không
+	// trả ra ngoài.
+	NoticeWindowStart *time.Time `gorm:"column:notice_window_start" json:"-"`
+	NoticeCount       int        `gorm:"column:notice_count;type:integer;not null;default:0" json:"-"`
 
 	Requester User `gorm:"foreignKey:RequesterID;constraint:OnDelete:CASCADE" json:"-"`
 	Addressee User `gorm:"foreignKey:AddresseeID;constraint:OnDelete:CASCADE" json:"-"`

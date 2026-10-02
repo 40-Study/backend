@@ -10,7 +10,7 @@ jobs:
   go-backend:
     name: Build Go Backend
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     # Test tích hợp chạy trên Postgres THẬT (khoá dòng, CHECK constraint, window function...).
     # CI=true: pgtest.Open/IsolatedSchema FAIL thay vì SKIP khi không kết nối được DB.
     services:
@@ -69,6 +69,8 @@ jobs:
         shell: bash
         run: |
           set +e
+          # Gói internal/service đã chạm ~597s trên timeout mặc định 10 phút của go test (L3 thêm vài test Postgres là vượt,
+          # CI đỏ với 'panic: test timed out after 10m0s'): đặt timeout tường minh thay vì để may rủi.
           go test -count=1 -timeout 25m -v ./... > go-test.log 2>&1
           rc=$?
           grep -E '^(ok|FAIL|panic)|--- FAIL' go-test.log

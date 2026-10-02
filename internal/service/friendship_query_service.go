@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log"
 	"strings"
 	"unicode/utf8"
 
@@ -223,7 +224,8 @@ func (s *FriendshipService) Block(ctx context.Context, me, targetID uuid.UUID) e
 	if target == nil {
 		return ErrFriendUserNotFound
 	}
-	return s.repo.Transaction(ctx, func(tx *repository.FriendshipRepository) error {
+	wasBlocked := s.blockedSnapshot(ctx, me, targetID)
+	err = s.repo.Transaction(ctx, func(tx *repository.FriendshipRepository) error {
 		if err := tx.LockUsers(ctx, me, targetID); err != nil {
 			return err
 		}
@@ -232,6 +234,11 @@ func (s *FriendshipService) Block(ctx context.Context, me, targetID uuid.UUID) e
 		}
 		return s.blocks.WithTx(tx).Create(ctx, me, targetID)
 	})
+	if err != nil {
+		return err
+	}
+	s.publishBlockChange(ctx, me, targetID, wasBlocked)
+	return nil
 }
 
 // Unblock — DELETE /friends/blocks/:userId (idempotent). Bỏ chặn KHÔNG khôi phục tình bạn.
@@ -239,7 +246,51 @@ func (s *FriendshipService) Unblock(ctx context.Context, me, targetID uuid.UUID)
 	if _, err := s.requireActive(ctx, me); err != nil {
 		return err
 	}
-	return s.blocks.Delete(ctx, me, targetID)
+	wasBlocked := s.blockedSnapshot(ctx, me, targetID)
+	if err := s.blocks.Delete(ctx, me, targetID); err != nil {
+		return err
+	}
+	s.publishBlockChange(ctx, me, targetID, wasBlocked)
+	return nil
+}
+
+// DirectBlockPublisher — phát sự kiện realtime "DM giữa a và b vừa khoá/mở khoá" (ConversationService cài đặt).
+type DirectBlockPublisher interface {
+	PublishDirectBlockChanged(ctx context.Context, a, b uuid.UUID, blocked bool)
+}
+
+// SetDirectBlockPublisher nối bộ phát sự kiện chặn (setter, giống SetNotifier, để không đổi chữ ký constructor).
+func (s *FriendshipService) SetDirectBlockPublisher(p DirectBlockPublisher) { s.blockEvents = p }
+
+// blockedSnapshot đọc trạng thái "có chặn ở bất kỳ chiều nào" trước khi đổi. Lỗi đọc chỉ log và coi như
+// "chưa chặn": hệ quả xấu nhất là thừa một sự kiện lặp lại đúng trạng thái, vô hại.
+func (s *FriendshipService) blockedSnapshot(ctx context.Context, a, b uuid.UUID) bool {
+	if s.blockEvents == nil {
+		return false
+	}
+	blocked, err := s.blocks.IsBlockedEitherWay(ctx, a, b)
+	if err != nil {
+		log.Printf("friendship: đọc trạng thái chặn %s-%s lỗi: %v", a, b, err)
+		return false
+	}
+	return blocked
+}
+
+// publishBlockChange chỉ phát khi trạng thái KHOÁ HIỆU LỰC (bất kỳ chiều) thực sự đổi: B đã chặn A rồi A chặn
+// lại B, hay A bỏ chặn khi B vẫn chặn A, đều không đổi gì nên không phát. Nhờ vậy sự kiện không bao giờ cho
+// người bỏ chặn biết người kia vẫn đang chặn mình ngoài những gì cờ is_blocked vốn đã cho biết.
+func (s *FriendshipService) publishBlockChange(ctx context.Context, a, b uuid.UUID, wasBlocked bool) {
+	if s.blockEvents == nil {
+		return
+	}
+	nowBlocked, err := s.blocks.IsBlockedEitherWay(ctx, a, b)
+	if err != nil {
+		log.Printf("friendship: đọc trạng thái chặn %s-%s lỗi: %v", a, b, err)
+		return
+	}
+	if nowBlocked != wasBlocked {
+		s.blockEvents.PublishDirectBlockChanged(ctx, a, b, nowBlocked)
+	}
 }
 
 // AreFriends — chỉ true khi có dòng ACCEPTED (FriendshipChecker).

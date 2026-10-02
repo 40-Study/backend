@@ -430,6 +430,11 @@ func RunPostMigrations(db *gorm.DB) error {
 		return err
 	}
 
+	// Đổi user_name cũ của tài khoản Google đang trùng prefix email (issue #105), xem google_user_name_backfill.go.
+	if err := runGoogleUserNameBackfill(db); err != nil {
+		return err
+	}
+
 	logNotValidCheckConstraints(db)
 
 	log.Printf("Post-migrations applied: %d statement group(s)\n", len(statements))

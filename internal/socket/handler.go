@@ -212,6 +212,10 @@ func (c *FiberClient) handleMessage(data []byte) {
 				c.sendError("typing_denied", "You are not subscribed to this conversation")
 				return
 			}
+			// DM 1-1 bị chặn (bất kỳ chiều nào): không phát cho phía bên kia (xem typingAllowed).
+			if !typingAllowed(c.authorizer, c.UserID, payload.ConversationID) {
+				return
+			}
 			c.Hub.SendToChannel(channelName, Message{
 				Event:   EventConversationTyping,
 				Payload: payload,

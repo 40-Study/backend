@@ -67,7 +67,9 @@ type FriendshipService struct {
 	repo     *repository.FriendshipRepository
 	blocks   *repository.UserBlockRepository
 	notifier FriendNotifier
-	now      func() time.Time
+	// blockEvents phát sự kiện realtime khi chặn/bỏ chặn đổi trạng thái khoá DM (nil = không phát).
+	blockEvents DirectBlockPublisher
+	now         func() time.Time
 }
 
 func NewFriendshipService(repo *repository.FriendshipRepository, blocks *repository.UserBlockRepository) *FriendshipService {
@@ -186,6 +188,7 @@ func (s *FriendshipService) SendRequest(ctx context.Context, me, targetID uuid.U
 
 	var out FriendSendOutcome
 	var rowID uuid.UUID
+	var sendNotice bool
 	err = s.repo.Transaction(ctx, func(tx *repository.FriendshipRepository) error {
 		if err := tx.LockUsers(ctx, me, targetID); err != nil {
 			return err
@@ -213,12 +216,13 @@ func (s *FriendshipService) SendRequest(ctx context.Context, me, targetID uuid.U
 			return err
 		}
 		now := s.now()
-		row, autoAccepted, err := s.applySend(ctx, tx, existing, me, targetID, now)
+		row, autoAccepted, notice, err := s.applySend(ctx, tx, existing, me, targetID, now)
 		if err != nil {
 			return err
 		}
 		rowID = row.ID
 		out.AutoAccepted = autoAccepted
+		sendNotice = notice
 		out.Result = dto.FriendRequestResultDTO{ID: row.ID, Status: row.Status, User: toFriendUserDTO(*target)}
 		return nil
 	})
@@ -229,42 +233,65 @@ func (s *FriendshipService) SendRequest(ctx context.Context, me, targetID uuid.U
 	if out.AutoAccepted {
 		s.notify(targetID, model.NotificationTypeFriendAccepted, "Lời mời kết bạn được chấp nhận",
 			fmt.Sprintf("%s đã trở thành bạn của bạn.", friendDisplayName(*meRow)), "user", me)
-	} else {
+	} else if sendNotice {
+		// Vượt trần thông báo (FriendRequestNoticeLimit/24h cho cặp này): lời mời vẫn tạo, chỉ không đẩy
+		// thông báo và sự kiện WS để gửi-huỷ-gửi không biến thành tràn thông báo cho người nhận.
 		s.notify(targetID, model.NotificationTypeFriendRequest, "Lời mời kết bạn",
 			fmt.Sprintf("%s đã gửi cho bạn lời mời kết bạn.", friendDisplayName(*meRow)), "friendship", rowID)
 	}
 	return &out, nil
 }
 
-// applySend quyết định ghi gì dựa trên dòng hiện có của cặp. Trả dòng sau khi ghi và cờ tự chấp nhận.
-func (s *FriendshipService) applySend(ctx context.Context, tx *repository.FriendshipRepository, existing *model.Friendship, me, targetID uuid.UUID, now time.Time) (*model.Friendship, bool, error) {
+// claimRequestNotice quyết định lời mời mới này có được đẩy thông báo cho người nhận không: tối đa
+// FriendRequestNoticeLimit thông báo / FriendRequestNoticeWindow cho mỗi cặp người gửi → người nhận.
+// Phải gọi TRƯỚC khi ghi đè chiều của dòng cũ (row.RequesterID còn là người gửi lần trước): đổi chiều
+// (người nhận cũ chủ động gửi) là một cặp gửi→nhận khác nên đếm lại từ đầu; hết cửa sổ cũng đếm lại.
+// Dòng cặp được dùng lại giữa các lần gửi-huỷ-gửi nên bộ đếm lưu ngay trên dòng và sống qua lần huỷ.
+func claimRequestNotice(row *model.Friendship, sender uuid.UUID, now time.Time) bool {
+	fresh := row.NoticeWindowStart == nil || row.RequesterID != sender ||
+		!now.Before(row.NoticeWindowStart.Add(constants.FriendRequestNoticeWindow))
+	if fresh {
+		row.NoticeWindowStart = &now
+		row.NoticeCount = 0
+	}
+	if row.NoticeCount >= constants.FriendRequestNoticeLimit {
+		return false
+	}
+	row.NoticeCount++
+	return true
+}
+
+// applySend quyết định ghi gì dựa trên dòng hiện có của cặp. Trả dòng sau khi ghi, cờ tự chấp nhận và cờ
+// "được đẩy thông báo lời mời" (claimRequestNotice).
+func (s *FriendshipService) applySend(ctx context.Context, tx *repository.FriendshipRepository, existing *model.Friendship, me, targetID uuid.UUID, now time.Time) (*model.Friendship, bool, bool, error) {
 	if existing == nil {
 		if err := checkFriendCaps(ctx, tx, me, targetID); err != nil {
-			return nil, false, err
+			return nil, false, false, err
 		}
 		if err := checkSendQuota(ctx, tx, me, uuid.Nil, now); err != nil {
-			return nil, false, err
+			return nil, false, false, err
 		}
 		row := &model.Friendship{RequesterID: me, AddresseeID: targetID, Status: model.FriendshipStatusPending, RequestedAt: now}
-		return row, false, tx.Create(ctx, row)
+		notice := claimRequestNotice(row, me, now)
+		return row, false, notice, tx.Create(ctx, row)
 	}
 
 	switch existing.Status {
 	case model.FriendshipStatusAccepted:
-		return nil, false, ErrFriendAlreadyFriends
+		return nil, false, false, ErrFriendAlreadyFriends
 
 	case model.FriendshipStatusPending:
 		if existing.RequesterID == me {
-			return nil, false, ErrFriendRequestExists
+			return nil, false, false, ErrFriendRequestExists
 		}
 		// Đối phương đã gửi cho mình: gửi lại = đồng ý. Không phải lời mời mới nên không tính hạn mức gửi,
 		// nhưng vẫn phải giữ trần số bạn của cả hai.
 		if err := checkFriendCaps(ctx, tx, me, targetID); err != nil {
-			return nil, false, err
+			return nil, false, false, err
 		}
 		existing.Status = model.FriendshipStatusAccepted
 		existing.RespondedAt = &now
-		return existing, true, tx.Save(ctx, existing)
+		return existing, true, false, tx.Save(ctx, existing)
 
 	case model.FriendshipStatusDeclined, model.FriendshipStatusCancelled:
 		// Cooldown chỉ ràng buộc chính người đã gửi lời mời cũ. Đối phương (người từ chối) muốn chủ động
@@ -275,23 +302,24 @@ func (s *FriendshipService) applySend(ctx context.Context, tx *repository.Friend
 				wait = constants.FriendCancelCooldown
 			}
 			if now.Before(existing.RespondedAt.Add(wait)) {
-				return nil, false, &FriendCooldownError{RetryAfter: existing.RespondedAt.Add(wait).Sub(now)}
+				return nil, false, false, &FriendCooldownError{RetryAfter: existing.RespondedAt.Add(wait).Sub(now)}
 			}
 		}
 		if err := checkFriendCaps(ctx, tx, me, targetID); err != nil {
-			return nil, false, err
+			return nil, false, false, err
 		}
 		if err := checkSendQuota(ctx, tx, me, existing.ID, now); err != nil {
-			return nil, false, err
+			return nil, false, false, err
 		}
+		notice := claimRequestNotice(existing, me, now) // trước khi ghi đè chiều bên dưới
 		// Dùng lại dòng cũ (unique theo cặp) với chiều mới.
 		existing.RequesterID, existing.AddresseeID = me, targetID
 		existing.Status = model.FriendshipStatusPending
 		existing.RequestedAt = now
 		existing.RespondedAt = nil
-		return existing, false, tx.Save(ctx, existing)
+		return existing, false, notice, tx.Save(ctx, existing)
 	}
-	return nil, false, fmt.Errorf("friendship: trạng thái không xác định %q", existing.Status)
+	return nil, false, false, fmt.Errorf("friendship: trạng thái không xác định %q", existing.Status)
 }
 
 // lockRequestPair khoá (advisory, theo thứ tự id) hai người của lời mời với CÙNG khoá mà Gửi/Chấp nhận/Chặn

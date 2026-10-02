@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -679,6 +680,38 @@ func (s *ConversationService) requireDirectNotBlocked(ctx context.Context, convI
 		}
 	}
 	return nil
+}
+
+// IsDirectBlocked: DM 1-1 convID có đang khoá (chặn ở bất kỳ chiều nào giữa userID và người kia) không. Chat nhóm
+// và chưa nối checker thì false. Cùng quy tắc với khoá gửi tin (requireDirectNotBlocked, SSOT); dùng cho khoá
+// "đang gõ" qua WebSocket.
+func (s *ConversationService) IsDirectBlocked(ctx context.Context, convID, userID uuid.UUID) (bool, error) {
+	err := s.requireDirectNotBlocked(ctx, convID, userID)
+	if errors.Is(err, ErrConversationBlocked) {
+		return true, nil
+	}
+	return false, err
+}
+
+// PublishDirectBlockChanged phát `conversation_blocked_changed` cho CẢ HAI người của DM 1-1 giữa a và b khi
+// trạng thái khoá của DM đổi (chặn/bỏ chặn), để web khoá/mở ô nhập ngay không cần gửi thử. Payload giống hệt
+// nhau cho hai phía và KHÔNG nói ai chặn ai. Chưa từng có DM giữa hai người: không có gì để báo. Lỗi tra DM chỉ
+// log, không làm hỏng thao tác chặn (thông tin này chỉ là gợi ý realtime; khoá thật nằm ở guard gửi tin).
+func (s *ConversationService) PublishDirectBlockChanged(ctx context.Context, a, b uuid.UUID, blocked bool) {
+	if s.notifier == nil {
+		return
+	}
+	conv, err := s.convRepo.GetDirectBetweenUsers(ctx, a, b)
+	if err != nil {
+		log.Printf("conversation: tra DM giữa %s và %s để báo chặn lỗi: %v", a, b, err)
+		return
+	}
+	if conv == nil {
+		return
+	}
+	payload := socket.ConversationBlockedChangedPayload{ConversationID: conv.ID, IsBlocked: blocked}
+	s.notifier.SendToUser(a, socket.EventConversationBlockedChanged, payload)
+	s.notifier.SendToUser(b, socket.EventConversationBlockedChanged, payload)
 }
 
 // fillDirectBlocked gắn cờ IsBlocked cho phản hồi chi tiết của DM 1-1. Dùng lại ĐÚNG quy tắc khoá gửi

@@ -19,19 +19,22 @@ import (
 )
 
 type OAuthService struct {
-	cfg                *config.Config
-	redisClient        *redis.Client
-	userRepo           repository.UserRepositoryInterface
-	oauthRepo          repository.OAuthProviderRepositoryInterface
-	userSystemRoleRepo repository.UserSystemRoleRepositoryInterface
-	systemRoleRepo     repository.SystemRoleRepositoryInterface
-	authService        *AuthService
+	cfg                 *config.Config
+	redisClient         *redis.Client
+	userRepo            repository.UserRepositoryInterface
+	oauthRepo           repository.OAuthProviderRepositoryInterface
+	userSystemRoleRepo  repository.UserSystemRoleRepositoryInterface
+	systemRoleRepo      repository.SystemRoleRepositoryInterface
+	authService         *AuthService
 	parentInvitationSvc ParentInvitationServiceInterface
 
 	// Map provider name → provider implementation
 	// Thay vì hardcode từng provider, dùng map để lookup
 	// Key: "github", "google", "facebook"
 	providers map[string]oauth.OAuthProvider
+
+	// userNameGen thay bộ sinh user_name (chỉ test dùng để ép va chạm); nil = utils.NewSafeUserName.
+	userNameGen func(fullName *string) (string, error)
 }
 
 type OAuthServiceInterface interface {
@@ -268,6 +271,15 @@ func (s *OAuthService) createOAuthUser(ctx context.Context, providerName string,
 	// Tạo user mới với thông tin từ provider
 	// PasswordHash dùng placeholder vì OAuth user không cần password,
 	// nếu sau này user muốn set password thì sẽ có endpoint riêng
+	// Provider không có username riêng (Google) để trống Username: sinh từ tên + hậu tố ngẫu nhiên, KHÔNG
+	// từ email (issue #105: phần trước '@' làm lộ email ở leaderboard/contest/thành viên nhóm).
+	if userInfo.Username == "" {
+		generated, err := s.uniqueOAuthUserName(ctx, userInfo.Name)
+		if err != nil {
+			return nil, fmt.Errorf("generate user_name: %w", err)
+		}
+		userInfo.Username = generated
+	}
 	user := &model.User{
 		Email:        *userInfo.Email,
 		PasswordHash: "$oauth$no-password", // Placeholder — bcrypt compare sẽ luôn fail
