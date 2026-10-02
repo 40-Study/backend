@@ -24,19 +24,29 @@ const (
 	typeTimestamptz = "timestamp with time zone"
 )
 
+// instantColumnTypes: kiểu hiện tại của các cột trong instantColumns CÓ trong schema hiện tại (bảng chưa tạo thì
+// không xuất hiện), khoá "bảng.cột".
 func instantColumnTypes(t *testing.T, db *gorm.DB) map[string]string {
 	t.Helper()
+	tables := make([]string, 0, len(instantColumns))
+	want := make(map[string]bool, len(instantColumns))
+	for _, c := range instantColumns {
+		if !want[c.table+"."+c.column] {
+			tables = append(tables, c.table)
+		}
+		want[c.table+"."+c.column] = true
+	}
 	type col struct{ TableName, ColumnName, DataType string }
 	var cols []col
 	if err := db.Raw(`SELECT table_name, column_name, data_type FROM information_schema.columns
-		WHERE table_schema = current_schema()
-		  AND table_name IN ('class_lesson_contents','livestream_sessions')
-		  AND column_name IN ('open_date','due_date','scheduled_at','end_at','started_at','ended_at')`).Scan(&cols).Error; err != nil {
+		WHERE table_schema = current_schema() AND table_name IN ?`, tables).Scan(&cols).Error; err != nil {
 		t.Fatal(err)
 	}
 	got := make(map[string]string, len(cols))
 	for _, c := range cols {
-		got[c.TableName+"."+c.ColumnName] = c.DataType
+		if k := c.TableName + "." + c.ColumnName; want[k] {
+			got[k] = c.DataType
+		}
 	}
 	return got
 }

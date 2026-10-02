@@ -109,6 +109,15 @@ func (pc *PermissionChecker) resolveOrgRolePermissions(ctx context.Context, user
 		return nil, err
 	}
 	for _, uor := range orgRoles {
+		// Role bị vô hiệu hoá (status khác active) hoặc đã xoá mềm thì không cấp quyền, dù user_organization_roles
+		// của người đó vẫn active. Role xoá mềm được GetRoleByID bỏ qua (nil); role inactive phải loại tường minh.
+		role, err := pc.roleRepo.GetRoleByID(ctx, uor.RoleID)
+		if err != nil {
+			return nil, err
+		}
+		if role == nil || role.Status != model.RoleStatusActive {
+			continue
+		}
 		rolePerms, err := pc.roleRepo.GetPermissionsByRoleID(ctx, uor.RoleID)
 		if err != nil {
 			return nil, err

@@ -42,13 +42,19 @@ type UnlockAchievementResponse struct {
 // Leaderboard DTOs
 // ============================================================
 
+// LeaderboardEntryDTO: một dòng bảng xếp hạng điểm thưởng. Người đặt `leaderboard_display = anonymous` hiện cho
+// người khác (trừ chính họ và admin) với DisplayName "Học viên ẩn danh", KHÔNG có user_id, user_name, full_name,
+// avatar_url: các field đó bị bỏ khỏi JSON (omitempty) chứ không để rỗng, vì id dẫn tới hồ sơ công khai.
+// DisplayName luôn có và là nhãn web nên hiển thị.
 type LeaderboardEntryDTO struct {
-	Rank      int        `json:"rank"`
-	UserID    uuid.UUID  `json:"user_id"`
-	UserName  string     `json:"user_name"`
-	FullName  *string    `json:"full_name,omitempty"`
-	AvatarURL *string    `json:"avatar_url,omitempty"`
-	Points    int        `json:"points"`
+	Rank        int        `json:"rank"`
+	UserID      *uuid.UUID `json:"user_id,omitempty"`
+	UserName    string     `json:"user_name,omitempty"`
+	FullName    *string    `json:"full_name,omitempty"`
+	AvatarURL   *string    `json:"avatar_url,omitempty"`
+	DisplayName string     `json:"display_name"`
+	Points      int        `json:"points"`
+	IsMe        bool       `json:"is_me"`
 }
 
 type LeaderboardResponse struct {

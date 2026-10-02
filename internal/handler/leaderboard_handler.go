@@ -5,6 +5,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/service"
 )
@@ -15,11 +16,12 @@ type LeaderboardHandlerInterface interface {
 }
 
 type LeaderboardHandler struct {
-	svc service.LeaderboardServiceInterface
+	svc         service.LeaderboardServiceInterface
+	permChecker *middleware.PermissionChecker
 }
 
-func NewLeaderboardHandler(svc service.LeaderboardServiceInterface) *LeaderboardHandler {
-	return &LeaderboardHandler{svc: svc}
+func NewLeaderboardHandler(svc service.LeaderboardServiceInterface, permChecker *middleware.PermissionChecker) *LeaderboardHandler {
+	return &LeaderboardHandler{svc: svc, permChecker: permChecker}
 }
 
 // leaderboardPeriodFromQuery đọc kỳ xếp hạng từ query.
@@ -50,7 +52,14 @@ func (h *LeaderboardHandler) GetLeaderboard(c *fiber.Ctx) error {
 	}
 	limit := c.QueryInt("limit", 100)
 
-	resp, err := h.svc.GetLeaderboard(c.Context(), periodType, limit)
+	// Route công khai nhưng theo người xem (OptionalAuth): khách không có user_id. Chính chủ và admin
+	// (SYSTEM_SETTINGS_MANAGE) thấy tên thật của người đặt ẩn danh; người khác thì không.
+	var viewer *service.LeaderboardViewer
+	if uid, ok := c.Locals("user_id").(uuid.UUID); ok && uid != uuid.Nil {
+		viewer = &service.LeaderboardViewer{UserID: uid, IsAdmin: isAdminActor(c, h.permChecker, uid)}
+	}
+
+	resp, err := h.svc.GetLeaderboard(c.Context(), periodType, limit, viewer)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidLeaderboardPeriod) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})

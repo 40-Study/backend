@@ -14,13 +14,14 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/service"
 )
 
 const leaderboardInternalErrText = `pq: relation "leaderboard_entries" does not exist (SELECT secret_column FROM leaderboard_entries)`
 
 type failingLeaderboardService struct{}
 
-func (failingLeaderboardService) GetLeaderboard(ctx context.Context, periodType string, limit int) (*dto.LeaderboardResponse, error) {
+func (failingLeaderboardService) GetLeaderboard(ctx context.Context, periodType string, limit int, viewer *service.LeaderboardViewer) (*dto.LeaderboardResponse, error) {
 	return nil, errors.New(leaderboardInternalErrText)
 }
 
@@ -29,7 +30,7 @@ func (failingLeaderboardService) GetMyRank(ctx context.Context, userID uuid.UUID
 }
 
 func TestLeaderboardHandler_InternalErrorNotLeaked(t *testing.T) {
-	h := NewLeaderboardHandler(failingLeaderboardService{})
+	h := NewLeaderboardHandler(failingLeaderboardService{}, nil)
 	endpoints := []struct {
 		name string
 		path string

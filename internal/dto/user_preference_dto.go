@@ -11,5 +11,5 @@ type UpdatePrivacySettingsDTO struct {
 	// trị đã định nghĩa (trước đây lưu chuỗi bất kỳ). "hidden" = ẩn hẳn (người khác nhận 404).
 	ProfileVisibility  *string `json:"profile_visibility,omitempty" validate:"omitempty,oneof=public friends private hidden"`
 	ActivityStatus     *string `json:"activity_status,omitempty"`
-	LeaderboardDisplay *string `json:"leaderboard_display,omitempty"`
+	LeaderboardDisplay *string `json:"leaderboard_display,omitempty" validate:"omitempty,oneof=name username anonymous"`
 }

@@ -11,7 +11,8 @@ import (
 )
 
 type LeaderboardServiceInterface interface {
-	GetLeaderboard(ctx context.Context, periodType string, limit int) (*dto.LeaderboardResponse, error)
+	// viewer = người xem (nil = khách): quyết định ai thấy tên thật của người đặt leaderboard_display ẩn danh/username.
+	GetLeaderboard(ctx context.Context, periodType string, limit int, viewer *LeaderboardViewer) (*dto.LeaderboardResponse, error)
 	GetMyRank(ctx context.Context, userID uuid.UUID, periodType string) (*dto.MyRankResponse, error)
 }
 
@@ -23,7 +24,7 @@ func NewLeaderboardService(repo *repository.LeaderboardRepository) *LeaderboardS
 	return &LeaderboardService{repo: repo}
 }
 
-func (s *LeaderboardService) GetLeaderboard(ctx context.Context, periodType string, limit int) (*dto.LeaderboardResponse, error) {
+func (s *LeaderboardService) GetLeaderboard(ctx context.Context, periodType string, limit int, viewer *LeaderboardViewer) (*dto.LeaderboardResponse, error) {
 	if err := validatePeriodType(periodType); err != nil {
 		return nil, err
 	}
@@ -39,14 +40,7 @@ func (s *LeaderboardService) GetLeaderboard(ctx context.Context, periodType stri
 
 	entries := make([]dto.LeaderboardEntryDTO, len(rows))
 	for i, r := range rows {
-		entries[i] = dto.LeaderboardEntryDTO{
-			Rank:      r.Rank,
-			UserID:    r.UserID,
-			UserName:  r.UserName,
-			FullName:  r.FullName,
-			AvatarURL: r.AvatarURL,
-			Points:    r.Points,
-		}
+		entries[i] = leaderboardEntry(r, viewer)
 	}
 
 	return &dto.LeaderboardResponse{
@@ -73,17 +67,26 @@ func (s *LeaderboardService) GetMyRank(ctx context.Context, userID uuid.UUID, pe
 		Period:     period,
 	}
 	if row != nil {
-		entry := dto.LeaderboardEntryDTO{
-			Rank:      row.Rank,
-			UserID:    row.UserID,
-			UserName:  row.UserName,
-			FullName:  row.FullName,
-			AvatarURL: row.AvatarURL,
-			Points:    row.Points,
-		}
+		// Người xem chính là chủ dòng: luôn thấy tên thật của mình, bất kể cài đặt.
+		entry := leaderboardEntry(*row, &LeaderboardViewer{UserID: userID})
 		resp.Entry = &entry
 	}
 	return resp, nil
+}
+
+// leaderboardEntry dựng một dòng trả ra cho người xem, đã áp cài đặt riêng tư của chủ dòng.
+func leaderboardEntry(r repository.LeaderboardRow, viewer *LeaderboardViewer) dto.LeaderboardEntryDTO {
+	p := presentLeaderboardUser(r.LeaderboardDisplay, r.UserID, r.FullName, r.UserName, r.AvatarURL, viewer)
+	return dto.LeaderboardEntryDTO{
+		Rank:        r.Rank,
+		UserID:      p.UserID,
+		UserName:    p.UserName,
+		FullName:    p.FullName,
+		AvatarURL:   p.AvatarURL,
+		DisplayName: p.DisplayName,
+		Points:      r.Points,
+		IsMe:        p.IsMe,
+	}
 }
 
 // ErrInvalidLeaderboardPeriod — kỳ xếp hạng không thuộc model.IsValidLeaderboardPeriodType.

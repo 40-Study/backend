@@ -59,7 +59,7 @@ type IdempotencyKey struct {
 	RequestHash     string     `gorm:"type:varchar(64);not null" json:"request_hash"`
 	ResponseCode    int        `gorm:"type:int" json:"response_code"`
 	ResponseBody    string     `gorm:"type:text" json:"response_body"`
-	ExpiresAt       time.Time  `gorm:"type:timestamp;not null;index" json:"expires_at"`
+	ExpiresAt       time.Time  `gorm:"type:timestamptz;not null;index" json:"expires_at"`
 	UserID          *uuid.UUID `gorm:"type:uuid;index" json:"user_id"`
 }
 

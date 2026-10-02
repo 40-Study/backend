@@ -163,6 +163,11 @@ type RankedRow struct {
 	CompletedAt      time.Time
 	UserName         string
 	AvatarURL        *string
+	// FullName/LoginName/LeaderboardDisplay: tách UserName (đã COALESCE) thành hai nguồn và cài đặt riêng tư của
+	// thí sinh, để bảng xếp hạng công khai áp leaderboard_display (ẩn danh / chỉ tên đăng nhập).
+	FullName           *string
+	LoginName          string
+	LeaderboardDisplay string
 }
 
 // liveRankSQL: chỉ attempt đã nộp; điểm cao trước, hoà thì ai NỘP TRƯỚC xếp trên, rồi thời gian
@@ -177,15 +182,21 @@ const liveRankSQL = `
 		FROM contest_participants cp JOIN quiz_attempts qa ON qa.id = cp.attempt_id
 		WHERE cp.contest_id = ? AND qa.completed_at IS NOT NULL
 	)
-	SELECT r.*, COALESCE(u.full_name, u.user_name) AS user_name, u.avatar_url
-	FROM ranked r JOIN users u ON u.id = r.user_id ORDER BY r.rank`
+	SELECT r.*, COALESCE(u.full_name, u.user_name) AS user_name, u.avatar_url,
+	       u.full_name AS full_name, u.user_name AS login_name,
+	       COALESCE(upr.leaderboard_display, 'name') AS leaderboard_display
+	FROM ranked r JOIN users u ON u.id = r.user_id
+	LEFT JOIN user_preferences upr ON upr.user_id = u.id ORDER BY r.rank`
 
 // finalRankSQL: sau khi chốt, BXH đọc contest_participants.rank đã ghi.
 const finalRankSQL = `
 	SELECT cp.user_id, cp.rank, COALESCE(qa.score, 0) AS score, COALESCE(qa.total_points, 0) AS total_points,
 	       COALESCE(qa.percentage, 0) AS percentage, COALESCE(qa.time_spent_seconds, 0) AS time_spent_seconds,
-	       qa.completed_at, COALESCE(u.full_name, u.user_name) AS user_name, u.avatar_url
+	       qa.completed_at, COALESCE(u.full_name, u.user_name) AS user_name, u.avatar_url,
+	       u.full_name AS full_name, u.user_name AS login_name,
+	       COALESCE(upr.leaderboard_display, 'name') AS leaderboard_display
 	FROM contest_participants cp JOIN quiz_attempts qa ON qa.id = cp.attempt_id JOIN users u ON u.id = cp.user_id
+	LEFT JOIN user_preferences upr ON upr.user_id = u.id
 	WHERE cp.contest_id = ? AND cp.rank IS NOT NULL ORDER BY cp.rank`
 
 // RankedRows — limit <= 0 lấy hết (dùng khi chốt, trong tx).

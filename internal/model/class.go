@@ -25,7 +25,9 @@ type Class struct {
 
 	// Relationships
 	Course *Course `gorm:"foreignKey:CourseID" json:"-"`
-	// Xoá tổ chức thì lớp trở về lớp cá nhân (SET NULL), không xoá lớp.
+	// Xoá CỨNG tổ chức thì lớp trở về lớp cá nhân (SET NULL), không xoá lớp. Xoá MỀM (đường mặc định của
+	// DeleteOrganization) KHÔNG chạy FK nên organization_id vẫn giữ id: mọi chỗ kiểm quyền theo tổ chức phải tự
+	// loại tổ chức đã xoá (ClassRepository.ActiveOrgMemberExists, orgManagesClass).
 	Organization *Organization  `gorm:"foreignKey:OrganizationID;constraint:OnDelete:SET NULL" json:"-"`
 	Teachers     []TeacherClass `gorm:"foreignKey:ClassID;constraint:OnDelete:CASCADE" json:"-"`
 	Students     []StudentClass `gorm:"foreignKey:ClassID;constraint:OnDelete:CASCADE" json:"-"`

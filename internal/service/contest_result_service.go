@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/repository"
 )
 
 // answersOpen: cuộc thi đã đóng VÀ đã qua ân hạn nộp bài (model.Contest.AnswersAvailableAt).
@@ -58,16 +59,30 @@ func (s *ContestService) Leaderboard(ctx context.Context, id uuid.UUID, actor *C
 	if err != nil {
 		return nil, err
 	}
+	// Bảng xếp hạng công khai: thí sinh đặt leaderboard_display = anonymous hiện là "Học viên ẩn danh" (không avatar)
+	// với mọi người trừ chính họ và admin; "username" chỉ hiện tên đăng nhập. Tên thật vẫn nằm ở route quản trị.
+	var viewer *LeaderboardViewer
+	if actor != nil {
+		viewer = &LeaderboardViewer{UserID: actor.UserID, IsAdmin: actor.IsAdmin}
+	}
 	out := &dto.LeaderboardPageDTO{Finalized: finalized}
-	out.Items, out.TotalCount, out.Page, out.Limit, out.TotalPages = []dto.LeaderboardItemDTO{}, total, page, limit, totalPages(total, limit)
+	out.Items, out.TotalCount, out.Page, out.Limit, out.TotalPages = contestLeaderboardItems(rows, viewer), total, page, limit, totalPages(total, limit)
+	return out, nil
+}
+
+// contestLeaderboardItems dựng các dòng BXH cuộc thi cho người xem, đã áp leaderboard_display của từng thí sinh.
+// Luôn trả slice không nil (JSON `[]`, không `null`).
+func contestLeaderboardItems(rows []repository.RankedRow, viewer *LeaderboardViewer) []dto.LeaderboardItemDTO {
+	items := make([]dto.LeaderboardItemDTO, 0, len(rows))
 	for _, r := range rows {
-		out.Items = append(out.Items, dto.LeaderboardItemDTO{
-			Rank: r.Rank, UserName: r.UserName, AvatarURL: r.AvatarURL, Score: r.Score, TotalPoints: r.TotalPoints,
+		who := presentLeaderboardUser(r.LeaderboardDisplay, r.UserID, r.FullName, r.LoginName, r.AvatarURL, viewer)
+		items = append(items, dto.LeaderboardItemDTO{
+			Rank: r.Rank, UserName: who.DisplayName, AvatarURL: who.AvatarURL, Score: r.Score, TotalPoints: r.TotalPoints,
 			Percentage: r.Percentage, TimeSpentSeconds: r.TimeSpentSeconds, SubmittedAt: r.CompletedAt,
-			IsMe: actor != nil && r.UserID == actor.UserID,
+			IsMe: who.IsMe,
 		})
 	}
-	return out, nil
+	return items
 }
 
 // Certificate — #17: chứng nhận của CHÍNH người gọi.

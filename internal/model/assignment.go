@@ -33,9 +33,9 @@ type Assignment struct {
 	// Live assignment specific
 	DurationMins int        `gorm:"default:15" json:"duration_minutes"` // Thoi gian lam bai trong live
 	IsPublished  bool       `gorm:"default:false;index" json:"is_published"`
-	PublishedAt  *time.Time `gorm:"type:timestamp" json:"published_at,omitempty"`
-	StartTime    *time.Time `gorm:"type:timestamp" json:"start_time,omitempty"` // Hen gio publish
-	EndTime      *time.Time `gorm:"type:timestamp" json:"end_time,omitempty"`   // Deadline
+	PublishedAt  *time.Time `gorm:"type:timestamptz" json:"published_at,omitempty"`
+	StartTime    *time.Time `gorm:"type:timestamptz" json:"start_time,omitempty"` // Hen gio publish
+	EndTime      *time.Time `gorm:"type:timestamptz" json:"end_time,omitempty"`   // Deadline
 
 	// Late submission settings
 	AllowLateSubmission  bool `gorm:"default:false" json:"allow_late_submission"`

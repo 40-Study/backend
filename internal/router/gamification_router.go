@@ -32,8 +32,9 @@ func SetupAchievementRoutes(api fiber.Router, cfg *config.Config, h *handler.Ach
 func SetupLeaderboardRoutes(api fiber.Router, cfg *config.Config, h *handler.LeaderboardHandler, redis *redis.Client) {
 	leaderboard := api.Group("/leaderboard")
 
-	// Public: top users
-	leaderboard.Get("/", h.GetLeaderboard)
+	// Public nhưng theo người xem: OptionalAuth để biết chính chủ/admin (thấy tên thật) với khách và người khác
+	// (người đặt leaderboard_display = anonymous hiện là "Học viên ẩn danh").
+	leaderboard.Get("/", middleware.OptionalAuth(cfg, redis), h.GetLeaderboard)
 
 	// Auth-required: current user rank
 	leaderboard.Get("/me", middleware.AuthMiddleware(cfg, redis), h.GetMyRank)
