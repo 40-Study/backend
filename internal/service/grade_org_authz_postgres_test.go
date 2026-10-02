@@ -56,8 +56,8 @@ func newGradeOrgEnv(t *testing.T) *gradeOrgEnv {
 		*u = e.user(name)
 	}
 
-	// Instructor chủ khoá là thành viên active của tổ chức A (vai không mang quyền nào): các lớp của khoá
-	// đó thuộc tổ chức A.
+	// Instructor chủ khoá là thành viên active của tổ chức A (vai không mang quyền nào). Việc là thành viên KHÔNG
+	// kéo lớp của họ vào phạm vi tổ chức: chỉ lớp có classes.organization_id = A mới thuộc quyền chủ tổ chức A.
 	e.grant(e.instructor, e.orgA, e.orgRole(e.orgA, "GIANG_VIEN"))
 	e.grant(e.ownerA, e.orgA, e.orgRole(e.orgA, "ORG_OWNER", "ORG_MEMBERS_MANAGE", "ORG_ROLES_MANAGE"))
 	e.grant(e.memberA, e.orgA, e.orgRole(e.orgA, "THANH_VIEN"))
@@ -82,18 +82,39 @@ func (e *gradeOrgEnv) newGradeService(authz ClassAuthorizer) *GradeService {
 		repository.NewCourseRepository(e.db), authz, nil)
 }
 
-// classInOrgA: lớp của khoá do instructor (thành viên tổ chức A) làm chủ; coTeacher được gán, student đang học.
+// classInOrgA: lớp tạo trong tổ chức A (organization_id = A) của khoá do instructor làm chủ; coTeacher được gán,
+// student đang học.
 func (e *gradeOrgEnv) classInOrgA(t *testing.T) model.Class {
 	t.Helper()
 	course := e.course(e.instructor)
-	class := model.Class{Name: "L2 grade " + uuid.NewString()[:6], CourseID: &course.ID, Status: "active"}
+	class := model.Class{Name: "L2 grade " + uuid.NewString()[:6], CourseID: &course.ID, Status: "active", OrganizationID: &e.orgA.ID}
 	mustCreate(t, e.db, &class)
 	mustCreate(t, e.db, &model.TeacherClass{TeacherID: e.coTeacher.ID, ClassID: class.ID, Role: "primary"})
 	mustCreate(t, e.db, &model.StudentClass{StudentID: e.student.ID, ClassID: class.ID, Status: "active"})
 	return class
 }
 
-// classOutsideOrgA: lớp không có nhân sự nào thuộc tổ chức A (khoá do người lạ làm chủ).
+// personalClassOfOrgMember: lớp CÁ NHÂN (organization_id NULL) của instructor, người là thành viên active của tổ chức A.
+func (e *gradeOrgEnv) personalClassOfOrgMember(t *testing.T) model.Class {
+	t.Helper()
+	course := e.course(e.instructor)
+	class := model.Class{Name: "L2 personal " + uuid.NewString()[:6], CourseID: &course.ID, Status: "active"}
+	mustCreate(t, e.db, &class)
+	mustCreate(t, e.db, &model.StudentClass{StudentID: e.student.ID, ClassID: class.ID, Status: "active"})
+	return class
+}
+
+// classInOrgB: lớp tạo trong tổ chức B.
+func (e *gradeOrgEnv) classInOrgB(t *testing.T) model.Class {
+	t.Helper()
+	course := e.course(e.stranger)
+	class := model.Class{Name: "L2 orgB " + uuid.NewString()[:6], CourseID: &course.ID, Status: "active", OrganizationID: &e.orgB.ID}
+	mustCreate(t, e.db, &class)
+	mustCreate(t, e.db, &model.StudentClass{StudentID: e.student.ID, ClassID: class.ID, Status: "active"})
+	return class
+}
+
+// classOutsideOrgA: lớp cá nhân của người lạ, không dính tổ chức nào.
 func (e *gradeOrgEnv) classOutsideOrgA(t *testing.T) model.Class {
 	t.Helper()
 	course := e.course(e.stranger)
@@ -119,6 +140,7 @@ func TestL2_ClassLane_Postgres(t *testing.T) {
 
 	t.Run("quyền chấm điểm theo vai", func(t *testing.T) {
 		class, foreign := e.classInOrgA(t), e.classOutsideOrgA(t)
+		personal, inB := e.personalClassOfOrgMember(t), e.classInOrgB(t)
 		cases := []struct {
 			name    string
 			actor   model.User
@@ -133,6 +155,10 @@ func TestL2_ClassLane_Postgres(t *testing.T) {
 			{"chủ tổ chức B", e.ownerB, class.ID, ErrClassNotFound},
 			{"chủ tổ chức A đã bị gỡ role", e.revokedOwnerA, class.ID, ErrClassNotFound},
 			{"chủ tổ chức A, lớp KHÔNG thuộc A", e.ownerA, foreign.ID, ErrClassNotFound},
+			// Chủ tổ chức thêm giảng viên vào tổ chức rồi cố chấm lớp CÁ NHÂN của người đó: bị chặn.
+			{"chủ tổ chức A, lớp cá nhân của giảng viên thành viên A", e.ownerA, personal.ID, ErrClassNotFound},
+			{"chủ tổ chức A, lớp thuộc tổ chức B", e.ownerA, inB.ID, ErrClassNotFound},
+			{"chủ tổ chức B, lớp thuộc tổ chức B", e.ownerB, inB.ID, nil},
 			{"người lạ", e.stranger, class.ID, ErrClassNotFound},
 			{"học viên trong lớp", e.student, class.ID, ErrNotClassTeacher},
 			{"lớp không tồn tại", e.ownerA, uuid.New(), ErrClassNotFound},
@@ -163,6 +189,13 @@ func TestL2_ClassLane_Postgres(t *testing.T) {
 			})
 		}
 		// Chỉ các lần chấm được phép để lại dòng điểm: 4 vai được chấm, đúng 4 dòng; lớp ngoài tổ chức không có dòng nào.
+		// Lớp thuộc B: chỉ chủ tổ chức B chấm được (1 dòng); lớp cá nhân: không ai trong số này.
+		if n := e.gradeRows(inB.ID); n != 1 {
+			t.Errorf("lớp của tổ chức B có %d dòng điểm, muốn 1", n)
+		}
+		if n := e.gradeRows(personal.ID); n != 0 {
+			t.Errorf("lớp cá nhân có %d dòng điểm, muốn 0", n)
+		}
 		if n := e.gradeRows(class.ID); n != 4 {
 			t.Errorf("có %d dòng điểm, muốn 4 (chỉ người được phép chấm)", n)
 		}
@@ -250,6 +283,51 @@ func TestL2_ClassLane_Postgres(t *testing.T) {
 		}
 		if _, err := svc.CreateGrade(ctx, class.ID, e.coTeacher.ID, e.gradeDTO()); err != nil {
 			t.Errorf("giảng viên lớp bị chặn nhầm: %v", err)
+		}
+	})
+
+	// Tạo lớp trong tổ chức: chỉ thành viên active của tổ chức đó mới gắn được organization_id; lớp cá nhân để NULL;
+	// không có backfill/suy luận.
+	t.Run("tạo lớp trong tổ chức", func(t *testing.T) {
+		svc := NewClassService(repository.NewClassRepository(e.db), repository.NewCourseRepository(e.db),
+			s4TeacherRepo{teachers: map[uuid.UUID]bool{e.instructor.ID: true, e.stranger.ID: true}}, nil, nil)
+		stored := func(id uuid.UUID) *uuid.UUID {
+			var c model.Class
+			if err := e.db.First(&c, "id = ?", id).Error; err != nil {
+				t.Fatal(err)
+			}
+			return c.OrganizationID
+		}
+		in, err := svc.CreateClass(ctx, e.instructor.ID, false, dto.CreateClassDTO{Name: "Lớp tổ chức A", OrganizationID: &e.orgA.ID})
+		if err != nil {
+			t.Fatalf("thành viên A tạo lớp trong A: %v", err)
+		}
+		if got := stored(in.ID); got == nil || *got != e.orgA.ID || in.OrganizationID == nil || *in.OrganizationID != e.orgA.ID {
+			t.Errorf("organization_id lưu=%v, response=%v, muốn %v", got, in.OrganizationID, e.orgA.ID)
+		}
+		personal, err := svc.CreateClass(ctx, e.instructor.ID, false, dto.CreateClassDTO{Name: "Lớp cá nhân"})
+		if err != nil || stored(personal.ID) != nil || personal.OrganizationID != nil {
+			t.Errorf("lớp cá nhân: err=%v, organization_id phải NULL", err)
+		}
+		// Thành viên của A không gắn lớp vào B; người lạ không gắn vào A; role đã bị gỡ thì không còn là thành viên.
+		if _, err := svc.CreateClass(ctx, e.instructor.ID, false, dto.CreateClassDTO{Name: "x", OrganizationID: &e.orgB.ID}); !errors.Is(err, ErrNotOrgMember) {
+			t.Errorf("tạo lớp vào tổ chức không phải thành viên: err=%v, muốn ErrNotOrgMember", err)
+		}
+		if _, err := svc.CreateClass(ctx, e.stranger.ID, false, dto.CreateClassDTO{Name: "x", OrganizationID: &e.orgA.ID}); !errors.Is(err, ErrNotOrgMember) {
+			t.Errorf("người lạ tạo lớp vào A: err=%v, muốn ErrNotOrgMember", err)
+		}
+		// Admin hệ thống: tổ chức phải tồn tại.
+		if _, err := svc.CreateClass(ctx, e.systemAdmin.ID, true, dto.CreateClassDTO{Name: "x", OrganizationID: &e.orgB.ID}); err != nil {
+			t.Errorf("admin tạo lớp vào tổ chức có thật: %v", err)
+		}
+		missing := uuid.New()
+		if _, err := svc.CreateClass(ctx, e.systemAdmin.ID, true, dto.CreateClassDTO{Name: "x", OrganizationID: &missing}); err == nil {
+			t.Error("admin tạo lớp vào tổ chức không tồn tại phải lỗi")
+		}
+		// Chủ tổ chức A thêm instructor vào A rồi KHÔNG thấy lớp cá nhân của họ: vẫn 404 (xem matrix ở trên).
+		if _, err := NewClassService(repository.NewClassRepository(e.db), repository.NewCourseRepository(e.db), nil, nil, nil).
+			GetClassByID(ctx, personal.ID, e.ownerA.ID, false); !errors.Is(err, ErrClassNotFound) {
+			t.Errorf("chủ tổ chức xem lớp cá nhân: err=%v, muốn ErrClassNotFound", err)
 		}
 	})
 

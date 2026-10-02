@@ -181,3 +181,51 @@ func TestInstantColumns_HoanTac(t *testing.T) {
 		t.Errorf("down rồi up: %q (%v), muốn 2026-10-08 13:00", inst, err)
 	}
 }
+
+// assertClassOrganizationColumn: classes.organization_id cho phép NULL, có index, FK tới organizations
+// (tổ chức không tồn tại bị từ chối; xoá tổ chức thì lớp về lớp cá nhân chứ không bị xoá), và lớp tạo không kèm
+// tổ chức giữ NULL (không backfill/suy luận).
+func assertClassOrganizationColumn(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	var nullable string
+	if err := db.Raw(`SELECT is_nullable FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = 'classes' AND column_name = 'organization_id'`).Scan(&nullable).Error; err != nil {
+		t.Fatal(err)
+	}
+	if nullable != "YES" {
+		t.Fatalf("classes.organization_id is_nullable=%q, muốn YES", nullable)
+	}
+	var idx int64
+	if err := db.Raw(`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'classes'
+		AND indexdef LIKE '%(organization_id)%'`).Scan(&idx).Error; err != nil || idx == 0 {
+		t.Fatalf("classes.organization_id thiếu index (n=%d err=%v)", idx, err)
+	}
+
+	org := model.Organization{Name: "L2 org " + uuid.NewString()[:6]}
+	if err := db.Create(&org).Error; err != nil {
+		t.Fatal(err)
+	}
+	personal := model.Class{Name: "L2 personal", Status: "active"}
+	inOrg := model.Class{Name: "L2 in org", Status: "active", OrganizationID: &org.ID}
+	if err := db.Create(&personal).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&inOrg).Error; err != nil {
+		t.Fatal(err)
+	}
+	var back model.Class
+	if err := db.First(&back, "id = ?", personal.ID).Error; err != nil || back.OrganizationID != nil {
+		t.Fatalf("lớp cá nhân phải giữ organization_id NULL: %v err=%v", back.OrganizationID, err)
+	}
+	ghost := uuid.New()
+	if err := db.Create(&model.Class{Name: "L2 ghost org", Status: "active", OrganizationID: &ghost}).Error; err == nil {
+		t.Fatal("organization_id trỏ tới tổ chức không tồn tại phải bị FK từ chối")
+	}
+	if err := db.Unscoped().Delete(&org).Error; err != nil {
+		t.Fatal(err)
+	}
+	var after model.Class
+	if err := db.First(&after, "id = ?", inOrg.ID).Error; err != nil || after.OrganizationID != nil {
+		t.Fatalf("xoá tổ chức: lớp phải còn và về NULL, thấy %v err=%v", after.OrganizationID, err)
+	}
+}

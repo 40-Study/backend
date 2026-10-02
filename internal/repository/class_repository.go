@@ -23,10 +23,9 @@ type ClassRepositoryInterface interface {
 	TeacherClassExists(ctx context.Context, classID, teacherID uuid.UUID) (bool, error)
 	StudentClassExists(ctx context.Context, classID, studentID uuid.UUID) (bool, error)
 	IsUserRelatedToClass(ctx context.Context, classID, userID uuid.UUID) (bool, error)
-	// OrganizationIDsOfClass: các tổ chức mà lớp "thuộc về". Lớp/khoá không có cột organization_id, nên
-	// lớp thuộc tổ chức O khi người tạo lớp, giảng viên chủ khoá hoặc một giảng viên được gán vào lớp
-	// đang là thành viên active của O (user_organization_roles).
-	OrganizationIDsOfClass(ctx context.Context, classID uuid.UUID) ([]uuid.UUID, error)
+	// ActiveOrgMemberExists / OrganizationExists: kiểm tra khi tạo lớp trong một tổ chức.
+	ActiveOrgMemberExists(ctx context.Context, userID, orgID uuid.UUID) (bool, error)
+	OrganizationExists(ctx context.Context, orgID uuid.UUID) (bool, error)
 
 	// Teacher-Class
 	AssignTeacher(ctx context.Context, tc *model.TeacherClass) error
@@ -191,26 +190,19 @@ func (r *ClassRepository) IsUserRelatedToClass(ctx context.Context, classID, use
 	return exists, tx.Error
 }
 
-// organizationIDsOfClassSQL: tập "nhân sự của lớp" = người tạo lớp + giảng viên chủ khoá + giảng viên được
-// gán; lớp thuộc mọi tổ chức mà một trong số họ đang là thành viên active. Tham số: class_id (x3).
-// Học viên cố ý KHÔNG tính: ghi danh vào lớp không làm lớp thuộc về tổ chức của học viên.
-const organizationIDsOfClassSQL = `
-SELECT DISTINCT uor.organization_id
-FROM user_organization_roles uor
-WHERE uor.status = 'active' AND uor.deleted_at IS NULL
-  AND uor.user_id IN (
-    SELECT cl.created_by FROM classes cl WHERE cl.id = ? AND cl.deleted_at IS NULL AND cl.created_by IS NOT NULL
-    UNION
-    SELECT co.instructor_id FROM classes cl JOIN courses co ON co.id = cl.course_id
-      WHERE cl.id = ? AND cl.deleted_at IS NULL
-    UNION
-    SELECT tc.teacher_id FROM teacher_classes tc WHERE tc.class_id = ?
-  )`
+// ActiveOrgMemberExists: userID đang giữ ít nhất một org role ACTIVE trong tổ chức orgID.
+func (r *ClassRepository) ActiveOrgMemberExists(ctx context.Context, userID, orgID uuid.UUID) (bool, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Model(&model.UserOrganizationRole{}).
+		Where("user_id = ? AND organization_id = ? AND status = ?", userID, orgID, model.UserOrgRoleStatusActive).
+		Count(&n).Error
+	return n > 0, err
+}
 
-func (r *ClassRepository) OrganizationIDsOfClass(ctx context.Context, classID uuid.UUID) ([]uuid.UUID, error) {
-	var ids []uuid.UUID
-	err := r.db.WithContext(ctx).Raw(organizationIDsOfClassSQL, classID, classID, classID).Scan(&ids).Error
-	return ids, err
+func (r *ClassRepository) OrganizationExists(ctx context.Context, orgID uuid.UUID) (bool, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Model(&model.Organization{}).Where("id = ?", orgID).Count(&n).Error
+	return n > 0, err
 }
 
 // Teacher-Class

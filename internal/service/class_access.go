@@ -145,25 +145,18 @@ type ClassAuthorizer interface {
 	HasOrgRolePermission(ctx context.Context, userID, orgID uuid.UUID, permission string) (bool, error)
 }
 
-// orgManagesClass: userID có vai quản trị (orgClassManagePermission) trong MỘT tổ chức mà lớp thuộc về.
-func orgManagesClass(ctx context.Context, classRepo repository.ClassRepositoryInterface, authz ClassAuthorizer, userID, classID uuid.UUID) (bool, error) {
-	if authz == nil {
+// orgManagesClass: lớp thuộc một tổ chức (classes.organization_id) và userID có vai quản trị
+// (orgClassManagePermission) TRONG CHÍNH tổ chức đó. Lớp cá nhân (organization_id NULL) không bao giờ thuộc
+// quyền của chủ tổ chức nào: thêm một giảng viên vào tổ chức không kéo lớp cá nhân của họ vào phạm vi.
+func orgManagesClass(ctx context.Context, authz ClassAuthorizer, userID uuid.UUID, class *model.Class) (bool, error) {
+	if authz == nil || class == nil || class.OrganizationID == nil {
 		return false, nil
 	}
-	orgIDs, err := classRepo.OrganizationIDsOfClass(ctx, classID)
+	ok, err := authz.HasOrgRolePermission(ctx, userID, *class.OrganizationID, orgClassManagePermission)
 	if err != nil {
-		return false, fmt.Errorf("failed to resolve class organizations: %w", err)
+		return false, fmt.Errorf("failed to verify organization role: %w", err)
 	}
-	for _, orgID := range orgIDs {
-		ok, err := authz.HasOrgRolePermission(ctx, userID, orgID, orgClassManagePermission)
-		if err != nil {
-			return false, fmt.Errorf("failed to verify organization role: %w", err)
-		}
-		if ok {
-			return true, nil
-		}
-	}
-	return false, nil
+	return ok, nil
 }
 
 // ensureClassGrade: quyền CHẤM ĐIỂM / quản bảng điểm của lớp = ensureClassManage (giảng viên lớp, người
@@ -182,7 +175,11 @@ func ensureClassGrade(ctx context.Context, classRepo repository.ClassRepositoryI
 	if err == nil || !errors.Is(err, ErrNotClassTeacher) {
 		return err
 	}
-	managed, err := orgManagesClass(ctx, classRepo, authz, userID, classID)
+	class, err := classRepo.GetByID(ctx, classID)
+	if err != nil {
+		return fmt.Errorf("failed to load class: %w", err)
+	}
+	managed, err := orgManagesClass(ctx, authz, userID, class)
 	if err != nil {
 		return err
 	}
