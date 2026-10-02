@@ -13,7 +13,6 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
-	"study.com/v1/internal/testutil/pgtest"
 )
 
 func newGroupServiceForInviteTest(db *gorm.DB) *GroupService {
@@ -54,7 +53,7 @@ func isActiveMember(t *testing.T, db *gorm.DB, groupID, userID uuid.UUID) bool {
 }
 
 func TestInviteMembers_NguoiLa_BiTuChoi_KhongVaoNhom(t *testing.T) {
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	svc := newGroupServiceForInviteTest(db)
 	ctx := t.Context()
 
@@ -77,7 +76,7 @@ func TestInviteMembers_NguoiLa_BiTuChoi_KhongVaoNhom(t *testing.T) {
 }
 
 func TestInviteMembers_QuanHeHopLeVaHonHop(t *testing.T) {
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	svc := newGroupServiceForInviteTest(db)
 	ctx := t.Context()
 
@@ -101,7 +100,7 @@ func TestInviteMembers_QuanHeHopLeVaHonHop(t *testing.T) {
 }
 
 func TestInviteMembers_AdminMoiAiCung_DuocPhep(t *testing.T) {
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	svc := newGroupServiceForInviteTest(db)
 	ctx := t.Context()
 
@@ -119,7 +118,7 @@ func TestInviteMembers_AdminMoiAiCung_DuocPhep(t *testing.T) {
 }
 
 func TestInviteMembers_ThieuGuard_TuChoiChuKhongMoCua(t *testing.T) {
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	svc := newGroupServiceForInviteTest(db)
 	svc.SetInviteGuard(nil)
 	inviter, other := guardUser(t, db, "gi-noguard"), guardUser(t, db, "gi-other")

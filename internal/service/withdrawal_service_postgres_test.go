@@ -41,12 +41,20 @@ func migrateLikeAPIBoot(db *gorm.DB) error {
 	return database.Migrate(db)
 }
 
+// isolatedAPISchema — schema đã migrate như lúc API khởi động, rỗng và cô lập cho đúng một test. Dùng lại giữa các
+// test của gói thay vì migrate + DROP cho từng test (xem pgtest.ReusableSchema: cô lập được bảo đảm bằng cơ chế
+// reset có kiểm lại, không bằng kỷ luật của từng test); PGTEST_REUSE=0 quay về một schema mới cho mỗi test.
+func isolatedAPISchema(t *testing.T) *gorm.DB {
+	t.Helper()
+	return pgtest.ReusableSchema(t, "api-boot", migrateLikeAPIBoot)
+}
+
 // newWithdrawalFixture mở 1 schema Postgres TẠM riêng (pgtest.IsolatedSchema), migrate như lúc
 // API khởi động, và DROP schema khi test xong: dữ liệu COMMIT (cần cho test race nhiều kết nối)
 // không bao giờ chạm schema public của DB dev dùng chung.
 func newWithdrawalFixture(t *testing.T) *withdrawalFixture {
 	t.Helper()
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	walletRepo := repository.NewWalletRepository(db)
 	return &withdrawalFixture{
 		t:      t,

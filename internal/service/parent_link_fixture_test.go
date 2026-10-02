@@ -11,7 +11,6 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
-	"study.com/v1/internal/testutil/pgtest"
 )
 
 // Fixture chung cho test Postgres THẬT của luồng liên kết phụ huynh-học sinh (QA vòng 2 lane E).
@@ -27,7 +26,7 @@ type parentLinkFixture struct {
 
 func newParentLinkFixture(t *testing.T) *parentLinkFixture {
 	t.Helper()
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	f := &parentLinkFixture{
 		t: t, ctx: context.Background(), db: db,
 		svc: NewParentLinkService(db),

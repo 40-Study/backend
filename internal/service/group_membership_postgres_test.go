@@ -15,7 +15,6 @@ import (
 	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
-	"study.com/v1/internal/testutil/pgtest"
 )
 
 type groupFx struct {
@@ -26,7 +25,7 @@ type groupFx struct {
 
 func newGroupFx(t *testing.T) *groupFx {
 	t.Helper()
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	return &groupFx{t: t, db: db, svc: newGroupServiceForInviteTest(db)}
 }
 

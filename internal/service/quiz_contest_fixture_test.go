@@ -14,7 +14,6 @@ import (
 	"gorm.io/gorm"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
-	"study.com/v1/internal/testutil/pgtest"
 )
 
 type contestFixture struct {
@@ -25,7 +24,7 @@ type contestFixture struct {
 
 func newContestFixture(t *testing.T) *contestFixture {
 	t.Helper()
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	svc := NewQuizService(repository.NewQuizRepository(db), nil, repository.NewCourseRepository(db),
 		repository.NewSectionRepository(db), repository.NewLessonRepository(db), nil, repository.NewEnrollmentRepository(db))
 	return &contestFixture{t: t, db: db, quiz: svc}

@@ -15,7 +15,6 @@ import (
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/socket"
-	"study.com/v1/internal/testutil/pgtest"
 )
 
 func newConversationServiceForTest(db *gorm.DB) *ConversationService {
@@ -90,7 +89,7 @@ func guardMakeAdmin(t *testing.T, db *gorm.DB, userID uuid.UUID) {
 // không làm case này đỏ (guard tháo ra thì mọi cặp đều cho qua) — case NgườiLạ bên dưới mới là
 // case chứng minh guard có tác dụng thật.
 func TestCreateDirectConversation_QuanHeHopLe_ChoTao(t *testing.T) {
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	svc := newConversationServiceForTest(db)
 	ctx := t.Context()
 
@@ -132,7 +131,7 @@ func TestCreateDirectConversation_QuanHeHopLe_ChoTao(t *testing.T) {
 // sang 403 + code CONVERSATION_NOT_ALLOWED). Bỏ lời gọi canCreateDirectConversation khỏi
 // CreateDirectConversation sẽ làm test này ĐỎ (đã tự kiểm 1 lần, xem báo cáo bàn giao).
 func TestCreateDirectConversation_NguoiLa_Tra403(t *testing.T) {
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	svc := newConversationServiceForTest(db)
 	ctx := t.Context()
 
@@ -149,7 +148,7 @@ func TestCreateDirectConversation_NguoiLa_Tra403(t *testing.T) {
 // TestCreateDirectConversation_LienKetPhuHuynhChuaXacNhan_Tra403 — liên kết phụ huynh-con đang
 // "pending" (chưa xác nhận) KHÔNG được tính là quan hệ hợp lệ.
 func TestCreateDirectConversation_LienKetPhuHuynhChuaXacNhan_Tra403(t *testing.T) {
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	svc := newConversationServiceForTest(db)
 	ctx := t.Context()
 
@@ -166,7 +165,7 @@ func TestCreateDirectConversation_LienKetPhuHuynhChuaXacNhan_Tra403(t *testing.T
 // cuộc trò chuyện đã tồn tại (kể cả giữa 2 người lạ — dữ liệu cũ, hoặc quan hệ đã hết) vẫn trả về
 // bình thường, không lỗi.
 func TestCreateDirectConversation_CuocTroChuyenDaCo_KhongBiChan(t *testing.T) {
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	svc := newConversationServiceForTest(db)
 	ctx := t.Context()
 

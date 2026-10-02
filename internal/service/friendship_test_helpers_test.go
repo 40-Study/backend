@@ -14,7 +14,6 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
-	"study.com/v1/internal/testutil/pgtest"
 )
 
 var errTest = errors.New("notifier down (test)")
@@ -49,7 +48,7 @@ type friendFx struct {
 
 func newFriendFx(t *testing.T) *friendFx {
 	t.Helper()
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	svc := NewFriendshipService(repository.NewFriendshipRepository(db), repository.NewUserBlockRepository(db))
 	notif := &fakeFriendNotifier{}
 	svc.SetNotifier(notif)

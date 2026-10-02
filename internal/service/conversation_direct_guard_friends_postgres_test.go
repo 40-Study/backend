@@ -13,10 +13,9 @@ import (
 	"gorm.io/gorm"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
-	"study.com/v1/internal/testutil/pgtest"
 )
 
-func pgtestIsolated(t *testing.T) *gorm.DB { return pgtest.IsolatedSchema(t, migrateLikeAPIBoot) }
+func pgtestIsolated(t *testing.T) *gorm.DB { return isolatedAPISchema(t) }
 
 // newConversationServiceWithFriends nối FriendshipService thật (cùng DB) làm FriendshipChecker.
 func newConversationServiceWithFriends(db *gorm.DB) *ConversationService {

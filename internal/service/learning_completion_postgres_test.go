@@ -14,11 +14,10 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
-	"study.com/v1/internal/testutil/pgtest"
 )
 
 func TestLearningCompletion_Postgres_VideoRoiBaiTapRoiChungChiDung1Lan(t *testing.T) {
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	ctx := context.Background()
 	s := uuid.NewString()[:8]
 
@@ -116,7 +115,7 @@ func TestLearningCompletion_Postgres_VideoRoiBaiTapRoiChungChiDung1Lan(t *testin
 // TestIssueMissingCertificates_Postgres_ChiCapChoGhiDanhDaHoanThanh: cấp bù cho người đã hoàn thành
 // TRƯỚC bản vá (completed_at có sẵn), không cấp cho ghi danh chưa xong.
 func TestIssueMissingCertificates_Postgres_ChiCapChoGhiDanhDaHoanThanh(t *testing.T) {
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	ctx := context.Background()
 	s := uuid.NewString()[:8]
 
