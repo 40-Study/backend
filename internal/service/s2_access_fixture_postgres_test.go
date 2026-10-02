@@ -11,7 +11,6 @@ import (
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"study.com/v1/internal/model"
-	"study.com/v1/internal/testutil/pgtest"
 )
 
 type s2Fixture struct {
@@ -21,7 +20,7 @@ type s2Fixture struct {
 
 func newS2Fixture(t *testing.T) *s2Fixture {
 	t.Helper()
-	return &s2Fixture{t: t, db: pgtest.IsolatedSchema(t, migrateLikeAPIBoot)}
+	return &s2Fixture{t: t, db: isolatedAPISchema(t)}
 }
 
 func (f *s2Fixture) user(kind string) model.User {

@@ -14,13 +14,12 @@ import (
 	"testing"
 
 	"study.com/v1/internal/repository"
-	"study.com/v1/internal/testutil/pgtest"
 	"study.com/v1/internal/thirdparty/oauth"
 )
 
 func newOAuthUsernameSvc(t *testing.T) (*OAuthService, *repository.UserRepository) {
 	t.Helper()
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	users := repository.NewUserRepository(db)
 	return &OAuthService{userRepo: users, oauthRepo: repository.NewOAuthProviderRepository(db)}, users
 }

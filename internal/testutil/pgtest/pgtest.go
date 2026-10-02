@@ -166,20 +166,7 @@ func isolatedSchema(t tb, openDB func(tb, string) *gorm.DB, migrate func(*gorm.D
 
 	sweepOnce.Do(func() { sweepOrphans(t, admin, time.Now(), orphanMaxAge) })
 
-	buf := make([]byte, 6)
-	_, _ = rand.Read(buf)
-	schema := "t_" + hex.EncodeToString(buf)
-	// Tạo schema và ghi thời điểm tạo trong CÙNG một transaction: schema nào tồn tại cũng có dấu thời
-	// gian, nên lượt quét mồ côi luôn xác định được tuổi.
-	err := admin.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("CREATE SCHEMA " + schema).Error; err != nil {
-			return err
-		}
-		return tx.Exec(fmt.Sprintf("COMMENT ON SCHEMA %s IS '%s%d'", schema, commentPrefix, time.Now().Unix())).Error
-	})
-	if err != nil {
-		t.Fatalf("tạo schema tạm %s: %v", schema, err)
-	}
+	schema := createTempSchema(t, admin)
 	t.Cleanup(func() {
 		if err := dropWithRetry(func() error { return dropSchema(admin, schema) }, time.Sleep); err != nil {
 			t.Errorf("xoá schema tạm %s: %v", schema, err)
@@ -211,6 +198,25 @@ func OpenSameSchema(t *testing.T, db *gorm.DB) *gorm.DB {
 	extra := open(t, fmt.Sprintf(" search_path=%s application_name=%s%s", schema, appNamePrefix, schema))
 	t.Cleanup(func() { closeDB(extra) })
 	return extra
+}
+
+// createTempSchema tạo schema tạm `t_<random>` và ghi thời điểm tạo trong CÙNG một transaction: schema nào tồn
+// tại cũng có dấu thời gian, nên lượt quét mồ côi luôn xác định được tuổi. Lỗi thì t.Fatalf.
+func createTempSchema(t tb, admin *gorm.DB) string {
+	t.Helper()
+	buf := make([]byte, 6)
+	_, _ = rand.Read(buf)
+	schema := "t_" + hex.EncodeToString(buf)
+	err := admin.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("CREATE SCHEMA " + schema).Error; err != nil {
+			return err
+		}
+		return tx.Exec(fmt.Sprintf("COMMENT ON SCHEMA %s IS '%s%d'", schema, commentPrefix, time.Now().Unix())).Error
+	})
+	if err != nil {
+		t.Fatalf("tạo schema tạm %s: %v", schema, err)
+	}
+	return schema
 }
 
 // dropSchema DROP schema trong 1 transaction có lock_timeout để không treo khi còn phiên khác giữ khoá.

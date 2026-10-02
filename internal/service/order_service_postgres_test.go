@@ -20,7 +20,6 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
-	"study.com/v1/internal/testutil/pgtest"
 )
 
 type orderFixture struct {
@@ -31,7 +30,7 @@ type orderFixture struct {
 
 func newOrderFixture(t *testing.T) *orderFixture {
 	t.Helper()
-	db := pgtest.IsolatedSchema(t, migrateLikeAPIBoot)
+	db := isolatedAPISchema(t)
 	svc := NewOrderService(
 		repository.NewOrderRepository(db),
 		repository.NewOrderItemRepository(db),
