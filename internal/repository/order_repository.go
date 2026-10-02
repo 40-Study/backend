@@ -159,6 +159,13 @@ func (r *OrderRepository) buildUpdatePaymentInfoQuery(orderID uuid.UUID, payment
 		"payment_transaction_id": transactionID,
 		"paid_at":                paidAt,
 		"status":                 "completed",
+		// L8 mục 3 (deploy cuốn chiếu): instance cũ chưa biết cột payment_code vẫn cấp mã chỉ vào
+		// payment_transaction_id, nên đơn tạo trong lúc triển khai có payment_code NULL, và câu UPDATE này
+		// sắp ghi đè payment_transaction_id bằng mã giao dịch ngân hàng, tức mã thanh toán mất vĩnh viễn
+		// (job đối chiếu không tra lại được khoản chuyển dư). Vì vậy chép mã sang payment_code NGAY TRONG
+		// CÙNG câu UPDATE: vế phải của SET luôn đọc giá trị CŨ của dòng nên payment_transaction_id ở đây
+		// vẫn là mã thanh toán. Chỉ điền khi payment_code còn trống: mã đã có thì bất biến, không đụng.
+		"payment_code": gorm.Expr("CASE WHEN payment_code IS NULL OR payment_code = '' THEN NULLIF(payment_transaction_id, '') ELSE payment_code END"),
 	}
 	// M-02 (review vòng 5): UPDATE CÓ ĐIỀU KIỆN — WHERE status IN ('pending','processing') —
 	// thay vì vô điều kiện như trước. Đơn phải đang ở 1 trong 2 trạng thái "còn sống" này mới

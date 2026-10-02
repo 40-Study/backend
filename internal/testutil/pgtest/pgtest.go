@@ -196,6 +196,23 @@ func isolatedSchema(t tb, openDB func(tb, string) *gorm.DB, migrate func(*gorm.D
 	return db
 }
 
+// OpenSameSchema mở thêm một pool RIÊNG (kết nối riêng, như một tiến trình khác) trỏ vào cùng schema tạm với db
+// (db phải đến từ IsolatedSchema). Dùng cho test đua nhiều tiến trình trên cùng một schema, ví dụ nhiều lần khởi
+// động migrate đồng thời. Pool được đóng trước khi DROP schema (Cleanup chạy ngược thứ tự đăng ký).
+func OpenSameSchema(t *testing.T, db *gorm.DB) *gorm.DB {
+	t.Helper()
+	var schema string
+	if err := db.Raw("SELECT current_schema()").Scan(&schema).Error; err != nil {
+		t.Fatalf("đọc schema hiện tại: %v", err)
+	}
+	if !tempSchemaRE.MatchString(schema) {
+		t.Fatalf("OpenSameSchema chỉ dùng cho schema tạm của IsolatedSchema, schema hiện tại là %q", schema)
+	}
+	extra := open(t, fmt.Sprintf(" search_path=%s application_name=%s%s", schema, appNamePrefix, schema))
+	t.Cleanup(func() { closeDB(extra) })
+	return extra
+}
+
 // dropSchema DROP schema trong 1 transaction có lock_timeout để không treo khi còn phiên khác giữ khoá.
 func dropSchema(admin *gorm.DB, schema string) error {
 	if !tempSchemaRE.MatchString(schema) {

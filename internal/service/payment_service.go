@@ -377,6 +377,19 @@ func updatePaymentCodeAndHistoryTx(txRepo paymentCodeUpdater, orderHistoryRepo r
 
 // CheckAndProcessPayment - Check transaction via gRPC and process if found
 func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool) (*dto.PaymentStatusResponse, error) {
+	return s.checkAndProcessPayment(ctx, orderID, actorUserID, isAdmin, reconcileOptions{})
+}
+
+// reconcileOptions — tuỳ chọn riêng của job nền cho luồng đối chiếu; giá trị rỗng là hành vi của người dùng/admin.
+type reconcileOptions struct {
+	// deferUnverifiedExpiry (L8 mục 5): ngân hàng không trả lời được thì KHÔNG chốt expired "chưa xác minh"
+	// (quyết định D, reconcileIssuedOrder) mà để lượt sau thử lại. Người dùng bấm kiểm tra vẫn được chốt (họ đang
+	// nhìn thấy đơn kẹt); job nền thì không, vì nó chạy lặp khi ngân hàng chết và sẽ chốt hàng loạt đơn mà không
+	// ai xác minh được, trong khi ngân hàng sống lại là xác minh được và chốt đúng (hoặc hoàn tất nếu có tiền).
+	deferUnverifiedExpiry bool
+}
+
+func (s *PaymentService) checkAndProcessPayment(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool, opts reconcileOptions) (*dto.PaymentStatusResponse, error) {
 	// Get order
 	order, err := s.orderRepo.GetByID(orderID)
 	if err != nil {
@@ -406,10 +419,10 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 		if !hasPaymentCode(order) {
 			return nil, errors.New("payment code not found")
 		}
-		return s.reconcileIssuedOrder(ctx, order)
+		return s.reconcileIssuedOrder(ctx, order, opts)
 	case "expired", "cancelled":
 		if hasPaymentCode(order) {
-			return s.reconcileIssuedOrder(ctx, order)
+			return s.reconcileIssuedOrder(ctx, order, opts)
 		}
 	}
 	return &dto.PaymentStatusResponse{OrderID: orderID, Status: order.Status, Amount: order.TotalAmount}, nil
