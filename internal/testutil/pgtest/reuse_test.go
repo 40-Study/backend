@@ -26,6 +26,10 @@ func miniMigrate(db *gorm.DB) error {
 		INSERT INTO settings VALUES ('fee', '8');`).Error
 }
 
+// forceReuse bật cơ chế dùng lại cho test chứng minh chính cơ chế đó, kể cả khi chạy với PGTEST_REUSE=0 (L9 mục 4):
+// nếu không các test này đỏ chỉ vì cờ tắt, không vì lỗi nào.
+func forceReuse(t *testing.T) { t.Setenv(reuseEnvVar, "1") }
+
 func currentSchema(t *testing.T, db *gorm.DB) string {
 	t.Helper()
 	var s string
@@ -54,6 +58,7 @@ func mustCount(t *testing.T, db *gorm.DB, table string) int64 {
 // Lượt mượn thứ hai nhận ĐÚNG schema của lượt đầu (không có thế thì test không chứng minh gì về việc dùng lại) và
 // sạch hoàn toàn: dữ liệu, dòng baseline bị sửa/xoá, sequence, khoá ngoại.
 func TestReusableSchema_ResetsBetweenLeases(t *testing.T) {
+	forceReuse(t)
 	const key = "reuse-test-reset"
 	var first string
 	t.Run("dirty", func(t *testing.T) {
@@ -99,6 +104,7 @@ func TestReusableSchema_ResetsBetweenLeases(t *testing.T) {
 
 // Nơi gọi thứ hai khi schema đang bận (test cha chưa xong) nhận một schema RIÊNG, không bao giờ cùng schema.
 func TestReusableSchema_BusyLeaseFallsBackToPrivateSchema(t *testing.T) {
+	forceReuse(t)
 	const key = "reuse-test-busy"
 	db1 := ReusableSchema(t, key, miniMigrate)
 	db2 := ReusableSchema(t, key, miniMigrate)
@@ -113,6 +119,7 @@ func TestReusableSchema_BusyLeaseFallsBackToPrivateSchema(t *testing.T) {
 
 // Test chạy DDL làm cấu trúc lệch dấu vân tay: lượt sau phải nhận schema DỰNG LẠI, không phải schema đã bị sửa.
 func TestReusableSchema_DDLTriggersRebuild(t *testing.T) {
+	forceReuse(t)
 	const key = "reuse-test-ddl"
 	var first string
 	t.Run("ddl", func(t *testing.T) {
@@ -141,6 +148,7 @@ func TestReusableSchema_DDLTriggersRebuild(t *testing.T) {
 
 // Phiên sót lại của lượt trước (goroutine giữ kết nối riêng) bị ngắt khi lượt sau mượn.
 func TestReusableSchema_StraySessionIsTerminated(t *testing.T) {
+	forceReuse(t)
 	const key = "reuse-test-stray"
 	var stray *gorm.DB
 	var strayPID int64
@@ -254,6 +262,7 @@ func TestBaselineCopyOrder_ParentsFirstAndDeterministic(t *testing.T) {
 // lại: chép con trước cha thì INSERT vi phạm khoá ngoại, reset báo lỗi và cơ chế âm thầm dựng schema mới (đúng nhưng
 // chậm). Chạy cả hai đường reset: DELETE (không sequence) và TRUNCATE (có sequence).
 func TestReusableSchema_FKLinkedBaselineTablesResetWithoutRebuild(t *testing.T) {
+	forceReuse(t)
 	cases := map[string]func(*gorm.DB) error{
 		"delete": func(db *gorm.DB) error {
 			return db.Exec(`
@@ -295,6 +304,7 @@ func TestReusableSchema_FKLinkedBaselineTablesResetWithoutRebuild(t *testing.T) 
 
 // CloseReusable xoá cả schema chính lẫn schema baseline.
 func TestCloseReusable_DropsBothSchemas(t *testing.T) {
+	forceReuse(t)
 	const key = "reuse-test-close"
 	var main string
 	t.Run("lease", func(t *testing.T) { main = currentSchema(t, ReusableSchema(t, key, miniMigrate)) })
@@ -334,6 +344,7 @@ func reuseEntry(key string) *reusable {
 }
 
 func TestReusableSchema_DeletePathEmptiesTablesInForeignKeyOrder(t *testing.T) {
+	forceReuse(t)
 	const key = "reuse-test-delete"
 	var first string
 	t.Run("dirty", func(t *testing.T) {
@@ -368,6 +379,7 @@ func TestReusableSchema_DeletePathEmptiesTablesInForeignKeyOrder(t *testing.T) {
 
 // Schema có sequence cần RESTART IDENTITY nên reset dùng TRUNCATE (deleteOrder = nil).
 func TestReusableSchema_SchemaWithSequencesFallsBackToTruncate(t *testing.T) {
+	forceReuse(t)
 	const key = "reuse-test-truncate"
 	_ = ReusableSchema(t, key, miniMigrate)
 	if reuseEntry(key).deleteOrder != nil {
@@ -412,6 +424,7 @@ func TestDeleteOrderFromEdges(t *testing.T) {
 // verifyClean là lưới an toàn cuối của reset: bảng thường còn dòng, hoặc bảng baseline sai số dòng, đều bị bắt (khi đó
 // schema bị dựng lại thay vì trao cho test sau).
 func TestReusableSchema_VerifyCleanDetectsLeftovers(t *testing.T) {
+	forceReuse(t)
 	const key = "reuse-test-verify"
 	db := ReusableSchema(t, key, miniMigrate)
 	e := reuseEntry(key)
