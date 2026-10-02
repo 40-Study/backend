@@ -187,20 +187,22 @@ func TestInstantColumns_HoanTac(t *testing.T) {
 // tổ chức giữ NULL (không backfill/suy luận).
 func assertClassOrganizationColumn(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	var nullable string
-	if err := db.Raw(`SELECT is_nullable FROM information_schema.columns
-		WHERE table_schema = current_schema() AND table_name = 'classes' AND column_name = 'organization_id'`).Scan(&nullable).Error; err != nil {
+	// Chỉ truy vấn catalog của đúng bảng classes (to_regclass theo search_path của schema tạm): information_schema
+	// và pg_indexes quét MỌI schema, mà test của package khác chạy song song đang tạo/xoá schema của chúng
+	// ("could not open relation with OID" trên CI).
+	var notNull bool
+	if err := db.Raw(`SELECT attnotnull FROM pg_attribute WHERE attrelid = to_regclass('classes') AND attname = 'organization_id'`).
+		Scan(&notNull).Error; err != nil {
 		t.Fatal(err)
 	}
-	if nullable != "YES" {
-		t.Fatalf("classes.organization_id is_nullable=%q, muốn YES", nullable)
+	if notNull {
+		t.Fatal("classes.organization_id phải cho phép NULL")
 	}
 	var idx int64
-	if err := db.Raw(`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'classes'
-		AND indexdef LIKE '%(organization_id)%'`).Scan(&idx).Error; err != nil || idx == 0 {
+	if err := db.Raw(`SELECT count(*) FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+		WHERE i.indrelid = to_regclass('classes') AND a.attname = 'organization_id'`).Scan(&idx).Error; err != nil || idx == 0 {
 		t.Fatalf("classes.organization_id thiếu index (n=%d err=%v)", idx, err)
 	}
-
 	org := model.Organization{Name: "L2 org " + uuid.NewString()[:6]}
 	if err := db.Create(&org).Error; err != nil {
 		t.Fatal(err)
