@@ -46,6 +46,7 @@ func classErrorStatus(err error) int {
 	case errors.Is(err, service.ErrNotClassTeacher),
 		errors.Is(err, service.ErrNotClassOwner),
 		errors.Is(err, service.ErrNotCourseInstructor),
+		errors.Is(err, service.ErrNotOrgMember),
 		errors.Is(err, service.ErrNotTeacher):
 		return fiber.StatusForbidden
 	default:

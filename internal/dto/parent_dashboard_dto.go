@@ -47,16 +47,19 @@ type ChildCoursesResponseDto struct {
 
 // ChildGradeDto - Điểm của con
 type ChildGradeDto struct {
-	ID         string    `json:"id"`
-	ClassID    string    `json:"class_id"`
-	ClassName  string    `json:"class_name"`
-	GradeType  string    `json:"grade_type"` // assignment, quiz, midterm, final, etc.
-	Title      string    `json:"title"`
-	Score      float64   `json:"score"`
-	MaxScore   float64   `json:"max_score"`
-	Percentage float64   `json:"percentage"`
-	Weight     float64   `json:"weight"`
-	GradedAt   time.Time `json:"graded_at"`
+	ID         string  `json:"id"`
+	ClassID    string  `json:"class_id"`
+	ClassName  string  `json:"class_name"`
+	GradeType  string  `json:"grade_type"` // assignment, quiz, midterm, final, etc.
+	Title      string  `json:"title"`
+	Score      float64 `json:"score"`
+	MaxScore   float64 `json:"max_score"`
+	Percentage float64 `json:"percentage"`
+	Weight     float64 `json:"weight"`
+	// GradedBy / GradedByName: người chấm (giảng viên hoặc chủ/quản trị tổ chức). Phụ huynh thấy ai đã chấm.
+	GradedBy     string    `json:"graded_by"`
+	GradedByName string    `json:"graded_by_name"`
+	GradedAt     time.Time `json:"graded_at"`
 }
 
 // ChildFinalGradeDto - Điểm tổng kết
@@ -119,12 +122,12 @@ type ChildAttendanceDto struct {
 
 // ChildAttendanceStatsDto - Thống kê điểm danh
 type ChildAttendanceStatsDto struct {
-	TotalSessions   int     `json:"total_sessions"`
-	PresentCount    int     `json:"present_count"`
-	AbsentCount     int     `json:"absent_count"`
-	LateCount       int     `json:"late_count"`
-	ExcusedCount    int     `json:"excused_count"`
-	AttendanceRate  float64 `json:"attendance_rate"` // percentage
+	TotalSessions  int     `json:"total_sessions"`
+	PresentCount   int     `json:"present_count"`
+	AbsentCount    int     `json:"absent_count"`
+	LateCount      int     `json:"late_count"`
+	ExcusedCount   int     `json:"excused_count"`
+	AttendanceRate float64 `json:"attendance_rate"` // percentage
 }
 
 // ChildAttendanceResponseDto - Response cho điểm danh

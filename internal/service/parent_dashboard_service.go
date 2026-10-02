@@ -130,10 +130,10 @@ func (s *ParentDashboardService) GetChildOverview(ctx context.Context, parentID,
 	}
 
 	return &dto.ChildOverviewDto{
-		ID:                childID.String(),
-		Username:          child.UserName,
-		FullName:          child.FullName,
-		AvatarURL:         child.AvatarURL,
+		ID:        childID.String(),
+		Username:  child.UserName,
+		FullName:  child.FullName,
+		AvatarURL: child.AvatarURL,
 
 		Relationship:      relation.Relationship,
 		TotalXP:           totalXP,
@@ -232,16 +232,18 @@ func (s *ParentDashboardService) GetChildGrades(ctx context.Context, parentID, c
 		}
 
 		gradeDtos[i] = dto.ChildGradeDto{
-			ID:         g.ID.String(),
-			ClassID:    g.ClassID.String(),
-			ClassName:  className,
-			GradeType:  string(g.GradeType),
-			Title:      g.Title,
-			Score:      score,
-			MaxScore:   maxScore,
-			Percentage: percentage,
-			Weight:     weight,
-			GradedAt:   g.CreatedAt,
+			ID:           g.ID.String(),
+			ClassID:      g.ClassID.String(),
+			ClassName:    className,
+			GradeType:    string(g.GradeType),
+			Title:        g.Title,
+			Score:        score,
+			MaxScore:     maxScore,
+			Percentage:   percentage,
+			Weight:       weight,
+			GradedBy:     g.GradedBy.String(),
+			GradedByName: graderDisplayName(&g.Grader),
+			GradedAt:     g.CreatedAt,
 		}
 	}
 

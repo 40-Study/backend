@@ -22,6 +22,9 @@ func gradeErrorStatus(err error) int {
 	switch err {
 	case service.ErrNotClassTeacher:
 		return fiber.StatusForbidden
+	case service.ErrClassNotFound:
+		// Người không xem được lớp: 404 để không dò được id lớp (ensureClassGrade).
+		return fiber.StatusNotFound
 	default:
 		return 0
 	}
@@ -482,6 +485,9 @@ func (h *GradeHandler) BulkCreateGrades(c *fiber.Ctx) error {
 
 	grades, err := h.service.BulkCreateGrades(c.Context(), classID, gradedBy, req)
 	if err != nil {
+		if status := gradeErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create grades",
 			"error":   err.Error(),

@@ -50,6 +50,9 @@ func (s *ClassService) requireClassTeacherOrAdmin(ctx context.Context, classID, 
 	return ensureClassManage(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin)
 }
 
+// ErrNotOrgMember: tạo lớp trong một tổ chức mà người gọi không phải thành viên active (và không phải admin). Handler tra 403.
+var ErrNotOrgMember = errors.New("forbidden: not an active member of this organization")
+
 // ErrNotTeacher (S4): tạo lớp không gắn khoá mà người gọi không phải giảng viên (và không phải admin).
 var ErrNotTeacher = errors.New("forbidden: only teachers can create classes")
 
@@ -111,6 +114,28 @@ func (s *ClassService) CreateClass(ctx context.Context, actorUserID uuid.UUID, i
 		}
 	}
 
+	// Lớp trong tổ chức: người tạo phải là thành viên active của tổ chức đó (admin hệ thống thì chỉ cần tổ chức
+	// tồn tại). Lớp cá nhân (không gửi organization_id) để NULL. Không suy luận tổ chức từ nơi nào khác.
+	if req.OrganizationID != nil {
+		if isAdmin {
+			exists, err := s.classRepo.OrganizationExists(ctx, *req.OrganizationID)
+			if err != nil {
+				return nil, err
+			}
+			if !exists {
+				return nil, errors.New("organization not found")
+			}
+		} else {
+			member, err := s.classRepo.ActiveOrgMemberExists(ctx, actorUserID, *req.OrganizationID)
+			if err != nil {
+				return nil, err
+			}
+			if !member {
+				return nil, ErrNotOrgMember
+			}
+		}
+	}
+
 	// Class luôn bắt đầu với status "draft".
 	// Để chuyển sang "active" (lớp thật), cần gọi API Update với status = "active"
 	// khi lớp đã sẵn sàng hoạt động (có đủ giáo viên, lịch học, etc.)
@@ -121,6 +146,8 @@ func (s *ClassService) CreateClass(ctx context.Context, actorUserID uuid.UUID, i
 		Status:      "draft",
 		MaxStudents: req.MaxStudents,
 		CreatedBy:   &actorUserID,
+
+		OrganizationID: req.OrganizationID,
 	}
 
 	if req.StartDate != nil {
@@ -620,17 +647,18 @@ func (s *ClassService) toClassResponseDTO(ctx context.Context, class *model.Clas
 	studentCount, _ := s.classRepo.GetStudentCount(ctx, class.ID)
 
 	return &dto.ClassResponseDTO{
-		ID:           class.ID,
-		Name:         class.Name,
-		Description:  class.Description,
-		CourseID:     class.CourseID,
-		Status:       class.Status,
-		MaxStudents:  class.MaxStudents,
-		StartDate:    class.StartDate,
-		EndDate:      class.EndDate,
-		TeacherCount: teacherCount,
-		StudentCount: studentCount,
-		CreatedAt:    utils.FormatTimestamp(class.CreatedAt),
-		UpdatedAt:    utils.FormatTimestamp(class.UpdatedAt),
+		ID:             class.ID,
+		Name:           class.Name,
+		Description:    class.Description,
+		CourseID:       class.CourseID,
+		OrganizationID: class.OrganizationID,
+		Status:         class.Status,
+		MaxStudents:    class.MaxStudents,
+		StartDate:      class.StartDate,
+		EndDate:        class.EndDate,
+		TeacherCount:   teacherCount,
+		StudentCount:   studentCount,
+		CreatedAt:      utils.FormatTimestamp(class.CreatedAt),
+		UpdatedAt:      utils.FormatTimestamp(class.UpdatedAt),
 	}
 }

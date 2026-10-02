@@ -17,7 +17,7 @@ import (
 func TestGrade_OnlyForStudentsOfTheClass(t *testing.T) {
 	e := newS4ClassEnv(t)
 	ctx := context.Background()
-	svc := NewGradeService(repository.NewGradeRepository(e.f.db), repository.NewClassRepository(e.f.db), nil)
+	svc := NewGradeService(repository.NewGradeRepository(e.f.db), repository.NewClassRepository(e.f.db), repository.NewCourseRepository(e.f.db), nil, nil)
 	teacher := e.coTeacher.ID
 
 	grade := func(student model.User) dto.CreateGradeDTO {

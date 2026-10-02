@@ -51,6 +51,9 @@ func TestTimeOfDayColumns_MigrateTaoKieuTime(t *testing.T) {
 			t.Errorf("%s.%s = %q, muốn %q", c.table, c.column, dt, model.TimeOfDayColumnType)
 		}
 	}
+	// Cùng schema đã Migrate đầy đủ: cột thời điểm buổi học là timestamptz (instant_columns_postgres_test.go).
+	assertInstantColumnsAfterMigrate(t, db)
+	assertClassOrganizationColumn(t, db)
 }
 
 // DB cũ: cột TIMESTAMPTZ chứa giờ +07 (đúng như DB dev 01/10/2026). Sau chuyển đổi phải còn đúng giờ

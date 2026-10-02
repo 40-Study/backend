@@ -12,9 +12,11 @@ type CreateClassDTO struct {
 	Name        string     `json:"name" validate:"required,min=2,max=255"`
 	Description *string    `json:"description"`
 	CourseID    *uuid.UUID `json:"course_id"`
-	MaxStudents *int       `json:"max_students" validate:"omitempty,min=1"`
-	StartDate   *string    `json:"start_date"`
-	EndDate     *string    `json:"end_date"`
+	// OrganizationID: tạo lớp trong một tổ chức (người tạo phải là thành viên active). Bỏ trống = lớp cá nhân.
+	OrganizationID *uuid.UUID `json:"organization_id"`
+	MaxStudents    *int       `json:"max_students" validate:"omitempty,min=1"`
+	StartDate      *string    `json:"start_date"`
+	EndDate        *string    `json:"end_date"`
 }
 
 type UpdateClassDTO struct {
@@ -28,18 +30,19 @@ type UpdateClassDTO struct {
 }
 
 type ClassResponseDTO struct {
-	ID           uuid.UUID  `json:"id"`
-	Name         string     `json:"name"`
-	Description  *string    `json:"description,omitempty"`
-	CourseID     *uuid.UUID `json:"course_id,omitempty"`
-	Status       string     `json:"status"`
-	MaxStudents  *int       `json:"max_students,omitempty"`
-	StartDate    *time.Time `json:"start_date,omitempty"`
-	EndDate      *time.Time `json:"end_date,omitempty"`
-	TeacherCount int64      `json:"teacher_count"`
-	StudentCount int64      `json:"student_count"`
-	CreatedAt    string     `json:"created_at"`
-	UpdatedAt    string     `json:"updated_at"`
+	ID             uuid.UUID  `json:"id"`
+	Name           string     `json:"name"`
+	Description    *string    `json:"description,omitempty"`
+	CourseID       *uuid.UUID `json:"course_id,omitempty"`
+	OrganizationID *uuid.UUID `json:"organization_id,omitempty"`
+	Status         string     `json:"status"`
+	MaxStudents    *int       `json:"max_students,omitempty"`
+	StartDate      *time.Time `json:"start_date,omitempty"`
+	EndDate        *time.Time `json:"end_date,omitempty"`
+	TeacherCount   int64      `json:"teacher_count"`
+	StudentCount   int64      `json:"student_count"`
+	CreatedAt      string     `json:"created_at"`
+	UpdatedAt      string     `json:"updated_at"`
 }
 
 type ClassListResponseDTO struct {

@@ -18,11 +18,17 @@ type Class struct {
 	// CreatedBy (S4): người tạo lớp — một trong hai "chủ lớp" (cùng giảng viên chủ khoá) được gán/gỡ
 	// giảng viên. Lớp tạo trước S4 là NULL: chỉ chủ khoá và admin gán/gỡ được, không suy ngược ra người tạo.
 	CreatedBy *uuid.UUID `gorm:"type:uuid;index;column:created_by" json:"-"`
+	// OrganizationID: tổ chức mà lớp thuộc về. NULL = lớp cá nhân của giảng viên. Chỉ được gắn lúc TẠO lớp,
+	// bởi thành viên active của tổ chức đó (ClassService.CreateClass); KHÔNG backfill theo suy luận thành viên.
+	// Chủ/quản trị tổ chức chỉ chấm điểm được lớp có organization_id bằng tổ chức của mình (ensureClassGrade).
+	OrganizationID *uuid.UUID `gorm:"type:uuid;index;column:organization_id" json:"organization_id,omitempty"`
 
 	// Relationships
-	Course   *Course        `gorm:"foreignKey:CourseID" json:"-"`
-	Teachers []TeacherClass `gorm:"foreignKey:ClassID;constraint:OnDelete:CASCADE" json:"-"`
-	Students []StudentClass `gorm:"foreignKey:ClassID;constraint:OnDelete:CASCADE" json:"-"`
+	Course *Course `gorm:"foreignKey:CourseID" json:"-"`
+	// Xoá tổ chức thì lớp trở về lớp cá nhân (SET NULL), không xoá lớp.
+	Organization *Organization  `gorm:"foreignKey:OrganizationID;constraint:OnDelete:SET NULL" json:"-"`
+	Teachers     []TeacherClass `gorm:"foreignKey:ClassID;constraint:OnDelete:CASCADE" json:"-"`
+	Students     []StudentClass `gorm:"foreignKey:ClassID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 func (Class) TableName() string {
@@ -62,4 +68,3 @@ type StudentClass struct {
 func (StudentClass) TableName() string {
 	return "student_classes"
 }
-

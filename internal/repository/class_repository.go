@@ -23,6 +23,9 @@ type ClassRepositoryInterface interface {
 	TeacherClassExists(ctx context.Context, classID, teacherID uuid.UUID) (bool, error)
 	StudentClassExists(ctx context.Context, classID, studentID uuid.UUID) (bool, error)
 	IsUserRelatedToClass(ctx context.Context, classID, userID uuid.UUID) (bool, error)
+	// ActiveOrgMemberExists / OrganizationExists: kiểm tra khi tạo lớp trong một tổ chức.
+	ActiveOrgMemberExists(ctx context.Context, userID, orgID uuid.UUID) (bool, error)
+	OrganizationExists(ctx context.Context, orgID uuid.UUID) (bool, error)
 
 	// Teacher-Class
 	AssignTeacher(ctx context.Context, tc *model.TeacherClass) error
@@ -185,6 +188,21 @@ func (r *ClassRepository) IsUserRelatedToClass(ctx context.Context, classID, use
 	var exists bool
 	tx := buildIsUserRelatedToClassQuery(r.db.WithContext(ctx), classID, userID, &exists)
 	return exists, tx.Error
+}
+
+// ActiveOrgMemberExists: userID đang giữ ít nhất một org role ACTIVE trong tổ chức orgID.
+func (r *ClassRepository) ActiveOrgMemberExists(ctx context.Context, userID, orgID uuid.UUID) (bool, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Model(&model.UserOrganizationRole{}).
+		Where("user_id = ? AND organization_id = ? AND status = ?", userID, orgID, model.UserOrgRoleStatusActive).
+		Count(&n).Error
+	return n > 0, err
+}
+
+func (r *ClassRepository) OrganizationExists(ctx context.Context, orgID uuid.UUID) (bool, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Model(&model.Organization{}).Where("id = ?", orgID).Count(&n).Error
+	return n > 0, err
 }
 
 // Teacher-Class

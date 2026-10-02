@@ -87,20 +87,22 @@ type GradeResponseDTO struct {
 	MaxScore     decimal.Decimal `json:"max_score"`
 	Weight       decimal.Decimal `json:"weight"`
 	GradedBy     uuid.UUID       `json:"graded_by"`
-	GradedAt     time.Time       `json:"graded_at"`
-	Feedback     *string         `json:"feedback,omitempty"`
-	IsFinal      bool            `json:"is_final"`
+	// GradedByName: họ tên (hoặc username) người chấm, để web hiển thị "Chấm bởi …". Rỗng khi chưa nạp được người chấm.
+	GradedByName string    `json:"graded_by_name"`
+	GradedAt     time.Time `json:"graded_at"`
+	Feedback     *string   `json:"feedback,omitempty"`
+	IsFinal      bool      `json:"is_final"`
 }
 
 type GradeBookDTO struct {
-	ClassID  uuid.UUID               `json:"class_id"`
+	ClassID  uuid.UUID                `json:"class_id"`
 	Columns  []GradeColumnResponseDTO `json:"columns"`
-	Students []StudentGradeRowDTO    `json:"students"`
+	Students []StudentGradeRowDTO     `json:"students"`
 }
 
 type StudentGradeRowDTO struct {
-	StudentID   uuid.UUID         `json:"student_id"`
-	StudentName string            `json:"student_name"`
+	StudentID   uuid.UUID          `json:"student_id"`
+	StudentName string             `json:"student_name"`
 	Grades      []GradeResponseDTO `json:"grades"`
 }
 

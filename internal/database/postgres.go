@@ -59,6 +59,10 @@ func Migrate(db *gorm.DB) error {
 	if err := migrateTimeOfDayColumns(db); err != nil {
 		return err
 	}
+	// Cột thời điểm buổi học timestamp -> timestamptz: cũng phải trước AutoMigrate, xem migrateInstantColumnsUp.
+	if err := migrateInstantColumnsUp(db); err != nil {
+		return err
+	}
 
 	if err := db.AutoMigrate(
 		// ===== 1. Base Tables (độc lập) =====

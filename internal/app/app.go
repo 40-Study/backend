@@ -51,7 +51,7 @@ func New() (*App, error) {
 		log.Printf("Warning: seeder failed: %v", err)
 	}
 
-	services := InitServices(resources, repos, notifier)
+	services := InitServices(resources, repos, notifier, permChecker)
 	// "Đang gõ" trong DM bị chặn không được phát cho phía bên kia (cùng quy tắc với khoá gửi tin).
 	wireDirectBlockRealtime(services, wsAuthorizer)
 

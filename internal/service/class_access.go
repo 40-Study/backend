@@ -133,6 +133,68 @@ func ensureClassManage(ctx context.Context, classRepo repository.ClassRepository
 	return nil
 }
 
+// orgClassManagePermission: quyền org role phải có để được coi là chủ/quản trị tổ chức khi chấm điểm lớp
+// của tổ chức. ORG_MEMBERS_MANAGE là quyền quản lý thành viên tổ chức, thuộc SSOT quyền phạm vi tổ chức
+// (data.IsOrgPermission, kiểm trong test) nên bộ lọc S6 ở PermissionChecker không loại nó.
+const orgClassManagePermission = "ORG_MEMBERS_MANAGE"
+
+// ClassAuthorizer: phần PermissionChecker mà tầng service cần (interface ở đây để service không import
+// middleware). Nil = không ai được nâng quyền (fail-closed, như isAdminActor khi permChecker nil).
+type ClassAuthorizer interface {
+	IsSystemAdmin(ctx context.Context, userID uuid.UUID) (bool, error)
+	HasOrgRolePermission(ctx context.Context, userID, orgID uuid.UUID, permission string) (bool, error)
+}
+
+// orgManagesClass: lớp thuộc một tổ chức (classes.organization_id) và userID có vai quản trị
+// (orgClassManagePermission) TRONG CHÍNH tổ chức đó. Lớp cá nhân (organization_id NULL) không bao giờ thuộc
+// quyền của chủ tổ chức nào: thêm một giảng viên vào tổ chức không kéo lớp cá nhân của họ vào phạm vi.
+func orgManagesClass(ctx context.Context, authz ClassAuthorizer, userID uuid.UUID, class *model.Class) (bool, error) {
+	if authz == nil || class == nil || class.OrganizationID == nil {
+		return false, nil
+	}
+	ok, err := authz.HasOrgRolePermission(ctx, userID, *class.OrganizationID, orgClassManagePermission)
+	if err != nil {
+		return false, fmt.Errorf("failed to verify organization role: %w", err)
+	}
+	return ok, nil
+}
+
+// ensureClassGrade: quyền CHẤM ĐIỂM / quản bảng điểm của lớp = ensureClassManage (giảng viên lớp, người
+// tạo lớp, instructor khoá, admin hệ thống) HOẶC chủ/quản trị của tổ chức mà lớp thuộc về. Lỗi theo
+// "xem được hay không": người không xem được lớp -> ErrClassNotFound (404, không dò được id lớp); người
+// xem được (học viên trong lớp) nhưng không được chấm -> ErrNotClassTeacher (403).
+func ensureClassGrade(ctx context.Context, classRepo repository.ClassRepositoryInterface, courseRepo repository.CourseRepositoryInterface, authz ClassAuthorizer, userID, classID uuid.UUID) error {
+	isAdmin := false
+	if authz != nil {
+		var err error
+		if isAdmin, err = authz.IsSystemAdmin(ctx, userID); err != nil {
+			return fmt.Errorf("failed to verify system admin: %w", err)
+		}
+	}
+	err := ensureClassManage(ctx, classRepo, courseRepo, userID, classID, isAdmin)
+	if err == nil || !errors.Is(err, ErrNotClassTeacher) {
+		return err
+	}
+	class, err := classRepo.GetByID(ctx, classID)
+	if err != nil {
+		return fmt.Errorf("failed to load class: %w", err)
+	}
+	managed, err := orgManagesClass(ctx, authz, userID, class)
+	if err != nil {
+		return err
+	}
+	if managed {
+		return nil
+	}
+	if err := ensureClassView(ctx, classRepo, courseRepo, userID, classID, false); err != nil {
+		if errors.Is(err, ErrNotClassMember) {
+			return ErrClassNotFound
+		}
+		return err
+	}
+	return ErrNotClassTeacher
+}
+
 // ensureClassView = nguoi quan tri duoc lop (ensureClassManage) HOAC hoc sinh dang hoc trong lop.
 // Dung cho cac handler DOC chi tiet mot lop: danh sach hoc sinh, thoi khoa bieu cua lop — truoc
 // day bat ky user dang nhap nao cung doc duoc (ro ri ten/email hoc sinh va lich hoc).

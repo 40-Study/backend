@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"study.com/v1/internal/config"
+	"study.com/v1/internal/middleware"
 	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/socket"
@@ -143,7 +144,7 @@ type Services struct {
 	Friendship *service.FriendshipService
 }
 
-func InitServices(resources *Resources, repos *Repositories, notifier *socket.Notifier) *Services {
+func InitServices(resources *Resources, repos *Repositories, notifier *socket.Notifier, permChecker *middleware.PermissionChecker) *Services {
 	transactionSvc := initTransactionService(resources.Config)
 	// voucherSvc khởi tạo SỚM (trước Order/Payment) vì item 24 (review web vòng 1) cần
 	// OrderService/PaymentService dùng voucherSvc.ValidateAndApplyVoucher/IncrementUsedCount/
@@ -447,8 +448,8 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 
 		// ===== Order & Payment =====
 		// Dựng ở trên (khối "Order & Payment") để nối bộ đối chiếu thanh toán vào OrderService.
-		Order:   orderSvc,
-		Payment: paymentSvc,
+		Order:              orderSvc,
+		Payment:            paymentSvc,
 		TransactionService: transactionSvc,
 		Voucher:            voucherSvc,
 		// Redis để hoàn tiền xoá cache tra cứu của chứng chỉ vừa thu hồi (cùng khoá với CertificateService).
@@ -494,7 +495,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Quiz: service.NewQuizService(repos.Quiz, resources.Redis, repos.Course, repos.Section, repos.Lesson, repos.Livestream, repos.Enrollment),
 
 		// ===== Grade (Redis cache) =====
-		Grade: service.NewGradeService(repos.Grade, repos.Class, resources.Redis),
+		Grade: service.NewGradeService(repos.Grade, repos.Class, repos.Course, permChecker, resources.Redis),
 
 		// ===== Exercise (RabbitMQ for code execution + Redis cache) =====
 		Exercise: service.NewExerciseService(repos.Exercise, resources.Redis, resources.RabbitMQ),
