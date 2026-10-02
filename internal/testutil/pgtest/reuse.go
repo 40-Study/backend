@@ -55,6 +55,8 @@ type reusable struct {
 	// (vòng khoá ngoại giữa các bảng, có sequence cần RESTART IDENTITY, hoặc có trigger mà TRUNCATE không kích hoạt)
 	// nên reset dùng TRUNCATE ... CASCADE.
 	deleteOrder []string
+	// copyOrder: thứ tự chép lại bảng baseline (cha trước con), xác định — xem baselineCopyOrder.
+	copyOrder []string
 }
 
 var (
@@ -62,12 +64,17 @@ var (
 	reuseEntries = map[string]*reusable{}
 )
 
+// ReuseEnabled cho biết cơ chế dùng lại schema đang bật (PGTEST_REUSE khác "0"). Test chứng minh chính cơ chế dùng
+// lại (lượt sau nhận ĐÚNG schema của lượt trước) phải t.Skip khi tắt, vì khi đó mỗi lượt một schema mới là hành vi
+// đúng chứ không phải lỗi.
+func ReuseEnabled() bool { return os.Getenv(reuseEnvVar) != "0" }
+
 // ReusableSchema trả một kết nối tới schema tạm đã migrate và RỖNG (trừ các dòng baseline do migrate sinh ra),
 // dùng lại giữa các test của tiến trình. key định danh hàm migrate: cùng key thì cùng một hàm migrate.
 // Xem mô tả đầu file về cách bảo đảm cô lập.
 func ReusableSchema(t *testing.T, key string, migrate func(*gorm.DB) error) *gorm.DB {
 	t.Helper()
-	if os.Getenv(reuseEnvVar) == "0" {
+	if !ReuseEnabled() {
 		return IsolatedSchema(t, migrate)
 	}
 	e, ok := leaseReusable(t, key, migrate)
@@ -158,6 +165,11 @@ func buildReusable(t *testing.T, migrate func(*gorm.DB) error) *reusable {
 	if e.deleteOrder, err = planDeleteOrder(admin, e.schema, e.tables); err != nil {
 		t.Fatalf("lập thứ tự xoá của %s: %v", e.schema, err)
 	}
+	childrenFirst, err := fkChildrenFirst(admin, e.schema, e.tables)
+	if err != nil {
+		t.Fatalf("lập thứ tự khoá ngoại của %s: %v", e.schema, err)
+	}
+	e.copyOrder = baselineCopyOrder(e.baseCounts, childrenFirst)
 	built = true
 	return e
 }
@@ -179,6 +191,12 @@ func planDeleteOrder(admin *gorm.DB, schema string, tables []string) ([]string, 
 	if seq > 0 || trg > 0 {
 		return nil, nil
 	}
+	return fkChildrenFirst(admin, schema, tables)
+}
+
+// fkChildrenFirst sắp bảng sao cho bảng con (có khoá ngoại) đứng trước bảng cha, nil khi có vòng khoá ngoại.
+// Tách khỏi planDeleteOrder vì thứ tự chép baseline (cha trước con) cần đúng thứ tự này kể cả khi reset dùng TRUNCATE.
+func fkChildrenFirst(admin *gorm.DB, schema string, tables []string) ([]string, error) {
 	var edges []struct{ Child, Parent string }
 	if err := admin.Raw(`SELECT c.relname AS child, p.relname AS parent
 		FROM pg_constraint k
@@ -193,6 +211,31 @@ func planDeleteOrder(admin *gorm.DB, schema string, tables []string) ([]string, 
 			yield(e.Child, e.Parent)
 		}
 	}), nil
+}
+
+// baselineCopyOrder trả thứ tự CHÉP LẠI các bảng baseline sau khi làm rỗng: bảng cha trước bảng con (ngược với thứ
+// tự xoá), để INSERT không vi phạm khoá ngoại giữa hai bảng baseline. Duyệt map thì thứ tự đổi theo từng lần chạy:
+// reset lỗi khoá ngoại rồi cơ chế âm thầm dựng lại schema mỗi lượt (đúng nhưng chậm). Khi không có thứ tự khoá ngoại
+// (childrenFirst nil: có vòng khoá ngoại) thì theo tên bảng, vẫn xác định.
+func baselineCopyOrder(baseCounts map[string]int64, childrenFirst []string) []string {
+	out := make([]string, 0, len(baseCounts))
+	seen := make(map[string]bool, len(baseCounts))
+	for i := len(childrenFirst) - 1; i >= 0; i-- {
+		if tbl := childrenFirst[i]; !seen[tbl] {
+			if _, isBase := baseCounts[tbl]; isBase {
+				out = append(out, tbl)
+				seen[tbl] = true
+			}
+		}
+	}
+	rest := make([]string, 0, len(baseCounts)-len(out))
+	for tbl := range baseCounts {
+		if !seen[tbl] {
+			rest = append(rest, tbl)
+		}
+	}
+	sort.Strings(rest)
+	return append(out, rest...)
 }
 
 // deleteOrderFromEdges sắp bảng sao cho mọi bảng con đứng trước bảng cha của nó; nil khi có vòng giữa các bảng.
@@ -260,7 +303,7 @@ func (e *reusable) reset(t tb) error {
 			if err := e.emptyTables(tx, targets); err != nil {
 				return err
 			}
-			for tbl := range e.baseCounts {
+			for _, tbl := range e.copyOrder {
 				if err := tx.Exec(fmt.Sprintf("INSERT INTO %s SELECT * FROM %s", qualified(e.schema, tbl), qualified(e.baseSchema, tbl))).Error; err != nil {
 					return err
 				}

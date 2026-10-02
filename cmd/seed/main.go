@@ -52,7 +52,7 @@ func main() {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
-	if err := database.MigrateAtStartup(db); err != nil {
+	if err := database.MigrateAtStartup(db, cfg.MigrateLockTimeout()); err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
 

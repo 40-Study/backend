@@ -158,12 +158,17 @@ func (s *PaymentService) reconcileIssuedOrder(ctx context.Context, order *model.
 	// cho web phân biệt "ngân hàng lỗi, thử lại sau" với "chưa có giao dịch".
 	if err != nil || result == nil || result.Status == "error" {
 		log.Printf("[PAYMENT-CHECK] order=%s status=%s chưa đối chiếu được với ngân hàng (err=%v)", order.ID, order.Status, bankErrorDetail(err, result))
-		if processing && !opts.deferUnverifiedExpiry && now.After(deadline.Add(unverifiedExpiryAfter)) {
-			resp, expErr := s.expireUnverified(ctx, order, deadline, bankErrorDetail(err, result))
-			if resp != nil {
-				resp.BankUnavailable = true
+		if processing && now.After(deadline.Add(unverifiedExpiryAfter)) {
+			if !opts.deferUnverifiedExpiry {
+				resp, expErr := s.expireUnverified(ctx, order, deadline, bankErrorDetail(err, result))
+				if resp != nil {
+					resp.BankUnavailable = true
+				}
+				return resp, expErr
 			}
-			return resp, expErr
+			if opts.onExpiryDeferred != nil {
+				opts.onExpiryDeferred()
+			}
 		}
 		return current(func(r *dto.PaymentStatusResponse) {
 			r.Reconciling = processing
