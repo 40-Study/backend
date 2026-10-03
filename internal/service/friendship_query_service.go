@@ -237,6 +237,7 @@ func (s *FriendshipService) Block(ctx context.Context, me, targetID uuid.UUID) e
 	if err != nil {
 		return err
 	}
+	s.cleanResolvedRequestNotices(me, targetID) // lời mời đang chờ vừa bị huỷ bởi chặn (A-14)
 	s.publishBlockChange(ctx, me, targetID, wasBlocked)
 	return nil
 }

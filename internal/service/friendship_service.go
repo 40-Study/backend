@@ -67,6 +67,8 @@ type FriendshipService struct {
 	repo     *repository.FriendshipRepository
 	blocks   *repository.UserBlockRepository
 	notifier FriendNotifier
+	// noticeCleaner xoá thông báo lời mời đã xử lý xong (nil = không dọn).
+	noticeCleaner FriendNoticeCleaner
 	// blockEvents phát sự kiện realtime khi chặn/bỏ chặn đổi trạng thái khoá DM (nil = không phát).
 	blockEvents DirectBlockPublisher
 	now         func() time.Time
@@ -78,6 +80,25 @@ func NewFriendshipService(repo *repository.FriendshipRepository, blocks *reposit
 
 // SetNotifier nối bộ gửi thông báo (setter để không đổi chữ ký constructor, giống SetInviteGuard).
 func (s *FriendshipService) SetNotifier(n FriendNotifier) { s.notifier = n }
+
+// FriendNoticeCleaner xoá thông báo lời mời kết bạn đã hết hiệu lực (NotificationRepository cài đặt).
+type FriendNoticeCleaner interface {
+	DeleteResolvedFriendRequestNotices(userIDs ...uuid.UUID) error
+}
+
+// SetNoticeCleaner nối bộ dọn thông báo lời mời (tuỳ chọn: nil = không dọn, chỉ mất tính gọn của danh sách).
+func (s *FriendshipService) SetNoticeCleaner(c FriendNoticeCleaner) { s.noticeCleaner = c }
+
+// cleanResolvedRequestNotices gọi SAU khi giao dịch đổi trạng thái lời mời đã commit. Lỗi chỉ log: thông báo thừa
+// không được làm hỏng thao tác chính (QA hồi quy A-14).
+func (s *FriendshipService) cleanResolvedRequestNotices(users ...uuid.UUID) {
+	if s.noticeCleaner == nil {
+		return
+	}
+	if err := s.noticeCleaner.DeleteResolvedFriendRequestNotices(users...); err != nil {
+		log.Printf("friendship: dọn thông báo lời mời của %v lỗi: %v", users, err)
+	}
+}
 
 // requireStudent — mọi API Bạn bè chỉ dành cho học viên (Q1). Trả thông tin công khai của chính người gọi
 // (dùng làm tên hiển thị trong thông báo).
@@ -231,6 +252,7 @@ func (s *FriendshipService) SendRequest(ctx context.Context, me, targetID uuid.U
 	}
 
 	if out.AutoAccepted {
+		s.cleanResolvedRequestNotices(me, targetID) // lời mời kia đã được chấp nhận (A-14)
 		s.notify(targetID, model.NotificationTypeFriendAccepted, "Lời mời kết bạn được chấp nhận",
 			fmt.Sprintf("%s đã trở thành bạn của bạn.", friendDisplayName(*meRow)), "user", me)
 	} else if sendNotice {
@@ -395,6 +417,7 @@ func (s *FriendshipService) AcceptRequest(ctx context.Context, me, requestID uui
 	if err != nil {
 		return nil, err
 	}
+	s.cleanResolvedRequestNotices(me, first.RequesterID)
 	s.notify(first.RequesterID, model.NotificationTypeFriendAccepted, "Lời mời kết bạn được chấp nhận",
 		fmt.Sprintf("%s đã chấp nhận lời mời kết bạn của bạn.", friendDisplayName(*meRow)), "user", me)
 	return &result, nil
@@ -406,6 +429,7 @@ func (s *FriendshipService) DeclineRequest(ctx context.Context, me, requestID uu
 		return nil, err
 	}
 	var result dto.FriendDeclineResultDTO
+	var requesterID uuid.UUID
 	err := s.repo.Transaction(ctx, func(tx *repository.FriendshipRepository) error {
 		if err := lockRequestPair(ctx, tx, requestID); err != nil {
 			return err
@@ -420,12 +444,14 @@ func (s *FriendshipService) DeclineRequest(ctx context.Context, me, requestID uu
 		if err := tx.Save(ctx, row); err != nil {
 			return err
 		}
+		requesterID = row.RequesterID
 		result = dto.FriendDeclineResultDTO{ID: row.ID, Status: row.Status}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.cleanResolvedRequestNotices(me, requesterID)
 	return &result, nil
 }
 
@@ -435,7 +461,8 @@ func (s *FriendshipService) CancelRequest(ctx context.Context, me, requestID uui
 	if _, err := s.requireStudent(ctx, me); err != nil {
 		return err
 	}
-	return s.repo.Transaction(ctx, func(tx *repository.FriendshipRepository) error {
+	var addresseeID uuid.UUID
+	err := s.repo.Transaction(ctx, func(tx *repository.FriendshipRepository) error {
 		if err := lockRequestPair(ctx, tx, requestID); err != nil {
 			return err
 		}
@@ -454,8 +481,14 @@ func (s *FriendshipService) CancelRequest(ctx context.Context, me, requestID uui
 		now := s.now()
 		row.Status = model.FriendshipStatusCancelled
 		row.RespondedAt = &now
+		addresseeID = row.AddresseeID
 		return tx.Save(ctx, row)
 	})
+	if err != nil {
+		return err
+	}
+	s.cleanResolvedRequestNotices(me, addresseeID)
+	return nil
 }
 
 // Unfriend — DELETE /friends/:userId. Xoá hẳn dòng ACCEPTED (kết bạn lại được ngay).

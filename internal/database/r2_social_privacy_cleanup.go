@@ -1,24 +1,27 @@
 package database
 
-// r2_social_privacy_cleanup.go — hai bước SỬA MỘT LẦN dữ liệu cũ của đợt sửa lỗi sau kiểm thử hồi quy 03/10/2026
+// r2_social_privacy_cleanup.go — ba bước SỬA MỘT LẦN dữ liệu cũ của đợt sửa lỗi sau kiểm thử hồi quy 03/10/2026
 // (lane R2). Mỗi bước có bản ghi đánh dấu trong data_migrations nên chỉ chạy đúng một lần trên mỗi DB:
 //
 //   - A-03: hội thoại nhóm mồ côi. Trước bản sửa DeleteGroup chỉ xoá nhóm, hội thoại GROUP của nó vẫn hiện trong
 //     danh sách và gửi tin được. Đóng các hội thoại GROUP mà nhóm đã xoá mềm hoặc không còn.
 //   - B-03: user_name chứa '@' (người dùng gõ cả email lúc đăng ký) lộ email ở bảng xếp hạng công khai và hồ sơ
 //     công khai. Đổi sang tên sinh từ họ tên không dấu + hậu tố ngẫu nhiên, KHÔNG lấy từ email, giữ duy nhất.
+//   - A-14: thông báo "đã gửi lời mời kết bạn" của lời mời không còn hiệu lực (đã huỷ/từ chối/chấp nhận/chặn).
 
 import (
 	"fmt"
 	"strings"
 
 	"gorm.io/gorm"
+	"study.com/v1/internal/model"
 	"study.com/v1/internal/utils"
 )
 
 const (
 	r2OrphanGroupConversationsName = "r2_close_orphan_group_conversations"
 	r2UserNameWithAtRenameName     = "r2_rename_user_name_containing_at"
+	r2ResolvedFriendNoticesName    = "r2_delete_resolved_friend_request_notices"
 
 	// r2CleanupLockKey: khoá advisory (toàn DB) cho các bước sửa một lần của lane R2; khác mọi khoá khác trong gói.
 	r2CleanupLockKey int64 = 4020261004
@@ -31,7 +34,17 @@ func runR2SocialPrivacyCleanup(db *gorm.DB) error {
 	if err := runDataMigrationOnce(db, r2OrphanGroupConversationsName, closeOrphanGroupConversations); err != nil {
 		return err
 	}
-	return runDataMigrationOnce(db, r2UserNameWithAtRenameName, renameUserNamesContainingAt)
+	if err := runDataMigrationOnce(db, r2UserNameWithAtRenameName, renameUserNamesContainingAt); err != nil {
+		return err
+	}
+	return runDataMigrationOnce(db, r2ResolvedFriendNoticesName, deleteResolvedFriendRequestNotices)
+}
+
+// deleteResolvedFriendRequestNotices (A-14): xoá thông báo "đã gửi lời mời kết bạn" của các lời mời đã bị
+// huỷ/từ chối/chấp nhận/chặn từ trước bản sửa (bấm vào dẫn tới tab Lời mời trống). Dùng chung điều kiện với
+// NotificationRepository.DeleteResolvedFriendRequestNotices (model.ResolvedFriendRequestNoticeSQL).
+func deleteResolvedFriendRequestNotices(tx *gorm.DB) error {
+	return tx.Exec(`DELETE FROM notifications WHERE ` + model.ResolvedFriendRequestNoticeSQL).Error
 }
 
 // runDataMigrationOnce chạy fn đúng một lần trên mỗi DB: giao dịch giữ khoá advisory, kiểm bản ghi đánh dấu SAU

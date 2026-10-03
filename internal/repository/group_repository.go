@@ -352,6 +352,25 @@ func (r *GroupJoinRequestRepository) GetPendingByGroupAndUser(ctx context.Contex
 	return &req, nil
 }
 
+// ListPendingByUserAndGroups trả yêu cầu xin vào ĐANG CHỜ của user trong số các nhóm cho trước, theo group_id ->
+// id yêu cầu. Một câu truy vấn cho cả trang danh sách nhóm (QA hồi quy A-24), thay vì hỏi từng nhóm.
+func (r *GroupJoinRequestRepository) ListPendingByUserAndGroups(ctx context.Context, userID uuid.UUID, groupIDs []uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
+	out := make(map[uuid.UUID]uuid.UUID, len(groupIDs))
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+	var reqs []model.GroupJoinRequest
+	if err := r.db.WithContext(ctx).
+		Where("user_id = ? AND status = ? AND group_id IN ?", userID, model.JoinRequestPending, groupIDs).
+		Find(&reqs).Error; err != nil {
+		return nil, err
+	}
+	for _, q := range reqs {
+		out[q.GroupID] = q.ID
+	}
+	return out, nil
+}
+
 // GetByGroupAndUser trả yêu cầu của user với nhóm ở MỌI trạng thái (unique theo cặp group_id+user_id nên tối
 // đa một dòng) — dùng để tái sử dụng dòng cũ khi xin vào lại sau khi bị từ chối hoặc đã rời nhóm.
 func (r *GroupJoinRequestRepository) GetByGroupAndUser(ctx context.Context, groupID, userID uuid.UUID) (*model.GroupJoinRequest, error) {

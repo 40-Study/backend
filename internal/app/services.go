@@ -557,6 +557,8 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Friendship: service.NewFriendshipService(repos.Friendship, repos.UserBlock),
 	}
 	s.Friendship.SetNotifier(s.Notification)
+	// QA hồi quy A-14: lời mời bị huỷ/từ chối/chấp nhận/chặn thì thông báo "đã gửi lời mời" của nó bị xoá.
+	s.Friendship.SetNoticeCleaner(repos.Notification)
 	// Plan 260930 phase 05: bạn bè mở khoá nhắn tin trực tiếp/mời vào nhóm (qua Conversation), hồ sơ chế độ
 	// `friends`, và thông báo group_added khi được thêm vào nhóm.
 	s.Conversation.SetFriendshipChecker(s.Friendship)

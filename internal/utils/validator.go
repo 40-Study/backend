@@ -94,7 +94,7 @@ func getErrorMessage(err validator.FieldError) string {
 		return field + " must contain only alphanumeric characters"
 	case "user_name":
 		// Hiện thẳng cho người dùng ở web (thay cho thông báo chung "Cập nhật thất bại"), nên viết tiếng Việt.
-		return "Tên đăng nhập chỉ gồm chữ cái không dấu, chữ số và dấu gạch dưới (_), dài 3 đến 30 ký tự; không dùng '@' hay địa chỉ email"
+		return "Tên đăng nhập gồm 3-30 ký tự: chữ không dấu, số hoặc dấu gạch dưới (_). Không dùng @ hay email"
 	case "numeric":
 		return field + " must contain only numeric characters"
 	case "oneof":

@@ -74,6 +74,18 @@ func (r *NotificationRepository) CreateBatch(notifications []model.Notification)
 	return r.db.Create(&notifications).Error
 }
 
+// DeleteResolvedFriendRequestNotices xoá thông báo "lời mời kết bạn" đã hết hiệu lực (model.ResolvedFriendRequestNoticeSQL)
+// của các user cho trước; không truyền user nào thì quét toàn bảng (bước sửa một lần ở package database dùng SQL
+// chung, không gọi hàm này). Gọi sau khi lời mời bị huỷ/từ chối/chấp nhận/chặn để người nhận không còn thấy thông
+// báo dẫn tới tab Lời mời trống (QA hồi quy A-14).
+func (r *NotificationRepository) DeleteResolvedFriendRequestNotices(userIDs ...uuid.UUID) error {
+	q := r.db.Where(model.ResolvedFriendRequestNoticeSQL)
+	if len(userIDs) > 0 {
+		q = q.Where("user_id IN ?", userIDs)
+	}
+	return q.Delete(&model.Notification{}).Error
+}
+
 func (r *NotificationRepository) Delete(id, userID uuid.UUID) error {
 	return r.db.Where("id = ? AND user_id = ?", id, userID).Delete(&model.Notification{}).Error
 }

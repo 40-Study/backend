@@ -81,6 +81,44 @@ func TestR2_XoaNhom_ChiDongHoiThoaiCuaNhomBiXoa(t *testing.T) {
 	}
 }
 
+// A-24: tab Khám phá phải biết người xem đã có yêu cầu chờ / đã là thành viên.
+func TestR2_DanhSachNhom_KemVaiVaYeuCauDangCho(t *testing.T) {
+	e := newS6GroupEnv(t)
+	ctx := context.Background()
+	owner, requester, stranger := e.user("owner"), e.user("requester"), e.user("stranger")
+	g, _ := e.newGroup(owner, "PRIVATE")
+	if _, err := e.groups.JoinGroup(ctx, requester.ID, g.ID, nil); err != nil {
+		t.Fatalf("xin vào nhóm PRIVATE: %v", err)
+	}
+
+	find := func(viewer *uuid.UUID) dto.GroupResponse {
+		t.Helper()
+		list, err := e.groups.ListGroups(ctx, viewer, "", "", 1, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range list.Groups {
+			if item.ID == g.ID {
+				return item
+			}
+		}
+		t.Fatal("nhóm PRIVATE không có trong danh sách")
+		return dto.GroupResponse{}
+	}
+
+	if got := find(&requester.ID); got.MyJoinRequest == nil || got.MyRole != nil {
+		t.Errorf("người đã xin vào: muốn my_join_request và không có vai, nhận %+v / %v", got.MyJoinRequest, got.MyRole)
+	}
+	if got := find(&owner.ID); got.MyRole == nil || *got.MyRole != "OWNER" || got.MyJoinRequest != nil {
+		t.Errorf("chủ nhóm: muốn vai OWNER và không có yêu cầu, nhận %+v / %v", got.MyJoinRequest, got.MyRole)
+	}
+	for name, viewer := range map[string]*uuid.UUID{"người lạ": &stranger.ID, "khách": nil} {
+		if got := find(viewer); got.MyJoinRequest != nil || got.MyRole != nil {
+			t.Errorf("%s không được thấy vai/yêu cầu của người khác, nhận %+v / %v", name, got.MyJoinRequest, got.MyRole)
+		}
+	}
+}
+
 // r2PT: guard hội thoại thật trên schema Postgres, checker phụ huynh -> giảng viên nối đúng như app/services.go
 // (wired=false để kiểm trường hợp chưa nối thì đóng).
 type r2PT struct {

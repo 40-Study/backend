@@ -6,7 +6,7 @@ package database
 //     (participant có left_at, hội thoại xoá mềm); hội thoại của nhóm còn sống và DM không bị đụng.
 //   - TestR2Cleanup_DoiUserNameChuaAt (B-03): user_name có '@' (kể cả tài khoản xoá mềm) đổi sang tên không còn
 //     '@', hợp lệ với utils.IsValidUserName, KHÔNG suy ra từ email, duy nhất; tên hợp lệ giữ nguyên.
-//   - TestR2Cleanup_ChayDungMotLan: bản ghi đánh dấu chặn lần chạy sau, kể cả khi sau đó có dữ liệu xấu mới.
+//   - TestR2Cleanup_XoaThongBaoLoiMoiHetHieuLuc (A-14): thông báo lời mời của lời mời đã huỷ/từ chối/chấp nhận bị\n//     xoá; lời mời còn chờ tới đúng người nhận, thông báo loại khác giữ nguyên.\n//   - TestR2Cleanup_ChayDungMotLan: bản ghi đánh dấu chặn lần chạy sau, kể cả khi sau đó có dữ liệu xấu mới.
 //
 // Bỏ UPDATE ở một bước, hoặc bỏ điều kiện/bản ghi đánh dấu, thì test tương ứng ĐỎ.
 
@@ -27,6 +27,9 @@ const r2Schema = `
 	CREATE TABLE conversations (id uuid PRIMARY KEY, type text, group_id uuid, deleted_at timestamptz);
 	CREATE TABLE conversation_participants (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id uuid,
 		left_at timestamptz, unread_count int DEFAULT 0);
+	CREATE TABLE friendships (id uuid PRIMARY KEY, status text, addressee_id uuid);
+	CREATE TABLE notifications (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid, notification_type text,
+		reference_type text, reference_id uuid);
 `
 
 const (
@@ -160,6 +163,56 @@ func TestR2Cleanup_DoiUserNameChuaAt(t *testing.T) {
 	}
 }
 
+const (
+	r2UserB       = "00000000-0000-0000-0000-0000000000b1" // người nhận thông báo
+	r2UserA       = "00000000-0000-0000-0000-0000000000b2"
+	r2FrPending   = "00000000-0000-0000-0000-0000000000f1"
+	r2FrCancelled = "00000000-0000-0000-0000-0000000000f2"
+	r2FrAccepted  = "00000000-0000-0000-0000-0000000000f3"
+	r2FrWrongWay  = "00000000-0000-0000-0000-0000000000f4" // PENDING nhưng người nhận thông báo là người GỬI
+)
+
+func TestR2Cleanup_XoaThongBaoLoiMoiHetHieuLuc(t *testing.T) {
+	db := r2Setup(t)
+	if err := db.Exec(`INSERT INTO friendships VALUES
+		('` + r2FrPending + `', 'PENDING', '` + r2UserB + `'),
+		('` + r2FrCancelled + `', 'CANCELLED', '` + r2UserB + `'),
+		('` + r2FrAccepted + `', 'ACCEPTED', '` + r2UserB + `'),
+		('` + r2FrWrongWay + `', 'PENDING', '` + r2UserA + `')`).Error; err != nil {
+		t.Fatal(err)
+	}
+	notice := func(user, typ, ref string) string {
+		return `('` + user + `', '` + typ + `', 'friendship', '` + ref + `')`
+	}
+	if err := db.Exec(`INSERT INTO notifications (user_id, notification_type, reference_type, reference_id) VALUES ` +
+		strings.Join([]string{
+			notice(r2UserB, "friend_request", r2FrPending),    // còn hiệu lực: giữ
+			notice(r2UserB, "friend_request", r2FrCancelled),  // đã huỷ: xoá
+			notice(r2UserB, "friend_request", r2FrAccepted),   // đã chấp nhận: xoá
+			notice(r2UserB, "friend_request", r2FrWrongWay),   // PENDING nhưng người nhận không phải addressee: xoá
+			notice(r2UserB, "friend_accepted", r2FrCancelled), // loại khác: giữ
+		}, ",")).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO notifications (user_id, notification_type, reference_type, reference_id)
+		VALUES ('` + r2UserB + `', 'friend_request', 'friendship', '00000000-0000-0000-0000-0000000000f9')`).Error; err != nil { // dòng friendships không còn: xoá
+		t.Fatal(err)
+	}
+
+	if err := runR2SocialPrivacyCleanup(db); err != nil {
+		t.Fatal(err)
+	}
+
+	var left []string
+	if err := db.Raw(`SELECT notification_type || ':' || reference_id::text FROM notifications ORDER BY 1`).Scan(&left).Error; err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"friend_accepted:" + r2FrCancelled, "friend_request:" + r2FrPending}
+	if strings.Join(left, ",") != strings.Join(want, ",") {
+		t.Errorf("thông báo còn lại = %v, muốn %v", left, want)
+	}
+}
+
 func TestR2Cleanup_ChayDungMotLan(t *testing.T) {
 	db := r2Setup(t)
 	if err := runR2SocialPrivacyCleanup(db); err != nil {
@@ -175,8 +228,8 @@ func TestR2Cleanup_ChayDungMotLan(t *testing.T) {
 	if n := r2Count(t, db, `SELECT count(*) FROM users WHERE user_name = 'late@y.vn'`); n != 1 {
 		t.Errorf("bước sửa chạy lại dù đã có bản ghi đánh dấu (còn %d dòng 'late@y.vn')", n)
 	}
-	if n := r2Count(t, db, `SELECT count(*) FROM data_migrations WHERE name IN (?, ?)`,
-		r2OrphanGroupConversationsName, r2UserNameWithAtRenameName); n != 2 {
-		t.Errorf("data_migrations có %d bản ghi đánh dấu của R2, muốn đúng 2", n)
+	if n := r2Count(t, db, `SELECT count(*) FROM data_migrations WHERE name IN (?, ?, ?)`,
+		r2OrphanGroupConversationsName, r2UserNameWithAtRenameName, r2ResolvedFriendNoticesName); n != 3 {
+		t.Errorf("data_migrations có %d bản ghi đánh dấu của R2, muốn đúng 3", n)
 	}
 }
