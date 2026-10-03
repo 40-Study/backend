@@ -88,7 +88,7 @@ func TestS5_Schedule_GhiLichVaBuoiChiNguoiQuanLyLop(t *testing.T) {
 
 		_, err := svc.CreateSchedule(ctx, e.class.ID, a.user.ID, a.isAdmin, dto.CreateClassScheduleDTO{DayOfWeek: 2, StartTime: "10:00", EndTime: "11:00", EffectiveFrom: "2026-01-01"})
 		s5WantWrite(t, "CreateSchedule", a, err)
-		_, err2 := svc.CreateSession(ctx, e.class.ID, a.user.ID, a.isAdmin, dto.CreateClassSessionDTO{Date: "2026-10-10", StartTime: "10:00", EndTime: "11:00"})
+		_, err2 := svc.CreateSession(ctx, e.class.ID, a.user.ID, a.isAdmin, dto.CreateClassSessionDTO{Date: time.Date(2026, 10, 10+i, 0, 0, 0, 0, time.UTC).Format("2006-01-02"), StartTime: "10:00", EndTime: "11:00"}) // mỗi vai một ngày riêng: buổi trùng giờ giờ bị 409 (B-10)
 		s5WantWrite(t, "CreateSession", a, err2)
 		count()
 		if !a.manager && (schedules != beforeSch || sessions != beforeSes) {

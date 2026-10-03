@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -30,6 +31,8 @@ type ScheduleRepositoryInterface interface {
 	DeleteSession(ctx context.Context, id uuid.UUID) error
 	GetNextSessionNumber(ctx context.Context, classID uuid.UUID) (int, error)
 	GetUpcomingSessions(ctx context.Context, classID uuid.UUID, limit int) ([]model.ClassSession, error)
+	GetSessionsByClassIDsAndDateRange(ctx context.Context, classIDs []uuid.UUID, startDate, endDate string) ([]model.ClassSession, error)
+	HasOverlappingSession(ctx context.Context, classID uuid.UUID, date time.Time, start, end model.TimeOfDay, excludeID *uuid.UUID) (bool, error)
 
 	// SessionAttendance
 	CreateAttendance(ctx context.Context, attendance *model.SessionAttendance) error
@@ -147,6 +150,18 @@ func (r *ScheduleRepository) GetSessionsByDateRange(ctx context.Context, classID
 	return sessions, err
 }
 
+// GetSessionsByClassIDsAndDateRange: buổi học cụ thể chưa huỷ của nhiều lớp trong [startDate, endDate]
+// (YYYY-MM-DD, gồm cả hai đầu), kèm tên lớp — cho GET /me/timetable?sessions_from&sessions_to.
+func (r *ScheduleRepository) GetSessionsByClassIDsAndDateRange(ctx context.Context, classIDs []uuid.UUID, startDate, endDate string) ([]model.ClassSession, error) {
+	var sessions []model.ClassSession
+	err := r.db.WithContext(ctx).
+		Preload("Class").
+		Where("class_id IN ? AND date >= ? AND date <= ? AND status <> ?", classIDs, startDate, endDate, model.SessionCancelled).
+		Order("date ASC, start_time ASC").
+		Find(&sessions).Error
+	return sessions, err
+}
+
 func (r *ScheduleRepository) UpdateSession(ctx context.Context, session *model.ClassSession) error {
 	return r.db.WithContext(ctx).Save(session).Error
 }
@@ -179,6 +194,28 @@ func (r *ScheduleRepository) GetUpcomingSessions(ctx context.Context, classID uu
 		Limit(limit).
 		Find(&sessions).Error
 	return sessions, err
+}
+
+// HasOverlappingSession (B-10): có buổi chưa huỷ nào cùng ngày, giao khoảng [start, end) với buổi
+// mới hay không — tính buổi của chính lớp này VÀ buổi của mọi lớp khác có chung giảng viên với lớp
+// này (một giảng viên không dạy hai nơi cùng lúc). Giao khoảng nửa mở: buổi 19:00-20:00 và buổi
+// 20:00-21:00 liền nhau không bị coi là trùng.
+func (r *ScheduleRepository) HasOverlappingSession(ctx context.Context, classID uuid.UUID, date time.Time, start, end model.TimeOfDay, excludeID *uuid.UUID) (bool, error) {
+	q := r.db.WithContext(ctx).
+		Table("class_sessions AS cs").
+		Where("cs.date = ?::date AND cs.status <> ?", date.Format("2006-01-02"), model.SessionCancelled).
+		Where("cs.start_time < ?::time AND cs.end_time > ?::time", string(end), string(start)).
+		Where(`(cs.class_id = ? OR cs.class_id IN (
+			SELECT tc2.class_id FROM teacher_classes tc2
+			WHERE tc2.teacher_id IN (SELECT tc1.teacher_id FROM teacher_classes tc1 WHERE tc1.class_id = ?)))`, classID, classID)
+	if excludeID != nil {
+		q = q.Where("cs.id <> ?", *excludeID)
+	}
+	var count int64
+	if err := q.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // ============================================================================

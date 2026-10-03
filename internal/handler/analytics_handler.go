@@ -31,6 +31,11 @@ func requireAnalyticsAuthErr(c *fiber.Ctx, err error) error {
 	if errors.Is(err, service.ErrAssignmentNotFound) {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "assignment not found"})
 	}
+	// Buổi không tồn tại là 404 (trước đây rơi về 500 vì service trả errors.New thô); trang thống kê của GV
+	// nhập id tay nên đây là trường hợp thường gặp, không phải lỗi hạ tầng.
+	if errors.Is(err, service.ErrSessionNotFound) {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "session not found"})
+	}
 	if errors.Is(err, service.ErrNotAnalyticsOwner) || errors.Is(err, service.ErrNotClassTeacher) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"message": "You are not authorized to view analytics for this resource",

@@ -36,7 +36,7 @@ type viewerCapturingLeaderboardSvc struct {
 	viewer *service.LeaderboardViewer
 }
 
-func (s *viewerCapturingLeaderboardSvc) GetLeaderboard(_ context.Context, periodType string, _ int, v *service.LeaderboardViewer) (*dto.LeaderboardResponse, error) {
+func (s *viewerCapturingLeaderboardSvc) GetLeaderboard(_ context.Context, periodType string, _ int, v *service.LeaderboardViewer, _ *uuid.UUID) (*dto.LeaderboardResponse, error) {
 	s.calls++
 	s.viewer = v
 	return &dto.LeaderboardResponse{PeriodType: periodType}, nil

@@ -100,8 +100,14 @@ type LeaderboardRow struct {
 
 // GetTopUsers returns ranked users for the given period/type up to limit.
 // For all_time it uses user_points.total_points directly.
-func (r *LeaderboardRepository) GetTopUsers(ctx context.Context, periodType string, period string, limit int) ([]LeaderboardRow, error) {
+//
+// B-20: chỉ HỌC VIÊN được xếp hạng (eligibleStudentSQL: có vai STUDENT, không mang TEACHER/SYSTEM_ADMIN) —
+// trước đây giảng viên, admin, phụ huynh 0 điểm đồng hạng lẫn vào bảng. classID != nil lọc tiếp theo
+// học viên đang ghi danh (active) lớp đó; hạng tính trên tập đã lọc nên cột rank khớp bảng hiển thị.
+func (r *LeaderboardRepository) GetTopUsers(ctx context.Context, periodType string, period string, limit int, classID *uuid.UUID) ([]LeaderboardRow, error) {
 	var rows []LeaderboardRow
+
+	classFilter, classArgs := leaderboardClassFilter(classID)
 
 	if periodType == "all_time" {
 		sql := `
@@ -116,10 +122,10 @@ func (r *LeaderboardRepository) GetTopUsers(ctx context.Context, periodType stri
 			FROM users u
 			LEFT JOIN user_points up ON up.user_id = u.id
 			LEFT JOIN user_preferences upr ON upr.user_id = u.id
-			WHERE u.is_active = true
+			WHERE ` + eligibleStudentSQL + classFilter + `
 			ORDER BY points DESC
 			LIMIT ?`
-		err := r.db.WithContext(ctx).Raw(sql, limit).Scan(&rows).Error
+		err := r.db.WithContext(ctx).Raw(sql, append(classArgs, limit)...).Scan(&rows).Error
 		return rows, err
 	}
 
@@ -138,11 +144,35 @@ func (r *LeaderboardRepository) GetTopUsers(ctx context.Context, periodType stri
 		INNER JOIN leaderboard_entries le ON le.user_id = u.id
 			AND le.period_type = ?
 			AND le.period     = ?
-		WHERE u.is_active = true
+		WHERE ` + eligibleStudentSQL + classFilter + `
 		ORDER BY points DESC
 		LIMIT ?`
-	err := r.db.WithContext(ctx).Raw(sql, periodType, period, limit).Scan(&rows).Error
+	args := append([]interface{}{periodType, period}, classArgs...)
+	err := r.db.WithContext(ctx).Raw(sql, append(args, limit)...).Scan(&rows).Error
 	return rows, err
+}
+
+// leaderboardClassFilter dựng điều kiện lọc theo lớp (hằng compile-time, tham số đi riêng). nil = không lọc.
+func leaderboardClassFilter(classID *uuid.UUID) (string, []interface{}) {
+	if classID == nil {
+		return "", nil
+	}
+	return `
+			AND EXISTS (SELECT 1 FROM student_classes sc
+				WHERE sc.student_id = u.id AND sc.class_id = ? AND sc.status = 'active')`, []interface{}{*classID}
+}
+
+// CanViewClassBoard: người xem có quan hệ thật với lớp (học viên đang ghi danh hoặc giảng viên của lớp)
+// hay không. Admin do service xử lý riêng. Dùng để không cho khách/người ngoài liệt kê thành viên một
+// lớp qua tham số class_id của bảng xếp hạng công khai.
+func (r *LeaderboardRepository) CanViewClassBoard(ctx context.Context, userID, classID uuid.UUID) (bool, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT (
+			(SELECT COUNT(*) FROM student_classes WHERE class_id = ? AND student_id = ? AND status = 'active')
+			+ (SELECT COUNT(*) FROM teacher_classes WHERE class_id = ? AND teacher_id = ?)
+		)`, classID, userID, classID, userID).Scan(&n).Error
+	return n > 0, err
 }
 
 // GetUserRank returns the rank and points for a single user
@@ -164,7 +194,7 @@ func (r *LeaderboardRepository) GetUserRank(ctx context.Context, userID uuid.UUI
 				FROM users u
 				LEFT JOIN user_points up ON up.user_id = u.id
 				LEFT JOIN user_preferences upr ON upr.user_id = u.id
-				WHERE u.is_active = true
+				WHERE ` + eligibleStudentSQL + `
 			) sub
 			WHERE sub.user_id = ?`
 		err := r.db.WithContext(ctx).Raw(sql, userID).Scan(&row).Error
@@ -193,7 +223,7 @@ func (r *LeaderboardRepository) GetUserRank(ctx context.Context, userID uuid.UUI
 			INNER JOIN leaderboard_entries le ON le.user_id = u.id
 				AND le.period_type = ?
 				AND le.period     = ?
-			WHERE u.is_active = true
+			WHERE ` + eligibleStudentSQL + `
 		) sub
 		WHERE sub.user_id = ?`
 	err := r.db.WithContext(ctx).Raw(sql, periodType, period, userID).Scan(&row).Error

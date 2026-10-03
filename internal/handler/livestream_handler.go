@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -53,6 +55,15 @@ func respondForbiddenOrError(c *fiber.Ctx, err error) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"message": service.ForbiddenCode(err), "error": err.Error(),
 		})
+	}
+	// B-10/B-21: lỗi đầu vào 400, sai trạng thái 409, không tồn tại 404 — trước đây tất cả về 500.
+	switch {
+	case errors.Is(err, service.ErrLivestreamInvalidInput):
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "Validation failed", "error": err.Error()})
+	case errors.Is(err, service.ErrLivestreamStateConflict):
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"message": "LIVESTREAM_STATE_CONFLICT", "error": err.Error()})
+	case errors.Is(err, service.ErrSessionNotFound):
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 }
@@ -185,6 +196,11 @@ func (h *LivestreamHandler) Update(c *fiber.Ctx) error {
 	var req dto.UpdateLivestreamDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Validation failed", "errors": errs,
+		})
 	}
 
 	session, err := h.svc.Update(c.Context(), userID, isAdmin, id, req)

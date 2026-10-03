@@ -59,10 +59,23 @@ func (h *LeaderboardHandler) GetLeaderboard(c *fiber.Ctx) error {
 		viewer = &service.LeaderboardViewer{UserID: uid, IsAdmin: isAdminActor(c, h.permChecker, uid)}
 	}
 
-	resp, err := h.svc.GetLeaderboard(c.Context(), periodType, limit, viewer)
+	// B-20: class_id trước đây bị bỏ qua im lặng nên không có bảng xếp hạng theo lớp. Sai UUID là 400.
+	var classID *uuid.UUID
+	if raw := c.Query("class_id"); raw != "" {
+		id, perr := uuid.Parse(raw)
+		if perr != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid class_id"})
+		}
+		classID = &id
+	}
+
+	resp, err := h.svc.GetLeaderboard(c.Context(), periodType, limit, viewer, classID)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidLeaderboardPeriod) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		if errors.Is(err, service.ErrLeaderboardClassNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
 		}
 		// Lỗi khác (DB/SQL...) không được lộ ra client: log phía server, trả thông điệp chung.
 		return RespondServiceError(c, err, "Không thể tải bảng xếp hạng")

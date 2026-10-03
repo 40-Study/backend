@@ -46,6 +46,7 @@ type ScheduleServiceInterface interface {
 	// Timetable
 	GetClassTimetable(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool) (*dto.TimetableResponseDTO, error)
 	GetMyTimetable(ctx context.Context, userID uuid.UUID, role string) (*dto.TimetableResponseDTO, error)
+	GetMyTimetableWithSessions(ctx context.Context, userID uuid.UUID, role string, from, to time.Time) (*dto.TimetableResponseDTO, error)
 
 	// Reminder
 	GetReminderSettings(ctx context.Context, userID uuid.UUID) ([]dto.ReminderSettingResponseDTO, error)
@@ -94,7 +95,30 @@ var (
 	ErrSessionClosedForCheckIn = errors.New("session is cancelled or already completed")
 	// ErrGenerateRangeTooLong: khoảng ngày sinh buổi vượt maxGenerateSessionDays.
 	ErrGenerateRangeTooLong = errors.New("date range for generating sessions is too long")
+	// ErrSessionTimeOrder (B-10): giờ kết thúc không sau giờ bắt đầu. 400.
+	ErrSessionTimeOrder = errors.New("giờ kết thúc phải sau giờ bắt đầu")
+	// ErrSessionOverlap (B-10): buổi trùng giờ với buổi khác của cùng lớp hoặc của một giảng viên
+	// của lớp. 409 (đúng người, xung đột lịch).
+	ErrSessionOverlap = errors.New("buổi học trùng giờ với một buổi khác của lớp này hoặc của giảng viên lớp")
 )
+
+// ensureSessionSlotFree kiểm giờ của một buổi: kết thúc phải sau bắt đầu và không trùng buổi nào
+// khác (cùng lớp, hoặc lớp khác có chung giảng viên). Buổi đã huỷ không tính là chiếm giờ.
+// excludeID != nil khi sửa: không tự trùng với chính nó.
+func (s *ScheduleService) ensureSessionSlotFree(ctx context.Context, classID uuid.UUID, date time.Time, start, end model.TimeOfDay, excludeID *uuid.UUID) error {
+	// TimeOfDay luôn dạng "HH:MM" đủ 2 chữ số nên so chuỗi cũng là so thời gian (xem model.TimeOfDay).
+	if end <= start {
+		return ErrSessionTimeOrder
+	}
+	overlap, err := s.repo.HasOverlappingSession(ctx, classID, date, start, end, excludeID)
+	if err != nil {
+		return err
+	}
+	if overlap {
+		return ErrSessionOverlap
+	}
+	return nil
+}
 
 const (
 	// sessionDayUTCOffsetHours: múi giờ của "ngày buổi học". Cột class_sessions.date là kiểu date
@@ -372,6 +396,10 @@ func (s *ScheduleService) CreateSession(ctx context.Context, classID, actorID uu
 		return nil, err
 	}
 
+	if err := s.ensureSessionSlotFree(ctx, classID, date, startTime, endTime, nil); err != nil {
+		return nil, err
+	}
+
 	nextNum, err := s.repo.GetNextSessionNumber(ctx, classID)
 	if err != nil {
 		return nil, err
@@ -472,6 +500,13 @@ func (s *ScheduleService) UpdateSession(ctx context.Context, id, actorID uuid.UU
 	}
 	if req.Status != nil {
 		session.Status = model.ClassSessionStatus(*req.Status)
+	}
+	// B-10: chỉ kiểm giờ khi sửa ngày/giờ của buổi còn hiệu lực — đổi ghi chú hay huỷ buổi không bị
+	// chặn vì một buổi cũ đã lỡ trùng giờ từ trước.
+	if (req.Date != nil || req.StartTime != nil || req.EndTime != nil) && session.Status != model.SessionCancelled {
+		if err := s.ensureSessionSlotFree(ctx, session.ClassID, session.Date, session.StartTime, session.EndTime, &session.ID); err != nil {
+			return nil, err
+		}
 	}
 	if req.Topic != nil {
 		session.Topic = req.Topic
@@ -885,6 +920,12 @@ func (s *ScheduleService) GetClassTimetable(ctx context.Context, classID, actorI
 		if sch.Class.Name != "" {
 			entry.ClassName = sch.Class.Name
 		}
+		from := sch.EffectiveFrom.Format("2006-01-02")
+		entry.EffectiveFrom = &from
+		if sch.EffectiveUntil != nil {
+			until := sch.EffectiveUntil.Format("2006-01-02")
+			entry.EffectiveUntil = &until
+		}
 		entries = append(entries, entry)
 	}
 
@@ -939,6 +980,12 @@ func (s *ScheduleService) GetMyTimetable(ctx context.Context, userID uuid.UUID, 
 		if sch.Class.Name != "" {
 			entry.ClassName = sch.Class.Name
 		}
+		from := sch.EffectiveFrom.Format("2006-01-02")
+		entry.EffectiveFrom = &from
+		if sch.EffectiveUntil != nil {
+			until := sch.EffectiveUntil.Format("2006-01-02")
+			entry.EffectiveUntil = &until
+		}
 		entries = append(entries, entry)
 	}
 
@@ -959,6 +1006,62 @@ func (s *ScheduleService) GetMyTimetable(ctx context.Context, userID uuid.UUID, 
 	}
 
 	return result, nil
+}
+
+// maxTimetableSessionDays: trần khoảng ngày của GET /me/timetable?sessions_from&sessions_to.
+const maxTimetableSessionDays = 120
+
+// ErrTimetableRangeInvalid: khoảng ngày xin buổi học cụ thể sai thứ tự hoặc quá dài (400).
+var ErrTimetableRangeInvalid = errors.New("invalid sessions range: sessions_to must not be before sessions_from and span at most 120 days")
+
+// GetMyTimetableWithSessions (B-08): lịch lặp tuần như GetMyTimetable, cộng thêm các BUỔI HỌC CỤ THỂ chưa huỷ
+// của lớp mình dạy/học trong [from, to] (mục có session_id + date). Trước đây lịch giảng viên chỉ vẽ
+// livestream nên buổi tạo qua POST /classes/:id/sessions và lịch lặp của lớp không hiện ở đâu. Không cache
+// phần buổi cụ thể (thay đổi theo từng thao tác tạo/sửa/huỷ buổi); lịch lặp vẫn đi qua cache cũ.
+func (s *ScheduleService) GetMyTimetableWithSessions(ctx context.Context, userID uuid.UUID, role string, from, to time.Time) (*dto.TimetableResponseDTO, error) {
+	if to.Before(from) || to.Sub(from) > maxTimetableSessionDays*24*time.Hour {
+		return nil, ErrTimetableRangeInvalid
+	}
+	base, err := s.GetMyTimetable(ctx, userID, role)
+	if err != nil {
+		return nil, err
+	}
+
+	var classIDs []uuid.UUID
+	if role == "TEACHER" {
+		classIDs, err = s.repo.GetTeacherClassIDs(ctx, userID)
+	} else {
+		classIDs, err = s.repo.GetStudentClassIDs(ctx, userID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(classIDs) == 0 {
+		return base, nil
+	}
+	sessions, err := s.repo.GetSessionsByClassIDsAndDateRange(ctx, classIDs, from.Format("2006-01-02"), to.Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+
+	entries := append([]dto.TimetableEntryDTO(nil), base.Entries...)
+	for _, sess := range sessions {
+		id := sess.ID
+		date := sess.Date.Format("2006-01-02")
+		entries = append(entries, dto.TimetableEntryDTO{
+			SessionID:  &id,
+			ScheduleID: sess.ScheduleID,
+			ClassName:  sess.Class.Name,
+			ClassID:    sess.ClassID,
+			DayOfWeek:  int(sess.Date.Weekday()),
+			Date:       &date,
+			StartTime:  sess.StartTime.String(),
+			EndTime:    sess.EndTime.String(),
+			Topic:      sess.Topic,
+			Status:     string(sess.Status),
+		})
+	}
+	return &dto.TimetableResponseDTO{Entries: entries, Week: base.Week}, nil
 }
 
 // ============================================================================

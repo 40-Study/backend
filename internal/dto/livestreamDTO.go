@@ -21,12 +21,24 @@ type CreateLivestreamDTO struct {
 	// dang van nhan 200, phien duoc tao KHONG lich, KHONG enqueue reminder, ma khong he biet.
 	// Validate ngay o DTO de handler tra 400 truoc khi toi service, thay vi im lang bo qua.
 	ScheduledAt string `json:"scheduled_at" validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
+	// B-09/B-10: giờ kết thúc dự kiến (phải sau scheduled_at) và phòng học. Service kiểm thứ tự giờ
+	// và 400 khi buổi nằm ở quá khứ.
+	ScheduledEndAt string `json:"scheduled_end_at" validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
+	Location       string `json:"location" validate:"omitempty,max=255"`
 }
 
+// UpdateLivestreamDTO — B-09: trước đây thiếu hẳn lịch/giờ nên PUT với scheduled_at trả 200 mà không
+// đổi gì (Fiber bỏ qua field lạ). Nay các trường lịch là con trỏ để phân biệt "không gửi" với "xoá":
+// chuỗi rỗng ở scheduled_end_at/location = xoá giá trị đã lưu. Định dạng RFC3339 của hai trường giờ do
+// service kiểm (parseLivestreamTime, trả 400): tag `datetime` của validator từ chối cả chuỗi rỗng trên
+// con trỏ, mà chuỗi rỗng ở đây là giá trị hợp lệ (xoá).
 type UpdateLivestreamDTO struct {
-	Title       *string `json:"title" validate:"omitempty,min=3,max=255"`
-	Description *string `json:"description"`
-	MaxViewers  *int64  `json:"max_viewers"`
+	Title          *string `json:"title" validate:"omitempty,min=3,max=255"`
+	Description    *string `json:"description"`
+	MaxViewers     *int64  `json:"max_viewers"`
+	ScheduledAt    *string `json:"scheduled_at"`
+	ScheduledEndAt *string `json:"scheduled_end_at"`
+	Location       *string `json:"location" validate:"omitempty,max=255"`
 }
 
 type StartLivestreamDTO struct {
@@ -62,6 +74,8 @@ type LivestreamResponseDTO struct {
 	StartedAt       *string    `json:"started_at,omitempty"`
 	EndedAt         *string    `json:"ended_at,omitempty"`
 	ScheduledAt     *string    `json:"scheduled_at,omitempty"`
+	ScheduledEndAt  *string    `json:"scheduled_end_at,omitempty"`
+	Location        *string    `json:"location,omitempty"`
 	MaxViewers      int64      `json:"max_viewers"`
 	IsRecorded      bool       `json:"is_recorded"`
 	Settings        string     `json:"settings"`
