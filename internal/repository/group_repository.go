@@ -95,6 +95,26 @@ func (r *GroupRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).Delete(&model.Group{}, "id = ?", id).Error
 }
 
+// DeleteWithConversation xoá nhóm VÀ đóng hội thoại của nó trong MỘT giao dịch (QA hồi quy A-03). Trước đây chỉ
+// xoá nhóm nên hội thoại GROUP vẫn nằm trong danh sách của mọi thành viên và gửi tin vẫn được (hội thoại mồ côi).
+// Mọi đường đọc/gửi đã lọc `left_at IS NULL` (participant) và soft-delete (conversations), nên đặt left_at cho
+// các participant còn hiệu lực rồi xoá mềm hội thoại là đủ để nó biến mất và từ chối tin mới. Lịch sử tin nhắn
+// giữ nguyên trong DB (xoá mềm, không xoá vật lý).
+func (r *GroupRepository) DeleteWithConversation(ctx context.Context, groupID uuid.UUID) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.ConversationParticipant{}).
+			Where("left_at IS NULL AND conversation_id IN (?)",
+				tx.Model(&model.Conversation{}).Select("id").Where("group_id = ?", groupID)).
+			Updates(map[string]interface{}{"left_at": gorm.Expr("NOW()"), "unread_count": 0}).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&model.Conversation{}, "group_id = ?", groupID).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.Group{}, "id = ?", groupID).Error
+	})
+}
+
 func (r *GroupRepository) List(ctx context.Context, keyword string, privacy string, page, pageSize int) ([]model.Group, int64, error) {
 	var groups []model.Group
 	var total int64
@@ -330,6 +350,25 @@ func (r *GroupJoinRequestRepository) GetPendingByGroupAndUser(ctx context.Contex
 		return nil, err
 	}
 	return &req, nil
+}
+
+// ListPendingByUserAndGroups trả yêu cầu xin vào ĐANG CHỜ của user trong số các nhóm cho trước, theo group_id ->
+// id yêu cầu. Một câu truy vấn cho cả trang danh sách nhóm (QA hồi quy A-24), thay vì hỏi từng nhóm.
+func (r *GroupJoinRequestRepository) ListPendingByUserAndGroups(ctx context.Context, userID uuid.UUID, groupIDs []uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
+	out := make(map[uuid.UUID]uuid.UUID, len(groupIDs))
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+	var reqs []model.GroupJoinRequest
+	if err := r.db.WithContext(ctx).
+		Where("user_id = ? AND status = ? AND group_id IN ?", userID, model.JoinRequestPending, groupIDs).
+		Find(&reqs).Error; err != nil {
+		return nil, err
+	}
+	for _, q := range reqs {
+		out[q.GroupID] = q.ID
+	}
+	return out, nil
 }
 
 // GetByGroupAndUser trả yêu cầu của user với nhóm ở MỌI trạng thái (unique theo cặp group_id+user_id nên tối

@@ -19,7 +19,7 @@ type GroupServiceInterface interface {
 	UpdateGroup(ctx context.Context, userID, groupID uuid.UUID, req dto.UpdateGroupRequest) (*dto.GroupResponse, error)
 	DeleteGroup(ctx context.Context, userID, groupID uuid.UUID) error
 	GetGroupBySlug(ctx context.Context, slug string, userID *uuid.UUID) (*dto.GroupResponse, error)
-	ListGroups(ctx context.Context, keyword, privacy string, page, pageSize int) (*dto.GroupListResponse, error)
+	ListGroups(ctx context.Context, userID *uuid.UUID, keyword, privacy string, page, pageSize int) (*dto.GroupListResponse, error)
 	GetMyGroups(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.GroupListResponse, error)
 	GetMyOwnedGroups(ctx context.Context, userID uuid.UUID, page, pageSize int) (*dto.GroupListResponse, error)
 
@@ -263,7 +263,30 @@ func (s *GroupService) DeleteGroup(ctx context.Context, userID, groupID uuid.UUI
 		return err
 	}
 
-	return s.groupRepo.Delete(ctx, groupID)
+	// Lấy participant TRƯỚC khi đóng hội thoại (sau đó left_at đã được đặt nên danh sách rỗng) để ngắt kênh
+	// WebSocket của họ sau khi xoá xong (QA hồi quy A-03).
+	var participants []model.ConversationParticipant
+	var convID *uuid.UUID
+	if conv, err := s.convRepo.GetByGroupID(ctx, groupID); err != nil {
+		return err
+	} else if conv != nil {
+		convID = &conv.ID
+		if participants, err = s.participantRepo.ListByConversationID(ctx, conv.ID); err != nil {
+			return err
+		}
+	}
+
+	if err := s.groupRepo.DeleteWithConversation(ctx, groupID); err != nil {
+		return err
+	}
+
+	if s.evictor != nil && convID != nil {
+		for _, p := range participants {
+			s.evictor.EvictUserFromChannel(p.UserID, "conversation:"+convID.String())
+			s.evictor.EvictUserFromChannel(p.UserID, "group:"+groupID.String())
+		}
+	}
+	return nil
 }
 
 func (s *GroupService) GetGroupBySlug(ctx context.Context, slug string, userID *uuid.UUID) (*dto.GroupResponse, error) {
@@ -307,15 +330,33 @@ func (s *GroupService) GetGroupBySlug(ctx context.Context, slug string, userID *
 	return resp, nil
 }
 
-func (s *GroupService) ListGroups(ctx context.Context, keyword, privacy string, page, pageSize int) (*dto.GroupListResponse, error) {
+// ListGroups: userID != nil (người xem đã đăng nhập, route dùng OptionalAuth) thì mỗi nhóm kèm vai của người xem và,
+// nếu chưa là thành viên, yêu cầu xin vào đang chờ — để tab Khám phá hiện đúng "Đã gửi yêu cầu"/huy hiệu vai thay vì
+// luôn "Xin tham gia" (QA hồi quy A-24). Danh sách không bao giờ chứa nhóm SECRET nên không lộ gì thêm.
+func (s *GroupService) ListGroups(ctx context.Context, userID *uuid.UUID, keyword, privacy string, page, pageSize int) (*dto.GroupListResponse, error) {
 	groups, total, err := s.groupRepo.List(ctx, keyword, privacy, page, pageSize)
 	if err != nil {
 		return nil, err
 	}
 
+	var pending map[uuid.UUID]uuid.UUID
+	if userID != nil {
+		ids := make([]uuid.UUID, len(groups))
+		for i, g := range groups {
+			ids[i] = g.ID
+		}
+		if pending, err = s.joinRequestRepo.ListPendingByUserAndGroups(ctx, *userID, ids); err != nil {
+			return nil, err
+		}
+	}
+
 	responses := make([]dto.GroupResponse, len(groups))
 	for i, g := range groups {
-		responses[i] = *s.toGroupResponse(&g, nil)
+		resp := s.toGroupResponse(&g, userID)
+		if reqID, ok := pending[g.ID]; ok && resp.MyRole == nil {
+			resp.MyJoinRequest = &dto.MyJoinRequestBrief{ID: reqID, Status: string(model.JoinRequestPending)}
+		}
+		responses[i] = *resp
 	}
 
 	return &dto.GroupListResponse{

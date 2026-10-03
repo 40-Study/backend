@@ -16,7 +16,7 @@ func SetupGroupRoutes(api fiber.Router, cfg *config.Config, h *handler.GroupHand
 	// Public. S6: OptionalAuth để GET /:slug biết người xem (khách hay thành viên): nhóm SECRET chỉ thành
 	// viên thấy, id hội thoại chỉ trả cho thành viên. Không token thì đi tiếp như khách; token sai vẫn 401.
 	optional := middleware.OptionalAuth(cfg, redis)
-	groups.Get("/", h.ListGroups)
+	groups.Get("/", optional, h.ListGroups)
 	groups.Get("/:slug", optional, h.GetGroupBySlug)
 
 	// Auth required

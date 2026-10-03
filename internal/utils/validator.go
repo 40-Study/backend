@@ -15,6 +15,10 @@ func init() {
 
 	// Register custom URL validation
 	validate.RegisterValidation("safe_url", validateSafeURL)
+	// user_name: luật SSOT cho đăng ký và sửa hồ sơ (utils.UserNamePattern), không cho '@'.
+	validate.RegisterValidation("user_name", func(fl validator.FieldLevel) bool {
+		return IsValidUserName(fl.Field().String())
+	})
 }
 
 // validateSafeURL validates that a URL is safe (http/https only, no javascript/data URIs)
@@ -93,6 +97,9 @@ func getErrorMessage(err validator.FieldError) string {
 		return field + " must be a valid phone number in E.164 format"
 	case "alphanum":
 		return field + " must contain only alphanumeric characters"
+	case "user_name":
+		// Hiện thẳng cho người dùng ở web (thay cho thông báo chung "Cập nhật thất bại"), nên viết tiếng Việt.
+		return "Tên đăng nhập gồm 3-30 ký tự: chữ không dấu, số hoặc dấu gạch dưới (_). Không dùng @ hay email"
 	case "numeric":
 		return field + " must contain only numeric characters"
 	case "oneof":

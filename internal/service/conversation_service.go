@@ -69,6 +69,20 @@ type ConversationService struct {
 	// friendChecker (nhánh bạn bè + chặn của canCreateDirectConversation) nối bằng SetFriendshipChecker để
 	// không đổi chữ ký NewConversationService. nil = chưa nối: nhánh bạn bè trả false.
 	friendChecker FriendshipChecker
+	// parentTeacherChecker (nhánh phụ huynh -> giảng viên của con) nối bằng SetParentTeacherChecker, cùng lý do như
+	// friendChecker. nil = chưa nối: nhánh này trả false (đóng, không mở cửa).
+	parentTeacherChecker ParentTeacherChecker
+}
+
+// ParentTeacherChecker: phụ huynh có con (liên kết đã xác nhận) đang được giảng viên này dạy không. Cài đặt:
+// repository.ParentStudentRepository.ParentHasChildTaughtBy.
+type ParentTeacherChecker interface {
+	ParentHasChildTaughtBy(ctx context.Context, parentID, teacherID uuid.UUID) (bool, error)
+}
+
+// SetParentTeacherChecker nối nhánh phụ huynh -> giảng viên của con cho guard tạo cuộc trò chuyện trực tiếp.
+func (s *ConversationService) SetParentTeacherChecker(c ParentTeacherChecker) {
+	s.parentTeacherChecker = c
 }
 
 // SetFriendshipChecker nối kiểm tra bạn bè/chặn cho guard tạo cuộc trò chuyện trực tiếp (và, qua
@@ -550,6 +564,8 @@ func (s *ConversationService) GetUnreadCount(ctx context.Context, userID uuid.UU
 //     giảng viên phụ trách — thử cả 2 chiều, vì API không biết trước ai là học viên/giảng viên.
 //   - (b) phụ huynh<->con: parent_student_relations.status = active (đã xác nhận — pending/revoked
 //     không tính).
+//   - (b2) phụ huynh<->giảng viên: phụ huynh có liên kết con active mà con đang ghi danh khoá của giảng viên
+//     đó hoặc đang học lớp giảng viên đó được gán dạy (ParentTeacherChecker). Không đủ điều kiện vẫn từ chối.
 //   - (c) bạn bè: friendships.status = ACCEPTED giữa hai người (FriendshipChecker; PENDING, DECLINED
 //     và CANCELLED không tính). Chưa nối checker (nil) thì nhánh này trả false — đóng chứ không mở cửa.
 //   - (d) một trong hai là SYSTEM_ADMIN.
@@ -605,6 +621,20 @@ func (s *ConversationService) canCreateDirectConversation(ctx context.Context, u
 	}
 	if hasParentChild {
 		return true, nil
+	}
+
+	// (b2) phụ huynh <-> giảng viên của con (QA hồi quy A-06, quyết định chủ dự án 03/10): thử cả 2 chiều vì API
+	// không biết trước ai là phụ huynh. Chỉ khi liên kết con đã xác nhận và giảng viên đang dạy lớp/khoá con ghi danh.
+	if s.parentTeacherChecker != nil {
+		for _, pair := range [][2]uuid.UUID{{userA, userB}, {userB, userA}} {
+			ok, err := s.parentTeacherChecker.ParentHasChildTaughtBy(ctx, pair[0], pair[1])
+			if err != nil {
+				return false, err
+			}
+			if ok {
+				return true, nil
+			}
+		}
 	}
 
 	// (c) bạn bè: CHỈ dòng ACCEPTED (xem FriendshipChecker.AreFriends).
@@ -779,7 +809,7 @@ func (s *ConversationService) toConversationResponse(conv *model.Conversation, u
 		}
 		if p.User.ID != uuid.Nil {
 			pr.UserName = p.User.UserName
-
+			pr.FullName = senderFullName(&p.User)
 			pr.AvatarURL = p.User.AvatarURL
 			pr.IsOnline = s.notifier.IsUserOnline(p.UserID)
 		}

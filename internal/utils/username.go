@@ -6,6 +6,7 @@ package utils
 // (database), nên đặt ở utils để hai nơi không lệch nhau.
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -21,6 +22,17 @@ const (
 	safeUserNameDefault   = "hocvien"
 	safeUserNameAlphabet  = "abcdefghijklmnopqrstuvwxyz0123456789"
 )
+
+// UserNamePattern là luật user_name DUY NHẤT (SSOT) cho cả đăng ký lẫn sửa hồ sơ: chữ không dấu, số và dấu gạch
+// dưới, 3-30 ký tự. Cố ý KHÔNG cho '@' và '.', nên một địa chỉ email không bao giờ là user_name hợp lệ (user_name
+// hiện công khai ở bảng xếp hạng và hồ sơ công khai, QA hồi quy 03/10 B-03). Web phản chiếu đúng luật này ở
+// web/src/lib/validations/auth.ts; đổi một bên phải đổi bên kia.
+const UserNamePattern = `^[A-Za-z0-9_]{3,30}$`
+
+var userNameRegexp = regexp.MustCompile(UserNamePattern)
+
+// IsValidUserName kiểm một user_name nhập tay theo UserNamePattern.
+func IsValidUserName(s string) bool { return userNameRegexp.MatchString(s) }
 
 // SafeUserNameBase đổi họ tên thành chuỗi ASCII an toàn (chữ thường, số, không dấu, không khoảng trắng,
 // tối đa 20 ký tự): "Nguyễn Văn Đạt" -> "nguyenvandat". Tên rỗng/không còn ký tự hợp lệ -> "hocvien".
@@ -50,7 +62,7 @@ func SafeUserNameBase(fullName *string) string {
 }
 
 // NewSafeUserName ghép <tên không dấu><hậu tố ngẫu nhiên 6 ký tự a-z0-9>, KHÔNG có dấu gạch dưới: user_name
-// phải qua được validator `alphanum,min=3,max=30` của UpdateMeRequestDto (PUT /users/me), nếu không tài khoản
+// phải qua được validator `user_name` (UserNamePattern) của UpdateMeRequestDto (PUT /users/me), nếu không tài khoản
 // Google không lưu được hồ sơ vì web luôn gửi lại username cũ. Dài tối đa 20+6=26 ký tự. Hậu tố là phần lấy ngẫu nhiên,
 // KHÔNG suy ra từ email. Không đảm bảo duy nhất: người gọi phải kiểm tra tồn tại (user_name không có
 // unique index vì dữ liệu cũ đã trùng tên).

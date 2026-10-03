@@ -239,7 +239,7 @@ func TestS6_Group_SecretVaPrivateTheoTungVai(t *testing.T) {
 
 	// Không liệt kê nhóm SECRET, kể cả khi xin đích danh ?privacy=SECRET.
 	for _, privacy := range []string{"", "SECRET"} {
-		list, err := e.groups.ListGroups(ctx, "", privacy, 1, 50)
+		list, err := e.groups.ListGroups(ctx, nil, "", privacy, 1, 50)
 		if err != nil {
 			t.Fatal(err)
 		}

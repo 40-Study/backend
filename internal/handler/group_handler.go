@@ -28,7 +28,13 @@ func (h *GroupHandler) ListGroups(c *fiber.Ctx) error {
 	keyword := c.Query("keyword")
 	privacy := c.Query("privacy")
 
-	result, err := h.groupService.ListGroups(c.Context(), keyword, privacy, page, limit)
+	// OptionalAuth: khách vẫn xem được; người đã đăng nhập thấy thêm vai/yêu cầu đang chờ của mình (QA hồi quy A-24).
+	var userID *uuid.UUID
+	if uid, ok := c.Locals("user_id").(uuid.UUID); ok {
+		userID = &uid
+	}
+
+	result, err := h.groupService.ListGroups(c.Context(), userID, keyword, privacy, page, limit)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": err.Error(),

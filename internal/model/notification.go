@@ -16,6 +16,14 @@ const (
 	NotificationTypeGroupAdded     = "group_added"
 )
 
+// ResolvedFriendRequestNoticeSQL (QA hồi quy A-14): điều kiện WHERE (trên bảng notifications, không alias) chọn thông
+// báo "lời mời kết bạn" ĐÃ HẾT HIỆU LỰC: lời mời đã bị huỷ/từ chối/chấp nhận/chặn nên không còn dòng PENDING nào
+// gửi tới đúng người nhận thông báo. Bấm vào thông báo như vậy dẫn tới tab Lời mời trống. SSOT cho cả đường xoá
+// ngay khi lời mời đổi trạng thái (NotificationRepository) và bước sửa một lần dữ liệu cũ (database).
+const ResolvedFriendRequestNoticeSQL = `notification_type = 'friend_request' AND reference_type = 'friendship'
+	AND NOT EXISTS (SELECT 1 FROM friendships f WHERE f.id = notifications.reference_id
+		AND f.status = 'PENDING' AND f.addressee_id = notifications.user_id)`
+
 var NotificationTypes = []string{
 	"course_update", "new_lesson", "quiz_reminder", "certificate_earned", "payment_success",
 	"payment_failed", "promotion", "system", "achievement", "streak", "point_earned",

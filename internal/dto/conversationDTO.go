@@ -46,8 +46,11 @@ type ConversationListResponse struct {
 }
 
 type ParticipantResponse struct {
-	UserID     uuid.UUID  `json:"user_id"`
-	UserName   string     `json:"user_name"`
+	UserID   uuid.UUID `json:"user_id"`
+	UserName string    `json:"user_name"`
+	// FullName là họ tên hiển thị (QA hồi quy A-12): web ưu tiên hơn user_name như bong bóng tin nhắn; vắng mặt khi
+	// chưa có họ tên để web rơi về user_name.
+	FullName   *string    `json:"full_name,omitempty"`
 	AvatarURL  *string    `json:"avatar_url,omitempty"`
 	IsOnline   bool       `json:"is_online"`
 	JoinedAt   time.Time  `json:"joined_at"`
