@@ -29,6 +29,9 @@ var ErrNotRoleOrgMember = errors.New("forbidden: role does not belong to your or
 // SYSTEM_SETTINGS_MANAGE/PAYMENTS_MANAGE... cho role của mình rồi tự nhận role đó và thành admin nền tảng.
 var ErrPermissionNotOrgScope = errors.New("forbidden: permission is outside organization scope")
 
+// ErrRoleInUse (B-16): role tổ chức còn thành viên đang được gán nên không xoá được. Handler trả 409.
+var ErrRoleInUse = errors.New("role is still assigned to members; revoke it from them first")
+
 type RoleServiceInterface interface {
 	// Mọi hàm nhận (activeOrgID, isAdmin) của người gọi: admin (SYSTEM_SETTINGS_MANAGE) làm việc trên
 	// mọi tổ chức, người khác chỉ trong tổ chức đang active của mình (S6).
@@ -184,6 +187,16 @@ func (s *RoleService) UpdateRole(ctx context.Context, id uuid.UUID, activeOrgID 
 func (s *RoleService) DeleteRole(ctx context.Context, id uuid.UUID, activeOrgID *uuid.UUID, isAdmin, hardDelete bool) error {
 	if _, err := s.loadRoleForActor(ctx, id, activeOrgID, isAdmin); err != nil {
 		return err
+	}
+
+	// B-16: xoá role còn người đang giữ trước đây trả 200 và để lại bản ghi gán "active" trỏ vào role đã mất
+	// (treo, người đó vẫn đăng nhập chọn được vai trò rỗng). Phải gỡ vai trò khỏi các thành viên trước.
+	assigned, err := s.repo.CountActiveAssignments(ctx, id)
+	if err != nil {
+		return err
+	}
+	if assigned > 0 {
+		return fmt.Errorf("%w: %d", ErrRoleInUse, assigned)
 	}
 
 	return s.repo.DeleteRole(ctx, id, hardDelete)

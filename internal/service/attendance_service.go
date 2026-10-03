@@ -35,10 +35,34 @@ type AttendanceService struct {
 	repo       repository.AttendanceRepositoryInterface
 	classRepo  repository.ClassRepositoryInterface
 	courseRepo repository.CourseRepositoryInterface
+	authz      ClassAuthorizer
 }
 
 func NewAttendanceService(repo repository.AttendanceRepositoryInterface, classRepo repository.ClassRepositoryInterface, courseRepo repository.CourseRepositoryInterface) *AttendanceService {
 	return &AttendanceService{repo: repo, classRepo: classRepo, courseRepo: courseRepo}
+}
+
+// WithAuthorizer gắn PermissionChecker để chủ/quản trị tổ chức điểm danh được lớp của tổ chức mình (B-05).
+func (s *AttendanceService) WithAuthorizer(authz ClassAuthorizer) *AttendanceService {
+	s.authz = authz
+	return s
+}
+
+// manage / manageOrNotFound: ensureClassManage* với quyền đã nâng cho chủ tổ chức của lớp (classAccessAsAdmin).
+func (s *AttendanceService) manage(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool) error {
+	elevated, err := classAccessAsAdmin(ctx, s.classRepo, s.authz, actorUserID, classID, isAdmin)
+	if err != nil {
+		return err
+	}
+	return ensureClassManage(ctx, s.classRepo, s.courseRepo, actorUserID, classID, elevated)
+}
+
+func (s *AttendanceService) manageOrNotFound(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool) error {
+	elevated, err := classAccessAsAdmin(ctx, s.classRepo, s.authz, actorUserID, classID, isAdmin)
+	if err != nil {
+		return err
+	}
+	return ensureClassManageOrNotFound(ctx, s.classRepo, s.courseRepo, actorUserID, classID, elevated)
 }
 
 // attendanceOfClass tải bản ghi điểm danh và bắt buộc nó thuộc lớp trong URL (nếu không, quyền quản lý lớp A
@@ -57,7 +81,7 @@ func (s *AttendanceService) attendanceOfClass(ctx context.Context, classID, id u
 // MarkAttendance records attendance for multiple students in a class for a specific date.
 // This is used by teachers to mark student presence/absence.
 func (s *AttendanceService) MarkAttendance(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, req dto.BulkCreateAttendanceDTO) ([]dto.AttendanceResponseDTO, error) {
-	if err := ensureClassManage(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin); err != nil {
+	if err := s.manage(ctx, classID, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 	date, err := time.Parse("2006-01-02", req.Date)
@@ -98,7 +122,7 @@ func (s *AttendanceService) MarkAttendance(ctx context.Context, classID, actorUs
 }
 
 func (s *AttendanceService) GetAllAttendances(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, dateStr string, page, pageSize int) (*dto.AttendanceListResponseDTO, error) {
-	if err := ensureClassManageOrNotFound(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin); err != nil {
+	if err := s.manageOrNotFound(ctx, classID, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 	if page < 1 {
@@ -136,7 +160,7 @@ func (s *AttendanceService) GetAllAttendances(ctx context.Context, classID, acto
 }
 
 func (s *AttendanceService) GetAttendanceByID(ctx context.Context, classID, id, actorUserID uuid.UUID, isAdmin bool) (*dto.AttendanceResponseDTO, error) {
-	if err := ensureClassManageOrNotFound(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin); err != nil {
+	if err := s.manageOrNotFound(ctx, classID, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 	attendance, err := s.attendanceOfClass(ctx, classID, id)
@@ -147,7 +171,7 @@ func (s *AttendanceService) GetAttendanceByID(ctx context.Context, classID, id, 
 }
 
 func (s *AttendanceService) UpdateAttendance(ctx context.Context, classID, id, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateAttendanceDTO) (*dto.AttendanceResponseDTO, error) {
-	if err := ensureClassManage(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin); err != nil {
+	if err := s.manage(ctx, classID, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 	attendance, err := s.attendanceOfClass(ctx, classID, id)
@@ -170,7 +194,7 @@ func (s *AttendanceService) UpdateAttendance(ctx context.Context, classID, id, a
 }
 
 func (s *AttendanceService) DeleteAttendance(ctx context.Context, classID, id, actorUserID uuid.UUID, isAdmin bool) error {
-	if err := ensureClassManage(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin); err != nil {
+	if err := s.manage(ctx, classID, actorUserID, isAdmin); err != nil {
 		return err
 	}
 	if _, err := s.attendanceOfClass(ctx, classID, id); err != nil {

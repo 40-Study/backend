@@ -169,6 +169,23 @@ func orgManagesClass(ctx context.Context, classRepo repository.ClassRepositoryIn
 	return ok, nil
 }
 
+// classAccessAsAdmin (B-05/B-12): chủ/quản trị tổ chức của lớp được đối xử như admin TRÊN LỚP ĐÓ cho các hàm
+// ensureClass* (xem, điểm danh, buổi học, kích hoạt lớp, gán/gỡ giảng viên, ghi danh học viên). Trả
+// `isAdmin || orgManagesClass`, tức dùng lại đúng orgManagesClass (một luật duy nhất như chấm điểm), không
+// viết luật song song. Chỉ dùng kết quả này cho kiểm QUYỀN TRUY CẬP lớp; những chỗ "isAdmin" mang nghĩa admin hệ
+// thống thật sự (đổi khoá của lớp, tạo lớp vào khoá người khác) phải giữ nguyên cờ gốc, nếu không chủ tổ chức
+// sẽ kéo được lớp sang khoá bất kỳ. authz nil (test, môi trường không có PermissionChecker) = không nâng quyền.
+func classAccessAsAdmin(ctx context.Context, classRepo repository.ClassRepositoryInterface, authz ClassAuthorizer, userID, classID uuid.UUID, isAdmin bool) (bool, error) {
+	if isAdmin || authz == nil {
+		return isAdmin, nil
+	}
+	class, err := classRepo.GetByID(ctx, classID)
+	if err != nil {
+		return false, fmt.Errorf("failed to load class: %w", err)
+	}
+	return orgManagesClass(ctx, classRepo, authz, userID, class)
+}
+
 // ensureClassGrade: quyền CHẤM ĐIỂM / quản bảng điểm của lớp = ensureClassManage (giảng viên lớp, người
 // tạo lớp, instructor khoá, admin hệ thống) HOẶC chủ/quản trị của tổ chức mà lớp thuộc về. Lỗi theo
 // "xem được hay không": người không xem được lớp -> ErrClassNotFound (404, không dò được id lớp); người

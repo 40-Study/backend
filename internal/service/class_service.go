@@ -21,6 +21,8 @@ type ClassServiceInterface interface {
 	UpdateClass(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateClassDTO) (*dto.ClassResponseDTO, error)
 	DeleteClass(ctx context.Context, id, actorUserID uuid.UUID, isAdmin, hardDelete bool) error
 	GetClassesByCourseID(ctx context.Context, courseID uuid.UUID) ([]dto.ClassResponseDTO, error)
+	// GetOrganizationClasses (B-02): lớp của một tổ chức. Quyền theo tổ chức kiểm ở router (RequireOrgPermission), không kiểm ở đây.
+	GetOrganizationClasses(ctx context.Context, orgID uuid.UUID, page, pageSize int, keyword, classStatus string) (*dto.ClassListResponseDTO, error)
 
 	// Gán/gỡ giảng viên (S4): chỉ chủ lớp (người tạo hoặc chủ khoá) và admin. Người không xem được lớp: ErrClassNotFound; xem được nhưng không phải chủ: ErrNotClassOwner.
 	AssignTeacherToClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, req dto.AssignTeacherDTO) (*dto.TeacherClassResponseDTO, error)
@@ -47,7 +49,41 @@ type ClassServiceInterface interface {
 func (s *ClassService) requireClassTeacherOrAdmin(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool) error {
 	// S4: một định nghĩa "quản lý lớp" duy nhất (class_access.go): giảng viên lớp, chủ khoá, người
 	// tạo lớp, admin. Trước đây chỉ tra teacher_classes nên chủ khoá không sửa được lớp của khoá mình.
-	return ensureClassManage(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin)
+	// B-12: cộng chủ/quản trị tổ chức của lớp (classAccessAsAdmin).
+	elevated, err := s.accessAsAdmin(ctx, classID, actorUserID, isAdmin)
+	if err != nil {
+		return err
+	}
+	return ensureClassManage(ctx, s.classRepo, s.courseRepo, actorUserID, classID, elevated)
+}
+
+// accessAsAdmin: isAdmin nâng lên cho chủ/quản trị tổ chức của lớp, chỉ để kiểm quyền truy cập lớp.
+func (s *ClassService) accessAsAdmin(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool) (bool, error) {
+	return classAccessAsAdmin(ctx, s.classRepo, s.authz, actorUserID, classID, isAdmin)
+}
+
+// ensureVisible / ensureOwner: ensureClassVisible / ensureClassOwner với quyền đã nâng cho chủ tổ chức của lớp.
+func (s *ClassService) ensureVisible(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool) error {
+	elevated, err := s.accessAsAdmin(ctx, classID, actorUserID, isAdmin)
+	if err != nil {
+		return err
+	}
+	return ensureClassVisible(ctx, s.classRepo, s.courseRepo, actorUserID, classID, elevated)
+}
+
+func (s *ClassService) ensureOwner(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool) error {
+	elevated, err := s.accessAsAdmin(ctx, classID, actorUserID, isAdmin)
+	if err != nil {
+		return err
+	}
+	return ensureClassOwner(ctx, s.classRepo, s.courseRepo, actorUserID, classID, elevated)
+}
+
+// WithAuthorizer gắn PermissionChecker để chủ/quản trị tổ chức quản lý được lớp của tổ chức mình (B-05/B-12).
+// Không gắn thì không ai được nâng quyền (fail-closed).
+func (s *ClassService) WithAuthorizer(authz ClassAuthorizer) *ClassService {
+	s.authz = authz
+	return s
 }
 
 // ErrNotOrgMember: tạo lớp trong một tổ chức mà người gọi không phải thành viên active (và không phải admin). Handler tra 403.
@@ -62,6 +98,7 @@ type ClassService struct {
 	teacherRepo       repository.TeacherRepositoryInterface
 	studentRepo       repository.StudentRepositoryInterface
 	parentStudentRepo repository.ParentStudentRepositoryInterface
+	authz             ClassAuthorizer
 }
 
 func NewClassService(
@@ -198,8 +235,26 @@ func (s *ClassService) GetAllClasses(ctx context.Context, page, pageSize int, ke
 	}, nil
 }
 
+func (s *ClassService) GetOrganizationClasses(ctx context.Context, orgID uuid.UUID, page, pageSize int, keyword, classStatus string) (*dto.ClassListResponseDTO, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+	classes, total, err := s.classRepo.GetByOrganization(ctx, orgID, page, pageSize, keyword, classStatus)
+	if err != nil {
+		return nil, err
+	}
+	classDTOs := make([]dto.ClassResponseDTO, len(classes))
+	for i, c := range classes {
+		classDTOs[i] = *s.toClassResponseDTO(ctx, &c)
+	}
+	return &dto.ClassListResponseDTO{Classes: classDTOs, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
 func (s *ClassService) GetClassByID(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool) (*dto.ClassResponseDTO, error) {
-	if err := ensureClassVisible(ctx, s.classRepo, s.courseRepo, actorUserID, id, isAdmin); err != nil {
+	if err := s.ensureVisible(ctx, id, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 	class, err := s.classRepo.GetByID(ctx, id)
@@ -310,7 +365,7 @@ func (s *ClassService) DeleteClass(ctx context.Context, id, actorUserID uuid.UUI
 // - "assistant": Trợ giảng, hỗ trợ giáo viên chính
 func (s *ClassService) AssignTeacherToClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, req dto.AssignTeacherDTO) (*dto.TeacherClassResponseDTO, error) {
 	// S4: chỉ chủ lớp/admin. Đây là cửa duy nhất để thành CanManage trên assignment của lớp.
-	if err := ensureClassOwner(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin); err != nil {
+	if err := s.ensureOwner(ctx, classID, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 
@@ -359,7 +414,7 @@ func (s *ClassService) AssignTeacherToClass(ctx context.Context, classID, actorU
 
 // AssignTeachers assigns multiple teachers to a class at once
 func (s *ClassService) AssignTeachersToClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, req dto.AssignTeachersDTO) ([]dto.TeacherClassResponseDTO, error) {
-	if err := ensureClassOwner(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin); err != nil {
+	if err := s.ensureOwner(ctx, classID, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 
@@ -416,7 +471,7 @@ func (s *ClassService) AssignTeachersToClass(ctx context.Context, classID, actor
 }
 
 func (s *ClassService) RemoveTeacherFromClass(ctx context.Context, classID, teacherID, actorUserID uuid.UUID, isAdmin bool) error {
-	if err := ensureClassOwner(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin); err != nil {
+	if err := s.ensureOwner(ctx, classID, actorUserID, isAdmin); err != nil {
 		return err
 	}
 
@@ -434,7 +489,7 @@ func (s *ClassService) RemoveTeacherFromClass(ctx context.Context, classID, teac
 
 func (s *ClassService) GetTeachersByClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.TeacherClassListResponseDTO, error) {
 	// S5 (review S4, M-7): danh sách giảng viên của lớp chỉ thành viên lớp, người quản lý lớp và admin; người khác 404.
-	if err := ensureClassVisible(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin); err != nil {
+	if err := s.ensureVisible(ctx, classID, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 	// Check class exists
@@ -566,7 +621,7 @@ func (s *ClassService) RemoveStudentFromClass(ctx context.Context, classID, stud
 func (s *ClassService) GetStudentsByClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.StudentClassListResponseDTO, error) {
 	// H-11 + S4: danh sách học sinh chỉ cho thành viên lớp (học viên, giảng viên), người quản lý lớp và admin;
 	// người khác nhận 404 (không dò được lớp nào tồn tại, không lấy được tên học sinh lớp khác).
-	if err := ensureClassVisible(ctx, s.classRepo, s.courseRepo, actorUserID, classID, isAdmin); err != nil {
+	if err := s.ensureVisible(ctx, classID, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 

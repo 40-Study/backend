@@ -42,6 +42,8 @@ func roleErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, service.ErrNotRoleOrgMember), errors.Is(err, service.ErrPermissionNotOrgScope):
 		return fiber.StatusForbidden
+	case errors.Is(err, service.ErrRoleInUse):
+		return fiber.StatusConflict
 	case err != nil && err.Error() == "role not found":
 		return fiber.StatusNotFound
 	default:

@@ -20,6 +20,8 @@ type RoleRepositoryInterface interface {
 	GetAllRoles(ctx context.Context, page, pageSize int, keyword string, status string, organizationID *uuid.UUID) ([]model.Role, int64, error)
 	UpdateRole(ctx context.Context, role *model.Role) error
 	DeleteRole(ctx context.Context, id uuid.UUID, hardDelete bool) error
+	// CountActiveAssignments (B-16): số người đang được gán role này (user_organization_roles.status = active).
+	CountActiveAssignments(ctx context.Context, roleID uuid.UUID) (int64, error)
 	RestoreRole(ctx context.Context, id uuid.UUID) error
 
 	// Role-Permission management
@@ -141,6 +143,14 @@ func (r *RoleRepository) DeleteRole(ctx context.Context, id uuid.UUID, hardDelet
 		})
 	}
 	return r.db.WithContext(ctx).Delete(&model.Role{}, "id = ?", id).Error
+}
+
+func (r *RoleRepository) CountActiveAssignments(ctx context.Context, roleID uuid.UUID) (int64, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Model(&model.UserOrganizationRole{}).
+		Where("role_id = ? AND status = ?", roleID, model.UserOrgRoleStatusActive).
+		Count(&n).Error
+	return n, err
 }
 
 func (r *RoleRepository) RestoreRole(ctx context.Context, id uuid.UUID) error {

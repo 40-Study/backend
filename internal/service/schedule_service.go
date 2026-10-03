@@ -58,6 +58,7 @@ type ScheduleService struct {
 	courseRepo repository.CourseRepositoryInterface
 	redis      *redis.Client
 	queue      *asynq_queue.Queue
+	authz      ClassAuthorizer
 }
 
 func NewScheduleService(
@@ -68,6 +69,12 @@ func NewScheduleService(
 	queue *asynq_queue.Queue,
 ) *ScheduleService {
 	return &ScheduleService{repo: repo, classRepo: classRepo, courseRepo: courseRepo, redis: redis, queue: queue}
+}
+
+// WithAuthorizer gắn PermissionChecker để chủ/quản trị tổ chức quản lý lịch, buổi học của lớp tổ chức mình (B-05).
+func (s *ScheduleService) WithAuthorizer(authz ClassAuthorizer) *ScheduleService {
+	s.authz = authz
+	return s
 }
 
 // ============================================================================
@@ -125,11 +132,15 @@ func requireCheckInOpen(session *model.ClassSession, now time.Time) error {
 // requireClassWrite: người quản lý lớp và admin qua; người xem được lớp mà không quản lý nhận
 // ErrNotClassTeacher (403); người không xem được nhận ErrClassNotFound (404).
 func (s *ScheduleService) requireClassWrite(ctx context.Context, actorID uuid.UUID, isAdmin bool, classID uuid.UUID) error {
-	err := ensureClassManage(ctx, s.classRepo, s.courseRepo, actorID, classID, isAdmin)
+	elevated, err := classAccessAsAdmin(ctx, s.classRepo, s.authz, actorID, classID, isAdmin)
+	if err != nil {
+		return err
+	}
+	err = ensureClassManage(ctx, s.classRepo, s.courseRepo, actorID, classID, elevated)
 	if !errors.Is(err, ErrNotClassTeacher) {
 		return err
 	}
-	if visibleErr := ensureClassVisible(ctx, s.classRepo, s.courseRepo, actorID, classID, isAdmin); visibleErr != nil {
+	if visibleErr := ensureClassVisible(ctx, s.classRepo, s.courseRepo, actorID, classID, elevated); visibleErr != nil {
 		return visibleErr
 	}
 	return ErrNotClassTeacher
@@ -137,7 +148,11 @@ func (s *ScheduleService) requireClassWrite(ctx context.Context, actorID uuid.UU
 
 // requireClassRead: thành viên lớp, người quản lý lớp, admin; người khác 404.
 func (s *ScheduleService) requireClassRead(ctx context.Context, actorID uuid.UUID, isAdmin bool, classID uuid.UUID) error {
-	return ensureClassVisible(ctx, s.classRepo, s.courseRepo, actorID, classID, isAdmin)
+	elevated, err := classAccessAsAdmin(ctx, s.classRepo, s.authz, actorID, classID, isAdmin)
+	if err != nil {
+		return err
+	}
+	return ensureClassVisible(ctx, s.classRepo, s.courseRepo, actorID, classID, elevated)
 }
 
 // scheduleClass / sessionClass: lớp của bản ghi (quyền xét trên lớp THẬT của bản ghi, không tin :classId
@@ -163,6 +178,7 @@ func (s *ScheduleService) sessionClass(ctx context.Context, id uuid.UUID) (*mode
 	}
 	return session, nil
 }
+
 // ============================================================================
 // CACHE HELPERS
 // ============================================================================
@@ -608,7 +624,11 @@ func (s *ScheduleService) requireSessionManage(ctx context.Context, sessionID, a
 		return err
 	}
 	if viewerNotFound {
-		return ensureClassManageOrNotFound(ctx, s.classRepo, s.courseRepo, actorID, session.ClassID, isAdmin)
+		elevated, err := classAccessAsAdmin(ctx, s.classRepo, s.authz, actorID, session.ClassID, isAdmin)
+		if err != nil {
+			return err
+		}
+		return ensureClassManageOrNotFound(ctx, s.classRepo, s.courseRepo, actorID, session.ClassID, elevated)
 	}
 	return s.requireClassWrite(ctx, actorID, isAdmin, session.ClassID)
 }

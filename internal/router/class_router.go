@@ -14,7 +14,13 @@ func SetupClassRoutes(
 	classHandler *handler.ClassHandler,
 	attendanceHandler *handler.AttendanceHandler,
 	redis *redis.Client,
+	permChecker *middleware.PermissionChecker,
 ) {
+	// B-02: danh sách lớp của một tổ chức cho chủ/quản trị tổ chức. Cùng quyền ORG_MEMBERS_MANAGE với orgManagesClass
+	// (class_access.go) và route thành viên; active_org_id phải khớp tổ chức trên URL.
+	api.Get("/organizations/:organization_id/classes", middleware.AuthMiddleware(cfg, redis),
+		permChecker.RequireOrgPermission("organization_id", "ORG_MEMBERS_MANAGE"), classHandler.GetOrganizationClasses)
+
 	classes := api.Group("/classes", middleware.AuthMiddleware(cfg, redis))
 	{
 		classes.Post("/", classHandler.CreateClass)

@@ -405,11 +405,11 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		),
 
 		// ===== Class =====
-		Class: service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student, repos.ParentStudent),
+		Class: service.NewClassService(repos.Class, repos.Course, repos.Teacher, repos.Student, repos.ParentStudent).WithAuthorizer(permChecker),
 		// V3-7 (issue #58): repos.Course duoc chen vao de kiem instructor cua khoa chua lop
 		// (class_access.go) — xem NewClassLessonContentService.
 		ClassLessonContent: service.NewClassLessonContentService(repos.ClassLessonContent, repos.Class, repos.Course, repos.Lesson, repos.Enrollment, livestreamSvc),
-		Attendance:         service.NewAttendanceService(repos.Attendance, repos.Class, repos.Course),
+		Attendance:         service.NewAttendanceService(repos.Attendance, repos.Class, repos.Course).WithAuthorizer(permChecker),
 
 		// ===== Teacher =====
 		Teacher:        teacherSvc,
@@ -487,7 +487,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		UserPreference: service.NewUserPreferenceService(repos.UserPreference),
 
 		// ===== Schedule (Asynq for reminders + Redis cache) =====
-		Schedule: service.NewScheduleService(repos.Schedule, repos.Class, repos.Course, resources.Redis, resources.Queue),
+		Schedule: service.NewScheduleService(repos.Schedule, repos.Class, repos.Course, resources.Redis, resources.Queue).WithAuthorizer(permChecker),
 
 		// ===== Quiz (Redis cache) =====
 		// enrollmentRepo (SEC-1, vá lộ nội dung quiz): cần cho checkLessonQuizAccess dùng chung

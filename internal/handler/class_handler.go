@@ -145,6 +145,26 @@ func (h *ClassHandler) GetAllClasses(c *fiber.Ctx) error {
 	})
 }
 
+// GetOrganizationClasses: GET /organizations/:organization_id/classes. Router đã đòi ORG_MEMBERS_MANAGE trên đúng tổ chức
+// (RequireOrgPermission), nên ở đây chỉ phân tích tham số.
+func (h *ClassHandler) GetOrganizationClasses(c *fiber.Ctx) error {
+	orgID, err := uuid.Parse(c.Params("organization_id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "Invalid organization ID"})
+	}
+	classes, err := h.service.GetOrganizationClasses(c.Context(), orgID, c.QueryInt("page", 1), c.QueryInt("page_size", 20), c.Query("keyword"), c.Query("status"))
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to retrieve organization classes",
+			"error":   err.Error(),
+		})
+	}
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Classes retrieved successfully",
+		"data":    classes,
+	})
+}
+
 func (h *ClassHandler) GetClassesByCourseID(c *fiber.Ctx) error {
 	courseID, err := uuid.Parse(c.Params("course_id"))
 	if err != nil {

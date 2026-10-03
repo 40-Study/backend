@@ -21,20 +21,22 @@ type UpdateUserOrgRoleStatusDTO struct {
 
 // UserOrgRoleResponseDTO - Response for single user organization role
 type UserOrgRoleResponseDTO struct {
-	ID             uuid.UUID            `json:"id"`
-	UserID         uuid.UUID            `json:"user_id"`
-	RoleID         uuid.UUID            `json:"role_id"`
-	OrganizationID uuid.UUID            `json:"organization_id"`
-	Role           *OrgRoleResponseDTO  `json:"role,omitempty"`
-	Organization   *OrgInfoResponseDTO  `json:"organization,omitempty"`
-	GrantedAt      string               `json:"granted_at"`
-	GrantedBy      *uuid.UUID           `json:"granted_by,omitempty"`
-	Notes          *string              `json:"notes,omitempty"`
-	Status         string               `json:"status"`
-	RevokedBy      *uuid.UUID           `json:"revoked_by,omitempty"`
-	RevokedAt      *string              `json:"revoked_at,omitempty"`
-	CreatedAt      string               `json:"created_at"`
-	UpdatedAt      string               `json:"updated_at"`
+	ID             uuid.UUID           `json:"id"`
+	UserID         uuid.UUID           `json:"user_id"`
+	RoleID         uuid.UUID           `json:"role_id"`
+	OrganizationID uuid.UUID           `json:"organization_id"`
+	Role           *OrgRoleResponseDTO `json:"role,omitempty"`
+	Organization   *OrgInfoResponseDTO `json:"organization,omitempty"`
+	// User (B-16): người giữ vai trò, để UI hiển thị tên/email thay vì user_id trần. Chỉ có khi repo đã Preload("User").
+	User      *OrgMemberUserDTO `json:"user,omitempty"`
+	GrantedAt string            `json:"granted_at"`
+	GrantedBy *uuid.UUID        `json:"granted_by,omitempty"`
+	Notes     *string           `json:"notes,omitempty"`
+	Status    string            `json:"status"`
+	RevokedBy *uuid.UUID        `json:"revoked_by,omitempty"`
+	RevokedAt *string           `json:"revoked_at,omitempty"`
+	CreatedAt string            `json:"created_at"`
+	UpdatedAt string            `json:"updated_at"`
 }
 
 // OrgRoleResponseDTO - Embedded organization role info
@@ -43,6 +45,15 @@ type OrgRoleResponseDTO struct {
 	Name        string    `json:"name"`
 	Description *string   `json:"description,omitempty"`
 	Status      string    `json:"status"`
+}
+
+// OrgMemberUserDTO - Embedded user info của một thành viên tổ chức (B-16)
+type OrgMemberUserDTO struct {
+	ID        uuid.UUID `json:"id"`
+	UserName  string    `json:"user_name"`
+	FullName  *string   `json:"full_name,omitempty"`
+	Email     string    `json:"email"`
+	AvatarURL *string   `json:"avatar_url,omitempty"`
 }
 
 // OrgInfoResponseDTO - Embedded organization info
