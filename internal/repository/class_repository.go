@@ -18,6 +18,8 @@ type ClassRepositoryInterface interface {
 	Delete(ctx context.Context, id uuid.UUID, hardDelete bool) error
 	Exists(ctx context.Context, id uuid.UUID) (bool, error)
 	GetByCourseID(ctx context.Context, courseID uuid.UUID) ([]model.Class, error)
+	// GetByOrganization (B-02): lớp thuộc một tổ chức, lọc theo từ khoá và trạng thái lớp (draft/active/archived; rỗng = tất cả).
+	GetByOrganization(ctx context.Context, orgID uuid.UUID, page, pageSize int, keyword, classStatus string) ([]model.Class, int64, error)
 
 	// Class relationship checks
 	TeacherClassExists(ctx context.Context, classID, teacherID uuid.UUID) (bool, error)
@@ -73,6 +75,27 @@ func (r *ClassRepository) GetAll(ctx context.Context, page, pageSize int, keywor
 		return nil, 0, err
 	}
 
+	return classes, total, nil
+}
+
+func (r *ClassRepository) GetByOrganization(ctx context.Context, orgID uuid.UUID, page, pageSize int, keyword, classStatus string) ([]model.Class, int64, error) {
+	var classes []model.Class
+	var total int64
+
+	query := r.db.WithContext(ctx).Model(&model.Class{}).Where("classes.organization_id = ?", orgID)
+	if classStatus != "" {
+		query = query.Where("classes.status = ?", classStatus)
+	}
+	query = utils.ApplyKeywordSearch(query, keyword, "classes.name", "classes.description")
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := utils.ApplyPagination(query, page, pageSize).
+		Order("classes.created_at DESC").
+		Find(&classes).Error; err != nil {
+		return nil, 0, err
+	}
 	return classes, total, nil
 }
 

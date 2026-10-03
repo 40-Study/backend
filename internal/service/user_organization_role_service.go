@@ -462,6 +462,16 @@ func toUserOrgRoleResponseDTO(uor *model.UserOrganizationRole) *dto.UserOrgRoleR
 		}
 	}
 
+	if uor.User != nil {
+		result.User = &dto.OrgMemberUserDTO{
+			ID:        uor.User.ID,
+			UserName:  uor.User.UserName,
+			FullName:  uor.User.FullName,
+			Email:     uor.User.Email,
+			AvatarURL: uor.User.AvatarURL,
+		}
+	}
+
 	if uor.Organization != nil {
 		result.Organization = &dto.OrgInfoResponseDTO{
 			ID:   uor.Organization.ID,

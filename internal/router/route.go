@@ -100,7 +100,7 @@ func SetupAllRoutes(
 	// Phase 3: PHẢI trước SetupTeacherProfileRoutes — "/teacher-profiles/me" tĩnh phải thắng "/:id".
 	SetupApprovalRoutes(api, cfg, approvalHandler, redis, permChecker)
 	SetupTeacherProfileRoutes(api, cfg, teacherProfileHandler, redis)
-	SetupClassRoutes(api, cfg, classHandler, attendanceHandler, redis)
+	SetupClassRoutes(api, cfg, classHandler, attendanceHandler, redis, permChecker)
 	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis, permChecker)
 	SetupCartRoutes(api, cfg, cartHandler, redis)
 	SetupCourseRoutes(api, cfg, courseHandler, sectionHandler, lessonHandler, lessonContentHandler, lessonPreviewHandler, classHandler, classLessonContentHandler, attendanceHandler, redis)

@@ -43,6 +43,19 @@ type ClassResponseDTO struct {
 	StudentCount   int64      `json:"student_count"`
 	CreatedAt      string     `json:"created_at"`
 	UpdatedAt      string     `json:"updated_at"`
+	// CanManage / CanAssignTeachers (B-12): chỉ có ở GET /classes/:id, tính theo ĐÚNG luật quyền của các thao tác
+	// ghi (ensureClassManage, ensureClassOwner) để UI ẩn nút khi không có quyền. omitempty: vắng = không có quyền
+	// (hoặc không phải endpoint chi tiết), UI không được suy ra quyền từ vai trò.
+	CanManage         bool `json:"can_manage,omitempty"`
+	CanAssignTeachers bool `json:"can_assign_teachers,omitempty"`
+}
+
+// EnrollableStudentDTO (B-12): một dòng ở ô chọn học viên để ghi danh. Không có email (xem StudentRepository.SearchEnrollable).
+type EnrollableStudentDTO struct {
+	ID        uuid.UUID `json:"id"`
+	UserName  string    `json:"user_name"`
+	FullName  *string   `json:"full_name,omitempty"`
+	AvatarURL *string   `json:"avatar_url,omitempty"`
 }
 
 type ClassListResponseDTO struct {
