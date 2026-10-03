@@ -66,6 +66,10 @@ func (s *s3AssignmentSvc) GetSandbox(context.Context, uuid.UUID, uuid.UUID) (*dt
 	s.read = true
 	return &dto.SandboxResponseDTO{}, nil
 }
+func (s *s3AssignmentSvc) GetByClass(context.Context, uuid.UUID, bool, uuid.UUID, int, int) (*dto.AssignmentListDTO, error) {
+	return nil, nil
+}
+
 func (s *s3AssignmentSvc) GetBySession(context.Context, uuid.UUID, bool, uuid.UUID, int, int) (*dto.AssignmentListDTO, error) {
 	s.read = true
 	if s.createErr != nil { // tái dùng trường làm "lỗi trả về" cho case người ngoài phiên

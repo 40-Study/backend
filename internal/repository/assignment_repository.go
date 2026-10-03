@@ -1,4 +1,4 @@
-package repository
+﻿package repository
 
 import (
 	"context"
@@ -18,6 +18,7 @@ type AssignmentRepositoryInterface interface {
 	GetByIDWithSession(ctx context.Context, id uuid.UUID) (*model.Assignment, error)
 	GetByIDWithTestCases(ctx context.Context, id uuid.UUID) (*model.Assignment, error)
 	GetBySession(ctx context.Context, sessionID uuid.UUID, page, pageSize int, publishedOnly bool) ([]model.Assignment, int64, error)
+	GetByClass(ctx context.Context, classID uuid.UUID, page, pageSize int, publishedOnly bool) ([]model.Assignment, int64, error)
 	GetPublishedBySession(ctx context.Context, sessionID uuid.UUID) ([]model.Assignment, error)
 	Update(ctx context.Context, assignment *model.Assignment) error
 	Delete(ctx context.Context, id uuid.UUID) error
@@ -99,6 +100,24 @@ func (r *AssignmentRepository) GetBySession(ctx context.Context, sessionID uuid.
 		Order("created_at DESC").
 		Find(&assignments).Error
 
+	return assignments, total, err
+}
+
+// GetByClass liệt kê bài tập gắn trực tiếp vào lớp (assignments.class_id), mới nhất trước.
+func (r *AssignmentRepository) GetByClass(ctx context.Context, classID uuid.UUID, page, pageSize int, publishedOnly bool) ([]model.Assignment, int64, error) {
+	var assignments []model.Assignment
+	var total int64
+
+	query := r.db.WithContext(ctx).Model(&model.Assignment{}).Where("class_id = ?", classID)
+	if publishedOnly {
+		query = query.Where("is_published = ?", true)
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	err := utils.ApplyPagination(query, page, pageSize).
+		Order("created_at DESC").
+		Find(&assignments).Error
 	return assignments, total, err
 }
 

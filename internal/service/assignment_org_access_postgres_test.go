@@ -1,4 +1,4 @@
-package service
+﻿package service
 
 // R4: chủ/quản trị tổ chức chấm được điểm lớp của tổ chức (L2) nhưng màn chấm còn cần đọc bài tập và liệt kê bài
 // nộp, hai việc vốn chỉ dành cho host/giảng viên lớp/chủ khoá/admin. Test này khoá:
@@ -25,9 +25,9 @@ func TestAssignmentOrgAccess_OwnerReadsButCannotManage(t *testing.T) {
 
 	assignmentSvc := NewAssignmentService(repository.NewAssignmentRepository(e.db), repository.NewTestCaseRepository(e.db), nil,
 		repository.NewClassRepository(e.db), nil)
-	assignmentSvc.SetOrgAccess(NewClassOrgAccess(repository.NewClassRepository(e.db), e.checker))
+	assignmentSvc.SetOrgAccess(NewClassOrgAccess(repository.NewClassRepository(e.db), repository.NewCourseRepository(e.db), e.checker))
 	submissionSvc := NewSubmissionService(repository.NewSubmissionRepository(e.db), assignmentSvc, repository.NewTestCaseRepository(e.db), nil, &config.Config{})
-	submissionSvc.SetOrgAccess(NewClassOrgAccess(repository.NewClassRepository(e.db), e.checker))
+	submissionSvc.SetOrgAccess(NewClassOrgAccess(repository.NewClassRepository(e.db), repository.NewCourseRepository(e.db), e.checker))
 
 	mk := func(class model.Class, published bool) model.Assignment {
 		a := model.Assignment{ClassID: &class.ID, Type: "homework", Title: "QA-R4 " + uuid.NewString()[:6], Description: "d", Language: []string{"python"}, IsPublished: published}
@@ -72,5 +72,61 @@ func TestAssignmentOrgAccess_OwnerReadsButCannotManage(t *testing.T) {
 	// Quyền đọc không kéo theo quyền quản lý: chủ tổ chức không được sửa/publish/xem test ẩn.
 	if manage, err := assignmentSvc.CanManage(ctx, inA.ID, e.ownerA.ID, false); err != nil || manage {
 		t.Errorf("CanManage của chủ tổ chức=%v err=%v, muốn false", manage, err)
+	}
+}
+
+// GET /classes/:id/assignments (R4): quản lý lớp (kể cả chủ/quản trị tổ chức của lớp) thấy cả bản nháp, học viên đang
+// học chỉ thấy bản đã công bố, người ngoài và lớp không tồn tại đều là ErrClassNotFound (404, không lộ lớp tồn tại).
+func TestAssignmentOrgAccess_ListByClass(t *testing.T) {
+	e := newGradeOrgEnv(t)
+	ctx := context.Background()
+	classRepo := repository.NewClassRepository(e.db)
+	svc := NewAssignmentService(repository.NewAssignmentRepository(e.db), repository.NewTestCaseRepository(e.db), nil, classRepo, nil)
+	svc.SetOrgAccess(NewClassOrgAccess(classRepo, repository.NewCourseRepository(e.db), e.checker))
+
+	inA, personal := e.classInOrgA(t), e.personalClassOfOrgMember(t)
+	for _, c := range []struct {
+		class     model.Class
+		published bool
+	}{{inA, true}, {inA, false}, {personal, true}} {
+		mustCreate(t, e.db, &model.Assignment{ClassID: &c.class.ID, Type: "homework", Title: "QA-R4 " + uuid.NewString()[:6], Description: "d", Language: []string{"python"}, IsPublished: c.published})
+	}
+
+	cases := []struct {
+		name  string
+		actor model.User
+		class model.Class
+		want  int // số bài thấy được; -1 = ErrClassNotFound
+	}{
+		{"chủ tổ chức A, lớp thuộc A: cả bản nháp", e.ownerA, inA, 2},
+		{"giảng viên được gán vào lớp: cả bản nháp", e.coTeacher, inA, 2},
+		{"chủ khoá của lớp: cả bản nháp", e.instructor, inA, 2},
+		{"học viên trong lớp: chỉ bản đã công bố", e.student, inA, 1},
+		{"thành viên A không quản trị", e.memberA, inA, -1},
+		{"chủ tổ chức B: lớp của tổ chức khác", e.ownerB, inA, -1},
+		{"chủ A đã bị gỡ role", e.revokedOwnerA, inA, -1},
+		{"người lạ", e.stranger, inA, -1},
+		{"chủ tổ chức A nhưng lớp CÁ NHÂN", e.ownerA, personal, -1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res, err := svc.GetByClass(ctx, c.actor.ID, false, c.class.ID, 1, 20)
+			if c.want < 0 {
+				if !errors.Is(err, ErrClassNotFound) {
+					t.Fatalf("err=%v, muốn ErrClassNotFound", err)
+				}
+				return
+			}
+			if err != nil || res == nil || len(res.Data) != c.want || res.Total != int64(c.want) {
+				t.Fatalf("res=%+v err=%v, muốn %d bài", res, err, c.want)
+			}
+		})
+	}
+
+	if _, err := svc.GetByClass(ctx, e.stranger.ID, false, uuid.New(), 1, 20); !errors.Is(err, ErrClassNotFound) {
+		t.Errorf("lớp không tồn tại: err=%v, muốn ErrClassNotFound", err)
+	}
+	if res, err := svc.GetByClass(ctx, e.stranger.ID, true, inA.ID, 1, 20); err != nil || len(res.Data) != 2 {
+		t.Errorf("admin hệ thống: %+v err=%v, muốn thấy 2 bài", res, err)
 	}
 }

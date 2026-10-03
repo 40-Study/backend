@@ -220,7 +220,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		resources.Config,
 	)
 	// R4: chủ/quản trị tổ chức của lớp xem được bài tập và bài nộp của lớp thuộc tổ chức để chấm điểm.
-	orgAccess := service.NewClassOrgAccess(repos.Class, permChecker)
+	orgAccess := service.NewClassOrgAccess(repos.Class, repos.Course, permChecker)
 	assignmentSvc.SetOrgAccess(orgAccess)
 	submissionSvc.SetOrgAccess(orgAccess)
 

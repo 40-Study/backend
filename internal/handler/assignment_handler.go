@@ -14,6 +14,7 @@ type AssignmentHandlerInterface interface {
 	Create(c *fiber.Ctx) error
 	GetByID(c *fiber.Ctx) error
 	GetBySession(c *fiber.Ctx) error
+	GetByClass(c *fiber.Ctx) error
 	Update(c *fiber.Ctx) error
 	Delete(c *fiber.Ctx) error
 	Publish(c *fiber.Ctx) error
@@ -171,6 +172,28 @@ func (h *AssignmentHandler) GetBySession(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
+	return c.JSON(result)
+}
+
+// GetByClass: GET /api/classes/:classId/assignments. Cùng envelope với GET /assignments?session_id=.
+// Lớp không xem được (hoặc không tồn tại) là 404, không lộ lớp có tồn tại hay không.
+func (h *AssignmentHandler) GetByClass(c *fiber.Ctx) error {
+	classID, err := uuid.Parse(c.Params("classId"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid class id"})
+	}
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	result, err := h.svc.GetByClass(c.Context(), userID, isAdminActor(c, h.permChecker, userID), classID, c.QueryInt("page", 1), c.QueryInt("page_size", 20))
+	if err != nil {
+		if errors.Is(err, service.ErrClassNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "class not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
 	return c.JSON(result)
 }
 

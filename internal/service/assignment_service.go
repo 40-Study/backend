@@ -37,6 +37,9 @@ type AssignmentServiceInterface interface {
 	GetByID(ctx context.Context, id uuid.UUID, includeHidden bool) (*model.Assignment, error)
 	// GetBySession (S3): chỉ thành viên phiên hoặc chủ phiên mới liệt kê được; thành viên chỉ thấy bản đã publish.
 	GetBySession(ctx context.Context, actorID uuid.UUID, isAdmin bool, sessionID uuid.UUID, page, pageSize int) (*dto.AssignmentListDTO, error)
+	// GetByClass (R4): bài tập của một lớp. Quản lý lớp (GV, chủ khoá, người tạo, admin, chủ/quản trị tổ chức) thấy cả
+	// bản nháp, học viên đang học chỉ thấy bản đã công bố; người ngoài (hoặc lớp không tồn tại) nhận ErrClassNotFound.
+	GetByClass(ctx context.Context, actorID uuid.UUID, isAdmin bool, classID uuid.UUID, page, pageSize int) (*dto.AssignmentListDTO, error)
 	Update(ctx context.Context, id uuid.UUID, req dto.UpdateAssignmentDTO) (*model.Assignment, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	Publish(ctx context.Context, id uuid.UUID, livekitSvc LivekitServiceInterface) (*model.Assignment, error)
@@ -238,6 +241,30 @@ func (s *AssignmentService) GetBySession(ctx context.Context, actorID uuid.UUID,
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
+}
+
+func (s *AssignmentService) GetByClass(ctx context.Context, actorID uuid.UUID, isAdmin bool, classID uuid.UUID, page, pageSize int) (*dto.AssignmentListDTO, error) {
+	// Thiếu checker thì fail-closed: không có căn cứ nào để nói người gọi xem được lớp.
+	if s.orgAccess == nil {
+		return nil, ErrClassNotFound
+	}
+	audience, err := s.orgAccess.ClassAudience(ctx, classID, actorID, isAdmin)
+	if err != nil {
+		return nil, err
+	}
+	if audience == ClassAudienceNone {
+		return nil, ErrClassNotFound
+	}
+
+	assignments, total, err := s.repo.GetByClass(ctx, classID, page, pageSize, audience != ClassAudienceManager)
+	if err != nil {
+		return nil, err
+	}
+	data := make([]dto.AssignmentResponseDTO, 0, len(assignments))
+	for _, a := range assignments {
+		data = append(data, s.toResponseDTO(a))
+	}
+	return &dto.AssignmentListDTO{Data: data, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
 func (s *AssignmentService) Update(ctx context.Context, id uuid.UUID, req dto.UpdateAssignmentDTO) (*model.Assignment, error) {
