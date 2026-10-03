@@ -49,11 +49,13 @@ type ReorderGradeColumnsDTO struct {
 // ============================================================================
 
 type CreateGradeDTO struct {
-	StudentID    string  `json:"student_id" validate:"required,uuid"`
-	GradeType    string  `json:"grade_type" validate:"required,oneof=assignment quiz midterm final attendance participation project other"`
-	Title        string  `json:"title" validate:"required,min=1,max=255"`
-	Score        float64 `json:"score" validate:"required"`
-	MaxScore     float64 `json:"max_score" validate:"required"`
+	StudentID string `json:"student_id" validate:"required,uuid"`
+	GradeType string `json:"grade_type" validate:"required,oneof=assignment quiz midterm final attendance participation project other"`
+	Title     string `json:"title" validate:"required,min=1,max=255"`
+	// Score dùng gte=0 thay cho required: required với số không-con-trỏ coi 0 là "thiếu", nên điểm 0 hợp lệ
+	// (học viên làm sai hết) từng bị từ chối 400. Có thiếu hay không đã được kiểm theo max_score bắt buộc.
+	Score        float64 `json:"score" validate:"gte=0"`
+	MaxScore     float64 `json:"max_score" validate:"required,gt=0"`
 	Weight       float64 `json:"weight,omitempty"`
 	AssignmentID string  `json:"assignment_id,omitempty" validate:"omitempty,uuid"`
 	QuizID       string  `json:"quiz_id,omitempty" validate:"omitempty,uuid"`
@@ -74,10 +76,13 @@ type BulkCreateGradesDTO struct {
 }
 
 type GradeResponseDTO struct {
-	ID           uuid.UUID       `json:"id"`
-	StudentID    uuid.UUID       `json:"student_id"`
-	StudentName  string          `json:"student_name"`
-	ClassID      uuid.UUID       `json:"class_id"`
+	ID          uuid.UUID `json:"id"`
+	StudentID   uuid.UUID `json:"student_id"`
+	StudentName string    `json:"student_name"`
+	ClassID     uuid.UUID `json:"class_id"`
+	// ClassName: tên lớp để trang "Điểm của tôi" nhóm điểm theo lớp mà không phải gọi thêm từng lớp. Rỗng khi
+	// truy vấn không Preload lớp (gradebook của giảng viên đã ở trong ngữ cảnh một lớp nên không cần).
+	ClassName    string          `json:"class_name,omitempty"`
 	AssignmentID *uuid.UUID      `json:"assignment_id,omitempty"`
 	QuizID       *uuid.UUID      `json:"quiz_id,omitempty"`
 	SessionID    *uuid.UUID      `json:"session_id,omitempty"`

@@ -69,6 +69,9 @@ func SetupAssignmentRoutes(api fiber.Router, cfg *config.Config, h *handler.Assi
 	assignments.Post("/:id/unpublish", h.Unpublish)
 	assignments.Get("/:id/testcases", h.GetTestCases)
 	assignments.Post("/:id/testcases", h.AddTestCase)
+
+	// R4: bài tập theo lớp (quyền xem lớp xét trong service, không phải ở middleware).
+	api.Get("/classes/:classId/assignments", middleware.AuthMiddleware(cfg, redis), h.GetByClass)
 	assignments.Post("/:id/testcases/import", h.ImportTestCases)
 	assignments.Delete("/:id/testcases/:tcId", h.DeleteTestCase)
 }
