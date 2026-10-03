@@ -200,7 +200,7 @@ type RegisterRequestDto struct {
 	Email           string `json:"email" validate:"required,email,max=255" example:"student@example.com"`
 	Password        string `json:"password" validate:"required,min=8,max=72" example:"SecurePass123!"`
 	ConfirmPassword string `json:"confirm_password" validate:"required,eqfield=Password" example:"SecurePass123!"`
-	UserName        string `json:"user_name" validate:"required,min=3,max=100" example:"student123"`
+	UserName        string `json:"user_name" validate:"required,user_name" example:"student123"`
 	FullName        string `json:"full_name,omitempty" validate:"omitempty,min=2,max=255" example:"Nguyen Van A"`
 }
 
@@ -227,7 +227,7 @@ type VerifyOtpResponseDto struct {
 // UpdateMeRequestDto - Request body for updating user profile
 // All fields are optional (partial update)
 type UpdateMeRequestDto struct {
-	Username    *string `json:"username,omitempty" validate:"omitempty,alphanum,min=3,max=30" example:"student123"`
+	Username    *string `json:"username,omitempty" validate:"omitempty,user_name" example:"student123"`
 	FullName    *string `json:"full_name,omitempty" validate:"omitempty,min=2,max=255" example:"Nguyen Van A"`
 	Phone       *string `json:"phone,omitempty" validate:"omitempty,e164" example:"+84901234567"`
 	DateOfBirth *string `json:"date_of_birth,omitempty" validate:"omitempty,datetime=2006-01-02" example:"2005-01-01"`

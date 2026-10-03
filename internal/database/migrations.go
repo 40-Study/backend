@@ -443,6 +443,11 @@ func RunPostMigrations(db *gorm.DB) error {
 		return err
 	}
 
+	// Sửa một lần dữ liệu cũ của lane R2 (hội thoại nhóm mồ côi, user_name chứa '@'), xem r2_social_privacy_cleanup.go.
+	if err := runR2SocialPrivacyCleanup(db); err != nil {
+		return err
+	}
+
 	logNotValidCheckConstraints(db)
 
 	log.Printf("Post-migrations applied: %d statement group(s)\n", len(statements))

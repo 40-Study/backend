@@ -263,7 +263,30 @@ func (s *GroupService) DeleteGroup(ctx context.Context, userID, groupID uuid.UUI
 		return err
 	}
 
-	return s.groupRepo.Delete(ctx, groupID)
+	// Lấy participant TRƯỚC khi đóng hội thoại (sau đó left_at đã được đặt nên danh sách rỗng) để ngắt kênh
+	// WebSocket của họ sau khi xoá xong (QA hồi quy A-03).
+	var participants []model.ConversationParticipant
+	var convID *uuid.UUID
+	if conv, err := s.convRepo.GetByGroupID(ctx, groupID); err != nil {
+		return err
+	} else if conv != nil {
+		convID = &conv.ID
+		if participants, err = s.participantRepo.ListByConversationID(ctx, conv.ID); err != nil {
+			return err
+		}
+	}
+
+	if err := s.groupRepo.DeleteWithConversation(ctx, groupID); err != nil {
+		return err
+	}
+
+	if s.evictor != nil && convID != nil {
+		for _, p := range participants {
+			s.evictor.EvictUserFromChannel(p.UserID, "conversation:"+convID.String())
+			s.evictor.EvictUserFromChannel(p.UserID, "group:"+groupID.String())
+		}
+	}
+	return nil
 }
 
 func (s *GroupService) GetGroupBySlug(ctx context.Context, slug string, userID *uuid.UUID) (*dto.GroupResponse, error) {

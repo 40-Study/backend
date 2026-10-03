@@ -26,9 +26,38 @@ func TestGeneratedUserName_QuaValidatorUpdateMe(t *testing.T) {
 			}
 		}
 	}
-	// Đối chứng: chính validator vẫn từ chối '_' (không nới validator).
-	bad := "abc_def"
-	if errs := utils.ValidateStruct(UpdateMeRequestDto{Username: &bad}); len(errs) == 0 {
-		t.Fatal("validator đã bị nới: 'abc_def' phải bị từ chối")
+}
+
+// QA hồi quy 03/10 (A-09, B-03): một luật user_name duy nhất cho đăng ký và sửa hồ sơ. '_' được phép (web cho
+// phép từ trước), '@' và dạng email bị từ chối ở CẢ HAI đường để email không bao giờ thành user_name công khai.
+func TestUserName_MotLuatChoDangKyVaSuaHoSo(t *testing.T) {
+	cases := []struct {
+		name string
+		ok   bool
+	}{
+		{"student1_qa", true},
+		{"student123", true},
+		{"_ab", true},
+		{"ab", false},
+		{"a23456789012345678901234567890", true},   // 30 ký tự
+		{"a234567890123456789012345678901", false}, // 31 ký tự
+		{"tvanle.dev@gmail.com", false},
+		{"abc@def", false},
+		{"abc.def", false},
+		{"abc def", false},
+		{"nguyễnvăn", false},
+		{"a-b-c", false},
+	}
+	for _, c := range cases {
+		reg := utils.ValidateStruct(RegisterRequestDto{
+			Email: "a@b.co", Password: "SecurePass123!", ConfirmPassword: "SecurePass123!", UserName: c.name,
+		})
+		upd := utils.ValidateStruct(UpdateMeRequestDto{Username: &c.name})
+		if (len(reg) == 0) != c.ok {
+			t.Errorf("đăng ký user_name %q: ok=%v, muốn %v (%+v)", c.name, len(reg) == 0, c.ok, reg)
+		}
+		if (len(upd) == 0) != c.ok {
+			t.Errorf("sửa hồ sơ user_name %q: ok=%v, muốn %v (%+v)", c.name, len(upd) == 0, c.ok, upd)
+		}
 	}
 }
