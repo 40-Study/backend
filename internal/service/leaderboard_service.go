@@ -12,7 +12,8 @@ import (
 
 type LeaderboardServiceInterface interface {
 	// viewer = người xem (nil = khách): quyết định ai thấy tên thật của người đặt leaderboard_display ẩn danh/username.
-	GetLeaderboard(ctx context.Context, periodType string, limit int, viewer *LeaderboardViewer) (*dto.LeaderboardResponse, error)
+	// classID != nil (B-20): bảng xếp hạng riêng của lớp; chỉ thành viên lớp hoặc admin xem được.
+	GetLeaderboard(ctx context.Context, periodType string, limit int, viewer *LeaderboardViewer, classID *uuid.UUID) (*dto.LeaderboardResponse, error)
 	GetMyRank(ctx context.Context, userID uuid.UUID, periodType string) (*dto.MyRankResponse, error)
 }
 
@@ -24,16 +25,32 @@ func NewLeaderboardService(repo *repository.LeaderboardRepository) *LeaderboardS
 	return &LeaderboardService{repo: repo}
 }
 
-func (s *LeaderboardService) GetLeaderboard(ctx context.Context, periodType string, limit int, viewer *LeaderboardViewer) (*dto.LeaderboardResponse, error) {
+func (s *LeaderboardService) GetLeaderboard(ctx context.Context, periodType string, limit int, viewer *LeaderboardViewer, classID *uuid.UUID) (*dto.LeaderboardResponse, error) {
 	if err := validatePeriodType(periodType); err != nil {
 		return nil, err
 	}
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
+	if classID != nil {
+		// Route công khai: nếu không kiểm, khách chỉ cần đoán class_id là liệt kê được học viên của lớp.
+		// Khách và người ngoài lớp đều nhận 404 như mọi tài nguyên lớp không xem được.
+		if viewer == nil {
+			return nil, ErrLeaderboardClassNotFound
+		}
+		if !viewer.IsAdmin {
+			ok, err := s.repo.CanViewClassBoard(ctx, viewer.UserID, *classID)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, ErrLeaderboardClassNotFound
+			}
+		}
+	}
 
 	period := repository.CurrentPeriod(periodType)
-	rows, err := s.repo.GetTopUsers(ctx, periodType, period, limit)
+	rows, err := s.repo.GetTopUsers(ctx, periodType, period, limit, classID)
 	if err != nil {
 		return nil, err
 	}
@@ -88,6 +105,9 @@ func leaderboardEntry(r repository.LeaderboardRow, viewer *LeaderboardViewer) dt
 		IsMe:        p.IsMe,
 	}
 }
+
+// ErrLeaderboardClassNotFound — lớp không tồn tại hoặc người xem không có quan hệ với lớp (404, không lộ lớp có hay không).
+var ErrLeaderboardClassNotFound = errors.New("class not found")
 
 // ErrInvalidLeaderboardPeriod — kỳ xếp hạng không thuộc model.IsValidLeaderboardPeriodType.
 var ErrInvalidLeaderboardPeriod = errors.New("invalid period: must be weekly, monthly, or all_time")

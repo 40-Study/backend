@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -65,7 +64,7 @@ func (s *AnalyticsService) ensureSessionAnalyticsAccess(ctx context.Context, ses
 		return err
 	}
 	if session == nil {
-		return errors.New("session not found")
+		return ErrSessionNotFound
 	}
 	if session.HostID == actorUserID {
 		return nil

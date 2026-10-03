@@ -130,6 +130,43 @@ var ErrSessionNotFound = errors.New("session not found")
 // de duoc snapshot ca khi GV da khoa).
 var ErrWhiteboardLocked = errors.New("forbidden: whiteboard is locked")
 
+// ErrLivestreamInvalidInput / ErrLivestreamStateConflict (QA hồi quy B-10, B-21): lỗi đầu vào (400) và
+// thao tác sai trạng thái (409). Trước đây Create nuốt lỗi parse giờ và End/Start trả errors.New thô,
+// handler gom hết về 500 nên client không phân biệt được lỗi của mình với lỗi hạ tầng.
+var (
+	// Thông điệp tiếng Việt vì web hiển thị nguyên văn `error` của lỗi 4xx lên toast cho giảng viên.
+	ErrLivestreamInvalidInput  = errors.New("dữ liệu buổi học không hợp lệ")
+	ErrLivestreamStateConflict = errors.New("buổi học không ở trạng thái phù hợp")
+)
+
+// livestreamClockSkew: dung sai khi so scheduled_at với "bây giờ" — form web chọn giờ theo phút nên
+// một buổi "bắt đầu ngay" đã chậm vài giây khi tới server; không muốn chặn nhầm trường hợp đó.
+const livestreamClockSkew = time.Minute
+
+// parseLivestreamTime đọc RFC3339 từ DTO; lỗi định dạng là lỗi đầu vào.
+func parseLivestreamTime(field, value string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%w: %s phải theo định dạng RFC3339", ErrLivestreamInvalidInput, field)
+	}
+	return t, nil
+}
+
+// validateLivestreamWindow kiểm cặp giờ bắt đầu/kết thúc dự kiến. requireFuture chỉ bật khi TẠO buổi
+// hoặc khi dời giờ bắt đầu: sửa tiêu đề của buổi đang diễn ra không được bị chặn vì giờ đã qua.
+func validateLivestreamWindow(start, end *time.Time, requireFuture bool, now time.Time) error {
+	if start != nil && requireFuture && start.Before(now.Add(-livestreamClockSkew)) {
+		return fmt.Errorf("%w: giờ bắt đầu không được nằm trong quá khứ", ErrLivestreamInvalidInput)
+	}
+	if end != nil && start == nil {
+		return fmt.Errorf("%w: cần giờ bắt đầu khi đặt giờ kết thúc", ErrLivestreamInvalidInput)
+	}
+	if end != nil && !end.After(*start) {
+		return fmt.Errorf("%w: giờ kết thúc phải sau giờ bắt đầu", ErrLivestreamInvalidInput)
+	}
+	return nil
+}
+
 // IsForbiddenErr (finding review V3-6/V3-7, issue #58) — gom moi sentinel UY QUYEN cua nhom
 // livestream/chat/whiteboard ve MOT cho, de tang handler khong phai liet ke lai tung sentinel.
 func IsForbiddenErr(err error) bool {
@@ -202,7 +239,7 @@ func (s *LivestreamService) getManageableSession(ctx context.Context, userID uui
 		return nil, err
 	}
 	if session == nil {
-		return nil, errors.New("session not found")
+		return nil, ErrSessionNotFound
 	}
 	if err := s.canManageSession(ctx, userID, isAdmin, session); err != nil {
 		return nil, err
@@ -275,12 +312,26 @@ func (s *LivestreamService) Create(ctx context.Context, hostID uuid.UUID, req dt
 		Settings:        settings,
 	}
 
-	// Set ScheduledAt trước khi lưu DB
+	// Set ScheduledAt trước khi lưu DB. Lỗi giờ là 400 (B-21: buổi ở quá khứ trước đây nhận 201).
 	if req.ScheduledAt != "" {
-		scheduledTime, err := time.Parse(time.RFC3339, req.ScheduledAt)
-		if err == nil {
-			session.ScheduledAt = &scheduledTime
+		scheduledTime, err := parseLivestreamTime("scheduled_at", req.ScheduledAt)
+		if err != nil {
+			return nil, err
 		}
+		session.ScheduledAt = &scheduledTime
+	}
+	if req.ScheduledEndAt != "" {
+		endTime, err := parseLivestreamTime("scheduled_end_at", req.ScheduledEndAt)
+		if err != nil {
+			return nil, err
+		}
+		session.ScheduledEndAt = &endTime
+	}
+	if err := validateLivestreamWindow(session.ScheduledAt, session.ScheduledEndAt, true, time.Now()); err != nil {
+		return nil, err
+	}
+	if req.Location != "" {
+		session.Location = &req.Location
 	}
 
 	if err := s.repo.Create(ctx, session); err != nil {
@@ -288,7 +339,7 @@ func (s *LivestreamService) Create(ctx context.Context, hostID uuid.UUID, req dt
 	}
 
 	// Enqueue reminder tasks sau khi lưu DB thành công
-	if session.ScheduledAt != nil {
+	if session.ScheduledAt != nil && s.q != nil {
 		payload := asynq_queue.ScheduleLivestreamRemindPayload{
 			SessionID:   sessionID,
 			ClassID:     &classID,
@@ -408,6 +459,42 @@ func (s *LivestreamService) Update(ctx context.Context, userID uuid.UUID, isAdmi
 		session.MaxViewers = *req.MaxViewers
 	}
 
+	// B-09: đổi lịch/phòng. Chỉ buổi chưa bắt đầu mới dời giờ được; trước đây trường này bị bỏ qua mà
+	// vẫn trả 200 nên GV tưởng đã lưu.
+	if req.ScheduledAt != nil || req.ScheduledEndAt != nil || req.Location != nil {
+		if (req.ScheduledAt != nil || req.ScheduledEndAt != nil) && session.Status != model.LivestreamStatusScheduled {
+			return nil, fmt.Errorf("%w: chỉ đổi được giờ của buổi chưa bắt đầu", ErrLivestreamStateConflict)
+		}
+		if req.ScheduledAt != nil {
+			t, err := parseLivestreamTime("scheduled_at", *req.ScheduledAt)
+			if err != nil {
+				return nil, err
+			}
+			session.ScheduledAt = &t
+		}
+		if req.ScheduledEndAt != nil {
+			if *req.ScheduledEndAt == "" {
+				session.ScheduledEndAt = nil
+			} else {
+				t, err := parseLivestreamTime("scheduled_end_at", *req.ScheduledEndAt)
+				if err != nil {
+					return nil, err
+				}
+				session.ScheduledEndAt = &t
+			}
+		}
+		if req.Location != nil {
+			if *req.Location == "" {
+				session.Location = nil
+			} else {
+				session.Location = req.Location
+			}
+		}
+		if err := validateLivestreamWindow(session.ScheduledAt, session.ScheduledEndAt, req.ScheduledAt != nil, time.Now()); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := s.repo.Update(ctx, session); err != nil {
 		return nil, err
 	}
@@ -453,7 +540,7 @@ func (s *LivestreamService) StartAsSystem(ctx context.Context, id uuid.UUID) (*m
 // startSession la phan than dung chung cua Start/StartAsSystem (mot nguon su that duy nhat).
 func (s *LivestreamService) startSession(ctx context.Context, session *model.LivestreamSession) (*model.LivestreamSession, error) {
 	if session.Status != model.LivestreamStatusScheduled {
-		return nil, errors.New("session cannot be started")
+		return nil, fmt.Errorf("%w: buổi học đã bắt đầu hoặc đã kết thúc", ErrLivestreamStateConflict)
 	}
 
 	// Tạo room LiveKit khi start
@@ -484,7 +571,8 @@ func (s *LivestreamService) End(ctx context.Context, userID uuid.UUID, isAdmin b
 	}
 
 	if session.Status != model.LivestreamStatusLive {
-		return nil, errors.New("session is not live")
+		// B-21: 409 (đúng người, sai trạng thái), không phải 500.
+		return nil, fmt.Errorf("%w: buổi học chưa bắt đầu hoặc đã kết thúc", ErrLivestreamStateConflict)
 	}
 
 	if err := s.repo.EndSession(ctx, id); err != nil {
@@ -1004,6 +1092,12 @@ func (s *LivestreamService) toResponseDTO(session model.LivestreamSession) dto.L
 		scheduledAt = &t
 	}
 
+	var scheduledEndAt *string
+	if session.ScheduledEndAt != nil {
+		t := session.ScheduledEndAt.Format(time.RFC3339)
+		scheduledEndAt = &t
+	}
+
 	return dto.LivestreamResponseDTO{
 		ID:              session.ID,
 		Title:           session.Title,
@@ -1017,6 +1111,8 @@ func (s *LivestreamService) toResponseDTO(session model.LivestreamSession) dto.L
 		StartedAt:       startedAt,
 		EndedAt:         endedAt,
 		ScheduledAt:     scheduledAt,
+		ScheduledEndAt:  scheduledEndAt,
+		Location:        session.Location,
 		MaxViewers:      session.MaxViewers,
 		IsRecorded:      session.IsRecorded,
 		Settings:        string(settingsJSON),

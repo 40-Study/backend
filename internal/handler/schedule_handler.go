@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -44,6 +45,13 @@ func scheduleFail(c *fiber.Ctx, err error, message string, fallback int) error {
 	// Điểm danh ngoài ngày / buổi đã đóng: 409 (đúng người, sai thời điểm), không phải 400 chung chung.
 	if status == 0 && (errors.Is(err, service.ErrCheckInOutsideSessionDay) || errors.Is(err, service.ErrSessionClosedForCheckIn)) {
 		status = fiber.StatusConflict
+	}
+	// B-10: trùng giờ là 409, giờ kết thúc không sau giờ bắt đầu là 400 (chặn cả khi fallback của route khác 400).
+	if status == 0 && errors.Is(err, service.ErrSessionOverlap) {
+		status = fiber.StatusConflict
+	}
+	if status == 0 && errors.Is(err, service.ErrSessionTimeOrder) {
+		status = fiber.StatusBadRequest
 	}
 	if status != 0 {
 		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
@@ -719,7 +727,25 @@ func (h *ScheduleHandler) GetMyTimetable(c *fiber.Ctx) error {
 
 	activeRole, _ := c.Locals("active_role").(string)
 
-	timetable, err := h.service.GetMyTimetable(c.Context(), userID, activeRole)
+	// B-08: ?sessions_from=YYYY-MM-DD&sessions_to=YYYY-MM-DD kèm thêm buổi học cụ thể của lớp trong khoảng
+	// đó. Không gửi thì giữ nguyên hành vi cũ (chỉ lịch lặp tuần) nên trang lịch học viên không đổi.
+	var timetable *dto.TimetableResponseDTO
+	var err error
+	if rawFrom, rawTo := c.Query("sessions_from"), c.Query("sessions_to"); rawFrom != "" || rawTo != "" {
+		from, errFrom := time.Parse("2006-01-02", rawFrom)
+		to, errTo := time.Parse("2006-01-02", rawTo)
+		if errFrom != nil || errTo != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "sessions_from and sessions_to must both be YYYY-MM-DD",
+			})
+		}
+		timetable, err = h.service.GetMyTimetableWithSessions(c.Context(), userID, activeRole, from, to)
+		if errors.Is(err, service.ErrTimetableRangeInvalid) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+		}
+	} else {
+		timetable, err = h.service.GetMyTimetable(c.Context(), userID, activeRole)
+	}
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve timetable",

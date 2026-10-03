@@ -21,7 +21,7 @@ const leaderboardInternalErrText = `pq: relation "leaderboard_entries" does not 
 
 type failingLeaderboardService struct{}
 
-func (failingLeaderboardService) GetLeaderboard(ctx context.Context, periodType string, limit int, viewer *service.LeaderboardViewer) (*dto.LeaderboardResponse, error) {
+func (failingLeaderboardService) GetLeaderboard(ctx context.Context, periodType string, limit int, viewer *service.LeaderboardViewer, _ *uuid.UUID) (*dto.LeaderboardResponse, error) {
 	return nil, errors.New(leaderboardInternalErrText)
 }
 

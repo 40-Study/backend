@@ -31,6 +31,7 @@ func TestL7_LeaderboardDisplay_Postgres(t *testing.T) {
 			u.AvatarURL = &avatar
 		}
 		mustCreate(t, db, &u)
+		grantSystemRole(t, db, u.ID, "STUDENT") // B-20: bảng xếp hạng chỉ liệt kê học viên
 		mustCreate(t, db, &model.UserPoint{UserID: u.ID, TotalPoints: points})
 		if display != "" {
 			mustCreate(t, db, &model.UserPreference{UserID: u.ID, LeaderboardDisplay: display})
@@ -51,7 +52,7 @@ func TestL7_LeaderboardDisplay_Postgres(t *testing.T) {
 
 	svc := NewLeaderboardService(repository.NewLeaderboardRepository(db))
 	get := func(period string, v *LeaderboardViewer) (string, map[uuid.UUID]int) {
-		resp, err := svc.GetLeaderboard(ctx, period, 100, v)
+		resp, err := svc.GetLeaderboard(ctx, period, 100, v, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

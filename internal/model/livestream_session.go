@@ -37,8 +37,14 @@ type LivestreamSession struct {
 	StartedAt       *time.Time              `gorm:"type:timestamptz" json:"started_at,omitempty"`
 	EndedAt         *time.Time              `gorm:"type:timestamptz" json:"ended_at,omitempty"`
 	ScheduledAt     *time.Time              `gorm:"type:timestamptz" json:"scheduled_at,omitempty"`
-	MaxViewers      int64                   `gorm:"default:1000" json:"max_viewers"`
-	IsRecorded      bool                    `gorm:"default:true" json:"is_recorded"`
+	// ScheduledEndAt/Location (QA hồi quy B-09): giờ kết thúc dự kiến và phòng học do GV nhập ở form
+	// "Tạo buổi học". Trước đây form có hai ô này nhưng backend không có cột nào để lưu nên bị bỏ im
+	// lặng, lịch luôn vẽ 1 giờ mặc định. Cả hai nullable: buổi cũ không có thì web vẫn vẽ mặc định.
+	ScheduledEndAt *time.Time `gorm:"type:timestamptz" json:"scheduled_end_at,omitempty"`
+	Location       *string    `gorm:"type:varchar(255)" json:"location,omitempty"`
+
+	MaxViewers int64 `gorm:"default:1000" json:"max_viewers"`
+	IsRecorded bool  `gorm:"default:true" json:"is_recorded"`
 
 	Settings     LivestreamSettings   `gorm:"type:jsonb;serializer:json;default:'{}'" json:"settings"`
 	Class        *Class               `gorm:"foreignKey:ClassID" json:"class,omitempty"`

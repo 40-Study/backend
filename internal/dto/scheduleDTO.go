@@ -163,6 +163,10 @@ type TimetableEntryDTO struct {
 	Room        *string    `json:"room,omitempty"`
 	Topic       *string    `json:"topic,omitempty"`
 	Status      string     `json:"status"`
+	// EffectiveFrom/EffectiveUntil (B-08): khoảng ngày hiệu lực của lịch lặp tuần (YYYY-MM-DD), để web
+	// không vẽ lịch đã hết hạn mãi mãi. Chỉ có ở mục lịch lặp (schedule_id), không có ở buổi cụ thể.
+	EffectiveFrom  *string `json:"effective_from,omitempty"`
+	EffectiveUntil *string `json:"effective_until,omitempty"`
 }
 
 type TimetableResponseDTO struct {

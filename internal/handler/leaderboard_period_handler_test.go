@@ -20,7 +20,7 @@ type stubLeaderboardService struct {
 	periodType string
 }
 
-func (s *stubLeaderboardService) GetLeaderboard(ctx context.Context, periodType string, limit int, _ *service.LeaderboardViewer) (*dto.LeaderboardResponse, error) {
+func (s *stubLeaderboardService) GetLeaderboard(ctx context.Context, periodType string, limit int, _ *service.LeaderboardViewer, _ *uuid.UUID) (*dto.LeaderboardResponse, error) {
 	s.calls++
 	s.periodType = periodType
 	return &dto.LeaderboardResponse{PeriodType: periodType}, nil
