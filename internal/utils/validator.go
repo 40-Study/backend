@@ -2,6 +2,7 @@ package utils
 
 import (
 	"net/url"
+	"reflect"
 	"strings"
 
 	"github.com/go-playground/validator/v10"
@@ -77,9 +78,13 @@ func getErrorMessage(err validator.FieldError) string {
 	case "email":
 		return field + " must be a valid email address"
 	case "min":
-		return field + " must be at least " + err.Param() + " characters"
+		return field + sizeBound(err, "at least")
 	case "max":
-		return field + " must be at most " + err.Param() + " characters"
+		return field + sizeBound(err, "at most")
+	case "gt":
+		return field + " must be greater than " + err.Param()
+	case "gte":
+		return field + " must be at least " + err.Param()
 	case "len":
 		return field + " must be exactly " + err.Param() + " characters"
 	case "uuid":
@@ -109,8 +114,22 @@ func getErrorMessage(err validator.FieldError) string {
 	}
 }
 
+// sizeBound dựng vế sau của thông báo min/max theo kiểu dữ liệu: "characters" chỉ đúng với chuỗi.
+// Trước đây số tiền/số lượt cũng báo "must be at least 0 characters" (B-21, QA hồi quy 03/10).
+func sizeBound(err validator.FieldError, bound string) string {
+	switch err.Kind() {
+	case reflect.String:
+		return " must be " + bound + " " + err.Param() + " characters"
+	case reflect.Slice, reflect.Array, reflect.Map:
+		return " must contain " + bound + " " + err.Param() + " items"
+	default:
+		return " must be " + bound + " " + err.Param()
+	}
+}
+
 // toSnakeCase converts a string from PascalCase/camelCase to snake_case
 // Handles consecutive uppercase (e.g., "InstructorID" -> "instructor_id", "HTTPServer" -> "http_server")
+// và số nhiều của từ viết tắt ("PermissionIDs" -> "permission_ids", không phải "permission_i_ds").
 func toSnakeCase(str string) string {
 	var result strings.Builder
 	runes := []rune(str)
@@ -121,6 +140,10 @@ func toSnakeCase(str string) string {
 			// - Next char exists and is lowercase (handles "HTTPServer" -> "http_server")
 			prevLower := runes[i-1] >= 'a' && runes[i-1] <= 'z'
 			nextLower := i+1 < len(runes) && runes[i+1] >= 'a' && runes[i+1] <= 'z'
+			// Chữ "s" cuối từ ngay sau viết tắt chỉ là dấu số nhiều, không mở từ mới.
+			if nextLower && runes[i+1] == 's' && (i+2 >= len(runes) || !isLowerRune(runes[i+2])) && !prevLower {
+				nextLower = false
+			}
 			if prevLower || nextLower {
 				result.WriteRune('_')
 			}
@@ -129,6 +152,8 @@ func toSnakeCase(str string) string {
 	}
 	return strings.ToLower(result.String())
 }
+
+func isLowerRune(r rune) bool { return r >= 'a' && r <= 'z' }
 
 func NormalizeEmail(email string) string {
 	return strings.TrimSpace(strings.ToLower(email))

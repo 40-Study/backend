@@ -40,12 +40,13 @@ func paymentStateConflict(err error) (fiber.Map, bool) {
 	return nil, false
 }
 
-// orderErrorStatus ánh xạ lỗi phân quyền (H-06, audit 260909 vòng 2) sang HTTP 403; trả 0 khi
-// không nhận diện được để caller giữ nguyên xử lý hiện có.
+// orderErrorStatus ánh xạ lỗi phân quyền (H-06, audit 260909 vòng 2) sang HTTP 404; trả 0 khi
+// không nhận diện được để caller giữ nguyên xử lý hiện có. Đơn của người khác là đơn "không xem được"
+// nên trả 404 y như id không tồn tại: 403 sẽ xác nhận cho người lạ rằng đơn đó có thật (A-23, QA hồi quy 03/10).
 func orderErrorStatus(err error) int {
 	switch err {
 	case service.ErrOrderForbidden:
-		return fiber.StatusForbidden
+		return fiber.StatusNotFound
 	default:
 		return 0
 	}
@@ -139,8 +140,8 @@ func (h *OrderHandler) GetOrder(c *fiber.Ctx) error {
 	if err != nil {
 		if status := orderErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{
-				"code":    "ERR_FORBIDDEN",
-				"message": err.Error(),
+				"code":    "ERR_NOT_FOUND",
+				"message": "Order not found",
 			})
 		}
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -207,8 +208,8 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 		}
 		if status := orderErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{
-				"code":    "ERR_FORBIDDEN",
-				"message": err.Error(),
+				"code":    "ERR_NOT_FOUND",
+				"message": "Order not found",
 			})
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -267,8 +268,8 @@ func (h *OrderHandler) CreatePaymentIntent(c *fiber.Ctx) error {
 		}
 		if status := orderErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{
-				"code":    "ERR_FORBIDDEN",
-				"message": err.Error(),
+				"code":    "ERR_NOT_FOUND",
+				"message": "Order not found",
 			})
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -306,8 +307,8 @@ func (h *OrderHandler) GetPaymentStatus(c *fiber.Ctx) error {
 	if err != nil {
 		if respStatus := orderErrorStatus(err); respStatus != 0 {
 			return c.Status(respStatus).JSON(fiber.Map{
-				"code":    "ERR_FORBIDDEN",
-				"message": err.Error(),
+				"code":    "ERR_NOT_FOUND",
+				"message": "Order not found",
 			})
 		}
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -345,8 +346,8 @@ func (h *OrderHandler) CheckPayment(c *fiber.Ctx) error {
 	if err != nil {
 		if respStatus := orderErrorStatus(err); respStatus != 0 {
 			return c.Status(respStatus).JSON(fiber.Map{
-				"code":    "ERR_FORBIDDEN",
-				"message": err.Error(),
+				"code":    "ERR_NOT_FOUND",
+				"message": "Order not found",
 			})
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
