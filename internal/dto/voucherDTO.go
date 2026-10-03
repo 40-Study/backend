@@ -18,10 +18,10 @@ type CreateVoucherRequest struct {
 	DiscountUnit   string  `json:"discount_unit" validate:"required,oneof=MONEY POINT"`
 	DiscountMethod string  `json:"discount_method" validate:"required,oneof=FIXED PERCENT"`
 
-	DiscountAmountMoney  *float64 `json:"discount_amount_money" validate:"omitempty,min=0"`  // MONEY + FIXED
-	DiscountAmountPoints *int32   `json:"discount_amount_points" validate:"omitempty,min=0"` // POINT + FIXED
+	DiscountAmountMoney  *float64 `json:"discount_amount_money" validate:"omitempty,gt=0"`  // MONEY + FIXED
+	DiscountAmountPoints *int32   `json:"discount_amount_points" validate:"omitempty,gt=0"` // POINT + FIXED
 
-	DiscountPercent *float64 `json:"discount_percent" validate:"omitempty,min=0,max=100"` // 0-100
+	DiscountPercent *float64 `json:"discount_percent" validate:"omitempty,gt=0,max=100"` // 0-100
 
 	MaxDiscountMoney  *float64 `json:"max_discount_money" validate:"omitempty,min=0"`  // Cap cho PERCENT + MONEY
 	MaxDiscountPoints *int32   `json:"max_discount_points" validate:"omitempty,min=0"` // Cap cho PERCENT + POINT
@@ -47,9 +47,9 @@ type UpdateVoucherRequest struct {
 	Name        *string `json:"name" validate:"omitempty,min=3,max=255"`
 	Description *string `json:"description"`
 
-	DiscountAmountMoney  *float64 `json:"discount_amount_money" validate:"omitempty,min=0"`
-	DiscountAmountPoints *int32   `json:"discount_amount_points" validate:"omitempty,min=0"`
-	DiscountPercent      *float64 `json:"discount_percent" validate:"omitempty,min=0,max=100"`
+	DiscountAmountMoney  *float64 `json:"discount_amount_money" validate:"omitempty,gt=0"`
+	DiscountAmountPoints *int32   `json:"discount_amount_points" validate:"omitempty,gt=0"`
+	DiscountPercent      *float64 `json:"discount_percent" validate:"omitempty,gt=0,max=100"`
 
 	MaxDiscountMoney  *float64 `json:"max_discount_money" validate:"omitempty,min=0"`
 	MaxDiscountPoints *int32   `json:"max_discount_points" validate:"omitempty,min=0"`
