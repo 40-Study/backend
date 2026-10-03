@@ -22,7 +22,7 @@ import (
 	"study.com/v1/internal/repository"
 )
 
-// r5StudentRepo giả StudentRepository.Exists (thật đòi role STUDENT đã seed).
+// r5StudentRepo giả StudentRepository.Exists (thật đòi role STUDENT đã seed); SearchEnrollable dùng repo thật.
 type r5StudentRepo struct {
 	repository.StudentRepositoryInterface
 	students map[uuid.UUID]bool
@@ -55,7 +55,7 @@ func newR5ClassEnv(t *testing.T) *r5ClassEnv {
 func (e *r5ClassEnv) buildClassService(authz ClassAuthorizer) *ClassService {
 	svc := NewClassService(repository.NewClassRepository(e.db), repository.NewCourseRepository(e.db),
 		s4TeacherRepo{teachers: map[uuid.UUID]bool{e.instructor.ID: true, e.coTeacher.ID: true, e.newTeacher.ID: true}},
-		r5StudentRepo{students: map[uuid.UUID]bool{e.student.ID: true, e.newStudent.ID: true}}, nil)
+		r5StudentRepo{StudentRepositoryInterface: repository.NewStudentRepository(e.db), students: map[uuid.UUID]bool{e.student.ID: true, e.newStudent.ID: true}}, nil)
 	if authz != nil {
 		svc.WithAuthorizer(authz)
 	}
@@ -230,6 +230,57 @@ func TestR5_OrgOwner_QuanLyLopCuaToChuc_Postgres(t *testing.T) {
 			if c.Status != "draft" {
 				t.Errorf("lọc status=draft nhưng có lớp %q", c.Status)
 			}
+		}
+	})
+
+	// can_manage / can_assign_teachers dùng đúng hàm kiểm của thao tác ghi: nút ẩn/hiện không lệch với API.
+	t.Run("GET lớp: cờ can_manage và can_assign_teachers theo vai", func(t *testing.T) {
+		for _, c := range []struct {
+			name           string
+			user           model.User
+			manage, assign bool
+		}{
+			{"chủ tổ chức A", e.ownerA, true, true},
+			{"giảng viên được gán (không phải chủ lớp)", e.coTeacher, true, false},
+			{"instructor chủ khoá", e.instructor, true, true},
+			{"học viên trong lớp", e.student, false, false},
+		} {
+			got, err := e.classes.GetClassByID(ctx, inA.ID, c.user.ID, false)
+			if err != nil {
+				t.Fatalf("%s: %v", c.name, err)
+			}
+			if got.CanManage != c.manage || got.CanAssignTeachers != c.assign {
+				t.Errorf("%s: can_manage=%v can_assign_teachers=%v, muốn %v/%v", c.name, got.CanManage, got.CanAssignTeachers, c.manage, c.assign)
+			}
+		}
+	})
+
+	t.Run("ô chọn học viên để ghi danh", func(t *testing.T) {
+		sys := model.SystemRole{Name: "STUDENT", Status: "active"}
+		mustCreate(t, e.db, &sys)
+		for _, u := range []model.User{e.student, e.newStudent} {
+			mustCreate(t, e.db, &model.UserSystemRole{UserID: u.ID, SystemRoleID: sys.ID, Status: model.UserSystemRoleStatusActive})
+		}
+		class := e.classInOrgA(t) // e.student đang học lớp này
+		got, err := e.classes.SearchEnrollableStudents(ctx, class.ID, e.ownerA.ID, false, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].ID != e.newStudent.ID {
+			t.Fatalf("ứng viên ghi danh=%+v, muốn đúng 1 người chưa học lớp (new-student)", got)
+		}
+		if byName, err := e.classes.SearchEnrollableStudents(ctx, class.ID, e.ownerA.ID, false, "khong-ton-tai"); err != nil || len(byName) != 0 {
+			t.Errorf("từ khoá không khớp: %+v err=%v, muốn rỗng", byName, err)
+		}
+		if byName, err := e.classes.SearchEnrollableStudents(ctx, class.ID, e.ownerA.ID, false, e.newStudent.UserName[:12]); err != nil || len(byName) != 1 {
+			t.Errorf("từ khoá khớp tên: %+v err=%v, muốn 1", byName, err)
+		}
+		// Học viên trong lớp: xem được lớp nhưng không quản lý -> 403; người ngoài (chủ tổ chức B) -> 404.
+		if _, err := e.classes.SearchEnrollableStudents(ctx, class.ID, e.student.ID, false, ""); !errors.Is(err, ErrNotClassTeacher) {
+			t.Errorf("học viên tìm ứng viên: err=%v, muốn ErrNotClassTeacher", err)
+		}
+		if _, err := e.classes.SearchEnrollableStudents(ctx, class.ID, e.ownerB.ID, false, ""); !errors.Is(err, ErrClassNotFound) {
+			t.Errorf("chủ tổ chức B tìm ứng viên lớp của A: err=%v, muốn ErrClassNotFound", err)
 		}
 	})
 

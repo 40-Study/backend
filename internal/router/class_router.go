@@ -39,6 +39,7 @@ func SetupClassRoutes(
 		classes.Post("/:id/students", classHandler.EnrollStudentToClass)
 		classes.Delete("/:id/students/:studentId", classHandler.RemoveStudentFromClass)
 		classes.Get("/:id/students", classHandler.GetStudentsByClass)
+		classes.Get("/:id/enrollable-students", classHandler.SearchEnrollableStudents)
 
 		// Attendances
 		attendances := classes.Group("/:classId/attendances")

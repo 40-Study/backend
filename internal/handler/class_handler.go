@@ -165,6 +165,33 @@ func (h *ClassHandler) GetOrganizationClasses(c *fiber.Ctx) error {
 	})
 }
 
+// SearchEnrollableStudents: GET /classes/:id/enrollable-students?keyword= — ô chọn học viên để ghi danh (B-12).
+func (h *ClassHandler) SearchEnrollableStudents(c *fiber.Ctx) error {
+	classID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "Invalid class ID"})
+	}
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+	students, err := h.service.SearchEnrollableStudents(c.Context(), classID, actorUserID, isAdminActor(c, h.permChecker, actorUserID), c.Query("keyword"))
+	if err != nil {
+		status := fiber.StatusInternalServerError
+		switch {
+		case errors.Is(err, service.ErrClassNotFound):
+			status = fiber.StatusNotFound
+		case errors.Is(err, service.ErrNotClassTeacher):
+			status = fiber.StatusForbidden
+		}
+		return c.Status(status).JSON(fiber.Map{"message": "Failed to search students", "error": err.Error()})
+	}
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Students retrieved successfully",
+		"data":    fiber.Map{"students": students},
+	})
+}
+
 func (h *ClassHandler) GetClassesByCourseID(c *fiber.Ctx) error {
 	courseID, err := uuid.Parse(c.Params("course_id"))
 	if err != nil {

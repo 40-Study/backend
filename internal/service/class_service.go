@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +24,8 @@ type ClassServiceInterface interface {
 	GetClassesByCourseID(ctx context.Context, courseID uuid.UUID) ([]dto.ClassResponseDTO, error)
 	// GetOrganizationClasses (B-02): lớp của một tổ chức. Quyền theo tổ chức kiểm ở router (RequireOrgPermission), không kiểm ở đây.
 	GetOrganizationClasses(ctx context.Context, orgID uuid.UUID, page, pageSize int, keyword, classStatus string) (*dto.ClassListResponseDTO, error)
+	// SearchEnrollableStudents (B-12): ô chọn học viên để ghi danh; chỉ người quản lý lớp (404 nếu không xem được, 403 nếu xem được mà không quản lý).
+	SearchEnrollableStudents(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, keyword string) ([]dto.EnrollableStudentDTO, error)
 
 	// Gán/gỡ giảng viên (S4): chỉ chủ lớp (người tạo hoặc chủ khoá) và admin. Người không xem được lớp: ErrClassNotFound; xem được nhưng không phải chủ: ErrNotClassOwner.
 	AssignTeacherToClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, req dto.AssignTeacherDTO) (*dto.TeacherClassResponseDTO, error)
@@ -264,8 +267,37 @@ func (s *ClassService) GetClassByID(ctx context.Context, id, actorUserID uuid.UU
 	if class == nil {
 		return nil, errors.New("class not found")
 	}
-	return s.toClassResponseDTO(ctx, class), nil
+	out := s.toClassResponseDTO(ctx, class)
+	// B-12: quyền ghi tính bằng chính hàm kiểm của các thao tác ghi, nên nút ẩn/hiện không thể lệch với API.
+	out.CanManage = s.requireClassTeacherOrAdmin(ctx, id, actorUserID, isAdmin) == nil
+	out.CanAssignTeachers = s.ensureOwner(ctx, id, actorUserID, isAdmin) == nil
+	return out, nil
 }
+
+// SearchEnrollableStudents: quyền như EnrollStudentToClass (quản lý lớp); người xem không được lớp nhận 404 để không dò
+// được lớp. keyword rỗng vẫn trả tối đa maxEnrollableResults học viên đầu tiên.
+func (s *ClassService) SearchEnrollableStudents(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, keyword string) ([]dto.EnrollableStudentDTO, error) {
+	if err := s.requireClassTeacherOrAdmin(ctx, classID, actorUserID, isAdmin); err != nil {
+		if errors.Is(err, ErrNotClassTeacher) {
+			if visErr := s.ensureVisible(ctx, classID, actorUserID, isAdmin); visErr != nil {
+				return nil, visErr
+			}
+		}
+		return nil, err
+	}
+	students, err := s.studentRepo.SearchEnrollable(ctx, classID, strings.TrimSpace(keyword), maxEnrollableResults)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]dto.EnrollableStudentDTO, len(students))
+	for i, st := range students {
+		out[i] = dto.EnrollableStudentDTO{ID: st.ID, UserName: st.UserName, FullName: st.FullName, AvatarURL: st.AvatarURL}
+	}
+	return out, nil
+}
+
+// maxEnrollableResults: trần số dòng của ô chọn học viên (SearchEnrollableStudents).
+const maxEnrollableResults = 20
 
 func (s *ClassService) UpdateClass(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateClassDTO) (*dto.ClassResponseDTO, error) {
 	if err := s.requireClassTeacherOrAdmin(ctx, id, actorUserID, isAdmin); err != nil {

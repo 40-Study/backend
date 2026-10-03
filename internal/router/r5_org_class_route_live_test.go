@@ -171,6 +171,25 @@ func TestR5_OrgClassRoutes_ChuToChucQuanLyLopCuaToChuc(t *testing.T) {
 		}
 	})
 
+	t.Run("cờ can_manage và ô chọn học viên", func(t *testing.T) {
+		base := "/api/classes/" + e.classA.ID.String()
+		if _, raw := e.do(t, e.ownerATok, "GET", base, ""); !strings.Contains(raw, `"can_manage":true`) || !strings.Contains(raw, `"can_assign_teachers":true`) {
+			t.Errorf("chủ A phải có can_manage và can_assign_teachers: %s", raw)
+		}
+		if _, raw := e.do(t, e.stuTok, "GET", base, ""); strings.Contains(raw, "can_manage") {
+			t.Errorf("học viên không được có can_manage: %s", raw)
+		}
+		if status, raw := e.do(t, e.ownerATok, "GET", base+"/enrollable-students?keyword=a", ""); status != fiber.StatusOK || strings.Contains(raw, "@") {
+			t.Errorf("chủ A tìm học viên: %d %s, muốn 200 và không có email", status, raw)
+		}
+		if status, raw := e.do(t, e.ownerBTok, "GET", base+"/enrollable-students", ""); status != fiber.StatusNotFound {
+			t.Errorf("chủ B tìm học viên lớp của A: %d %s, muốn 404", status, raw)
+		}
+		if status, raw := e.do(t, e.stuTok, "GET", base+"/enrollable-students", ""); status != fiber.StatusForbidden {
+			t.Errorf("học viên tìm học viên: %d %s, muốn 403", status, raw)
+		}
+	})
+
 	t.Run("kích hoạt lớp và ghi danh", func(t *testing.T) {
 		base := "/api/classes/" + e.classA.ID.String()
 		if status, raw := e.do(t, e.ownerATok, "PUT", base, `{"status":"active"}`); status != fiber.StatusOK || !strings.Contains(raw, `"active"`) {
