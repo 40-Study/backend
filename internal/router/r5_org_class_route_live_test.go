@@ -233,8 +233,8 @@ func TestR5_OrgMembersVaXoaRole_Routes(t *testing.T) {
 
 	// Xoá role còn người giữ: 409 và role còn nguyên.
 	del := "/api/org-roles/" + e.holderRole.ID.String()
-	if status, raw := e.do(t, e.ownerATok, "DELETE", del, ""); status != fiber.StatusConflict {
-		t.Fatalf("xoá role còn người giữ: %d %s, muốn 409", status, raw)
+	if status, raw := e.do(t, e.ownerATok, "DELETE", del, ""); status != fiber.StatusConflict || !strings.Contains(raw, `"code":"ROLE_IN_USE"`) {
+		t.Fatalf("xoá role còn người giữ: %d %s, muốn 409 kèm code ROLE_IN_USE", status, raw)
 	}
 	if status, raw := e.do(t, e.ownerATok, "GET", del, ""); status != fiber.StatusOK {
 		t.Errorf("role đã mất dù xoá bị từ chối: %d %s", status, raw)

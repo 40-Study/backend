@@ -69,7 +69,12 @@ func (h *RoleHandler) roleActor(c *fiber.Ctx) (activeOrgID *uuid.UUID, isAdmin b
 // respondRoleError trả 403/404 cho lỗi phân quyền/không tìm thấy, còn lại dùng fallback (400/500 cũ).
 func respondRoleError(c *fiber.Ctx, err error, fallbackStatus int, message string) error {
 	if status := roleErrorStatus(err); status != 0 {
-		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		body := fiber.Map{"message": err.Error()}
+		if errors.Is(err, service.ErrRoleInUse) {
+			// Mã ổn định để web dịch câu tiếng Việt, không so khớp chuỗi tiếng Anh.
+			body["code"] = "ROLE_IN_USE"
+		}
+		return c.Status(status).JSON(body)
 	}
 	return c.Status(fallbackStatus).JSON(fiber.Map{"message": message, "error": err.Error()})
 }
