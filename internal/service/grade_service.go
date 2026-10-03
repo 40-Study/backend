@@ -47,6 +47,17 @@ type GradeServiceInterface interface {
 // chỉ dùng user_id để ghi GradedBy, không kiểm tra người gọi có thực sự dạy lớp đó không.
 var ErrNotClassTeacher = errors.New("forbidden: not the teacher of this class")
 
+// ErrGradeScoreOutOfRange: điểm phải nằm trong [0, max_score]. Trước đây điểm 15/10 vẫn được ghi, kéo điểm
+// trung bình có trọng số của cả lớp lên theo.
+var ErrGradeScoreOutOfRange = errors.New("score must be between 0 and max_score")
+
+func validateScoreRange(score, maxScore decimal.Decimal) error {
+	if score.IsNegative() || !maxScore.IsPositive() || score.GreaterThan(maxScore) {
+		return ErrGradeScoreOutOfRange
+	}
+	return nil
+}
+
 type GradeService struct {
 	repo       repository.GradeRepositoryInterface
 	classRepo  repository.ClassRepositoryInterface
@@ -237,6 +248,9 @@ func (s *GradeService) CreateGrade(ctx context.Context, classID, gradedBy uuid.U
 	if err := s.requireStudentInClass(ctx, classID, studentID); err != nil {
 		return nil, err
 	}
+	if err := validateScoreRange(decimal.NewFromFloat(req.Score), decimal.NewFromFloat(req.MaxScore)); err != nil {
+		return nil, err
+	}
 
 	grade := &model.Grade{
 		StudentID: studentID,
@@ -399,6 +413,10 @@ func (s *GradeService) UpdateGrade(ctx context.Context, id, gradedBy uuid.UUID, 
 	}
 	if req.IsFinal != nil {
 		grade.IsFinal = *req.IsFinal
+	}
+	// Kiểm trên giá trị SAU khi áp thay đổi: chỉ sửa max_score xuống thấp hơn điểm đang có cũng phải bị chặn.
+	if err := validateScoreRange(grade.Score, grade.MaxScore); err != nil {
+		return nil, err
 	}
 	grade.GradedBy = gradedBy
 	grade.GradedAt = time.Now()
@@ -695,6 +713,7 @@ func (s *GradeService) mapGradeToDTO(g *model.Grade) *dto.GradeResponseDTO {
 		StudentID:    g.StudentID,
 		StudentName:  name,
 		ClassID:      g.ClassID,
+		ClassName:    g.Class.Name,
 		AssignmentID: g.AssignmentID,
 		QuizID:       g.QuizID,
 		SessionID:    g.SessionID,

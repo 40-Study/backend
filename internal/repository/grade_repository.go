@@ -139,6 +139,7 @@ func (r *GradeRepository) GetGradesByStudentAndClass(ctx context.Context, studen
 	var grades []model.Grade
 	err := r.db.WithContext(ctx).
 		Preload("Student").
+		Preload("Class").
 		Preload("Grader").
 		Where("student_id = ? AND class_id = ?", studentID, classID).
 		Order("grade_type ASC, created_at ASC").

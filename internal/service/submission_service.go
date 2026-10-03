@@ -140,6 +140,7 @@ type SubmissionService struct {
 	judge0Client  Judge0Client
 	redis         *redis.Client
 	cfg           *config.Config
+	orgAccess     assignmentOrgAccess
 }
 
 func NewSubmissionService(
@@ -173,8 +174,16 @@ func (s *SubmissionService) canManageAssignment(ctx context.Context, assignment 
 	if assignment == nil {
 		return false, nil
 	}
-	return s.assignmentSvc.CanManage(ctx, assignment.ID, requesterID, isAdmin)
+	manage, err := s.assignmentSvc.CanManage(ctx, assignment.ID, requesterID, isAdmin)
+	if err != nil || manage {
+		return manage, err
+	}
+	// R4: chủ/quản trị tổ chức của lớp được ĐỌC bài nộp để chấm (cả hai nơi gọi hàm này đều chỉ đọc).
+	return orgManagesAssignmentClass(ctx, s.orgAccess, assignment, requesterID)
 }
+
+// SetOrgAccess nối kiểm tra quyền tổ chức (tuỳ chọn; nil = không ai được nâng quyền).
+func (s *SubmissionService) SetOrgAccess(a assignmentOrgAccess) { s.orgAccess = a }
 
 // canAccessSubmission cho phép: (1) chính chủ bài nộp, hoặc (2) giáo viên "sở hữu" assignment
 // (xem canManageAssignment). Trước đây chỉ kiểm SessionID -> giáo viên không xem được bài nộp

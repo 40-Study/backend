@@ -58,7 +58,11 @@ type AssignmentService struct {
 	submissionRepo repository.SubmissionRepositoryInterface
 	classAccess    assignmentClassAccess
 	sessionGate    assignmentSessionGate
+	orgAccess      assignmentOrgAccess
 }
+
+// SetOrgAccess nối kiểm tra quyền tổ chức (tuỳ chọn; nil = không ai được nâng quyền).
+func (s *AssignmentService) SetOrgAccess(a assignmentOrgAccess) { s.orgAccess = a }
 
 func NewAssignmentService(
 	repo repository.AssignmentRepositoryInterface,
@@ -414,6 +418,10 @@ func (s *AssignmentService) CanView(ctx context.Context, assignmentID, userID uu
 	}
 	if manage, err := s.repo.CanManage(ctx, assignmentID, userID); err != nil || manage {
 		return manage, err
+	}
+	// R4: chủ/quản trị tổ chức của lớp xem được đề (kể cả bản nháp) để chấm bài; chỉ đọc, không nâng CanManage.
+	if org, err := orgManagesAssignmentClass(ctx, s.orgAccess, assignment, userID); err != nil || org {
+		return org, err
 	}
 	if !assignment.IsPublished {
 		return false, nil
