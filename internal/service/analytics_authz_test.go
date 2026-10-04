@@ -29,6 +29,7 @@ type fakeClassRepoForAnalytics struct {
 	repository.ClassRepositoryInterface
 	class          *model.Class
 	teacherOfClass map[uuid.UUID]bool // classID -> actor is teacher
+	student        bool               // actor dang hoc lop (xem duoc lop)
 }
 
 func (r *fakeClassRepoForAnalytics) GetByID(_ context.Context, _ uuid.UUID) (*model.Class, error) {
@@ -40,7 +41,7 @@ func (r *fakeClassRepoForAnalytics) TeacherClassExists(_ context.Context, classI
 }
 
 func (r *fakeClassRepoForAnalytics) StudentClassExists(_ context.Context, _, _ uuid.UUID) (bool, error) {
-	return false, nil
+	return r.student, nil
 }
 
 type fakeCourseRepoForAnalytics struct {
@@ -73,10 +74,31 @@ func TestGetLivestreamAnalytics_KhongPhaiHostHayGiaoVienLop_TuChoi(t *testing.T)
 
 	_, err := svc.GetLivestreamAnalytics(context.Background(), sessionID, strangerID, false)
 	if err == nil {
-		t.Fatal("muon loi 403 (ErrNotAnalyticsOwner), duoc nil — giao vien khac xem duoc so lieu cua lop nguoi khac")
+		t.Fatal("muon loi (404), duoc nil — giao vien khac xem duoc so lieu cua lop nguoi khac")
 	}
-	if !errors.Is(err, ErrNotAnalyticsOwner) {
-		t.Fatalf("muon ErrNotAnalyticsOwner, duoc: %v", err)
+	// W3-BE: nguoi khong xem duoc lop nhan 404 (ErrClassNotFound), khong lo buoi live ton tai.
+	if !errors.Is(err, ErrClassNotFound) {
+		t.Fatalf("muon ErrClassNotFound, duoc: %v", err)
+	}
+}
+
+// Hoc vien dang hoc lop xem duoc lop nhung khong co quyen xem thong ke -> 403 (ErrNotClassTeacher).
+func TestGetLivestreamAnalytics_HocVienCuaLop_Bi403(t *testing.T) {
+	classID := uuid.New()
+	sessionID := uuid.New()
+	svc := &AnalyticsService{
+		livestreamRepo: &fakeLivestreamRepoForAnalytics{session: &model.LivestreamSession{
+			BaseModel: model.BaseModel{ID: sessionID},
+			HostID:    uuid.New(),
+			ClassID:   classID,
+		}},
+		classRepo:  &fakeClassRepoForAnalytics{class: &model.Class{BaseModel: model.BaseModel{ID: classID}}, student: true},
+		courseRepo: &fakeCourseRepoForAnalytics{},
+	}
+
+	_, err := svc.GetLivestreamAnalytics(context.Background(), sessionID, uuid.New(), false)
+	if !errors.Is(err, ErrNotClassTeacher) {
+		t.Fatalf("muon ErrNotClassTeacher, duoc: %v", err)
 	}
 }
 

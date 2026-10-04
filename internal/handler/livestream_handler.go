@@ -58,11 +58,13 @@ func respondForbiddenOrError(c *fiber.Ctx, err error) error {
 	}
 	// B-10/B-21: lỗi đầu vào 400, sai trạng thái 409, không tồn tại 404 — trước đây tất cả về 500.
 	switch {
+	case errors.Is(err, service.ErrClassArchived):
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"code": "CLASS_ARCHIVED", "message": err.Error(), "error": err.Error()})
 	case errors.Is(err, service.ErrLivestreamInvalidInput):
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "Validation failed", "error": err.Error()})
 	case errors.Is(err, service.ErrLivestreamStateConflict):
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"message": "LIVESTREAM_STATE_CONFLICT", "error": err.Error()})
-	case errors.Is(err, service.ErrSessionNotFound):
+	case errors.Is(err, service.ErrSessionNotFound), errors.Is(err, service.ErrClassNotFound):
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})

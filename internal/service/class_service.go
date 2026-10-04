@@ -56,12 +56,26 @@ func (s *ClassService) requireClassTeacherOrAdmin(ctx context.Context, classID, 
 	// S4: một định nghĩa "quản lý lớp" duy nhất (class_access.go): giảng viên lớp, chủ khoá, người
 	// tạo lớp, admin. Trước đây chỉ tra teacher_classes nên chủ khoá không sửa được lớp của khoá mình.
 	// B-12: cộng chủ/quản trị tổ chức của lớp (classAccessAsAdmin).
-	elevated, err := s.accessAsAdmin(ctx, classID, actorUserID, isAdmin)
-	if err != nil {
+	// W2-A: người không xem được lớp nhận 404 (không phải 403), như các route đọc. Nâng quyền cho chủ tổ chức nằm
+	// trong ensureClassManageWrite (luật ghi vào lớp duy nhất).
+	return ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, s.authz, actorUserID, classID, isAdmin)
+}
+
+// requireClassWritable: quyền quản lý lớp (requireClassTeacherOrAdmin) rồi lớp chưa lưu trữ. Dùng cho thao tác GHI;
+// requireClassTeacherOrAdmin trần vẫn dùng cho CanManage và các route đọc, vì lớp lưu trữ vẫn phải mở lại được.
+func (s *ClassService) requireClassWritable(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool) error {
+	if err := s.requireClassTeacherOrAdmin(ctx, classID, actorUserID, isAdmin); err != nil {
 		return err
 	}
-	// W2-A: người không xem được lớp nhận 404 (không phải 403), như các route đọc.
-	return ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, actorUserID, classID, elevated)
+	return ensureClassWritable(ctx, s.classRepo, classID)
+}
+
+// ensureOwnerWritable: chủ lớp (ensureOwner) rồi lớp chưa lưu trữ; cho gán/gỡ giảng viên.
+func (s *ClassService) ensureOwnerWritable(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool) error {
+	if err := s.ensureOwner(ctx, classID, actorUserID, isAdmin); err != nil {
+		return err
+	}
+	return ensureClassWritable(ctx, s.classRepo, classID)
 }
 
 // accessAsAdmin: isAdmin nâng lên cho chủ/quản trị tổ chức của lớp, chỉ để kiểm quyền truy cập lớp.
@@ -399,6 +413,12 @@ func (s *ClassService) UpdateClass(ctx context.Context, id, actorUserID uuid.UUI
 		return nil, errors.New("class not found")
 	}
 
+	// W3-BE: lớp đã lưu trữ chỉ nhận đúng thao tác MỞ LẠI (đặt status khác archived); sửa thông tin khác khi vẫn
+	// lưu trữ bị 409. Kiểm sau quyền nên người ngoài vẫn nhận 404/403.
+	if class.Status == classStatusArchived && (req.Status == nil || *req.Status == classStatusArchived) {
+		return nil, ErrClassArchived
+	}
+
 	// Validate CourseID exists if being updated
 	if req.CourseID != nil {
 		exists, err := s.courseRepo.Exists(ctx, *req.CourseID)
@@ -498,7 +518,7 @@ func (s *ClassService) DeleteClass(ctx context.Context, id, actorUserID uuid.UUI
 // - "assistant": Trợ giảng, hỗ trợ giáo viên chính
 func (s *ClassService) AssignTeacherToClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, req dto.AssignTeacherDTO) (*dto.TeacherClassResponseDTO, error) {
 	// S4: chỉ chủ lớp/admin. Đây là cửa duy nhất để thành CanManage trên assignment của lớp.
-	if err := s.ensureOwner(ctx, classID, actorUserID, isAdmin); err != nil {
+	if err := s.ensureOwnerWritable(ctx, classID, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 
@@ -550,7 +570,7 @@ func (s *ClassService) AssignTeacherToClass(ctx context.Context, classID, actorU
 
 // AssignTeachers assigns multiple teachers to a class at once
 func (s *ClassService) AssignTeachersToClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, req dto.AssignTeachersDTO) ([]dto.TeacherClassResponseDTO, error) {
-	if err := s.ensureOwner(ctx, classID, actorUserID, isAdmin); err != nil {
+	if err := s.ensureOwnerWritable(ctx, classID, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 
@@ -610,7 +630,7 @@ func (s *ClassService) AssignTeachersToClass(ctx context.Context, classID, actor
 }
 
 func (s *ClassService) RemoveTeacherFromClass(ctx context.Context, classID, teacherID, actorUserID uuid.UUID, isAdmin bool) error {
-	if err := s.ensureOwner(ctx, classID, actorUserID, isAdmin); err != nil {
+	if err := s.ensureOwnerWritable(ctx, classID, actorUserID, isAdmin); err != nil {
 		return err
 	}
 
@@ -679,7 +699,7 @@ func (s *ClassService) GetTeachersByClass(ctx context.Context, classID, actorUse
 // Student-Class
 
 func (s *ClassService) EnrollStudentToClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, req dto.EnrollStudentDTO) (*dto.StudentClassResponseDTO, error) {
-	if err := s.requireClassTeacherOrAdmin(ctx, classID, actorUserID, isAdmin); err != nil {
+	if err := s.requireClassWritable(ctx, classID, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
 
@@ -732,7 +752,7 @@ func (s *ClassService) EnrollStudentToClass(ctx context.Context, classID, actorU
 }
 
 func (s *ClassService) RemoveStudentFromClass(ctx context.Context, classID, studentID, actorUserID uuid.UUID, isAdmin bool) error {
-	if err := s.requireClassTeacherOrAdmin(ctx, classID, actorUserID, isAdmin); err != nil {
+	if err := s.requireClassWritable(ctx, classID, actorUserID, isAdmin); err != nil {
 		return err
 	}
 

@@ -80,6 +80,15 @@ func (s *GradeService) requireClassGrader(ctx context.Context, classID, userID u
 	return ensureClassGrade(ctx, s.classRepo, s.courseRepo, s.authz, userID, classID)
 }
 
+// requireClassGraderWritable: requireClassGrader rồi lớp chưa lưu trữ. Dùng cho thao tác GHI điểm (tạo/sửa/xoá cột,
+// điểm, tính và chốt điểm tổng kết); đọc bảng điểm dùng requireClassGrader trần nên lớp lưu trữ vẫn xem được.
+func (s *GradeService) requireClassGraderWritable(ctx context.Context, classID, userID uuid.UUID) error {
+	if err := s.requireClassGrader(ctx, classID, userID); err != nil {
+		return err
+	}
+	return ensureClassWritable(ctx, s.classRepo, classID)
+}
+
 // requireStudentInClass (lane P): điểm chỉ ghi được cho học viên đang học lớp đó. Trước đây giảng viên
 // của lớp ghi điểm cho student_id bất kỳ, và điểm hiện ra trong bảng điểm cá nhân (GetMyGrades) của
 // người không hề thuộc lớp. Dùng ErrStudentNotInClass như điểm danh lớp (attendance_service.go).
@@ -110,7 +119,7 @@ func (s *GradeService) invalidateGradeCache(ctx context.Context, classID uuid.UU
 // ============================================================================
 
 func (s *GradeService) CreateGradeColumn(ctx context.Context, classID, actorUserID uuid.UUID, req dto.CreateGradeColumnDTO) (*dto.GradeColumnResponseDTO, error) {
-	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGraderWritable(ctx, classID, actorUserID); err != nil {
 		return nil, err
 	}
 	col := &model.GradeColumn{
@@ -156,7 +165,7 @@ func (s *GradeService) GetGradeColumns(ctx context.Context, classID, actorUserID
 }
 
 func (s *GradeService) UpdateGradeColumn(ctx context.Context, classID, id, actorUserID uuid.UUID, req dto.UpdateGradeColumnDTO) (*dto.GradeColumnResponseDTO, error) {
-	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGraderWritable(ctx, classID, actorUserID); err != nil {
 		return nil, err
 	}
 	col, err := s.repo.GetGradeColumnByID(ctx, id)
@@ -195,7 +204,7 @@ func (s *GradeService) UpdateGradeColumn(ctx context.Context, classID, id, actor
 }
 
 func (s *GradeService) DeleteGradeColumn(ctx context.Context, classID, id, actorUserID uuid.UUID) error {
-	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGraderWritable(ctx, classID, actorUserID); err != nil {
 		return err
 	}
 	col, err := s.repo.GetGradeColumnByID(ctx, id)
@@ -214,7 +223,7 @@ func (s *GradeService) DeleteGradeColumn(ctx context.Context, classID, id, actor
 }
 
 func (s *GradeService) ReorderGradeColumns(ctx context.Context, classID, actorUserID uuid.UUID, req dto.ReorderGradeColumnsDTO) error {
-	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGraderWritable(ctx, classID, actorUserID); err != nil {
 		return err
 	}
 	ids := make([]uuid.UUID, len(req.ColumnIDs))
@@ -238,7 +247,7 @@ func (s *GradeService) ReorderGradeColumns(ctx context.Context, classID, actorUs
 // ============================================================================
 
 func (s *GradeService) CreateGrade(ctx context.Context, classID, gradedBy uuid.UUID, req dto.CreateGradeDTO) (*dto.GradeResponseDTO, error) {
-	if err := s.requireClassGrader(ctx, classID, gradedBy); err != nil {
+	if err := s.requireClassGraderWritable(ctx, classID, gradedBy); err != nil {
 		return nil, err
 	}
 
@@ -410,7 +419,7 @@ func (s *GradeService) UpdateGrade(ctx context.Context, id, gradedBy uuid.UUID, 
 	if err != nil || grade == nil {
 		return nil, errors.New("grade not found")
 	}
-	if err := s.requireClassGrader(ctx, grade.ClassID, gradedBy); err != nil {
+	if err := s.requireClassGraderWritable(ctx, grade.ClassID, gradedBy); err != nil {
 		return nil, err
 	}
 
@@ -453,7 +462,7 @@ func (s *GradeService) DeleteGrade(ctx context.Context, id, actorUserID uuid.UUI
 	if err != nil || grade == nil {
 		return errors.New("grade not found")
 	}
-	if err := s.requireClassGrader(ctx, grade.ClassID, actorUserID); err != nil {
+	if err := s.requireClassGraderWritable(ctx, grade.ClassID, actorUserID); err != nil {
 		return err
 	}
 
@@ -468,7 +477,7 @@ func (s *GradeService) DeleteGrade(ctx context.Context, id, actorUserID uuid.UUI
 func (s *GradeService) BulkCreateGrades(ctx context.Context, classID, gradedBy uuid.UUID, req dto.BulkCreateGradesDTO) ([]dto.GradeResponseDTO, error) {
 	// Kiểm quyền và học viên của CẢ lô trước khi ghi dòng nào (như điểm danh lớp, M-4 review S4),
 	// để một học viên ngoài lớp không làm lô ghi dở dang.
-	if err := s.requireClassGrader(ctx, classID, gradedBy); err != nil {
+	if err := s.requireClassGraderWritable(ctx, classID, gradedBy); err != nil {
 		return nil, err
 	}
 	// Dựng và validate TOÀN BỘ lô (học viên thuộc lớp, khoảng điểm) trước khi ghi: một dòng sai ở giữa lô
@@ -504,7 +513,7 @@ func (s *GradeService) BulkCreateGrades(ctx context.Context, classID, gradedBy u
 // ============================================================================
 
 func (s *GradeService) CalculateFinalGrades(ctx context.Context, classID, actorUserID uuid.UUID) ([]dto.FinalGradeResponseDTO, error) {
-	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGraderWritable(ctx, classID, actorUserID); err != nil {
 		return nil, err
 	}
 	grades, err := s.repo.GetGradesByClassID(ctx, classID)
@@ -600,7 +609,7 @@ func (s *GradeService) GetFinalGrades(ctx context.Context, classID, actorUserID 
 }
 
 func (s *GradeService) UpdateFinalGrade(ctx context.Context, classID, id, actorUserID uuid.UUID, req dto.UpdateFinalGradeDTO) (*dto.FinalGradeResponseDTO, error) {
-	if err := s.requireClassGrader(ctx, classID, actorUserID); err != nil {
+	if err := s.requireClassGraderWritable(ctx, classID, actorUserID); err != nil {
 		return nil, err
 	}
 	fg, err := s.repo.GetFinalGradeByID(ctx, id)
@@ -631,7 +640,7 @@ func (s *GradeService) UpdateFinalGrade(ctx context.Context, classID, id, actorU
 }
 
 func (s *GradeService) FinalizeFinalGrades(ctx context.Context, classID, userID uuid.UUID) error {
-	if err := s.requireClassGrader(ctx, classID, userID); err != nil {
+	if err := s.requireClassGraderWritable(ctx, classID, userID); err != nil {
 		return err
 	}
 	if err := s.repo.FinalizeFinalGrades(ctx, classID, userID); err != nil {

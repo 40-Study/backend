@@ -8,6 +8,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -22,6 +23,7 @@ type fakeClassRepoAuthz struct {
 	repository.ClassRepositoryInterface
 	class          *model.Class
 	isTeacher      bool
+	isStudent      bool
 	teacherCalls   int
 	getByIDErr     error
 	teacherErr     error
@@ -42,6 +44,10 @@ func (f *fakeClassRepoAuthz) TeacherClassExists(ctx context.Context, classID, te
 	return f.isTeacher, nil
 }
 
+func (f *fakeClassRepoAuthz) StudentClassExists(ctx context.Context, classID, studentID uuid.UUID) (bool, error) {
+	return f.isStudent, nil
+}
+
 // fakeCourseRepoAuthz: GetByID tra ve course co InstructorID configure san.
 type fakeCourseRepoAuthz struct {
 	repository.CourseRepositoryInterface
@@ -57,7 +63,7 @@ func newLivestreamServiceForAuthz(classRepo repository.ClassRepositoryInterface,
 }
 
 // TestLivestreamCreate_HocSinhTaoPhienChoLopKhongDay_BiTuChoi (kich ban chinh cua N1): user
-// khong phai giao vien lop, khong phai instructor khoa hoc -> 403 (ErrNotClassTeacher), VA khong
+// khong phai giao vien lop, khong phai instructor khoa hoc -> khong xem duoc lop => ErrClassNotFound (404, W3-BE), VA khong
 // co ban ghi nao duoc tao (repo.Create khong duoc goi) -> chung minh khong co enqueue reminder
 // nao xay ra sau do (enqueue nam SAU buoc repo.Create trong code, xem livestream_service.go).
 func TestLivestreamCreate_HocSinhTaoPhienChoLopKhongDay_BiTuChoi(t *testing.T) {
@@ -84,14 +90,30 @@ func TestLivestreamCreate_HocSinhTaoPhienChoLopKhongDay_BiTuChoi(t *testing.T) {
 	if session != nil {
 		t.Error("session phai la nil khi bi tu choi")
 	}
-	if !errorIsNotClassTeacher(err) {
-		t.Errorf("loi = %v, mong doi ErrNotClassTeacher", err)
+	if !errors.Is(err, ErrClassNotFound) {
+		t.Errorf("loi = %v, mong doi ErrClassNotFound (nguoi ngoai lop: 404, khong lo id lop)", err)
 	}
 	if repo.created != nil {
 		t.Error("repo.Create BI GOI du khong co quyen — nghia la enqueue reminder cung se chay, ban thong bao toi ca lop nguoi khac")
 	}
-	if classRepo.teacherCalls != 1 {
-		t.Errorf("TeacherClassExists duoc goi %d lan, mong doi 1", classRepo.teacherCalls)
+	if classRepo.teacherCalls == 0 {
+		t.Error("TeacherClassExists khong duoc goi: quyen khong duoc kiem")
+	}
+}
+
+// Hoc vien DANG HOC lop (xem duoc lop) nhung khong quan ly -> 403 (ErrNotClassTeacher), khong phai 404.
+func TestLivestreamCreate_HocVienCuaLop_BiTuChoi403(t *testing.T) {
+	classID := uuid.New()
+	classRepo := &fakeClassRepoAuthz{class: &model.Class{BaseModel: model.BaseModel{ID: classID}}, isStudent: true}
+	repo := &fakeLivestreamRepoHostTest{}
+	svc := newLivestreamServiceForAuthz(classRepo, &fakeCourseRepoAuthz{}, repo)
+
+	_, err := svc.Create(context.Background(), uuid.New(), dto.CreateLivestreamDTO{Title: "x", ClassID: classID.String()})
+	if !errorIsNotClassTeacher(err) {
+		t.Errorf("loi = %v, mong doi ErrNotClassTeacher", err)
+	}
+	if repo.created != nil {
+		t.Error("repo.Create khong duoc phep goi")
 	}
 }
 
@@ -173,8 +195,8 @@ func TestLivestreamCreate_KhongPhaiInstructorKhoaHoc_TuChoi(t *testing.T) {
 	req := dto.CreateLivestreamDTO{Title: "Buoi hoc gia mao", ClassID: classID.String()}
 
 	_, err := svc.Create(context.Background(), someOtherInstructor, req)
-	if !errorIsNotClassTeacher(err) {
-		t.Errorf("loi = %v, mong doi ErrNotClassTeacher", err)
+	if !errors.Is(err, ErrClassNotFound) {
+		t.Errorf("loi = %v, mong doi ErrClassNotFound", err)
 	}
 	if repo.created != nil {
 		t.Error("repo.Create khong duoc phep goi")

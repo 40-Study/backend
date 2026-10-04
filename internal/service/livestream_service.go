@@ -207,11 +207,25 @@ func (s *LivestreamService) isClassTeacherOrInstructor(ctx context.Context, user
 	return classTeacherOrInstructor(ctx, s.classRepo, s.courseRepo, userID, class)
 }
 
+// EnsureSessionClassWritable (W3-BE): lớp của phiên live phải chưa lưu trữ; dùng cho bài tập gắn phiên (không có class_id).
+// Phiên không tồn tại thì không có lớp nào để chặn (nil): lỗi 404 do bước quyền của người gọi quyết định.
+func (s *LivestreamService) EnsureSessionClassWritable(ctx context.Context, sessionID uuid.UUID) error {
+	session, err := s.repo.GetByID(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session == nil || session.ClassID == uuid.Nil {
+		return nil
+	}
+	return ensureClassWritable(ctx, s.classRepo, session.ClassID)
+}
+
 // canManageClass tra ErrNotClassTeacher khi userID khong duoc quan tri lop. Uy quyen cho
 // ensureClassManage (class_access.go) — mot dinh nghia duy nhat cho ca livestream lan
 // class-lesson-content.
 func (s *LivestreamService) canManageClass(ctx context.Context, userID, classID uuid.UUID, isAdmin bool) error {
-	return ensureClassManage(ctx, s.classRepo, s.courseRepo, userID, classID, isAdmin)
+	// W3-BE: người không xem được lớp -> ErrClassNotFound (404, không lộ id), xem được mà không quản lý -> 403.
+	return ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, nil, userID, classID, isAdmin)
 }
 
 // canManageSession = host cua phien, HOAC admin he thong (D2), HOAC nguoi quan tri duoc lop cua
@@ -256,6 +270,10 @@ func (s *LivestreamService) Create(ctx context.Context, hostID uuid.UUID, req dt
 	// N1/V3-6/V3-7 (issue #58): host phai la giao vien cua class_id HOAC instructor cua khoa
 	// hoc chua lop do, truoc khi tao bat cu thu gi.
 	if err := s.canManageClass(ctx, hostID, classID, false); err != nil {
+		return nil, err
+	}
+	// W3-BE: không tạo phiên live mới cho lớp đã lưu trữ (quyền xét trước).
+	if err := ensureClassWritable(ctx, s.classRepo, classID); err != nil {
 		return nil, err
 	}
 
@@ -448,6 +466,10 @@ func (s *LivestreamService) Update(ctx context.Context, userID uuid.UUID, isAdmi
 	if err != nil {
 		return nil, err
 	}
+	// W3-BE: lớp đã lưu trữ chỉ đọc (quyền đã xét ở getManageableSession).
+	if err := ensureClassWritable(ctx, s.classRepo, session.ClassID); err != nil {
+		return nil, err
+	}
 
 	if req.Title != nil {
 		session.Title = *req.Title
@@ -507,6 +529,9 @@ func (s *LivestreamService) Delete(ctx context.Context, userID uuid.UUID, isAdmi
 	if err != nil {
 		return err
 	}
+	if err := ensureClassWritable(ctx, s.classRepo, session.ClassID); err != nil {
+		return err
+	}
 
 	_ = s.livekitSvc.DeleteRoom(ctx, session.RoomName)
 	return s.repo.Delete(ctx, id)
@@ -515,6 +540,10 @@ func (s *LivestreamService) Delete(ctx context.Context, userID uuid.UUID, isAdmi
 func (s *LivestreamService) Start(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) (*model.LivestreamSession, error) {
 	session, err := s.getManageableSession(ctx, userID, isAdmin, id)
 	if err != nil {
+		return nil, err
+	}
+	// W3-BE: lớp đã lưu trữ chỉ đọc (quyền đã xét ở getManageableSession).
+	if err := ensureClassWritable(ctx, s.classRepo, session.ClassID); err != nil {
 		return nil, err
 	}
 	return s.startSession(ctx, session)

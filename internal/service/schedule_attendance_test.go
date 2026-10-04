@@ -91,9 +91,18 @@ func (r *stubScheduleRepo) StudentCanAttendSession(context.Context, uuid.UUID, u
 	return r.studentCanAttend, nil
 }
 
+// activeClassRepoStub: lop nao cung ton tai va dang hoat dong (W3-BE: ghi diem danh kiem lop chua luu tru).
+type activeClassRepoStub struct {
+	repository.ClassRepositoryInterface
+}
+
+func (activeClassRepoStub) GetByID(_ context.Context, id uuid.UUID) (*model.Class, error) {
+	return &model.Class{BaseModel: model.BaseModel{ID: id}, Status: "active"}, nil
+}
+
 func newTestService(repo repository.ScheduleRepositoryInterface) *ScheduleService {
 	// redis/queue de nil: cac ham attendance duoc test khong dung toi
-	return &ScheduleService{repo: repo}
+	return &ScheduleService{repo: repo, classRepo: activeClassRepoStub{}}
 }
 
 // ============================================================================

@@ -154,20 +154,9 @@ func requireCheckInOpen(session *model.ClassSession, now time.Time) error {
 }
 
 // requireClassWrite: người quản lý lớp và admin qua; người xem được lớp mà không quản lý nhận
-// ErrNotClassTeacher (403); người không xem được nhận ErrClassNotFound (404).
+// ErrNotClassTeacher (403); người không xem được nhận ErrClassNotFound (404); lớp đã lưu trữ ErrClassArchived (409).
 func (s *ScheduleService) requireClassWrite(ctx context.Context, actorID uuid.UUID, isAdmin bool, classID uuid.UUID) error {
-	elevated, err := classAccessAsAdmin(ctx, s.classRepo, s.authz, actorID, classID, isAdmin)
-	if err != nil {
-		return err
-	}
-	err = ensureClassManage(ctx, s.classRepo, s.courseRepo, actorID, classID, elevated)
-	if !errors.Is(err, ErrNotClassTeacher) {
-		return err
-	}
-	if visibleErr := ensureClassVisible(ctx, s.classRepo, s.courseRepo, actorID, classID, elevated); visibleErr != nil {
-		return visibleErr
-	}
-	return ErrNotClassTeacher
+	return ensureClassWriteOpen(ctx, s.classRepo, s.courseRepo, s.authz, actorID, classID, isAdmin)
 }
 
 // requireClassRead: thành viên lớp, người quản lý lớp, admin; người khác 404.
@@ -600,6 +589,20 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 		return nil, errors.New("no recurring schedules found for this class")
 	}
 
+	// W3-BE: buổi đã HUỶ của một lịch lặp không được sinh lại (huỷ có chủ ý, vd nghỉ lễ). Buổi huỷ không chiếm giờ
+	// (HasOverlappingSession bỏ qua), nên không có bước kiểm này thì chạy lại 'sinh buổi' làm buổi huỷ quay về.
+	cancelled, err := s.repo.GetCancelledScheduledSessions(ctx, []uuid.UUID{classID}, req.StartDate, req.EndDate)
+	if err != nil {
+		return nil, err
+	}
+	wasCancelled := make(map[string]struct{}, len(cancelled))
+	for _, c := range cancelled {
+		if c.ScheduleID != nil {
+			wasCancelled[c.ScheduleID.String()+"|"+c.Date.Format("2006-01-02")] = struct{}{}
+		}
+	}
+	skippedCancelled := 0
+
 	var sessions []model.ClassSession
 	for d := startDate; !d.After(endDate); d = d.AddDate(0, 0, 1) {
 		weekday := int(d.Weekday())
@@ -611,6 +614,10 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 				continue
 			}
 			if sch.EffectiveUntil != nil && d.After(*sch.EffectiveUntil) {
+				continue
+			}
+			if _, gone := wasCancelled[sch.ID.String()+"|"+d.Format("2006-01-02")]; gone {
+				skippedCancelled++
 				continue
 			}
 
@@ -626,6 +633,10 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 	}
 
 	if len(sessions) == 0 {
+		if skippedCancelled > 0 {
+			// Mọi ngày còn lại đều là buổi đã huỷ: không có gì mới để sinh (cùng nghĩa với sinh lại khoảng đã sinh).
+			return nil, ErrSessionOverlap
+		}
 		return nil, errors.New("no sessions generated for the given date range")
 	}
 
@@ -873,6 +884,10 @@ func (s *ScheduleService) StudentCheckIn(ctx context.Context, sessionID, student
 	if err != nil {
 		return nil, err
 	}
+	// W3-BE: lớp đã lưu trữ chỉ đọc, kể cả điểm danh tự động của học viên (quyền xét trước ở requireStudentSessionAccess).
+	if err := ensureClassWritable(ctx, s.classRepo, session.ClassID); err != nil {
+		return nil, err
+	}
 	if err := requireCheckInOpen(session, now); err != nil {
 		return nil, err
 	}
@@ -903,6 +918,13 @@ func (s *ScheduleService) StudentCheckIn(ctx context.Context, sessionID, student
 
 func (s *ScheduleService) StudentCheckOut(ctx context.Context, sessionID, studentID uuid.UUID) (*dto.SessionAttendanceResponseDTO, error) {
 	if err := s.requireStudentSessionAccess(ctx, sessionID, studentID); err != nil {
+		return nil, err
+	}
+	session, err := s.sessionClass(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureClassWritable(ctx, s.classRepo, session.ClassID); err != nil {
 		return nil, err
 	}
 	att, err := s.repo.GetAttendanceBySessionAndStudent(ctx, sessionID, studentID)

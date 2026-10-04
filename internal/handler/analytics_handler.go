@@ -33,7 +33,7 @@ func requireAnalyticsAuthErr(c *fiber.Ctx, err error) error {
 	}
 	// Buổi không tồn tại là 404 (trước đây rơi về 500 vì service trả errors.New thô); trang thống kê của GV
 	// nhập id tay nên đây là trường hợp thường gặp, không phải lỗi hạ tầng.
-	if errors.Is(err, service.ErrSessionNotFound) {
+	if errors.Is(err, service.ErrSessionNotFound) || errors.Is(err, service.ErrClassNotFound) {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "session not found"})
 	}
 	if errors.Is(err, service.ErrNotAnalyticsOwner) || errors.Is(err, service.ErrNotClassTeacher) {

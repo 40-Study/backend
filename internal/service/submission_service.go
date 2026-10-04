@@ -236,6 +236,15 @@ func (s *SubmissionService) Submit(ctx context.Context, isAdmin bool, req dto.Cr
 		return nil, ErrAssignmentNotFound
 	}
 
+	// W3-BE: lớp đã lưu trữ chỉ đọc, học viên không nộp bài mới (quyền xem xét trước ở requireViewable).
+	if g, ok := s.assignmentSvc.(interface {
+		EnsureWritable(ctx context.Context, a *model.Assignment) error
+	}); ok {
+		if err := g.EnsureWritable(ctx, assignment); err != nil {
+			return nil, err
+		}
+	}
+
 	if !assignment.IsPublished {
 		return nil, errors.New("assignment is not published")
 	}

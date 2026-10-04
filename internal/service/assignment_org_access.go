@@ -51,6 +51,11 @@ func (a *classOrgAccess) OrgManagesClass(ctx context.Context, classID, userID uu
 	return orgManagesClass(ctx, a.classRepo, a.authz, userID, class)
 }
 
+// EnsureClassWritable (W3-BE): lớp đã lưu trữ -> ErrClassArchived; dùng chung ensureClassWritable với các service khác.
+func (a *classOrgAccess) EnsureClassWritable(ctx context.Context, classID uuid.UUID) error {
+	return ensureClassWritable(ctx, a.classRepo, classID)
+}
+
 // ClassAudience: admin -> quản lý; giảng viên lớp/chủ khoá/người tạo -> quản lý; chủ/quản trị tổ chức của lớp
 // -> quản lý; học viên đang học -> học viên; còn lại (kể cả lớp không tồn tại) -> không.
 func (a *classOrgAccess) ClassAudience(ctx context.Context, classID, userID uuid.UUID, isAdmin bool) (ClassAudience, error) {

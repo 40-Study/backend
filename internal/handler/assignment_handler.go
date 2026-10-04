@@ -111,7 +111,7 @@ func (h *AssignmentHandler) Create(c *fiber.Ctx) error {
 		case errors.Is(err, service.ErrAssignmentTargetRequired):
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return assignmentWriteFail(c, err)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -214,7 +214,7 @@ func (h *AssignmentHandler) Update(c *fiber.Ctx) error {
 
 	assignment, err := h.svc.Update(c.Context(), id, req)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return assignmentWriteFail(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Assignment updated", "data": assignment})
@@ -231,7 +231,7 @@ func (h *AssignmentHandler) Delete(c *fiber.Ctx) error {
 	}
 
 	if err := h.svc.Delete(c.Context(), id); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return assignmentWriteFail(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Assignment deleted"})
@@ -249,7 +249,7 @@ func (h *AssignmentHandler) Publish(c *fiber.Ctx) error {
 
 	assignment, err := h.svc.Publish(c.Context(), id, h.livekitSvc)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return assignmentWriteFail(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Assignment published", "data": assignment})
@@ -267,7 +267,7 @@ func (h *AssignmentHandler) Unpublish(c *fiber.Ctx) error {
 
 	assignment, err := h.svc.Unpublish(c.Context(), id)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return assignmentWriteFail(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Assignment unpublished", "data": assignment})
@@ -290,7 +290,7 @@ func (h *AssignmentHandler) AddTestCase(c *fiber.Ctx) error {
 
 	testCase, err := h.svc.AddTestCase(c.Context(), id, req)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return assignmentWriteFail(c, err)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -313,7 +313,7 @@ func (h *AssignmentHandler) DeleteTestCase(c *fiber.Ctx) error {
 	}
 
 	if err := h.svc.DeleteTestCase(c.Context(), id, tcID); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return assignmentWriteFail(c, err)
 	}
 
 	return c.JSON(fiber.Map{"message": "Test case deleted"})
@@ -336,7 +336,7 @@ func (h *AssignmentHandler) ImportTestCases(c *fiber.Ctx) error {
 
 	testCases, err := h.svc.ImportTestCases(c.Context(), id, req)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return assignmentWriteFail(c, err)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{

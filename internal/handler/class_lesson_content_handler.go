@@ -30,6 +30,10 @@ func clcErrorStatus(err error) int {
 	if errors.Is(err, service.ErrClassNotFound) {
 		return fiber.StatusNotFound
 	}
+	// W3-BE: lớp đã lưu trữ chỉ đọc.
+	if errors.Is(err, service.ErrClassArchived) {
+		return fiber.StatusConflict
+	}
 	if service.IsForbiddenErr(err) {
 		return fiber.StatusForbidden
 	}
@@ -68,7 +72,7 @@ func (h *ClassLessonContentHandler) AssignClassToContent(c *fiber.Ctx) error {
 	result, err := h.service.AssignClassToContent(c.Context(), contentID, userID, isAdmin, req)
 	if err != nil {
 		if status := clcErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to assign class to content",
@@ -120,7 +124,7 @@ func (h *ClassLessonContentHandler) UpdateClassContentSchedule(c *fiber.Ctx) err
 	result, err := h.service.UpdateClassContentSchedule(c.Context(), contentID, classID, userID, isAdmin, req)
 	if err != nil {
 		if status := clcErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update schedule",
@@ -163,7 +167,7 @@ func (h *ClassLessonContentHandler) RemoveClassFromContent(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 	if err := h.service.RemoveClassFromContent(c.Context(), contentID, classID, userID, isAdmin); err != nil {
 		if status := clcErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to remove class from content",
@@ -201,7 +205,7 @@ func (h *ClassLessonContentHandler) GetClassesForContent(c *fiber.Ctx) error {
 	result, err := h.service.GetClassesForContent(c.Context(), contentID, userID, isAdmin, page, pageSize)
 	if err != nil {
 		if status := clcErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to get classes for content",
@@ -240,7 +244,7 @@ func (h *ClassLessonContentHandler) GetContentScheduleForClass(c *fiber.Ctx) err
 	result, err := h.service.GetContentScheduleForClass(c.Context(), classID, userID, isAdmin, page, pageSize)
 	if err != nil {
 		if status := clcErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to get content schedule for class",
@@ -284,7 +288,7 @@ func (h *ClassLessonContentHandler) BulkAssignClassesToContent(c *fiber.Ctx) err
 	result, err := h.service.BulkAssignClassesToContent(c.Context(), contentID, userID, isAdmin, req)
 	if err != nil {
 		if status := clcErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to bulk assign classes",
