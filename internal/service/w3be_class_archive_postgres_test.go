@@ -16,12 +16,21 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/livekit/protocol/livekit"
 	"gorm.io/gorm/clause"
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 )
+
+// w3Livekit: LiveKit giả cho Start/Delete livestream (CreateRoom/DeleteRoom thành công, không gọi mạng).
+type w3Livekit struct{ LivekitServiceInterface }
+
+func (w3Livekit) CreateRoom(context.Context, dto.CreateRoomDTO) (*livekit.Room, error) {
+	return &livekit.Room{}, nil
+}
+func (w3Livekit) DeleteRoom(context.Context, string) error { return nil }
 
 type w3Op struct {
 	name string
@@ -37,7 +46,7 @@ func TestW3BE_LopLuuTru_ChiDoc_Postgres(t *testing.T) {
 	grades := e.newGradeService(e.checker)
 	classRepo, courseRepo := repository.NewClassRepository(e.db), repository.NewCourseRepository(e.db)
 	livestreams := NewLivestreamService(repository.NewLivestreamRepository(e.db), nil, repository.NewAnalyticsRepository(e.db),
-		classRepo, courseRepo, nil, nil, nil, nil, nil)
+		classRepo, courseRepo, nil, nil, w3Livekit{}, nil, nil)
 	assignments := NewAssignmentService(repository.NewAssignmentRepository(e.db), repository.NewTestCaseRepository(e.db),
 		repository.NewSubmissionRepository(e.db), classRepo, livestreams)
 	assignments.SetClassGate(NewClassOrgAccess(classRepo, courseRepo, e.checker))
@@ -187,6 +196,18 @@ func TestW3BE_LopLuuTru_ChiDoc_Postgres(t *testing.T) {
 			title := "Bài phiên đã sửa"
 			_, err := assignments.Update(ctx, sessAssignment.ID, dto.UpdateAssignmentDTO{Title: &title})
 			return err
+		}},
+		{"sửa livestream", true, func(a model.User) error {
+			title := "Live đã sửa"
+			_, err := livestreams.Update(ctx, e.instructor.ID, false, live.ID, dto.UpdateLivestreamDTO{Title: &title})
+			return err
+		}},
+		{"bắt đầu livestream", true, func(a model.User) error {
+			_, err := livestreams.Start(ctx, e.instructor.ID, false, live.ID)
+			return err
+		}},
+		{"xoá livestream", true, func(a model.User) error {
+			return livestreams.Delete(ctx, e.instructor.ID, false, live.ID)
 		}},
 		{"gỡ giảng viên", false, func(a model.User) error {
 			return e.classes.RemoveTeacherFromClass(ctx, class.ID, e.coTeacher.ID, a.ID, false)

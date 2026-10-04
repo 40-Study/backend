@@ -466,6 +466,10 @@ func (s *LivestreamService) Update(ctx context.Context, userID uuid.UUID, isAdmi
 	if err != nil {
 		return nil, err
 	}
+	// W3-BE: lớp đã lưu trữ chỉ đọc (quyền đã xét ở getManageableSession).
+	if err := ensureClassWritable(ctx, s.classRepo, session.ClassID); err != nil {
+		return nil, err
+	}
 
 	if req.Title != nil {
 		session.Title = *req.Title
@@ -525,6 +529,9 @@ func (s *LivestreamService) Delete(ctx context.Context, userID uuid.UUID, isAdmi
 	if err != nil {
 		return err
 	}
+	if err := ensureClassWritable(ctx, s.classRepo, session.ClassID); err != nil {
+		return err
+	}
 
 	_ = s.livekitSvc.DeleteRoom(ctx, session.RoomName)
 	return s.repo.Delete(ctx, id)
@@ -533,6 +540,10 @@ func (s *LivestreamService) Delete(ctx context.Context, userID uuid.UUID, isAdmi
 func (s *LivestreamService) Start(ctx context.Context, userID uuid.UUID, isAdmin bool, id uuid.UUID) (*model.LivestreamSession, error) {
 	session, err := s.getManageableSession(ctx, userID, isAdmin, id)
 	if err != nil {
+		return nil, err
+	}
+	// W3-BE: lớp đã lưu trữ chỉ đọc (quyền đã xét ở getManageableSession).
+	if err := ensureClassWritable(ctx, s.classRepo, session.ClassID); err != nil {
 		return nil, err
 	}
 	return s.startSession(ctx, session)
