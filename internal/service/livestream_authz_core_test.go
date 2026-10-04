@@ -284,8 +284,21 @@ func TestCanManageSession_NguoiLa_TuChoi(t *testing.T) {
 	classRepo := &fakeClassRepoJoin{class: &model.Class{BaseModel: model.BaseModel{ID: classID}}, isTeacher: false}
 	svc := newLivestreamServiceForJoin(classRepo, &fakeCourseRepoJoin{}, nil, nil, nil)
 
+	// W3-BE: nguoi ngoai lop khong xem duoc lop -> 404, khong lo phien live ton tai.
 	err := svc.canManageSession(context.Background(), strangerID, false, session)
-	if err != ErrNotClassTeacher {
+	if err != ErrClassNotFound {
+		t.Errorf("loi = %v, mong doi ErrClassNotFound", err)
+	}
+}
+
+// Hoc vien dang hoc lop xem duoc lop nhung khong quan tri phien -> 403.
+func TestCanManageSession_HocVienCuaLop_Bi403(t *testing.T) {
+	classID := uuid.New()
+	session := &model.LivestreamSession{BaseModel: model.BaseModel{ID: uuid.New()}, HostID: uuid.New(), ClassID: classID}
+	classRepo := &fakeClassRepoJoin{class: &model.Class{BaseModel: model.BaseModel{ID: classID}}, isTeacher: false, isStudent: true}
+	svc := newLivestreamServiceForJoin(classRepo, &fakeCourseRepoJoin{}, nil, nil, nil)
+
+	if err := svc.canManageSession(context.Background(), uuid.New(), false, session); err != ErrNotClassTeacher {
 		t.Errorf("loi = %v, mong doi ErrNotClassTeacher", err)
 	}
 }

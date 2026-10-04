@@ -211,7 +211,8 @@ func (s *LivestreamService) isClassTeacherOrInstructor(ctx context.Context, user
 // ensureClassManage (class_access.go) — mot dinh nghia duy nhat cho ca livestream lan
 // class-lesson-content.
 func (s *LivestreamService) canManageClass(ctx context.Context, userID, classID uuid.UUID, isAdmin bool) error {
-	return ensureClassManage(ctx, s.classRepo, s.courseRepo, userID, classID, isAdmin)
+	// W3-BE: người không xem được lớp -> ErrClassNotFound (404, không lộ id), xem được mà không quản lý -> 403.
+	return ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, nil, userID, classID, isAdmin)
 }
 
 // canManageSession = host cua phien, HOAC admin he thong (D2), HOAC nguoi quan tri duoc lop cua

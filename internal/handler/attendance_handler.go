@@ -41,7 +41,7 @@ func (h *AttendanceHandler) attendanceActor(c *fiber.Ctx) (uuid.UUID, bool, bool
 // lý lớp); lỗi khác giữ nguyên mã 400 và thông điệp của từng route.
 func attendanceFail(c *fiber.Ctx, err error, message string, fallback int) error {
 	if status := classErrorStatus(err); status != 0 {
-		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		return c.Status(status).JSON(classErrorBody(err))
 	}
 	if errors.Is(err, service.ErrAttendanceNotFound) {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": err.Error()})

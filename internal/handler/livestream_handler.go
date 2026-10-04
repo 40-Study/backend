@@ -62,7 +62,7 @@ func respondForbiddenOrError(c *fiber.Ctx, err error) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "Validation failed", "error": err.Error()})
 	case errors.Is(err, service.ErrLivestreamStateConflict):
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"message": "LIVESTREAM_STATE_CONFLICT", "error": err.Error()})
-	case errors.Is(err, service.ErrSessionNotFound):
+	case errors.Is(err, service.ErrSessionNotFound), errors.Is(err, service.ErrClassNotFound):
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})

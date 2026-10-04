@@ -74,7 +74,7 @@ func (s *ClassLessonContentService) AssignClassToContent(ctx context.Context, co
 	// V3-7 (issue #58): truoc day bat ky user dang nhap nao cung gan duoc mot lesson content vao
 	// BAT KY lop nao cua cung khoa hoc — ke ca hoc sinh. Gio chi giao vien cua lop / instructor
 	// cua khoa chua lop (hoac admin) moi duoc gan lich.
-	if err := ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, userID, req.ClassID, isAdmin); err != nil {
+	if err := ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, nil, userID, req.ClassID, isAdmin); err != nil {
 		return nil, err
 	}
 
@@ -139,7 +139,7 @@ func (s *ClassLessonContentService) AssignClassToContent(ctx context.Context, co
 
 func (s *ClassLessonContentService) UpdateClassContentSchedule(ctx context.Context, contentID, classID, userID uuid.UUID, isAdmin bool, req dto.UpdateClassContentScheduleDTO) (*dto.ClassLessonContentResponseDTO, error) {
 	// V3-7 (issue #58): doi lich hoc cua lop la thao tac GHI len lop — truoc day khong kiem quyen.
-	if err := ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, userID, classID, isAdmin); err != nil {
+	if err := ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, nil, userID, classID, isAdmin); err != nil {
 		return nil, err
 	}
 
@@ -209,7 +209,7 @@ func (s *ClassLessonContentService) UpdateClassContentSchedule(ctx context.Conte
 
 func (s *ClassLessonContentService) RemoveClassFromContent(ctx context.Context, contentID, classID, userID uuid.UUID, isAdmin bool) error {
 	// V3-7 (issue #58): go mot lesson content khoi lop la thao tac GHI (xoa lich cua ca lop).
-	if err := ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, userID, classID, isAdmin); err != nil {
+	if err := ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, nil, userID, classID, isAdmin); err != nil {
 		return err
 	}
 
@@ -367,7 +367,7 @@ func (s *ClassLessonContentService) BulkAssignClassesToContent(ctx context.Conte
 		// nay da load `class` cho muc dich khac) — khong ton them truy van nao. Duong
 		// `req.ClassIDs` rong chi goi ham nay KHONG tu kiem quyen gi ca (khac voi
 		// AssignClassToContent), nen neu bo qua cho nay thi "gan ca khoa" van la mot lo hong mo.
-		if err := ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, userID, classID, isAdmin); err != nil {
+		if err := ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, nil, userID, classID, isAdmin); err != nil {
 			return nil, err
 		}
 

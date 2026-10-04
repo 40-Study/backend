@@ -62,10 +62,35 @@ type AssignmentService struct {
 	classAccess    assignmentClassAccess
 	sessionGate    assignmentSessionGate
 	orgAccess      assignmentOrgAccess
+	classGate      assignmentClassGate
 }
 
 // SetOrgAccess nối kiểm tra quyền tổ chức (tuỳ chọn; nil = không ai được nâng quyền).
 func (s *AssignmentService) SetOrgAccess(a assignmentOrgAccess) { s.orgAccess = a }
+
+// SetClassGate nối kiểm tra lớp đã lưu trữ (W3-BE). nil = không chặn (test không dựng lớp).
+func (s *AssignmentService) SetClassGate(g assignmentClassGate) { s.classGate = g }
+
+// assignmentClassGate: lớp của bài tập phải chưa lưu trữ thì mới ghi được (ErrClassArchived -> 409).
+type assignmentClassGate interface {
+	EnsureClassWritable(ctx context.Context, classID uuid.UUID) error
+}
+
+// requireClassWritableFor: bài tập gắn vào lớp đã lưu trữ thì không sửa/xoá/công bố được. Gọi SAU kiểm quyền ở handler
+// (404/403 trước, 409 sau). Bài tập gắn phiên livestream (không có class_id) không bị chặn.
+func (s *AssignmentService) requireClassWritableFor(ctx context.Context, assignmentID uuid.UUID) error {
+	if s.classGate == nil {
+		return nil
+	}
+	assignment, err := s.repo.GetByID(ctx, assignmentID)
+	if err != nil {
+		return err
+	}
+	if assignment == nil || assignment.ClassID == nil {
+		return nil
+	}
+	return s.classGate.EnsureClassWritable(ctx, *assignment.ClassID)
+}
 
 func NewAssignmentService(
 	repo repository.AssignmentRepositoryInterface,
@@ -139,6 +164,13 @@ func (s *AssignmentService) Create(ctx context.Context, actorID uuid.UUID, isAdm
 			if !ok {
 				return nil, ErrAssignmentForbidden
 			}
+		}
+	}
+
+	// W3-BE: sau kiểm quyền, lớp đích phải chưa lưu trữ (admin cũng không tạo bài vào lớp lưu trữ).
+	if classID != nil && s.classGate != nil {
+		if err := s.classGate.EnsureClassWritable(ctx, *classID); err != nil {
+			return nil, err
 		}
 	}
 
@@ -268,6 +300,9 @@ func (s *AssignmentService) GetByClass(ctx context.Context, actorID uuid.UUID, i
 }
 
 func (s *AssignmentService) Update(ctx context.Context, id uuid.UUID, req dto.UpdateAssignmentDTO) (*model.Assignment, error) {
+	if err := s.requireClassWritableFor(ctx, id); err != nil {
+		return nil, err
+	}
 	assignment, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -323,10 +358,16 @@ func (s *AssignmentService) Update(ctx context.Context, id uuid.UUID, req dto.Up
 }
 
 func (s *AssignmentService) Delete(ctx context.Context, id uuid.UUID) error {
+	if err := s.requireClassWritableFor(ctx, id); err != nil {
+		return err
+	}
 	return s.repo.Delete(ctx, id)
 }
 
 func (s *AssignmentService) Publish(ctx context.Context, id uuid.UUID, livekitSvc LivekitServiceInterface) (*model.Assignment, error) {
+	if err := s.requireClassWritableFor(ctx, id); err != nil {
+		return nil, err
+	}
 	assignment, err := s.repo.GetByIDWithSession(ctx, id)
 	if err != nil {
 		return nil, err
@@ -376,6 +417,9 @@ func (s *AssignmentService) Publish(ctx context.Context, id uuid.UUID, livekitSv
 }
 
 func (s *AssignmentService) Unpublish(ctx context.Context, id uuid.UUID) (*model.Assignment, error) {
+	if err := s.requireClassWritableFor(ctx, id); err != nil {
+		return nil, err
+	}
 	if err := s.repo.Unpublish(ctx, id); err != nil {
 		return nil, err
 	}
@@ -383,6 +427,9 @@ func (s *AssignmentService) Unpublish(ctx context.Context, id uuid.UUID) (*model
 }
 
 func (s *AssignmentService) AddTestCase(ctx context.Context, assignmentID uuid.UUID, req dto.CreateTestCaseDTO) (*model.TestCase, error) {
+	if err := s.requireClassWritableFor(ctx, assignmentID); err != nil {
+		return nil, err
+	}
 	testCase := &model.TestCase{
 		AssignmentID:   assignmentID,
 		Input:          req.Input,
@@ -399,6 +446,9 @@ func (s *AssignmentService) AddTestCase(ctx context.Context, assignmentID uuid.U
 }
 
 func (s *AssignmentService) DeleteTestCase(ctx context.Context, assignmentID, testCaseID uuid.UUID) error {
+	if err := s.requireClassWritableFor(ctx, assignmentID); err != nil {
+		return err
+	}
 	return s.testCaseRepo.DeleteFromAssignment(ctx, assignmentID, testCaseID)
 }
 
@@ -469,6 +519,9 @@ func (s *AssignmentService) CanView(ctx context.Context, assignmentID, userID uu
 }
 
 func (s *AssignmentService) ImportTestCases(ctx context.Context, assignmentID uuid.UUID, req dto.ImportTestCasesDTO) ([]model.TestCase, error) {
+	if err := s.requireClassWritableFor(ctx, assignmentID); err != nil {
+		return nil, err
+	}
 	testCases := make([]model.TestCase, 0, len(req.TestCases))
 	for i, tc := range req.TestCases {
 		order := tc.DisplayOrder

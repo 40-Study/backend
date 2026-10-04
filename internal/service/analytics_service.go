@@ -70,7 +70,8 @@ func (s *AnalyticsService) ensureSessionAnalyticsAccess(ctx context.Context, ses
 		return nil
 	}
 	if session.ClassID != uuid.Nil {
-		return ensureClassManage(ctx, s.classRepo, s.courseRepo, actorUserID, session.ClassID, isAdmin)
+		// W3-BE: người ngoài lớp -> 404 (không lộ buổi live tồn tại), thành viên lớp không quản lý -> 403.
+		return ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, nil, actorUserID, session.ClassID, isAdmin)
 	}
 	if session.CourseID != nil {
 		course, err := s.courseRepo.GetByID(ctx, *session.CourseID)

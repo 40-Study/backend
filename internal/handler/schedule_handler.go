@@ -54,7 +54,7 @@ func scheduleFail(c *fiber.Ctx, err error, message string, fallback int) error {
 		status = fiber.StatusBadRequest
 	}
 	if status != 0 {
-		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+		return c.Status(status).JSON(classErrorBody(err))
 	}
 	return c.Status(fallback).JSON(fiber.Map{"message": message, "error": err.Error()})
 }

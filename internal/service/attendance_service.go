@@ -50,12 +50,9 @@ func (s *AttendanceService) WithAuthorizer(authz ClassAuthorizer) *AttendanceSer
 
 // manage / manageOrNotFound: ensureClassManage* với quyền đã nâng cho chủ tổ chức của lớp (classAccessAsAdmin).
 func (s *AttendanceService) manage(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool) error {
-	elevated, err := classAccessAsAdmin(ctx, s.classRepo, s.authz, actorUserID, classID, isAdmin)
-	if err != nil {
-		return err
-	}
-	// W2-A: route ghi, người không xem được lớp nhận 404 (người xem được mà không quản lý vẫn 403).
-	return ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, actorUserID, classID, elevated)
+	// W2-A: route ghi, người không xem được lớp nhận 404 (người xem được mà không quản lý vẫn 403); W3-BE: lớp đã
+	// lưu trữ nhận 409.
+	return ensureClassWriteOpen(ctx, s.classRepo, s.courseRepo, s.authz, actorUserID, classID, isAdmin)
 }
 
 func (s *AttendanceService) manageOrNotFound(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool) error {

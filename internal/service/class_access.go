@@ -195,10 +195,8 @@ func classAccessAsAdmin(ctx context.Context, classRepo repository.ClassRepositor
 	return orgManagesClass(ctx, classRepo, authz, userID, class)
 }
 
-// ensureClassGrade: quyền CHẤM ĐIỂM / quản bảng điểm của lớp = ensureClassManage (giảng viên lớp, người
-// tạo lớp, instructor khoá, admin hệ thống) HOẶC chủ/quản trị của tổ chức mà lớp thuộc về. Lỗi theo
-// "xem được hay không": người không xem được lớp -> ErrClassNotFound (404, không dò được id lớp); người
-// xem được (học viên trong lớp) nhưng không được chấm -> ErrNotClassTeacher (403).
+// ensureClassGrade: quyền CHẤM ĐIỂM / quản bảng điểm của lớp. Cờ admin hệ thống tự tra qua authz (service chấm
+// điểm không nhận cờ từ handler), rồi dùng đúng luật ghi vào lớp ensureClassManageWrite.
 func ensureClassGrade(ctx context.Context, classRepo repository.ClassRepositoryInterface, courseRepo repository.CourseRepositoryInterface, authz ClassAuthorizer, userID, classID uuid.UUID) error {
 	isAdmin := false
 	if authz != nil {
@@ -207,28 +205,7 @@ func ensureClassGrade(ctx context.Context, classRepo repository.ClassRepositoryI
 			return fmt.Errorf("failed to verify system admin: %w", err)
 		}
 	}
-	err := ensureClassManage(ctx, classRepo, courseRepo, userID, classID, isAdmin)
-	if err == nil || !errors.Is(err, ErrNotClassTeacher) {
-		return err
-	}
-	class, err := classRepo.GetByID(ctx, classID)
-	if err != nil {
-		return fmt.Errorf("failed to load class: %w", err)
-	}
-	managed, err := orgManagesClass(ctx, classRepo, authz, userID, class)
-	if err != nil {
-		return err
-	}
-	if managed {
-		return nil
-	}
-	if err := ensureClassView(ctx, classRepo, courseRepo, userID, classID, false); err != nil {
-		if errors.Is(err, ErrNotClassMember) {
-			return ErrClassNotFound
-		}
-		return err
-	}
-	return ErrNotClassTeacher
+	return ensureClassManageWrite(ctx, classRepo, courseRepo, authz, userID, classID, isAdmin)
 }
 
 // ensureClassView = nguoi quan tri duoc lop (ensureClassManage) HOAC hoc sinh dang hoc trong lop.
@@ -270,17 +247,63 @@ func ensureClassVisible(ctx context.Context, classRepo repository.ClassRepositor
 	return err
 }
 
-// ensureClassManageWrite: luật "không xem được thì 404, xem được mà không có quyền thì 403" cho route GHI vào lớp
-// (sửa, kích hoạt, ghi danh, điểm danh...). ensureClassManage thuần trả ErrNotClassTeacher (403) cho cả người
-// ngoài lớp, nên người lạ dò được lớp nào tồn tại qua route ghi; ở đây người không xem được nhận ErrClassNotFound,
-// còn người xem được (học viên trong lớp) vẫn nhận ErrNotClassTeacher. isAdmin đã gồm nâng quyền chủ tổ chức; kiểm
-// "xem được" cố ý KHÔNG nâng, vì chủ tổ chức đã qua ensureClassManage trước khi tới đây.
-func ensureClassManageWrite(ctx context.Context, classRepo repository.ClassRepositoryInterface, courseRepo repository.CourseRepositoryInterface, userID, classID uuid.UUID, isAdmin bool) error {
+// ErrClassArchived (W3-BE, quyết định 04/10): lớp đã lưu trữ chỉ đọc. Mọi thao tác GHI vào lớp (ghi danh, gán giảng
+// viên, buổi học, bài tập, điểm danh, chấm điểm) bị từ chối; mở lại lớp (đặt status khác archived) thì ghi lại được.
+// Handler trả 409 kèm code CLASS_ARCHIVED.
+var ErrClassArchived = errors.New("lớp đã lưu trữ, chỉ được xem; hãy mở lại lớp để thay đổi")
+
+// classStatusArchived: giá trị classes.status của lớp đã lưu trữ (enum draft/active/archived, xem model.Class).
+const classStatusArchived = "archived"
+
+// ensureClassManageWrite: MỘT luật duy nhất "quyền GHI vào lớp" (SSOT): giảng viên lớp, người tạo lớp, instructor
+// khoá, admin hệ thống, HOẶC chủ/quản trị của tổ chức mà lớp thuộc về (authz nil = không ai được nâng quyền).
+// Lỗi theo "xem được hay không": người không xem được lớp -> ErrClassNotFound (404, không dò được id lớp); người
+// xem được (học viên trong lớp) nhưng không có quyền ghi -> ErrNotClassTeacher (403). isAdmin là cờ admin hệ thống
+// gốc. Kiểm "xem được" cố ý KHÔNG nâng quyền: chủ tổ chức đã qua ở nhánh trước đó.
+func ensureClassManageWrite(ctx context.Context, classRepo repository.ClassRepositoryInterface, courseRepo repository.CourseRepositoryInterface, authz ClassAuthorizer, userID, classID uuid.UUID, isAdmin bool) error {
 	err := ensureClassManage(ctx, classRepo, courseRepo, userID, classID, isAdmin)
 	if !errors.Is(err, ErrNotClassTeacher) {
 		return err
 	}
+	if authz != nil {
+		class, err := classRepo.GetByID(ctx, classID)
+		if err != nil {
+			return fmt.Errorf("failed to load class: %w", err)
+		}
+		managed, err := orgManagesClass(ctx, classRepo, authz, userID, class)
+		if err != nil {
+			return err
+		}
+		if managed {
+			return nil
+		}
+	}
 	return ensureClassVisibleOr(ctx, classRepo, courseRepo, userID, classID, ErrNotClassTeacher)
+}
+
+// ensureClassWritable: lớp phải chưa lưu trữ. Gọi SAU kiểm quyền (404/403 trước, 409 sau) để người ngoài không
+// dò được lớp nào đã lưu trữ.
+func ensureClassWritable(ctx context.Context, classRepo repository.ClassRepositoryInterface, classID uuid.UUID) error {
+	class, err := classRepo.GetByID(ctx, classID)
+	if err != nil {
+		return fmt.Errorf("failed to load class: %w", err)
+	}
+	if class == nil {
+		return ErrClassNotFound
+	}
+	if class.Status == classStatusArchived {
+		return ErrClassArchived
+	}
+	return nil
+}
+
+// ensureClassWriteOpen = quyền ghi (ensureClassManageWrite) rồi lớp chưa lưu trữ (ensureClassWritable): helper dùng
+// chung cho mọi service có thao tác ghi vào lớp.
+func ensureClassWriteOpen(ctx context.Context, classRepo repository.ClassRepositoryInterface, courseRepo repository.CourseRepositoryInterface, authz ClassAuthorizer, userID, classID uuid.UUID, isAdmin bool) error {
+	if err := ensureClassManageWrite(ctx, classRepo, courseRepo, authz, userID, classID, isAdmin); err != nil {
+		return err
+	}
+	return ensureClassWritable(ctx, classRepo, classID)
 }
 
 // ensureClassVisibleOr: nếu người gọi xem được lớp thì trả `denied` (lỗi 403 của route), không xem được thì

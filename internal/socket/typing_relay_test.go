@@ -86,6 +86,12 @@ func TestTypingRelay_FiberClient_GanTenDoServerTra(t *testing.T) {
 	if got := readTypingUserName(t, observer); got != "Lê Văn C" {
 		t.Fatalf("user_name = %q, muốn tên server tra", got)
 	}
+	// Ghim cache như Client: sự kiện gõ thứ hai trên cùng kết nối không tra lại tên (mỗi lần gõ là một truy vấn DB).
+	fc.handleMessage(typingFrame(conv, ""))
+	readTypingUserName(t, observer)
+	if auth.calls != 1 {
+		t.Errorf("tên phải được nhớ theo kết nối: tra %d lần, muốn 1", auth.calls)
+	}
 }
 
 func TestTypingNameCache_KhongNhoTenRong(t *testing.T) {

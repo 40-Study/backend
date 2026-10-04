@@ -53,9 +53,21 @@ func classErrorStatus(err error) int {
 	case errors.Is(err, service.ErrTeacherNotOrgMember):
 		// 400 (không 422): web (api-client) bỏ code/message của 422 và chỉ hiện "dữ liệu không hợp lệ" chung.
 		return fiber.StatusBadRequest
+	case errors.Is(err, service.ErrClassArchived):
+		// W3-BE: ghi vào lớp đã lưu trữ.
+		return fiber.StatusConflict
 	default:
 		return 0
 	}
+}
+
+// assignmentWriteFail: lỗi của thao tác ghi bài tập. Lớp đã lưu trữ là 409 CLASS_ARCHIVED (cùng hợp đồng với các
+// route ghi khác của lớp); lỗi khác giữ 500 như trước.
+func assignmentWriteFail(c *fiber.Ctx, err error) error {
+	if errors.Is(err, service.ErrClassArchived) {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"code": "CLASS_ARCHIVED", "message": err.Error(), "error": err.Error()})
+	}
+	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 }
 
 // classErrorBody: thân JSON của lỗi đã ánh xạ. Hai lỗi nghiệp vụ mới mang mã ổn định để web hiện câu tiếng Việt
@@ -67,6 +79,8 @@ func classErrorBody(err error) fiber.Map {
 		body["code"] = "TEACHER_NOT_ORG_MEMBER"
 	case errors.Is(err, service.ErrClassDeleteAdminOnly):
 		body["code"] = "CLASS_DELETE_ADMIN_ONLY"
+	case errors.Is(err, service.ErrClassArchived):
+		body["code"] = "CLASS_ARCHIVED"
 	}
 	return body
 }
