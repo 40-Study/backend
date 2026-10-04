@@ -884,6 +884,10 @@ func (s *ScheduleService) StudentCheckIn(ctx context.Context, sessionID, student
 	if err != nil {
 		return nil, err
 	}
+	// W3-BE: lớp đã lưu trữ chỉ đọc, kể cả điểm danh tự động của học viên (quyền xét trước ở requireStudentSessionAccess).
+	if err := ensureClassWritable(ctx, s.classRepo, session.ClassID); err != nil {
+		return nil, err
+	}
 	if err := requireCheckInOpen(session, now); err != nil {
 		return nil, err
 	}
@@ -914,6 +918,13 @@ func (s *ScheduleService) StudentCheckIn(ctx context.Context, sessionID, student
 
 func (s *ScheduleService) StudentCheckOut(ctx context.Context, sessionID, studentID uuid.UUID) (*dto.SessionAttendanceResponseDTO, error) {
 	if err := s.requireStudentSessionAccess(ctx, sessionID, studentID); err != nil {
+		return nil, err
+	}
+	session, err := s.sessionClass(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureClassWritable(ctx, s.classRepo, session.ClassID); err != nil {
 		return nil, err
 	}
 	att, err := s.repo.GetAttendanceBySessionAndStudent(ctx, sessionID, studentID)

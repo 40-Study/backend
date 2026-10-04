@@ -60,6 +60,9 @@ func (h *SubmissionHandler) Submit(c *fiber.Ctx) error {
 
 	submission, err := h.svc.Submit(c.Context(), isAdminActor(c, h.permChecker, userID), req)
 	if err != nil {
+		if errors.Is(err, service.ErrClassArchived) {
+			return assignmentWriteFail(c, err)
+		}
 		if errors.Is(err, service.ErrAssignmentNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assignment not found"})
 		}

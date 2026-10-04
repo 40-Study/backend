@@ -52,9 +52,13 @@ func TestW3BE_ClassArchived_Map409VaCode_MoiNhomRouteGhi(t *testing.T) {
 			}
 			return c.SendStatus(fiber.StatusBadRequest)
 		},
-		"lịch học":  func(c *fiber.Ctx) error { return scheduleFail(c, archived, "Failed", fiber.StatusBadRequest) },
-		"điểm danh": func(c *fiber.Ctx) error { return attendanceFail(c, archived, "Failed", fiber.StatusBadRequest) },
-		"bài tập":   func(c *fiber.Ctx) error { return assignmentWriteFail(c, archived) },
+		"lịch học":   func(c *fiber.Ctx) error { return scheduleFail(c, archived, "Failed", fiber.StatusBadRequest) },
+		"điểm danh":  func(c *fiber.Ctx) error { return attendanceFail(c, archived, "Failed", fiber.StatusBadRequest) },
+		"bài tập":    func(c *fiber.Ctx) error { return assignmentWriteFail(c, archived) },
+		"livestream": func(c *fiber.Ctx) error { return respondForbiddenOrError(c, archived) },
+		"nội dung bài học": func(c *fiber.Ctx) error {
+			return c.Status(clcErrorStatus(archived)).JSON(classErrorBody(archived))
+		},
 		"chấm điểm": func(c *fiber.Ctx) error {
 			h := NewGradeHandler(stubGradeService{bulkErr: archived})
 			c.Locals("user_id", uuid.New())

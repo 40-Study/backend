@@ -79,17 +79,47 @@ type assignmentClassGate interface {
 // requireClassWritableFor: bài tập gắn vào lớp đã lưu trữ thì không sửa/xoá/công bố được. Gọi SAU kiểm quyền ở handler
 // (404/403 trước, 409 sau). Bài tập gắn phiên livestream (không có class_id) không bị chặn.
 func (s *AssignmentService) requireClassWritableFor(ctx context.Context, assignmentID uuid.UUID) error {
-	if s.classGate == nil {
+	if s.classGate == nil && !s.hasSessionClassGate() {
 		return nil
 	}
 	assignment, err := s.repo.GetByID(ctx, assignmentID)
 	if err != nil {
 		return err
 	}
-	if assignment == nil || assignment.ClassID == nil {
+	return s.EnsureWritable(ctx, assignment)
+}
+
+// assignmentSessionClassGate: phiên live mà bài tập gắn vào thuộc lớp nào, lớp đó đã lưu trữ chưa (LivestreamService).
+type assignmentSessionClassGate interface {
+	EnsureSessionClassWritable(ctx context.Context, sessionID uuid.UUID) error
+}
+
+func (s *AssignmentService) hasSessionClassGate() bool {
+	_, ok := s.sessionGate.(assignmentSessionClassGate)
+	return ok
+}
+
+// EnsureWritable: lớp của bài tập (class_id, hoặc lớp của phiên live nó gắn vào) phải chưa lưu trữ. Không truy ra lớp
+// (không có class_id và phiên không tồn tại/không có lớp) thì để nguyên, không chặn.
+func (s *AssignmentService) EnsureWritable(ctx context.Context, a *model.Assignment) error {
+	if a == nil {
 		return nil
 	}
-	return s.classGate.EnsureClassWritable(ctx, *assignment.ClassID)
+	return s.ensureTargetWritable(ctx, a.ClassID, a.SessionID)
+}
+
+func (s *AssignmentService) ensureTargetWritable(ctx context.Context, classID, sessionID *uuid.UUID) error {
+	if classID != nil && s.classGate != nil {
+		if err := s.classGate.EnsureClassWritable(ctx, *classID); err != nil {
+			return err
+		}
+	}
+	if sessionID != nil {
+		if g, ok := s.sessionGate.(assignmentSessionClassGate); ok {
+			return g.EnsureSessionClassWritable(ctx, *sessionID)
+		}
+	}
+	return nil
 }
 
 func NewAssignmentService(
@@ -168,10 +198,8 @@ func (s *AssignmentService) Create(ctx context.Context, actorID uuid.UUID, isAdm
 	}
 
 	// W3-BE: sau kiểm quyền, lớp đích phải chưa lưu trữ (admin cũng không tạo bài vào lớp lưu trữ).
-	if classID != nil && s.classGate != nil {
-		if err := s.classGate.EnsureClassWritable(ctx, *classID); err != nil {
-			return nil, err
-		}
+	if err := s.ensureTargetWritable(ctx, classID, sessionID); err != nil {
+		return nil, err
 	}
 
 	// Default type

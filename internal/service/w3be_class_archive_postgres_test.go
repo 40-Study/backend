@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm/clause"
+	"study.com/v1/internal/config"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -35,9 +36,13 @@ func TestW3BE_LopLuuTru_ChiDoc_Postgres(t *testing.T) {
 	class := e.classInOrgA(t)
 	grades := e.newGradeService(e.checker)
 	classRepo, courseRepo := repository.NewClassRepository(e.db), repository.NewCourseRepository(e.db)
+	livestreams := NewLivestreamService(repository.NewLivestreamRepository(e.db), nil, repository.NewAnalyticsRepository(e.db),
+		classRepo, courseRepo, nil, nil, nil, nil, nil)
 	assignments := NewAssignmentService(repository.NewAssignmentRepository(e.db), repository.NewTestCaseRepository(e.db),
-		repository.NewSubmissionRepository(e.db), nil, nil)
+		repository.NewSubmissionRepository(e.db), classRepo, livestreams)
 	assignments.SetClassGate(NewClassOrgAccess(classRepo, courseRepo, e.checker))
+	submissions := NewSubmissionService(repository.NewSubmissionRepository(e.db), assignments, repository.NewTestCaseRepository(e.db),
+		nil, &config.Config{Environment: "test"})
 
 	// Dữ liệu có sẵn TRƯỚC khi lưu trữ: một lịch, một buổi, một điểm, một bài tập.
 	sch := model.ClassSchedule{ClassID: class.ID, DayOfWeek: 3, StartTime: "08:00", EndTime: "09:00", IsActive: true, EffectiveFrom: time.Now()}
@@ -49,6 +54,28 @@ func TestW3BE_LopLuuTru_ChiDoc_Postgres(t *testing.T) {
 		t.Fatalf("tạo điểm trước khi lưu trữ: %v", err)
 	}
 	classID := class.ID.String()
+	// Bài tập đã công bố của lớp (để học viên nộp) và một phiên live của lớp kèm bài tập gắn phiên (không có class_id).
+	published, err := assignments.Create(ctx, e.systemAdmin.ID, true, dto.CreateAssignmentDTO{
+		ClassID: classID, Title: "Bài đã công bố", Description: "d", Difficulty: "easy", Language: []string{"go"}})
+	if err != nil {
+		t.Fatalf("tạo bài tập để nộp: %v", err)
+	}
+	if _, err := assignments.Publish(ctx, published.ID, nil); err != nil {
+		t.Fatalf("công bố bài tập: %v", err)
+	}
+	live := model.LivestreamSession{Title: "Live W3", HostID: e.instructor.ID, ClassID: class.ID, RoomName: uuid.NewString(),
+		Status: model.LivestreamStatusScheduled, MaxViewers: 100}
+	mustCreate(t, e.db, &live)
+	sessAssignment, err := assignments.Create(ctx, e.systemAdmin.ID, true, dto.CreateAssignmentDTO{
+		SessionID: live.ID.String(), Title: "Bài gắn phiên", Description: "d", Difficulty: "easy", Language: []string{"go"}})
+	if err != nil {
+		t.Fatalf("tạo bài tập gắn phiên: %v", err)
+	}
+	// Buổi học diễn ra hôm nay để check-in của học viên không bị chặn vì sai ngày.
+	nowICT := time.Now().In(sessionDayZone)
+	today := model.ClassSession{ClassID: class.ID, SessionNumber: 2, Date: time.Date(nowICT.Year(), nowICT.Month(), nowICT.Day(), 0, 0, 0, 0, time.UTC),
+		StartTime: "00:00", EndTime: "23:59", Status: model.SessionScheduled}
+	mustCreate(t, e.db, &today)
 	assignment, err := assignments.Create(ctx, e.systemAdmin.ID, true, dto.CreateAssignmentDTO{
 		ClassID: classID, Title: "Bài trước lưu trữ", Description: "d", Difficulty: "easy", Language: []string{"go"}})
 	if err != nil {
@@ -134,6 +161,33 @@ func TestW3BE_LopLuuTru_ChiDoc_Postgres(t *testing.T) {
 			_, err := assignments.AddTestCase(ctx, assignment.ID, dto.CreateTestCaseDTO{Input: "1", ExpectedOutput: "1"})
 			return err
 		}},
+		{"học viên nộp bài", true, func(a model.User) error {
+			_, err := submissions.Submit(ctx, false, dto.CreateSubmissionDTO{
+				AssignmentID: published.ID.String(), UserID: e.student.ID.String(), Language: "go", Code: "package main"})
+			return err
+		}},
+		{"học viên check-in", true, func(a model.User) error {
+			_, err := e.schedule.StudentCheckIn(ctx, today.ID, e.student.ID)
+			return err
+		}},
+		{"học viên check-out", true, func(a model.User) error {
+			_, err := e.schedule.StudentCheckOut(ctx, today.ID, e.student.ID)
+			return err
+		}},
+		{"tạo livestream mới", true, func(a model.User) error {
+			_, err := livestreams.Create(ctx, e.instructor.ID, dto.CreateLivestreamDTO{Title: "Live mới", ClassID: classID})
+			return err
+		}},
+		{"tạo bài tập gắn phiên live", true, func(a model.User) error {
+			_, err := assignments.Create(ctx, e.systemAdmin.ID, true, dto.CreateAssignmentDTO{
+				SessionID: live.ID.String(), Title: "Bài phiên mới", Description: "d", Difficulty: "easy", Language: []string{"go"}})
+			return err
+		}},
+		{"sửa bài tập gắn phiên live", true, func(a model.User) error {
+			title := "Bài phiên đã sửa"
+			_, err := assignments.Update(ctx, sessAssignment.ID, dto.UpdateAssignmentDTO{Title: &title})
+			return err
+		}},
 		{"gỡ giảng viên", false, func(a model.User) error {
 			return e.classes.RemoveTeacherFromClass(ctx, class.ID, e.coTeacher.ID, a.ID, false)
 		}},
@@ -147,13 +201,16 @@ func TestW3BE_LopLuuTru_ChiDoc_Postgres(t *testing.T) {
 			return assignments.Delete(ctx, assignment.ID)
 		}},
 	}
-	snapshot := func() [5]int64 {
-		var s [5]int64
+	snapshot := func() [8]int64 {
+		var s [8]int64
 		e.db.Model(&model.StudentClass{}).Where("class_id = ?", class.ID).Count(&s[0])
 		e.db.Model(&model.TeacherClass{}).Where("class_id = ?", class.ID).Count(&s[1])
 		e.db.Model(&model.ClassSession{}).Where("class_id = ?", class.ID).Count(&s[2])
 		e.db.Model(&model.Grade{}).Where("class_id = ?", class.ID).Count(&s[3])
-		e.db.Model(&model.Assignment{}).Where("class_id = ?", class.ID).Count(&s[4])
+		e.db.Model(&model.Assignment{}).Where("class_id = ? OR session_id = ?", class.ID, live.ID).Count(&s[4])
+		e.db.Model(&model.Submission{}).Where("assignment_id = ?", published.ID).Count(&s[5])
+		e.db.Model(&model.SessionAttendance{}).Where("session_id = ?", today.ID).Count(&s[6])
+		e.db.Model(&model.LivestreamSession{}).Where("class_id = ?", class.ID).Count(&s[7])
 		return s
 	}
 

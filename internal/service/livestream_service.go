@@ -207,6 +207,19 @@ func (s *LivestreamService) isClassTeacherOrInstructor(ctx context.Context, user
 	return classTeacherOrInstructor(ctx, s.classRepo, s.courseRepo, userID, class)
 }
 
+// EnsureSessionClassWritable (W3-BE): lớp của phiên live phải chưa lưu trữ; dùng cho bài tập gắn phiên (không có class_id).
+// Phiên không tồn tại thì không có lớp nào để chặn (nil): lỗi 404 do bước quyền của người gọi quyết định.
+func (s *LivestreamService) EnsureSessionClassWritable(ctx context.Context, sessionID uuid.UUID) error {
+	session, err := s.repo.GetByID(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session == nil || session.ClassID == uuid.Nil {
+		return nil
+	}
+	return ensureClassWritable(ctx, s.classRepo, session.ClassID)
+}
+
 // canManageClass tra ErrNotClassTeacher khi userID khong duoc quan tri lop. Uy quyen cho
 // ensureClassManage (class_access.go) — mot dinh nghia duy nhat cho ca livestream lan
 // class-lesson-content.
@@ -257,6 +270,10 @@ func (s *LivestreamService) Create(ctx context.Context, hostID uuid.UUID, req dt
 	// N1/V3-6/V3-7 (issue #58): host phai la giao vien cua class_id HOAC instructor cua khoa
 	// hoc chua lop do, truoc khi tao bat cu thu gi.
 	if err := s.canManageClass(ctx, hostID, classID, false); err != nil {
+		return nil, err
+	}
+	// W3-BE: không tạo phiên live mới cho lớp đã lưu trữ (quyền xét trước).
+	if err := ensureClassWritable(ctx, s.classRepo, classID); err != nil {
 		return nil, err
 	}
 
