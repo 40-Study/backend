@@ -195,11 +195,28 @@ func TestR5_OrgClassRoutes_ChuToChucQuanLyLopCuaToChuc(t *testing.T) {
 		if status, raw := e.do(t, e.ownerATok, "PUT", base, `{"status":"active"}`); status != fiber.StatusOK || !strings.Contains(raw, `"active"`) {
 			t.Fatalf("chủ A kích hoạt lớp: %d %s", status, raw)
 		}
-		if status, raw := e.do(t, e.ownerBTok, "PUT", base, `{"status":"archived"}`); status != fiber.StatusForbidden {
-			t.Errorf("chủ B sửa lớp của A: %d %s, muốn 403", status, raw)
+		if status, raw := e.do(t, e.ownerBTok, "PUT", base, `{"status":"archived"}`); status != fiber.StatusNotFound {
+			t.Errorf("chủ B sửa lớp của A: %d %s, muốn 404 (không xem được lớp)", status, raw)
 		}
 		if status, raw := e.do(t, e.stuTok, "PUT", base, `{"status":"archived"}`); status != fiber.StatusForbidden {
 			t.Errorf("học viên sửa lớp: %d %s, muốn 403", status, raw)
+		}
+	})
+
+	// W2-A (quyết định 04/10): chủ/quản trị tổ chức chỉ lưu trữ lớp; xoá (nhất là hard_delete) là việc của admin hệ thống.
+	// Người không xem được lớp vẫn nhận 404 dù xin hard_delete (không dò được lớp).
+	t.Run("xoá lớp: chủ tổ chức bị từ chối, người ngoài 404, lớp còn nguyên", func(t *testing.T) {
+		base := "/api/classes/" + e.classA.ID.String()
+		for _, q := range []string{"", "?hard_delete=true"} {
+			if status, raw := e.do(t, e.ownerATok, "DELETE", base+q, ""); status != fiber.StatusForbidden || !strings.Contains(raw, `"code":"CLASS_DELETE_ADMIN_ONLY"`) {
+				t.Errorf("chủ A xoá lớp %q: %d %s, muốn 403 kèm code CLASS_DELETE_ADMIN_ONLY", q, status, raw)
+			}
+			if status, raw := e.do(t, e.ownerBTok, "DELETE", base+q, ""); status != fiber.StatusNotFound {
+				t.Errorf("chủ B xoá lớp của A %q: %d %s, muốn 404", q, status, raw)
+			}
+		}
+		if status, raw := e.do(t, e.ownerATok, "GET", base, ""); status != fiber.StatusOK {
+			t.Errorf("lớp phải còn sau các lần xoá bị từ chối: %d %s", status, raw)
 		}
 	})
 }

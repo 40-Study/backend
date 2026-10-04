@@ -13,6 +13,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -147,8 +148,8 @@ func TestCLCAssignClassToContent_NguoiLa_Bi403(t *testing.T) {
 
 	_, err := svc.AssignClassToContent(context.Background(), uuid.New(), stranger, false, dto.AssignClassToContentDTO{ClassID: classID})
 
-	if !IsForbiddenErr(err) {
-		t.Errorf("loi = %v, mong doi loi uy quyen (ErrNotClassTeacher)", err)
+	if !errors.Is(err, ErrClassNotFound) {
+		t.Errorf("loi = %v, mong doi ErrClassNotFound (nguoi khong xem duoc lop -> 404)", err)
 	}
 	if clcRepo.createCalls != 0 {
 		t.Error("clcRepo.Create BI GOI du nguoi goi khong co quyen — da gan lich hoc vao lop nguoi khac")
@@ -231,8 +232,8 @@ func TestCLCUpdateClassContentSchedule_NguoiLa_Bi403(t *testing.T) {
 
 	_, err := svc.UpdateClassContentSchedule(context.Background(), uuid.New(), classID, uuid.New(), false, dto.UpdateClassContentScheduleDTO{})
 
-	if !IsForbiddenErr(err) {
-		t.Errorf("loi = %v, mong doi loi uy quyen", err)
+	if !errors.Is(err, ErrClassNotFound) {
+		t.Errorf("loi = %v, mong doi ErrClassNotFound (nguoi khong xem duoc lop -> 404)", err)
 	}
 }
 
@@ -246,8 +247,8 @@ func TestCLCRemoveClassFromContent_NguoiLa_Bi403(t *testing.T) {
 
 	err := svc.RemoveClassFromContent(context.Background(), uuid.New(), classID, uuid.New(), false)
 
-	if !IsForbiddenErr(err) {
-		t.Errorf("loi = %v, mong doi loi uy quyen", err)
+	if !errors.Is(err, ErrClassNotFound) {
+		t.Errorf("loi = %v, mong doi ErrClassNotFound (nguoi khong xem duoc lop -> 404)", err)
 	}
 }
 
@@ -263,8 +264,8 @@ func TestCLCBulkAssignClassesToContent_NguoiLa_Bi403(t *testing.T) {
 
 	_, err := svc.BulkAssignClassesToContent(context.Background(), uuid.New(), uuid.New(), false, dto.BulkAssignClassesToContentDTO{ClassIDs: []uuid.UUID{classID}})
 
-	if !IsForbiddenErr(err) {
-		t.Errorf("loi = %v, mong doi loi uy quyen", err)
+	if !errors.Is(err, ErrClassNotFound) {
+		t.Errorf("loi = %v, mong doi ErrClassNotFound (nguoi khong xem duoc lop -> 404)", err)
 	}
 	if clcRepo.createBatchCall != 0 {
 		t.Error("CreateBatch BI GOI du nguoi goi khong co quyen tren bat ky lop nao")

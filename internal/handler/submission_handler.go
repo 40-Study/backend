@@ -89,6 +89,10 @@ func (h *SubmissionHandler) GetByID(c *fiber.Ctx) error {
 		if status := submissionErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{"error": err.Error()})
 		}
+		// Người không xem được bài tập: cùng 404, cùng thông điệp với id bài nộp không tồn tại (không dò được id).
+		if errors.Is(err, service.ErrAssignmentNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "submission not found"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 	if submission == nil {
@@ -121,7 +125,7 @@ func (h *SubmissionHandler) GetByAssignment(c *fiber.Ctx) error {
 			return c.Status(status).JSON(fiber.Map{"error": err.Error()})
 		}
 		status := fiber.StatusInternalServerError
-		if err.Error() == "assignment not found" {
+		if errors.Is(err, service.ErrAssignmentNotFound) {
 			status = fiber.StatusNotFound
 		}
 		return c.Status(status).JSON(fiber.Map{"error": err.Error()})

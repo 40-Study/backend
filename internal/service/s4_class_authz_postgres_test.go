@@ -237,17 +237,22 @@ func TestS4_Class_TaoLopDoiKhoaVaQuanLy(t *testing.T) {
 	t.Run("sửa, xoá, thêm/gỡ học viên: giảng viên lạ và học viên bị chặn, chủ khoá và người tạo qua", func(t *testing.T) {
 		name := "renamed"
 		for _, u := range []model.User{e.stranger, e.student} {
-			if _, err := e.svc.UpdateClass(ctx, e.class.ID, u.ID, false, dto.UpdateClassDTO{Name: &name}); !errors.Is(err, ErrNotClassTeacher) {
-				t.Errorf("UpdateClass bởi %s: err=%v, muốn ErrNotClassTeacher", u.UserName, err)
+			// W2-A: nguoi khong xem duoc lop (giang vien la) nhan 404; hoc vien trong lop xem duoc nen nhan 403.
+			wantDenied := ErrNotClassTeacher
+			if u.ID == e.stranger.ID {
+				wantDenied = ErrClassNotFound
 			}
-			if err := e.svc.DeleteClass(ctx, e.class.ID, u.ID, false, false); !errors.Is(err, ErrNotClassTeacher) {
-				t.Errorf("DeleteClass bởi %s: err=%v, muốn ErrNotClassTeacher", u.UserName, err)
+			if _, err := e.svc.UpdateClass(ctx, e.class.ID, u.ID, false, dto.UpdateClassDTO{Name: &name}); !errors.Is(err, wantDenied) {
+				t.Errorf("UpdateClass bởi %s: err=%v, muon %v", u.UserName, err, wantDenied)
 			}
-			if _, err := e.svc.EnrollStudentToClass(ctx, e.class.ID, u.ID, false, dto.EnrollStudentDTO{StudentID: e.student.ID}); !errors.Is(err, ErrNotClassTeacher) {
-				t.Errorf("EnrollStudentToClass bởi %s: err=%v, muốn ErrNotClassTeacher", u.UserName, err)
+			if err := e.svc.DeleteClass(ctx, e.class.ID, u.ID, false, false); !errors.Is(err, wantDenied) {
+				t.Errorf("DeleteClass bởi %s: err=%v, muon %v", u.UserName, err, wantDenied)
 			}
-			if err := e.svc.RemoveStudentFromClass(ctx, e.class.ID, e.student.ID, u.ID, false); !errors.Is(err, ErrNotClassTeacher) {
-				t.Errorf("RemoveStudentFromClass bởi %s: err=%v, muốn ErrNotClassTeacher", u.UserName, err)
+			if _, err := e.svc.EnrollStudentToClass(ctx, e.class.ID, u.ID, false, dto.EnrollStudentDTO{StudentID: e.student.ID}); !errors.Is(err, wantDenied) {
+				t.Errorf("EnrollStudentToClass bởi %s: err=%v, muon %v", u.UserName, err, wantDenied)
+			}
+			if err := e.svc.RemoveStudentFromClass(ctx, e.class.ID, e.student.ID, u.ID, false); !errors.Is(err, wantDenied) {
+				t.Errorf("RemoveStudentFromClass bởi %s: err=%v, muon %v", u.UserName, err, wantDenied)
 			}
 		}
 		// Chủ khoá và người tạo không cần là giảng viên được gán vẫn quản lý được lớp của mình.

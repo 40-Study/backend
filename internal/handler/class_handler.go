@@ -47,11 +47,28 @@ func classErrorStatus(err error) int {
 		errors.Is(err, service.ErrNotClassOwner),
 		errors.Is(err, service.ErrNotCourseInstructor),
 		errors.Is(err, service.ErrNotOrgMember),
-		errors.Is(err, service.ErrNotTeacher):
+		errors.Is(err, service.ErrNotTeacher),
+		errors.Is(err, service.ErrClassDeleteAdminOnly):
 		return fiber.StatusForbidden
+	case errors.Is(err, service.ErrTeacherNotOrgMember):
+		// 400 (không 422): web (api-client) bỏ code/message của 422 và chỉ hiện "dữ liệu không hợp lệ" chung.
+		return fiber.StatusBadRequest
 	default:
 		return 0
 	}
+}
+
+// classErrorBody: thân JSON của lỗi đã ánh xạ. Hai lỗi nghiệp vụ mới mang mã ổn định để web hiện câu tiếng Việt
+// mà không so khớp chuỗi tiếng Anh (cùng kiểu ROLE_IN_USE ở role_handler).
+func classErrorBody(err error) fiber.Map {
+	body := fiber.Map{"message": err.Error()}
+	switch {
+	case errors.Is(err, service.ErrTeacherNotOrgMember):
+		body["code"] = "TEACHER_NOT_ORG_MEMBER"
+	case errors.Is(err, service.ErrClassDeleteAdminOnly):
+		body["code"] = "CLASS_DELETE_ADMIN_ONLY"
+	}
+	return body
 }
 
 func (h *ClassHandler) CreateClass(c *fiber.Ctx) error {
@@ -71,7 +88,7 @@ func (h *ClassHandler) CreateClass(c *fiber.Ctx) error {
 	class, err := h.service.CreateClass(c.Context(), actorUserID, isAdminActor(c, h.permChecker, actorUserID), req)
 	if err != nil {
 		if status := classErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create class",
@@ -111,7 +128,7 @@ func (h *ClassHandler) CreateClassForCourse(c *fiber.Ctx) error {
 	class, err := h.service.CreateClass(c.Context(), actorUserID, isAdminActor(c, h.permChecker, actorUserID), req)
 	if err != nil {
 		if status := classErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create class",
@@ -131,7 +148,11 @@ func (h *ClassHandler) GetAllClasses(c *fiber.Ctx) error {
 	keyword := c.Query("keyword")
 	status := c.Query("status")
 
-	classes, err := h.service.GetAllClasses(c.Context(), page, pageSize, keyword, status)
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+	classes, err := h.service.GetAllClasses(c.Context(), actorUserID, isAdminActor(c, h.permChecker, actorUserID), page, pageSize, keyword, status)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve classes",
@@ -189,6 +210,29 @@ func (h *ClassHandler) SearchEnrollableStudents(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Students retrieved successfully",
 		"data":    fiber.Map{"students": students},
+	})
+}
+
+// SearchAssignableTeachers: GET /classes/:id/assignable-teachers?keyword= — ô chọn giảng viên để gán vào lớp (W2-A).
+func (h *ClassHandler) SearchAssignableTeachers(c *fiber.Ctx) error {
+	classID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "Invalid class ID"})
+	}
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+	teachers, err := h.service.SearchAssignableTeachers(c.Context(), classID, actorUserID, isAdminActor(c, h.permChecker, actorUserID), c.Query("keyword"))
+	if err != nil {
+		if status := classErrorStatus(err); status != 0 {
+			return c.Status(status).JSON(classErrorBody(err))
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"message": "Failed to search teachers", "error": err.Error()})
+	}
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Teachers retrieved successfully",
+		"data":    fiber.Map{"teachers": teachers},
 	})
 }
 
@@ -296,7 +340,7 @@ func (h *ClassHandler) UpdateClass(c *fiber.Ctx) error {
 	class, err := h.service.UpdateClass(c.Context(), id, actorUserID, isAdmin, req)
 	if err != nil {
 		if status := classErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update class",
@@ -332,7 +376,7 @@ func (h *ClassHandler) DeleteClass(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, actorUserID)
 	if err := h.service.DeleteClass(c.Context(), id, actorUserID, isAdmin, hardDelete); err != nil {
 		if status := classErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete class",
@@ -372,7 +416,7 @@ func (h *ClassHandler) AssignTeacherToClass(c *fiber.Ctx) error {
 	tc, err := h.service.AssignTeacherToClass(c.Context(), classID, actorUserID, isAdminActor(c, h.permChecker, actorUserID), req)
 	if err != nil {
 		if status := classErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to assign teacher",
@@ -410,7 +454,7 @@ func (h *ClassHandler) RemoveTeacherFromClass(c *fiber.Ctx) error {
 
 	if err := h.service.RemoveTeacherFromClass(c.Context(), classID, teacherID, actorUserID, isAdminActor(c, h.permChecker, actorUserID)); err != nil {
 		if status := classErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to remove teacher",
@@ -442,7 +486,7 @@ func (h *ClassHandler) GetTeachersByClass(c *fiber.Ctx) error {
 	teachers, err := h.service.GetTeachersByClass(c.Context(), classID, actorUserID, isAdminActor(c, h.permChecker, actorUserID), page, pageSize)
 	if err != nil {
 		if status := classErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve teachers",
@@ -487,7 +531,7 @@ func (h *ClassHandler) EnrollStudentToClass(c *fiber.Ctx) error {
 	sc, err := h.service.EnrollStudentToClass(c.Context(), classID, actorUserID, isAdmin, req)
 	if err != nil {
 		if status := classErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to enroll student",
@@ -529,7 +573,7 @@ func (h *ClassHandler) RemoveStudentFromClass(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, actorUserID)
 	if err := h.service.RemoveStudentFromClass(c.Context(), classID, studentID, actorUserID, isAdmin); err != nil {
 		if status := classErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to remove student",
@@ -566,7 +610,7 @@ func (h *ClassHandler) GetStudentsByClass(c *fiber.Ctx) error {
 	students, err := h.service.GetStudentsByClass(c.Context(), classID, actorUserID, isAdmin, page, pageSize)
 	if err != nil {
 		if status := classErrorStatus(err); status != 0 {
-			return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+			return c.Status(status).JSON(classErrorBody(err))
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve students",

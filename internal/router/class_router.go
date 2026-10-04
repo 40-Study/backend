@@ -34,6 +34,7 @@ func SetupClassRoutes(
 		classes.Post("/:id/teachers", classHandler.AssignTeacherToClass)
 		classes.Delete("/:id/teachers/:teacherId", classHandler.RemoveTeacherFromClass)
 		classes.Get("/:id/teachers", classHandler.GetTeachersByClass)
+		classes.Get("/:id/assignable-teachers", classHandler.SearchAssignableTeachers)
 
 		// Student-Class
 		classes.Post("/:id/students", classHandler.EnrollStudentToClass)

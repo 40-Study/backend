@@ -36,6 +36,15 @@ var ErrNotClassOwner = errors.New("forbidden: only the class owner or an admin c
 // giang vien chu khoa do (va khong phai admin). Handler tra 403.
 var ErrNotCourseInstructor = errors.New("forbidden: only the course instructor or an admin can put a class in this course")
 
+// ErrTeacherNotOrgMember (W2-A, quyết định 04/10): gán vào lớp của một tổ chức một giảng viên chưa là thành viên
+// active của tổ chức đó. Admin hệ thống không bị giới hạn. Handler trả 400 kèm code TEACHER_NOT_ORG_MEMBER.
+var ErrTeacherNotOrgMember = errors.New("teacher is not an active member of this class's organization")
+
+// ErrClassDeleteAdminOnly (W2-A, quyết định 04/10): xoá lớp bị từ chối. Xoá vĩnh viễn (hard_delete) chỉ admin hệ
+// thống; người quản lý lớp chỉ nhờ vai tổ chức (chủ/quản trị tổ chức) chỉ được lưu trữ lớp, không xoá. Handler
+// trả 403 kèm code CLASS_DELETE_ADMIN_ONLY.
+var ErrClassDeleteAdminOnly = errors.New("forbidden: only a system admin can delete a class; archive it instead")
+
 // classOwner (S4): CHU lop = nguoi tao lop (classes.created_by) HOAC giang vien chu khoa chua lop.
 // Hep hon classTeacherOrInstructor: giang vien duoc gan vao lop (teacher_classes) quan tri lop nhung
 // KHONG phai chu, nen khong tu gan them giang vien khac — neu khong, moi giang vien deu tu gan minh
@@ -259,6 +268,28 @@ func ensureClassVisible(ctx context.Context, classRepo repository.ClassRepositor
 		return ErrClassNotFound
 	}
 	return err
+}
+
+// ensureClassManageWrite: luật "không xem được thì 404, xem được mà không có quyền thì 403" cho route GHI vào lớp
+// (sửa, kích hoạt, ghi danh, điểm danh...). ensureClassManage thuần trả ErrNotClassTeacher (403) cho cả người
+// ngoài lớp, nên người lạ dò được lớp nào tồn tại qua route ghi; ở đây người không xem được nhận ErrClassNotFound,
+// còn người xem được (học viên trong lớp) vẫn nhận ErrNotClassTeacher. isAdmin đã gồm nâng quyền chủ tổ chức; kiểm
+// "xem được" cố ý KHÔNG nâng, vì chủ tổ chức đã qua ensureClassManage trước khi tới đây.
+func ensureClassManageWrite(ctx context.Context, classRepo repository.ClassRepositoryInterface, courseRepo repository.CourseRepositoryInterface, userID, classID uuid.UUID, isAdmin bool) error {
+	err := ensureClassManage(ctx, classRepo, courseRepo, userID, classID, isAdmin)
+	if !errors.Is(err, ErrNotClassTeacher) {
+		return err
+	}
+	return ensureClassVisibleOr(ctx, classRepo, courseRepo, userID, classID, ErrNotClassTeacher)
+}
+
+// ensureClassVisibleOr: nếu người gọi xem được lớp thì trả `denied` (lỗi 403 của route), không xem được thì
+// ErrClassNotFound (404). Một chỗ duy nhất quyết định "xem được thì 403, không thì 404".
+func ensureClassVisibleOr(ctx context.Context, classRepo repository.ClassRepositoryInterface, courseRepo repository.CourseRepositoryInterface, userID, classID uuid.UUID, denied error) error {
+	if err := ensureClassVisible(ctx, classRepo, courseRepo, userID, classID, false); err != nil {
+		return err
+	}
+	return denied
 }
 
 // ensureClassManageOrNotFound (S4): nhu ensureClassManage nhung nguoi khong quan tri duoc lop nhan

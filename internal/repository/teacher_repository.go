@@ -15,6 +15,9 @@ type TeacherRepositoryInterface interface {
 	GetTeacherByID(ctx context.Context, id uuid.UUID) (*model.User, error)
 	DeleteTeacher(ctx context.Context, id uuid.UUID, hardDelete bool) error
 	Exists(ctx context.Context, id uuid.UUID) (bool, error)
+	// SearchAssignable (W2-A): ô chọn giảng viên để gán vào lớp. orgID != nil thì chỉ giảng viên là thành viên
+	// ACTIVE của tổ chức đó (cùng điều kiện ClassRepository.ActiveOrgMemberExists); nil thì mọi giảng viên.
+	SearchAssignable(ctx context.Context, orgID *uuid.UUID, keyword string, limit int) ([]model.User, error)
 }
 
 type TeacherRepository struct {
@@ -57,6 +60,19 @@ func (r *TeacherRepository) GetAllTeachers(ctx context.Context, page, pageSize i
 	}
 
 	return teachers, total, nil
+}
+
+func (r *TeacherRepository) SearchAssignable(ctx context.Context, orgID *uuid.UUID, keyword string, limit int) ([]model.User, error) {
+	var teachers []model.User
+	query := r.teacherQuery(ctx).Where("users.is_active = ?", true)
+	if orgID != nil {
+		query = query.Where(`users.id IN (SELECT uor.user_id FROM user_organization_roles uor
+			JOIN organizations o ON o.id = uor.organization_id AND o.deleted_at IS NULL
+			WHERE uor.organization_id = ? AND uor.status = ?)`, *orgID, model.UserOrgRoleStatusActive)
+	}
+	query = utils.ApplyKeywordSearch(query, keyword, "users.user_name", "users.full_name")
+	err := query.Select("users.*").Order("users.full_name ASC, users.user_name ASC").Limit(limit).Find(&teachers).Error
+	return teachers, err
 }
 
 func (r *TeacherRepository) GetTeacherByID(ctx context.Context, id uuid.UUID) (*model.User, error) {

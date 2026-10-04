@@ -355,6 +355,19 @@ func (r *UserOrganizationRoleRepository) DeleteByOrganizationID(ctx context.Cont
 // AssignRolesWithTx reactivate va tao mappings trong 1 transaction
 func (r *UserOrganizationRoleRepository) AssignRolesWithTx(ctx context.Context, toReactivate []*model.UserOrganizationRole, toCreate []model.UserOrganizationRole) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// W2-A: khoá FOR SHARE các role sắp gán, đối ứng với FOR UPDATE của RoleRepository.DeleteRoleIfUnused: nếu
+		// role đang bị xoá thì chờ rồi thấy nó đã mất (ErrRoleGone), nếu gán xong trước thì xoá sẽ đếm thấy người giữ.
+		roleIDs := make([]uuid.UUID, 0, len(toReactivate)+len(toCreate))
+		for _, m := range toReactivate {
+			roleIDs = append(roleIDs, m.RoleID)
+		}
+		for _, m := range toCreate {
+			roleIDs = append(roleIDs, m.RoleID)
+		}
+		if err := LockRolesForShare(tx, roleIDs); err != nil {
+			return err
+		}
+
 		// Reactivate cac mapping inactive
 		for _, mapping := range toReactivate {
 			if err := tx.Save(mapping).Error; err != nil {

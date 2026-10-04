@@ -52,11 +52,20 @@ func (r *NotificationRepository) GetUnreadCount(userID uuid.UUID) (int64, error)
 	return count, err
 }
 
+// MarkAsRead trả gorm.ErrRecordNotFound khi không có thông báo nào của userID với id này (không tồn tại hoặc của
+// người khác: hai trường hợp không phân biệt được), để handler trả 404 thay vì 200 giả.
 func (r *NotificationRepository) MarkAsRead(id, userID uuid.UUID) error {
 	now := time.Now()
-	return r.db.Model(&model.Notification{}).
+	res := r.db.Model(&model.Notification{}).
 		Where("id = ? AND user_id = ?", id, userID).
-		Updates(map[string]interface{}{"is_read": true, "read_at": now}).Error
+		Updates(map[string]interface{}{"is_read": true, "read_at": now})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (r *NotificationRepository) MarkAllAsRead(userID uuid.UUID) error {
@@ -86,8 +95,16 @@ func (r *NotificationRepository) DeleteResolvedFriendRequestNotices(userIDs ...u
 	return q.Delete(&model.Notification{}).Error
 }
 
+// Delete chỉ xoá thông báo của chính userID; 0 dòng bị xoá (không tồn tại hoặc của người khác) trả gorm.ErrRecordNotFound.
 func (r *NotificationRepository) Delete(id, userID uuid.UUID) error {
-	return r.db.Where("id = ? AND user_id = ?", id, userID).Delete(&model.Notification{}).Error
+	res := r.db.Where("id = ? AND user_id = ?", id, userID).Delete(&model.Notification{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (r *NotificationRepository) GetSettingsByUserID(userID uuid.UUID) (*model.NotificationSettings, error) {

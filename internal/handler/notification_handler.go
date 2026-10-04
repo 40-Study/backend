@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -61,6 +63,9 @@ func (h *NotificationHandler) MarkAsRead(c *fiber.Ctx) error {
 	}
 
 	if err := h.svc.MarkAsRead(id, userID); err != nil {
+		if errors.Is(err, service.ErrNotificationNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "notification not found"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
@@ -94,6 +99,9 @@ func (h *NotificationHandler) DeleteNotification(c *fiber.Ctx) error {
 	}
 
 	if err := h.svc.DeleteNotification(id, userID); err != nil {
+		if errors.Is(err, service.ErrNotificationNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "notification not found"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 

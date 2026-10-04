@@ -58,6 +58,14 @@ type EnrollableStudentDTO struct {
 	AvatarURL *string   `json:"avatar_url,omitempty"`
 }
 
+// AssignableTeacherDTO (W2-A): một dòng ở ô chọn giảng viên để gán vào lớp. Không có email, cùng dạng EnrollableStudentDTO.
+type AssignableTeacherDTO struct {
+	ID        uuid.UUID `json:"id"`
+	UserName  string    `json:"user_name"`
+	FullName  *string   `json:"full_name,omitempty"`
+	AvatarURL *string   `json:"avatar_url,omitempty"`
+}
+
 type ClassListResponseDTO struct {
 	Classes  []ClassResponseDTO `json:"classes"`
 	Total    int64              `json:"total"`

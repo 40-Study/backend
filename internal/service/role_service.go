@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 	"study.com/v1/data"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
@@ -191,15 +192,19 @@ func (s *RoleService) DeleteRole(ctx context.Context, id uuid.UUID, activeOrgID 
 
 	// B-16: xoá role còn người đang giữ trước đây trả 200 và để lại bản ghi gán "active" trỏ vào role đã mất
 	// (treo, người đó vẫn đăng nhập chọn được vai trò rỗng). Phải gỡ vai trò khỏi các thành viên trước.
-	assigned, err := s.repo.CountActiveAssignments(ctx, id)
+	// W2-A: đếm và xoá trong MỘT transaction có khoá dòng role. Đếm rồi xoá ở hai câu lệnh rời nhau thì một lượt gán
+	// role song song chen vào giữa vẫn để lại bản ghi gán "active" trỏ vào role đã mất.
+	assigned, err := s.repo.DeleteRoleIfUnused(ctx, id, hardDelete)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return errors.New("role not found")
+	}
 	if err != nil {
 		return err
 	}
 	if assigned > 0 {
 		return fmt.Errorf("%w: %d", ErrRoleInUse, assigned)
 	}
-
-	return s.repo.DeleteRole(ctx, id, hardDelete)
+	return nil
 }
 
 func (s *RoleService) RestoreRole(ctx context.Context, id uuid.UUID, activeOrgID *uuid.UUID, isAdmin bool) error {

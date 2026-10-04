@@ -13,6 +13,11 @@ import (
 type ClassRepositoryInterface interface {
 	Create(ctx context.Context, class *model.Class) error
 	GetAll(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.Class, int64, error)
+	// GetAllVisible (W2-A): như GetAll nhưng chỉ lớp userID xem được: giảng viên lớp, người tạo, chủ khoá, học viên
+	// ĐANG học, hoặc lớp thuộc một tổ chức trong managedOrgIDs (tổ chức người đó quản trị).
+	GetAllVisible(ctx context.Context, userID uuid.UUID, managedOrgIDs []uuid.UUID, page, pageSize int, keyword, status string) ([]model.Class, int64, error)
+	// ActiveOrgIDsOfUser: các tổ chức CHƯA xoá mà userID giữ ít nhất một org role active.
+	ActiveOrgIDsOfUser(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Class, error)
 	Update(ctx context.Context, class *model.Class) error
 	Delete(ctx context.Context, id uuid.UUID, hardDelete bool) error
@@ -76,6 +81,42 @@ func (r *ClassRepository) GetAll(ctx context.Context, page, pageSize int, keywor
 	}
 
 	return classes, total, nil
+}
+
+func (r *ClassRepository) GetAllVisible(ctx context.Context, userID uuid.UUID, managedOrgIDs []uuid.UUID, page, pageSize int, keyword, status string) ([]model.Class, int64, error) {
+	var classes []model.Class
+	var total int64
+
+	visible := `(classes.created_by = @u
+		OR EXISTS (SELECT 1 FROM teacher_classes tc WHERE tc.class_id = classes.id AND tc.teacher_id = @u)
+		OR EXISTS (SELECT 1 FROM courses c WHERE c.id = classes.course_id AND c.instructor_id = @u)
+		OR EXISTS (SELECT 1 FROM student_classes sc WHERE sc.class_id = classes.id AND sc.student_id = @u AND ` + StudentClassActiveCondition + `)`
+	args := map[string]interface{}{"u": userID}
+	if len(managedOrgIDs) > 0 {
+		visible += ` OR classes.organization_id IN @orgs`
+		args["orgs"] = managedOrgIDs
+	}
+	visible += `)`
+
+	query := r.db.WithContext(ctx).Model(&model.Class{}).Where(visible, args)
+	query = utils.ApplySoftDeleteStatus(query, status)
+	query = utils.ApplyKeywordSearch(query, keyword, "classes.name", "classes.description")
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := utils.ApplyPagination(query, page, pageSize).Order("classes.created_at DESC").Find(&classes).Error; err != nil {
+		return nil, 0, err
+	}
+	return classes, total, nil
+}
+
+func (r *ClassRepository) ActiveOrgIDsOfUser(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := r.db.WithContext(ctx).Model(&model.UserOrganizationRole{}).
+		Joins("JOIN organizations ON organizations.id = user_organization_roles.organization_id AND organizations.deleted_at IS NULL").
+		Where("user_organization_roles.user_id = ? AND user_organization_roles.status = ?", userID, model.UserOrgRoleStatusActive).
+		Distinct().Pluck("user_organization_roles.organization_id", &ids).Error
+	return ids, err
 }
 
 func (r *ClassRepository) GetByOrganization(ctx context.Context, orgID uuid.UUID, page, pageSize int, keyword, classStatus string) ([]model.Class, int64, error) {

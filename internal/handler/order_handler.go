@@ -43,9 +43,13 @@ func paymentStateConflict(err error) (fiber.Map, bool) {
 // orderErrorStatus ánh xạ lỗi phân quyền (H-06, audit 260909 vòng 2) sang HTTP 404; trả 0 khi
 // không nhận diện được để caller giữ nguyên xử lý hiện có. Đơn của người khác là đơn "không xem được"
 // nên trả 404 y như id không tồn tại: 403 sẽ xác nhận cho người lạ rằng đơn đó có thật (A-23, QA hồi quy 03/10).
+//
+// W2-A: id không tồn tại (ErrOrderNotFound) cũng thuộc nhóm này. Trước đây Cancel/CreatePaymentIntent/CheckPayment
+// chỉ ánh xạ ErrOrderForbidden, còn id không tồn tại rơi xuống 400 kèm câu "order not found" riêng, nên người lạ
+// phân biệt được "đơn của người khác" (404) với "id không có" (400). Nay cả hai cùng 404 cùng thông điệp.
 func orderErrorStatus(err error) int {
-	switch err {
-	case service.ErrOrderForbidden:
+	switch {
+	case errors.Is(err, service.ErrOrderForbidden), errors.Is(err, service.ErrOrderNotFound):
 		return fiber.StatusNotFound
 	default:
 		return 0
