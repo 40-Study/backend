@@ -32,6 +32,7 @@ type FiberClient struct {
 	closed     bool
 	channels   map[string]bool
 	channelMu  sync.RWMutex
+	typingName typingNameCache
 	// hubClient là con trỏ DUY NHẤT hub biết tới (S6): Register, Unregister và đăng ký kênh đều phải dùng đúng
 	// con trỏ này. Trước đây mỗi chỗ tạo một &Client mới nên Unregister không bao giờ tìm thấy client đã đăng ký,
 	// kênh của hub không có Send để phát tin, và client đã đóng vẫn bị phát tới (panic send on closed channel).
@@ -216,7 +217,7 @@ func (c *FiberClient) handleMessage(data []byte) {
 			if !typingAllowed(c.authorizer, c.UserID, payload.ConversationID) {
 				return
 			}
-			payload.UserName = typingDisplayName(c.authorizer, c.UserID)
+			payload.UserName = c.typingName.get(c.authorizer, c.UserID)
 			c.Hub.SendToChannel(channelName, Message{
 				Event:   EventConversationTyping,
 				Payload: payload,
