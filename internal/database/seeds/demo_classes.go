@@ -137,14 +137,14 @@ func (s *Seeder) upsertDemoSchedules(spec classSpec, class model.Class) (map[int
 	return result, nil
 }
 
-// demoToday trả về 00:00 hôm nay theo giờ máy chủ — mốc để chia buổi quá khứ/tương lai.
+// demoToday trả về 00:00 hôm nay theo giờ Việt Nam (seedZone) — mốc để chia buổi quá khứ/tương lai.
 func demoToday() time.Time {
-	return toLocalDate(time.Now())
+	return demoTodayAt(time.Now())
 }
 
 // toLocalDate bỏ phần giờ, giữ nguyên ngày/tháng/năm (cột date đọc từ Postgres về ở UTC 00:00).
 func toLocalDate(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local)
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, seedZone)
 }
 
 // dateOrToday chuẩn hoá con trỏ ngày của lớp; lớp demo luôn có start_date nên nhánh nil chỉ là an toàn.

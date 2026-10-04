@@ -169,7 +169,16 @@ type TimetableEntryDTO struct {
 	EffectiveUntil *string `json:"effective_until,omitempty"`
 }
 
+// TimetableOccurrenceDTO: một ngày của lịch lặp tuần không còn buổi học vì buổi sinh ra đã bị huỷ.
+type TimetableOccurrenceDTO struct {
+	ScheduleID uuid.UUID `json:"schedule_id"`
+	Date       string    `json:"date"` // YYYY-MM-DD
+}
+
 type TimetableResponseDTO struct {
 	Entries []TimetableEntryDTO `json:"entries"`
 	Week    string              `json:"week,omitempty"`
+	// CancelledOccurrences chỉ có khi hỏi kèm khoảng ngày (sessions_from/sessions_to). Buổi huỷ không nằm trong
+	// Entries (học viên không cần thấy), nhưng lịch lặp của giảng viên cần biết ngày nào bị huỷ để không vẽ lại.
+	CancelledOccurrences []TimetableOccurrenceDTO `json:"cancelled_occurrences,omitempty"`
 }

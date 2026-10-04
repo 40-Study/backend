@@ -175,6 +175,26 @@ func (r *LeaderboardRepository) CanViewClassBoard(ctx context.Context, userID, c
 	return n > 0, err
 }
 
+// ClassBoardRow: một lớp mà người xem có thể xem bảng xếp hạng riêng.
+type ClassBoardRow struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+// ListClassBoardsForUser: các lớp (chưa xoá) mà người dùng là học viên đang ghi danh hoặc giảng viên, đúng định nghĩa của
+// CanViewClassBoard, để giao diện chỉ mời chọn những lớp mà class_id thực sự mở được.
+func (r *LeaderboardRepository) ListClassBoardsForUser(ctx context.Context, userID uuid.UUID) ([]ClassBoardRow, error) {
+	var rows []ClassBoardRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT c.id, c.name FROM classes c
+		WHERE c.deleted_at IS NULL AND (
+			EXISTS (SELECT 1 FROM student_classes sc WHERE sc.class_id = c.id AND sc.student_id = ? AND sc.status = 'active')
+			OR EXISTS (SELECT 1 FROM teacher_classes tc WHERE tc.class_id = c.id AND tc.teacher_id = ?)
+		)
+		ORDER BY c.name, c.id`, userID, userID).Scan(&rows).Error
+	return rows, err
+}
+
 // GetUserRank returns the rank and points for a single user
 func (r *LeaderboardRepository) GetUserRank(ctx context.Context, userID uuid.UUID, periodType string, period string) (*LeaderboardRow, error) {
 	var row LeaderboardRow

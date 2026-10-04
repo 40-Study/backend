@@ -247,6 +247,11 @@ func (s *ScheduleService) CreateSchedule(ctx context.Context, classID, actorID u
 	if err != nil {
 		return nil, err
 	}
+	// Lịch lặp tuần cũng phải có giờ kết thúc sau giờ bắt đầu: GenerateSessions sinh buổi từ đây, một lịch
+	// end<=start sẽ sinh hàng loạt buổi vô nghĩa (review R3 MINOR 1).
+	if endTime <= startTime {
+		return nil, ErrSessionTimeOrder
+	}
 
 	schedule := &model.ClassSchedule{
 		ClassID:       classID,
@@ -344,6 +349,10 @@ func (s *ScheduleService) UpdateSchedule(ctx context.Context, id, actorID uuid.U
 		if schedule.EndTime, err = parseClockField("end_time", *req.EndTime); err != nil {
 			return nil, err
 		}
+	}
+	// Kiểm trên giá trị SAU khi áp thay đổi: chỉ sửa một đầu giờ cũng không được làm lịch end<=start.
+	if schedule.EndTime <= schedule.StartTime {
+		return nil, ErrSessionTimeOrder
 	}
 	if req.Room != nil {
 		schedule.Room = req.Room
@@ -514,12 +523,15 @@ func (s *ScheduleService) UpdateSession(ctx context.Context, id, actorID uuid.UU
 			return nil, err
 		}
 	}
+	wasCancelled := session.Status == model.SessionCancelled
 	if req.Status != nil {
 		session.Status = model.ClassSessionStatus(*req.Status)
 	}
 	// B-10: chỉ kiểm giờ khi sửa ngày/giờ của buổi còn hiệu lực — đổi ghi chú hay huỷ buổi không bị
-	// chặn vì một buổi cũ đã lỡ trùng giờ từ trước.
-	if (req.Date != nil || req.StartTime != nil || req.EndTime != nil) && session.Status != model.SessionCancelled {
+	// chặn vì một buổi cũ đã lỡ trùng giờ từ trước. Buổi huỷ không chiếm giờ, nên khi mở lại (huỷ -> còn hiệu
+	// lực) cũng phải kiểm dù không đổi ngày/giờ: trong lúc huỷ có thể đã có buổi khác vào chỗ đó.
+	reactivated := wasCancelled && session.Status != model.SessionCancelled
+	if (req.Date != nil || req.StartTime != nil || req.EndTime != nil || reactivated) && session.Status != model.SessionCancelled {
 		if err := s.ensureSessionSlotFree(ctx, session.ClassID, session.Date, session.StartTime, session.EndTime, &session.ID); err != nil {
 			return nil, err
 		}
@@ -588,11 +600,6 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 		return nil, errors.New("no recurring schedules found for this class")
 	}
 
-	nextNum, err := s.repo.GetNextSessionNumber(ctx, classID)
-	if err != nil {
-		return nil, err
-	}
-
 	var sessions []model.ClassSession
 	for d := startDate; !d.After(endDate); d = d.AddDate(0, 0, 1) {
 		weekday := int(d.Weekday())
@@ -607,20 +614,14 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 				continue
 			}
 
-			session := model.ClassSession{
-				ClassID:       classID,
-				ScheduleID:    &sch.ID,
-				SessionNumber: nextNum,
-				Date:          d,
-				StartTime:     sch.StartTime,
-				EndTime:       sch.EndTime,
-				Status:        model.SessionScheduled,
-			}
-			if sch.Room != nil {
-				// Room info available from schedule
-			}
-			sessions = append(sessions, session)
-			nextNum++
+			sessions = append(sessions, model.ClassSession{
+				ClassID:    classID,
+				ScheduleID: &sch.ID,
+				Date:       d,
+				StartTime:  sch.StartTime,
+				EndTime:    sch.EndTime,
+				Status:     model.SessionScheduled,
+			})
 		}
 	}
 
@@ -628,19 +629,49 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 		return nil, errors.New("no sessions generated for the given date range")
 	}
 
+	nextNum, err := s.repo.GetNextSessionNumber(ctx, classID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Sinh hàng loạt cũng qua cùng luật giờ với CreateSession (review R3 MINOR 4). Buổi trùng giờ với một buổi
+	// đã có (của lớp hoặc của giảng viên lớp) bị BỎ QUA thay vì làm hỏng cả lô: chạy lại "sinh buổi" cho một
+	// khoảng ngày đã sinh trước đó phải idempotent (không nhân đôi buổi, cũng không 409 vì chính các buổi
+	// mình đã sinh). Kiểm tuần tự ngay trước khi tạo từng buổi nên hai lịch lặp trùng giờ nhau trong cùng
+	// lô cũng chỉ sinh được một. Số buổi gán lúc tạo để buổi bị bỏ qua không để lại lỗ hổng số thứ tự.
+	created := make([]model.ClassSession, 0, len(sessions))
+	skipped := 0
 	for i := range sessions {
+		err := s.ensureSessionSlotFree(ctx, classID, sessions[i].Date, sessions[i].StartTime, sessions[i].EndTime, nil)
+		if errors.Is(err, ErrSessionOverlap) || errors.Is(err, ErrSessionTimeOrder) {
+			skipped++
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		sessions[i].SessionNumber = nextNum
 		if err := s.repo.CreateSession(ctx, &sessions[i]); err != nil {
 			return nil, fmt.Errorf("failed to create session #%d: %w", sessions[i].SessionNumber, err)
 		}
+		nextNum++
 		// Schedule Asynq reminders for each generated session
 		s.scheduleSessionReminder(ctx, &sessions[i], classID)
+		created = append(created, sessions[i])
+	}
+	if skipped > 0 {
+		log.Printf("GenerateSessions: lớp %s bỏ qua %d/%d buổi trùng giờ", classID, skipped, len(sessions))
+	}
+	// Mọi buổi đều trùng: báo 409 thay vì trả danh sách rỗng như thể thành công.
+	if len(created) == 0 {
+		return nil, ErrSessionOverlap
 	}
 
 	s.invalidateSessionCache(ctx, classID)
 
-	result := make([]dto.ClassSessionResponseDTO, len(sessions))
-	for i, sess := range sessions {
-		result[i] = *s.mapSessionToDTO(&sess)
+	result := make([]dto.ClassSessionResponseDTO, len(created))
+	for i := range created {
+		result[i] = *s.mapSessionToDTO(&created[i])
 	}
 	return result, nil
 }
@@ -1081,7 +1112,15 @@ func (s *ScheduleService) GetMyTimetableWithSessions(ctx context.Context, userID
 			Status:     string(sess.Status),
 		})
 	}
-	return &dto.TimetableResponseDTO{Entries: entries, Week: base.Week}, nil
+	cancelled, err := s.repo.GetCancelledScheduledSessions(ctx, classIDs, from.Format("2006-01-02"), to.Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+	var occurrences []dto.TimetableOccurrenceDTO
+	for _, sess := range cancelled {
+		occurrences = append(occurrences, dto.TimetableOccurrenceDTO{ScheduleID: *sess.ScheduleID, Date: sess.Date.Format("2006-01-02")})
+	}
+	return &dto.TimetableResponseDTO{Entries: entries, Week: base.Week, CancelledOccurrences: occurrences}, nil
 }
 
 // ============================================================================

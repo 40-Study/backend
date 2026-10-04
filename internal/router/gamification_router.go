@@ -38,6 +38,9 @@ func SetupLeaderboardRoutes(api fiber.Router, cfg *config.Config, h *handler.Lea
 
 	// Auth-required: current user rank
 	leaderboard.Get("/me", middleware.AuthMiddleware(cfg, redis), h.GetMyRank)
+
+	// Auth-required: các lớp người gọi mở được bảng xếp hạng riêng (cho ô chọn lớp ở trang xếp hạng).
+	leaderboard.Get("/classes", middleware.AuthMiddleware(cfg, redis), h.GetMyClassBoards)
 }
 
 // SetupUserStatsRoutes registers /users/:id/public-profile endpoint.

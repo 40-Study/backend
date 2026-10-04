@@ -13,6 +13,7 @@ import (
 type LeaderboardHandlerInterface interface {
 	GetLeaderboard(c *fiber.Ctx) error
 	GetMyRank(c *fiber.Ctx) error
+	GetMyClassBoards(c *fiber.Ctx) error
 }
 
 type LeaderboardHandler struct {
@@ -81,6 +82,19 @@ func (h *LeaderboardHandler) GetLeaderboard(c *fiber.Ctx) error {
 		return RespondServiceError(c, err, "Không thể tải bảng xếp hạng")
 	}
 	return c.JSON(fiber.Map{"data": resp})
+}
+
+// GetMyClassBoards GET /leaderboard/classes: các lớp người gọi mở được bảng xếp hạng riêng (?class_id= của GET /leaderboard).
+func (h *LeaderboardHandler) GetMyClassBoards(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok || userID == uuid.Nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+	classes, err := h.svc.ListMyClassBoards(c.Context(), userID)
+	if err != nil {
+		return RespondServiceError(c, err, "Không thể tải danh sách lớp")
+	}
+	return c.JSON(fiber.Map{"data": classes})
 }
 
 // GetMyRank GET /leaderboard/me?period=weekly|monthly|all_time

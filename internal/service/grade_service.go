@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -241,6 +242,27 @@ func (s *GradeService) CreateGrade(ctx context.Context, classID, gradedBy uuid.U
 		return nil, err
 	}
 
+	grade, err := s.buildGrade(ctx, classID, gradedBy, req)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.repo.CreateGrade(ctx, grade); err != nil {
+		return nil, err
+	}
+
+	s.invalidateGradeCache(ctx, classID)
+
+	created, _ := s.repo.GetGradeByID(ctx, grade.ID)
+	if created != nil {
+		return s.mapGradeToDTO(created), nil
+	}
+	return s.mapGradeToDTO(grade), nil
+}
+
+// buildGrade kiểm học viên thuộc lớp + khoảng điểm rồi dựng bản ghi điểm CHƯA ghi. Tách khỏi CreateGrade để
+// BulkCreateGrades validate được cả lô trước khi ghi dòng nào (quyền lớp do người gọi kiểm trước).
+func (s *GradeService) buildGrade(ctx context.Context, classID, gradedBy uuid.UUID, req dto.CreateGradeDTO) (*model.Grade, error) {
 	studentID, err := uuid.Parse(req.StudentID)
 	if err != nil {
 		return nil, errors.New("invalid student_id")
@@ -248,7 +270,11 @@ func (s *GradeService) CreateGrade(ctx context.Context, classID, gradedBy uuid.U
 	if err := s.requireStudentInClass(ctx, classID, studentID); err != nil {
 		return nil, err
 	}
-	if err := validateScoreRange(decimal.NewFromFloat(req.Score), decimal.NewFromFloat(req.MaxScore)); err != nil {
+	// Service có thể được gọi không qua handler (không qua validate): thiếu score là lỗi, không phải điểm 0.
+	if req.Score == nil {
+		return nil, errors.New("score is required")
+	}
+	if err := validateScoreRange(decimal.NewFromFloat(*req.Score), decimal.NewFromFloat(req.MaxScore)); err != nil {
 		return nil, err
 	}
 
@@ -257,7 +283,7 @@ func (s *GradeService) CreateGrade(ctx context.Context, classID, gradedBy uuid.U
 		ClassID:   classID,
 		GradeType: model.GradeType(req.GradeType),
 		Title:     req.Title,
-		Score:     decimal.NewFromFloat(req.Score),
+		Score:     decimal.NewFromFloat(*req.Score),
 		MaxScore:  decimal.NewFromFloat(req.MaxScore),
 		Weight:    decimal.NewFromFloat(1.0),
 		GradedBy:  gradedBy,
@@ -282,18 +308,7 @@ func (s *GradeService) CreateGrade(ctx context.Context, classID, gradedBy uuid.U
 		id, _ := uuid.Parse(req.SessionID)
 		grade.SessionID = &id
 	}
-
-	if err := s.repo.CreateGrade(ctx, grade); err != nil {
-		return nil, err
-	}
-
-	s.invalidateGradeCache(ctx, classID)
-
-	created, _ := s.repo.GetGradeByID(ctx, grade.ID)
-	if created != nil {
-		return s.mapGradeToDTO(created), nil
-	}
-	return s.mapGradeToDTO(grade), nil
+	return grade, nil
 }
 
 func (s *GradeService) GetGradesByClass(ctx context.Context, classID, actorUserID uuid.UUID) (*dto.GradeBookDTO, error) {
@@ -456,22 +471,30 @@ func (s *GradeService) BulkCreateGrades(ctx context.Context, classID, gradedBy u
 	if err := s.requireClassGrader(ctx, classID, gradedBy); err != nil {
 		return nil, err
 	}
-	for _, gReq := range req.Grades {
-		studentID, err := uuid.Parse(gReq.StudentID)
+	// Dựng và validate TOÀN BỘ lô (học viên thuộc lớp, khoảng điểm) trước khi ghi: một dòng sai ở giữa lô
+	// không được để lại các dòng trước đó đã ghi. Ghi bằng MỘT câu INSERT nhiều dòng nên Postgres coi là
+	// nguyên tử: hoặc đủ cả lô, hoặc không dòng nào.
+	grades := make([]model.Grade, 0, len(req.Grades))
+	for i, gReq := range req.Grades {
+		grade, err := s.buildGrade(ctx, classID, gradedBy, gReq)
 		if err != nil {
-			return nil, errors.New("invalid student_id")
+			return nil, fmt.Errorf("dòng %d: %w", i+1, err)
 		}
-		if err := s.requireStudentInClass(ctx, classID, studentID); err != nil {
-			return nil, err
-		}
+		grades = append(grades, *grade)
 	}
-	var results []dto.GradeResponseDTO
-	for _, gReq := range req.Grades {
-		result, err := s.CreateGrade(ctx, classID, gradedBy, gReq)
-		if err != nil {
-			return nil, err
+	if err := s.repo.BulkCreateGrades(ctx, grades); err != nil {
+		return nil, err
+	}
+	s.invalidateGradeCache(ctx, classID)
+
+	results := make([]dto.GradeResponseDTO, 0, len(grades))
+	for i := range grades {
+		// Nạp lại để có thông tin người chấm/học viên như CreateGrade.
+		if created, _ := s.repo.GetGradeByID(ctx, grades[i].ID); created != nil {
+			results = append(results, *s.mapGradeToDTO(created))
+			continue
 		}
-		results = append(results, *result)
+		results = append(results, *s.mapGradeToDTO(&grades[i]))
 	}
 	return results, nil
 }

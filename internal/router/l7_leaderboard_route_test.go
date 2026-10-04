@@ -46,6 +46,10 @@ func (s *viewerCapturingLeaderboardSvc) GetMyRank(context.Context, uuid.UUID, st
 	return &dto.MyRankResponse{}, nil
 }
 
+func (s *viewerCapturingLeaderboardSvc) ListMyClassBoards(context.Context, uuid.UUID) ([]dto.LeaderboardClassDTO, error) {
+	return []dto.LeaderboardClassDTO{}, nil
+}
+
 func TestLeaderboardRoute_OptionalAuthDungVoiMoiLoaiNguoiXem(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

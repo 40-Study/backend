@@ -24,7 +24,7 @@ func TestGradeScoreRange_ZeroAllowedOverMaxRejected(t *testing.T) {
 	teacher := e.coTeacher.ID
 
 	req := func(score, max float64) dto.CreateGradeDTO {
-		return dto.CreateGradeDTO{StudentID: e.student.ID.String(), GradeType: "assignment", Title: "Bài tập", Score: score, MaxScore: max}
+		return dto.CreateGradeDTO{StudentID: e.student.ID.String(), GradeType: "assignment", Title: "Bài tập", Score: gradeF64(score), MaxScore: max}
 	}
 
 	// DTO: 0 điểm hợp lệ, âm và max_score 0 thì không.
@@ -72,7 +72,7 @@ func TestGradeResponse_MyGradesCarryClassName(t *testing.T) {
 	svc := NewGradeService(repository.NewGradeRepository(e.f.db), repository.NewClassRepository(e.f.db), repository.NewCourseRepository(e.f.db), nil, nil)
 
 	if _, err := svc.CreateGrade(ctx, e.class.ID, e.coTeacher.ID, dto.CreateGradeDTO{
-		StudentID: e.student.ID.String(), GradeType: "assignment", Title: "Bài tập", Score: 8, MaxScore: 10,
+		StudentID: e.student.ID.String(), GradeType: "assignment", Title: "Bài tập", Score: gradeF64(8), MaxScore: 10,
 	}); err != nil {
 		t.Fatal(err)
 	}
