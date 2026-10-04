@@ -34,6 +34,7 @@ type Client struct {
 	closed     bool
 	channels   map[string]bool
 	channelMu  sync.RWMutex
+	typingName typingNameCache
 }
 
 // NewClient creates a new WebSocket client
@@ -153,7 +154,7 @@ func (c *Client) handleMessage(data []byte) {
 			if !typingAllowed(c.authorizer, c.UserID, payload.ConversationID) {
 				return
 			}
-			payload.UserName = typingDisplayName(c.authorizer, c.UserID)
+			payload.UserName = c.typingName.get(c.authorizer, c.UserID)
 			c.Hub.SendToChannel(channelName, Message{
 				Event:   EventConversationTyping,
 				Payload: payload,

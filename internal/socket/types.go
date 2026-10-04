@@ -132,6 +132,18 @@ func typingDisplayName(authorizer ChannelAuthorizer, userID uuid.UUID) string {
 	return namer.TypingDisplayName(userID)
 }
 
+// typingNameCache giữ tên người gõ đã tra được cho MỘT kết nối, để mỗi sự kiện gõ không tốn thêm một truy vấn DB.
+// Chỉ nhớ tên KHÔNG rỗng (lỗi/không thấy thì lần gõ sau tra lại). Chỉ read pump của chính kết nối đọc/ghi nó nên
+// không cần khoá; tên đổi giữa phiên thì hiện tên cũ tới khi kết nối lại (tín hiệu "đang gõ" thoáng qua, chấp nhận).
+type typingNameCache struct{ name string }
+
+func (n *typingNameCache) get(authorizer ChannelAuthorizer, userID uuid.UUID) string {
+	if n.name == "" {
+		n.name = typingDisplayName(authorizer, userID)
+	}
+	return n.name
+}
+
 // typingAllowed — false thì BỎ IM LẶNG sự kiện gõ (không báo lỗi: người gõ không cần biết, ô nhập của họ đã bị
 // khoá; và phía bên kia tuyệt đối không nhận gì). Lỗi hạ tầng hoặc id sai định dạng cũng bỏ (fail-closed): "đang
 // gõ" chỉ là tín hiệu thoáng qua, bỏ nhầm một lần không hại gì, còn lọt nhầm là rò rỉ cho người đã chặn.
