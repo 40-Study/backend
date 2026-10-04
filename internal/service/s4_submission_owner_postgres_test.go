@@ -67,6 +67,15 @@ func newS4SubmissionEnv(t *testing.T) *s4SubmissionEnv {
 	return e
 }
 
+// W2-A: hoc vien trong lop xem duoc bai tap nen bi tu choi bang 403 (ErrSubmissionForbidden); nguoi khong xem duoc bai
+// tap nhan 404 (ErrAssignmentNotFound), khong do duoc id.
+func (e *s4SubmissionEnv) deniedErr(u model.User) error {
+	if u.ID == e.student.ID || u.ID == e.otherStudent.ID {
+		return ErrSubmissionForbidden
+	}
+	return ErrAssignmentNotFound
+}
+
 func TestS4_Submission_QuyenDocBaiNopLaCanManageCuaAssignment(t *testing.T) {
 	e := newS4SubmissionEnv(t)
 	ctx := context.Background()
@@ -98,8 +107,8 @@ func TestS4_Submission_QuyenDocBaiNopLaCanManageCuaAssignment(t *testing.T) {
 			switch {
 			case tc.want && err != nil:
 				t.Errorf("GetByAssignment / %s / %s: bị chặn nhầm (%v)", a.name, tc.what, err)
-			case !tc.want && !errors.Is(err, ErrSubmissionForbidden):
-				t.Errorf("GetByAssignment / %s / %s: err=%v, muốn ErrSubmissionForbidden", a.name, tc.what, err)
+			case !tc.want && !errors.Is(err, e.deniedErr(a.user)):
+				t.Errorf("GetByAssignment / %s / %s: err=%v, muon %v", a.name, tc.what, err, e.deniedErr(a.user))
 			}
 		}
 	}
@@ -116,8 +125,8 @@ func TestS4_Submission_QuyenDocBaiNopLaCanManageCuaAssignment(t *testing.T) {
 			switch {
 			case want && (err != nil || got == nil):
 				t.Errorf("GetByID / %s / %s: bị chặn nhầm (%v)", a.name, tc.what, err)
-			case !want && !errors.Is(err, ErrSubmissionForbidden):
-				t.Errorf("GetByID / %s / %s: err=%v, muốn ErrSubmissionForbidden", a.name, tc.what, err)
+			case !want && !errors.Is(err, e.deniedErr(a.user)):
+				t.Errorf("GetByID / %s / %s: err=%v, muon %v", a.name, tc.what, err, e.deniedErr(a.user))
 			}
 		}
 	}

@@ -440,9 +440,20 @@ func (s *SubmissionService) GetByID(ctx context.Context, id, requesterID uuid.UU
 		return nil, err
 	}
 	if !allowed {
-		return nil, ErrSubmissionForbidden
+		return nil, s.denyOrHide(ctx, sub.AssignmentID, requesterID, isAdmin)
 	}
 	return sub, nil
+}
+
+// denyOrHide (W2-A): luật "không xem được thì 404, xem được mà không có quyền thì 403" cho bài nộp. Người gọi
+// không xem được bài tập (lớp tổ chức khác, bài chưa công bố...) nhận ErrAssignmentNotFound để không dò được
+// id; người xem được bài tập (học viên cùng lớp) mà không phải chủ bài/người quản lý nhận ErrSubmissionForbidden.
+// Dùng đúng AssignmentService.CanView, cùng nguồn với Submit/RunCode (requireViewable).
+func (s *SubmissionService) denyOrHide(ctx context.Context, assignmentID, requesterID uuid.UUID, isAdmin bool) error {
+	if err := s.requireViewable(ctx, assignmentID, requesterID, isAdmin); err != nil {
+		return err
+	}
+	return ErrSubmissionForbidden
 }
 
 // GetByAssignment (H-03, review vòng 1): TRƯỚC ĐÂY không nhận requesterID, không lọc gì —
@@ -455,14 +466,14 @@ func (s *SubmissionService) GetByAssignment(ctx context.Context, assignmentID, r
 		return nil, err
 	}
 	if assignment == nil {
-		return nil, errors.New("assignment not found")
+		return nil, ErrAssignmentNotFound
 	}
 	allowed, err := s.canManageAssignment(ctx, assignment, requesterID, isAdmin)
 	if err != nil {
 		return nil, err
 	}
 	if !allowed {
-		return nil, ErrSubmissionForbidden
+		return nil, s.denyOrHide(ctx, assignmentID, requesterID, isAdmin)
 	}
 
 	submissions, total, err := s.repo.GetByAssignment(ctx, assignmentID, page, pageSize)

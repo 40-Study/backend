@@ -67,6 +67,11 @@ func TestS4_Attendance_QuyenGhiDocVaThuocDungLop(t *testing.T) {
 	day := 0
 	for _, a := range actors {
 		day++
+		// W2-A: giang vien la khong xem duoc lop -> ErrClassNotFound (404); hoc vien xem duoc -> ErrNotClassTeacher (403).
+		denied := ErrNotClassTeacher
+		if a.user.ID == e.stranger.ID {
+			denied = ErrClassNotFound
+		}
 		date := time.Now().AddDate(0, 0, day).Format("2006-01-02")
 
 		// ghi: tạo
@@ -76,8 +81,8 @@ func TestS4_Attendance_QuyenGhiDocVaThuocDungLop(t *testing.T) {
 			t.Errorf("Mark / %s: bị chặn nhầm (%v)", a.name, err)
 		}
 		if !a.manager {
-			if !errors.Is(err, ErrNotClassTeacher) {
-				t.Errorf("Mark / %s: err=%v, muốn ErrNotClassTeacher", a.name, err)
+			if !errors.Is(err, denied) {
+				t.Errorf("Mark / %s: err=%v, muon loi tu choi (denied)", a.name, err)
 			}
 			if count() != before {
 				t.Errorf("Mark / %s: bản ghi vẫn được tạo dù không có quyền", a.name)
@@ -96,8 +101,8 @@ func TestS4_Attendance_QuyenGhiDocVaThuocDungLop(t *testing.T) {
 		switch {
 		case a.manager && (err != nil || got.Status != "absent"):
 			t.Errorf("Update / %s: err=%v status=%s, muốn sửa được", a.name, err, got.Status)
-		case !a.manager && (!errors.Is(err, ErrNotClassTeacher) || got.Status != "present"):
-			t.Errorf("Update / %s: err=%v status=%s, muốn ErrNotClassTeacher và không đổi", a.name, err, got.Status)
+		case !a.manager && (!errors.Is(err, denied) || got.Status != "present"):
+			t.Errorf("Update / %s: err=%v status=%s, muon loi tu choi (denied) và không đổi", a.name, err, got.Status)
 		}
 		err = svc.DeleteAttendance(ctx, e.class.ID, row.ID, a.user.ID, a.isAdmin)
 		var n int64
@@ -105,8 +110,8 @@ func TestS4_Attendance_QuyenGhiDocVaThuocDungLop(t *testing.T) {
 		switch {
 		case a.manager && (err != nil || n != 0):
 			t.Errorf("Delete / %s: err=%v còn=%d, muốn xoá được", a.name, err, n)
-		case !a.manager && (!errors.Is(err, ErrNotClassTeacher) || n != 1):
-			t.Errorf("Delete / %s: err=%v còn=%d, muốn ErrNotClassTeacher và không xoá", a.name, err, n)
+		case !a.manager && (!errors.Is(err, denied) || n != 1):
+			t.Errorf("Delete / %s: err=%v còn=%d, muon loi tu choi (denied) và không xoá", a.name, err, n)
 		}
 
 		// đọc: danh sách, một bản ghi

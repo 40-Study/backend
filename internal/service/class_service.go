@@ -27,6 +27,9 @@ type ClassServiceInterface interface {
 	// SearchEnrollableStudents (B-12): ô chọn học viên để ghi danh; chỉ người quản lý lớp (404 nếu không xem được, 403 nếu xem được mà không quản lý).
 	SearchEnrollableStudents(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, keyword string) ([]dto.EnrollableStudentDTO, error)
 
+	// SearchAssignableTeachers (W2-A): ô chọn giảng viên để gán. Cùng quyền với AssignTeacherToClass (chủ lớp/admin; 404 nếu không xem được, 403 nếu xem được mà không phải chủ); lớp của tổ chức chỉ liệt kê giảng viên là thành viên tổ chức (admin hệ thống thấy mọi giảng viên).
+	SearchAssignableTeachers(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, keyword string) ([]dto.AssignableTeacherDTO, error)
+
 	// Gán/gỡ giảng viên (S4): chỉ chủ lớp (người tạo hoặc chủ khoá) và admin. Người không xem được lớp: ErrClassNotFound; xem được nhưng không phải chủ: ErrNotClassOwner.
 	AssignTeacherToClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, req dto.AssignTeacherDTO) (*dto.TeacherClassResponseDTO, error)
 	AssignTeachersToClass(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, req dto.AssignTeachersDTO) ([]dto.TeacherClassResponseDTO, error)
@@ -57,7 +60,8 @@ func (s *ClassService) requireClassTeacherOrAdmin(ctx context.Context, classID, 
 	if err != nil {
 		return err
 	}
-	return ensureClassManage(ctx, s.classRepo, s.courseRepo, actorUserID, classID, elevated)
+	// W2-A: người không xem được lớp nhận 404 (không phải 403), như các route đọc.
+	return ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, actorUserID, classID, elevated)
 }
 
 // accessAsAdmin: isAdmin nâng lên cho chủ/quản trị tổ chức của lớp, chỉ để kiểm quyền truy cập lớp.
@@ -80,6 +84,30 @@ func (s *ClassService) ensureOwner(ctx context.Context, classID, actorUserID uui
 		return err
 	}
 	return ensureClassOwner(ctx, s.classRepo, s.courseRepo, actorUserID, classID, elevated)
+}
+
+// requireOrgMemberTeacher (quyết định 04/10): lớp thuộc một tổ chức chỉ nhận giảng viên đã là thành viên active của
+// tổ chức đó. Lớp cá nhân (organization_id NULL) không bị giới hạn. Admin hệ thống (cờ gốc, KHÔNG phải quyền đã
+// nâng cho chủ tổ chức) được gán bất kỳ giảng viên nào. Ghi danh học viên không qua hàm này: học viên mua lẻ B2C.
+func (s *ClassService) requireOrgMemberTeacher(ctx context.Context, classID, teacherID uuid.UUID, isAdmin bool) error {
+	if isAdmin {
+		return nil
+	}
+	class, err := s.classRepo.GetByID(ctx, classID)
+	if err != nil {
+		return err
+	}
+	if class == nil || class.OrganizationID == nil {
+		return nil
+	}
+	member, err := s.classRepo.ActiveOrgMemberExists(ctx, teacherID, *class.OrganizationID)
+	if err != nil {
+		return err
+	}
+	if !member {
+		return ErrTeacherNotOrgMember
+	}
+	return nil
 }
 
 // WithAuthorizer gắn PermissionChecker để chủ/quản trị tổ chức quản lý được lớp của tổ chức mình (B-05/B-12).
@@ -278,11 +306,6 @@ func (s *ClassService) GetClassByID(ctx context.Context, id, actorUserID uuid.UU
 // được lớp. keyword rỗng vẫn trả tối đa maxEnrollableResults học viên đầu tiên.
 func (s *ClassService) SearchEnrollableStudents(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, keyword string) ([]dto.EnrollableStudentDTO, error) {
 	if err := s.requireClassTeacherOrAdmin(ctx, classID, actorUserID, isAdmin); err != nil {
-		if errors.Is(err, ErrNotClassTeacher) {
-			if visErr := s.ensureVisible(ctx, classID, actorUserID, isAdmin); visErr != nil {
-				return nil, visErr
-			}
-		}
 		return nil, err
 	}
 	students, err := s.studentRepo.SearchEnrollable(ctx, classID, strings.TrimSpace(keyword), maxEnrollableResults)
@@ -292,6 +315,34 @@ func (s *ClassService) SearchEnrollableStudents(ctx context.Context, classID, ac
 	out := make([]dto.EnrollableStudentDTO, len(students))
 	for i, st := range students {
 		out[i] = dto.EnrollableStudentDTO{ID: st.ID, UserName: st.UserName, FullName: st.FullName, AvatarURL: st.AvatarURL}
+	}
+	return out, nil
+}
+
+// SearchAssignableTeachers: điều kiện thành viên lấy từ cùng nguồn với requireOrgMemberTeacher (ActiveOrgMemberExists
+// là truy vấn một người, ở đây là truy vấn danh sách trên cùng bảng/điều kiện), nên ô chọn không hiện người mà gán sẽ bị từ chối.
+func (s *ClassService) SearchAssignableTeachers(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool, keyword string) ([]dto.AssignableTeacherDTO, error) {
+	if err := s.ensureOwner(ctx, classID, actorUserID, isAdmin); err != nil {
+		return nil, err
+	}
+	class, err := s.classRepo.GetByID(ctx, classID)
+	if err != nil {
+		return nil, err
+	}
+	if class == nil {
+		return nil, ErrClassNotFound
+	}
+	var orgID *uuid.UUID
+	if !isAdmin {
+		orgID = class.OrganizationID
+	}
+	teachers, err := s.teacherRepo.SearchAssignable(ctx, orgID, strings.TrimSpace(keyword), maxEnrollableResults)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]dto.AssignableTeacherDTO, len(teachers))
+	for i, t := range teachers {
+		out[i] = dto.AssignableTeacherDTO{ID: t.ID, UserName: t.UserName, FullName: t.FullName, AvatarURL: t.AvatarURL}
 	}
 	return out, nil
 }
@@ -379,6 +430,20 @@ func (s *ClassService) DeleteClass(ctx context.Context, id, actorUserID uuid.UUI
 		return err
 	}
 
+	// Quyết định 04/10: xoá vĩnh viễn chỉ admin hệ thống; người chỉ quản lý lớp nhờ vai tổ chức chỉ được lưu trữ
+	// (UpdateClass status=archived), không xoá. Kiểm SAU quyền xem/quản lý để người lạ vẫn nhận 404, không dò được lớp.
+	if !isAdmin {
+		if hardDelete {
+			return ErrClassDeleteAdminOnly
+		}
+		if err := ensureClassManage(ctx, s.classRepo, s.courseRepo, actorUserID, id, false); err != nil {
+			if errors.Is(err, ErrNotClassTeacher) {
+				return ErrClassDeleteAdminOnly
+			}
+			return err
+		}
+	}
+
 	class, err := s.classRepo.GetByID(ctx, id)
 	if err != nil {
 		return err
@@ -408,6 +473,9 @@ func (s *ClassService) AssignTeacherToClass(ctx context.Context, classID, actorU
 	}
 	if !exists {
 		return nil, errors.New("teacher not found")
+	}
+	if err := s.requireOrgMemberTeacher(ctx, classID, req.TeacherID, isAdmin); err != nil {
+		return nil, err
 	}
 
 	// Check if teacher is already assigned to this class
@@ -460,6 +528,9 @@ func (s *ClassService) AssignTeachersToClass(ctx context.Context, classID, actor
 		}
 		if !exists {
 			return nil, errors.New("teacher not found: " + t.TeacherID.String())
+		}
+		if err := s.requireOrgMemberTeacher(ctx, classID, t.TeacherID, isAdmin); err != nil {
+			return nil, err
 		}
 
 		// Check if teacher is already assigned

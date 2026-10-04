@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -24,6 +26,10 @@ func NewClassLessonContentHandler(service service.ClassLessonContentServiceInter
 // thay vi 400 mac dinh cua cac handler trong nhom nay — xem service.IsForbiddenErr (mot cho duy
 // nhat liet ke sentinel uy quyen cua nhom livestream/class-content).
 func clcErrorStatus(err error) int {
+	// W2-A: người không xem được lớp nhận 404 (ensureClassManageWrite), cùng luật với route lớp.
+	if errors.Is(err, service.ErrClassNotFound) {
+		return fiber.StatusNotFound
+	}
 	if service.IsForbiddenErr(err) {
 		return fiber.StatusForbidden
 	}

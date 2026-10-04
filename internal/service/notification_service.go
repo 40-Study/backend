@@ -1,7 +1,10 @@
 package service
 
 import (
+	"errors"
+
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -64,8 +67,18 @@ func (s *NotificationService) GetUnreadCount(userID uuid.UUID) (int64, error) {
 	return s.repo.GetUnreadCount(userID)
 }
 
+// ErrNotificationNotFound: thông báo không tồn tại HOẶC không thuộc người gọi (không phân biệt, để không dò được id). Handler trả 404.
+var ErrNotificationNotFound = errors.New("notification not found")
+
 func (s *NotificationService) MarkAsRead(id, userID uuid.UUID) error {
-	return s.repo.MarkAsRead(id, userID)
+	return notificationNotFound(s.repo.MarkAsRead(id, userID))
+}
+
+func notificationNotFound(err error) error {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ErrNotificationNotFound
+	}
+	return err
 }
 
 func (s *NotificationService) MarkAllAsRead(userID uuid.UUID) error {
@@ -106,7 +119,7 @@ func (s *NotificationService) SendNotification(req dto.CreateNotificationDTO) er
 }
 
 func (s *NotificationService) DeleteNotification(id, userID uuid.UUID) error {
-	return s.repo.Delete(id, userID)
+	return notificationNotFound(s.repo.Delete(id, userID))
 }
 
 func (s *NotificationService) GetSettings(userID uuid.UUID) (*dto.NotificationSettingsResponseDTO, error) {

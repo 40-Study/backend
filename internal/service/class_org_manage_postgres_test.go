@@ -136,14 +136,14 @@ func TestR5_OrgOwner_QuanLyLopCuaToChuc_Postgres(t *testing.T) {
 		if err := e.db.First(&stored, "id = ?", draft.ID).Error; err != nil || stored.Status != "active" {
 			t.Errorf("DB status=%q err=%v, muốn active", stored.Status, err)
 		}
-		// Chủ tổ chức B, và chủ A với lớp cá nhân: không kích hoạt được. Đường GHI giữ nguyên ErrNotClassTeacher của
-		// requireClassTeacherOrAdmin (403), khác đường ĐỌC (404).
+		// Chủ tổ chức B, và chủ A với lớp cá nhân: không kích hoạt được. Đường GHI nay cũng 404 cho người không xem được lớp (W2-A, ensureClassManageWrite):
+		// 403 chỉ còn cho người XEM được lớp mà không quản lý (học viên).
 		archived := "archived"
-		if _, err := e.classes.UpdateClass(ctx, personal.ID, e.ownerA.ID, false, dto.UpdateClassDTO{Status: &archived}); !errors.Is(err, ErrNotClassTeacher) {
-			t.Errorf("chủ A sửa lớp cá nhân: err=%v, muốn ErrNotClassTeacher", err)
+		if _, err := e.classes.UpdateClass(ctx, personal.ID, e.ownerA.ID, false, dto.UpdateClassDTO{Status: &archived}); !errors.Is(err, ErrClassNotFound) {
+			t.Errorf("chủ A sửa lớp cá nhân: err=%v, muốn ErrClassNotFound", err)
 		}
-		if _, err := e.classes.UpdateClass(ctx, draft.ID, e.ownerB.ID, false, dto.UpdateClassDTO{Status: &archived}); !errors.Is(err, ErrNotClassTeacher) {
-			t.Errorf("chủ B sửa lớp của A: err=%v, muốn ErrNotClassTeacher", err)
+		if _, err := e.classes.UpdateClass(ctx, draft.ID, e.ownerB.ID, false, dto.UpdateClassDTO{Status: &archived}); !errors.Is(err, ErrClassNotFound) {
+			t.Errorf("chủ B sửa lớp của A: err=%v, muốn ErrClassNotFound", err)
 		}
 		var after model.Class
 		if err := e.db.First(&after, "id = ?", personal.ID).Error; err != nil || after.Status != "active" {
@@ -169,6 +169,8 @@ func TestR5_OrgOwner_QuanLyLopCuaToChuc_Postgres(t *testing.T) {
 
 	t.Run("chủ tổ chức A: gán/gỡ giảng viên, ghi danh/gỡ học viên", func(t *testing.T) {
 		class := e.classInOrgA(t)
+		// Quyết định 04/10: chỉ gán được giảng viên ĐÃ là thành viên tổ chức (xem w2a_authz_org_postgres_test.go).
+		e.grant(e.newTeacher, e.orgA, e.orgRole(e.orgA, "GIANG_VIEN"))
 		if _, err := e.classes.AssignTeacherToClass(ctx, class.ID, e.ownerA.ID, false, dto.AssignTeacherDTO{TeacherID: e.newTeacher.ID}); err != nil {
 			t.Fatalf("gán giảng viên: %v", err)
 		}
@@ -190,8 +192,8 @@ func TestR5_OrgOwner_QuanLyLopCuaToChuc_Postgres(t *testing.T) {
 		if _, err := e.classes.AssignTeacherToClass(ctx, class.ID, e.ownerB.ID, false, dto.AssignTeacherDTO{TeacherID: e.newTeacher.ID}); !errors.Is(err, ErrClassNotFound) {
 			t.Errorf("chủ B gán giảng viên vào lớp của A: err=%v, muốn ErrClassNotFound", err)
 		}
-		if _, err := e.classes.EnrollStudentToClass(ctx, personal.ID, e.ownerA.ID, false, dto.EnrollStudentDTO{StudentID: e.newStudent.ID}); !errors.Is(err, ErrNotClassTeacher) {
-			t.Errorf("chủ A ghi danh vào lớp cá nhân: err=%v, muốn ErrNotClassTeacher", err)
+		if _, err := e.classes.EnrollStudentToClass(ctx, personal.ID, e.ownerA.ID, false, dto.EnrollStudentDTO{StudentID: e.newStudent.ID}); !errors.Is(err, ErrClassNotFound) {
+			t.Errorf("chủ A ghi danh vào lớp cá nhân: err=%v, muốn ErrClassNotFound", err)
 		}
 	})
 
@@ -201,8 +203,8 @@ func TestR5_OrgOwner_QuanLyLopCuaToChuc_Postgres(t *testing.T) {
 		if out, err := e.attendance.MarkAttendance(ctx, class.ID, e.ownerA.ID, false, req); err != nil || len(out) != 1 {
 			t.Fatalf("điểm danh: %v err=%v", out, err)
 		}
-		if _, err := e.attendance.MarkAttendance(ctx, class.ID, e.ownerB.ID, false, req); !errors.Is(err, ErrNotClassTeacher) {
-			t.Errorf("chủ B điểm danh lớp của A: err=%v, muốn ErrNotClassTeacher", err)
+		if _, err := e.attendance.MarkAttendance(ctx, class.ID, e.ownerB.ID, false, req); !errors.Is(err, ErrClassNotFound) {
+			t.Errorf("chủ B điểm danh lớp của A: err=%v, muốn ErrClassNotFound", err)
 		}
 	})
 

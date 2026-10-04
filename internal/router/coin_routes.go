@@ -19,6 +19,9 @@ func SetupCoinRoutes(api fiber.Router, cfg *config.Config, h *handler.CoinHandle
 	// Auth required
 	authed := coins.Group("")
 	authed.Use(auth)
+	// Quyết định cũ của chủ dự án: phụ huynh không dùng ví xu. Chặn ở backend (không chỉ ẩn trên web) để gọi API
+	// trực tiếp cũng 403 thay vì tự tạo ví cho phụ huynh.
+	authed.Use(middleware.DenyActiveRole("COIN_WALLET_NOT_FOR_PARENT", "Tài khoản phụ huynh không dùng ví xu.", "PARENT"))
 
 	// Wallet
 	authed.Get("/wallet", h.GetWallet)

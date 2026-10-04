@@ -1,4 +1,4 @@
-﻿package service
+package service
 
 // R4: chủ/quản trị tổ chức chấm được điểm lớp của tổ chức (L2) nhưng màn chấm còn cần đọc bài tập và liệt kê bài
 // nộp, hai việc vốn chỉ dành cho host/giảng viên lớp/chủ khoá/admin. Test này khoá:
@@ -63,8 +63,8 @@ func TestAssignmentOrgAccess_OwnerReadsButCannotManage(t *testing.T) {
 				if err != nil || list == nil || len(list.Data) != 1 {
 					t.Errorf("GetByAssignment: %+v err=%v, muốn đúng 1 bài nộp", list, err)
 				}
-			} else if !errors.Is(err, ErrSubmissionForbidden) {
-				t.Errorf("GetByAssignment err=%v, muốn ErrSubmissionForbidden", err)
+			} else if !errors.Is(err, ErrAssignmentNotFound) {
+				t.Errorf("GetByAssignment err=%v, muon ErrAssignmentNotFound (404, khong xem duoc bai tap)", err)
 			}
 		})
 	}

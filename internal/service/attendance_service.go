@@ -54,7 +54,8 @@ func (s *AttendanceService) manage(ctx context.Context, classID, actorUserID uui
 	if err != nil {
 		return err
 	}
-	return ensureClassManage(ctx, s.classRepo, s.courseRepo, actorUserID, classID, elevated)
+	// W2-A: route ghi, người không xem được lớp nhận 404 (người xem được mà không quản lý vẫn 403).
+	return ensureClassManageWrite(ctx, s.classRepo, s.courseRepo, actorUserID, classID, elevated)
 }
 
 func (s *AttendanceService) manageOrNotFound(ctx context.Context, classID, actorUserID uuid.UUID, isAdmin bool) error {
