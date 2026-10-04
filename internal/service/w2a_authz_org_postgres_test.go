@@ -192,6 +192,57 @@ func TestW2A_GhiVaoLop_KhongXemDuoc404_Postgres(t *testing.T) {
 	}
 }
 
+// GET /classes: mỗi người chỉ thấy lớp xem được (giảng viên, chủ khoá, học viên đang học, chủ/quản trị tổ chức của lớp);
+// admin hệ thống thấy hết. Bỏ nhánh managed (tổ chức) thì ca chủ tổ chức A ĐỎ; trả mọi lớp như cũ thì mọi ca âm ĐỎ.
+func TestW2A_DanhSachLop_ChiLopXemDuoc_Postgres(t *testing.T) {
+	e := newR5ClassEnv(t)
+	ctx := context.Background()
+	inA, personal, inB, foreign := e.classInOrgA(t), e.personalClassOfOrgMember(t), e.classInOrgB(t), e.classOutsideOrgA(t)
+
+	cases := []struct {
+		name  string
+		user  model.User
+		admin bool
+		want  []model.Class
+	}{
+		{"chủ tổ chức A: chỉ lớp thuộc A", e.ownerA, false, []model.Class{inA}},
+		{"chủ tổ chức B: chỉ lớp thuộc B", e.ownerB, false, []model.Class{inB}},
+		{"giảng viên được gán: lớp của mình", e.coTeacher, false, []model.Class{inA}},
+		{"chủ khoá: lớp thuộc khoá của mình", e.instructor, false, []model.Class{inA, personal}},
+		{"giảng viên chủ khoá lớp B và lớp ngoài", e.stranger, false, []model.Class{inB, foreign}},
+		{"học viên: lớp đang học", e.student, false, []model.Class{inA, personal, inB, foreign}},
+		{"thành viên A không quản trị: không thấy lớp nào", e.memberA, false, nil},
+		{"chủ A đã bị gỡ role: không thấy lớp nào", e.revokedOwnerA, false, nil},
+		{"admin hệ thống: thấy hết", e.systemAdmin, true, []model.Class{inA, personal, inB, foreign}},
+	}
+	for _, c := range cases {
+		got, err := e.classes.GetAllClasses(ctx, c.user.ID, c.admin, 1, 100, "", "")
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		seen := map[uuid.UUID]bool{}
+		for _, g := range got.Classes {
+			seen[g.ID] = true
+		}
+		want := map[uuid.UUID]bool{}
+		for _, w := range c.want {
+			want[w.ID] = true
+		}
+		for _, k := range []model.Class{inA, personal, inB, foreign} {
+			if seen[k.ID] != want[k.ID] {
+				t.Errorf("%s: lớp %q hiện=%v, muốn %v", c.name, k.Name, seen[k.ID], want[k.ID])
+			}
+		}
+		if int(got.Total) != len(got.Classes) {
+			t.Errorf("%s: total=%d nhưng trả %d lớp", c.name, got.Total, len(got.Classes))
+		}
+	}
+	// Không gắn authorizer: chủ tổ chức không được nâng quyền (fail-closed).
+	if got, err := e.buildClassService(nil).GetAllClasses(ctx, e.ownerA.ID, false, 1, 100, "", ""); err != nil || len(got.Classes) != 0 {
+		t.Errorf("không có authorizer: %+v err=%v, muốn rỗng", got, err)
+	}
+}
+
 // Ô chọn giảng viên cùng luật với việc gán: lớp của tổ chức chỉ liệt kê thành viên active của tổ chức, admin hệ thống
 // thấy mọi giảng viên, người không phải chủ lớp không dùng được (404 nếu không xem được, 403 nếu xem được).
 func TestW2A_OChonGiangVien_ChiThanhVienToChuc_Postgres(t *testing.T) {

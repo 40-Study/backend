@@ -16,7 +16,7 @@ import (
 type ClassServiceInterface interface {
 	// CreateClass (S4): chỉ admin, giảng viên chủ khoá (khi có course_id) hoặc giảng viên (khi không có khoá); người tạo thành chủ lớp.
 	CreateClass(ctx context.Context, actorUserID uuid.UUID, isAdmin bool, req dto.CreateClassDTO) (*dto.ClassResponseDTO, error)
-	GetAllClasses(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.ClassListResponseDTO, error)
+	GetAllClasses(ctx context.Context, actorUserID uuid.UUID, isAdmin bool, page, pageSize int, keyword string, status string) (*dto.ClassListResponseDTO, error)
 	// GetClassByID (S4): chỉ thành viên lớp, người quản lý lớp và admin; người khác ErrClassNotFound (404).
 	GetClassByID(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool) (*dto.ClassResponseDTO, error)
 	UpdateClass(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateClassDTO) (*dto.ClassResponseDTO, error)
@@ -240,7 +240,10 @@ func (s *ClassService) CreateClass(ctx context.Context, actorUserID uuid.UUID, i
 	return s.toClassResponseDTO(ctx, class), nil
 }
 
-func (s *ClassService) GetAllClasses(ctx context.Context, page, pageSize int, keyword string, status string) (*dto.ClassListResponseDTO, error) {
+// GetAllClasses (W2-A): trước đây liệt kê MỌI lớp cho bất kỳ người đăng nhập nào. Nay admin hệ thống thấy hết; người
+// khác chỉ thấy lớp xem được (cùng định nghĩa với ensureClassView/orgManagesClass: giảng viên, người tạo, chủ khoá,
+// học viên đang học, hoặc lớp thuộc tổ chức họ quản trị).
+func (s *ClassService) GetAllClasses(ctx context.Context, actorUserID uuid.UUID, isAdmin bool, page, pageSize int, keyword string, status string) (*dto.ClassListResponseDTO, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -248,7 +251,18 @@ func (s *ClassService) GetAllClasses(ctx context.Context, page, pageSize int, ke
 		pageSize = 20
 	}
 
-	classes, total, err := s.classRepo.GetAll(ctx, page, pageSize, keyword, status)
+	var classes []model.Class
+	var total int64
+	var err error
+	if isAdmin {
+		classes, total, err = s.classRepo.GetAll(ctx, page, pageSize, keyword, status)
+	} else {
+		var managed []uuid.UUID
+		if managed, err = s.managedOrgIDs(ctx, actorUserID); err != nil {
+			return nil, err
+		}
+		classes, total, err = s.classRepo.GetAllVisible(ctx, actorUserID, managed, page, pageSize, keyword, status)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -264,6 +278,28 @@ func (s *ClassService) GetAllClasses(ctx context.Context, page, pageSize int, ke
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
+}
+
+// managedOrgIDs: tổ chức mà actor quản trị lớp (cùng quyền orgClassManagePermission như orgManagesClass). authz nil = không ai.
+func (s *ClassService) managedOrgIDs(ctx context.Context, actorUserID uuid.UUID) ([]uuid.UUID, error) {
+	if s.authz == nil {
+		return nil, nil
+	}
+	orgIDs, err := s.classRepo.ActiveOrgIDsOfUser(ctx, actorUserID)
+	if err != nil {
+		return nil, err
+	}
+	var managed []uuid.UUID
+	for _, id := range orgIDs {
+		ok, err := s.authz.HasOrgRolePermission(ctx, actorUserID, id, orgClassManagePermission)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			managed = append(managed, id)
+		}
+	}
+	return managed, nil
 }
 
 func (s *ClassService) GetOrganizationClasses(ctx context.Context, orgID uuid.UUID, page, pageSize int, keyword, classStatus string) (*dto.ClassListResponseDTO, error) {

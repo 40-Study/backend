@@ -148,7 +148,11 @@ func (h *ClassHandler) GetAllClasses(c *fiber.Ctx) error {
 	keyword := c.Query("keyword")
 	status := c.Query("status")
 
-	classes, err := h.service.GetAllClasses(c.Context(), page, pageSize, keyword, status)
+	actorUserID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "Unauthorized"})
+	}
+	classes, err := h.service.GetAllClasses(c.Context(), actorUserID, isAdminActor(c, h.permChecker, actorUserID), page, pageSize, keyword, status)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to retrieve classes",
