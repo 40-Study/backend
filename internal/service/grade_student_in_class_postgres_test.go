@@ -21,7 +21,7 @@ func TestGrade_OnlyForStudentsOfTheClass(t *testing.T) {
 	teacher := e.coTeacher.ID
 
 	grade := func(student model.User) dto.CreateGradeDTO {
-		return dto.CreateGradeDTO{StudentID: student.ID.String(), GradeType: "midterm", Title: "Giữa kỳ", Score: 8, MaxScore: 10}
+		return dto.CreateGradeDTO{StudentID: student.ID.String(), GradeType: "midterm", Title: "Giữa kỳ", Score: gradeF64(8), MaxScore: 10}
 	}
 	rows := func(student model.User) int64 {
 		var n int64

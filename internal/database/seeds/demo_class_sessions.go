@@ -138,10 +138,10 @@ func demoAttendancePattern(number, studentIdx int) (model.AttendanceStatus, int,
 	}
 }
 
-// atClock ghép ngày với giờ học (giờ máy chủ) để tính giờ vào/ra lớp của điểm danh. Giờ sai định
+// atClock ghép ngày với giờ học (giờ Việt Nam, seedZone) để tính giờ vào/ra lớp của điểm danh. Giờ sai định
 // dạng là lỗi dữ liệu demo: trả lỗi thay vì âm thầm dùng 00:00.
 func atClock(day time.Time, clock model.TimeOfDay) (time.Time, error) {
-	t, err := clock.On(day, time.Local)
+	t, err := clock.On(day, seedZone)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("giờ demo sai: %w", err)
 	}

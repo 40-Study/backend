@@ -18,7 +18,7 @@ func (s *Seeder) upsertDemoLivestreams(spec classSpec, class model.Class, teache
 	today := demoToday()
 	lives := make([]model.LivestreamSession, 0, len(spec.Lives))
 	for i, ls := range spec.Lives {
-		scheduled := time.Date(today.Year(), today.Month(), today.Day()+ls.OffsetDays, ls.Hour, ls.Min, 0, 0, time.Local)
+		scheduled := demoWallClock(today, ls.OffsetDays, ls.Hour, ls.Min)
 		live := model.LivestreamSession{
 			Title:       ls.Title,
 			Description: ptr(ls.Description),
@@ -55,7 +55,8 @@ func (s *Seeder) seedDemoAssignments(spec classSpec, class model.Class, teacher 
 			return fmt.Errorf("assignment %q: live index %d out of range", as.Title, as.LiveIndex)
 		}
 		live := lives[as.LiveIndex]
-		due := time.Date(today.Year(), today.Month(), today.Day()+as.DueOffsetDays, 23, 59, 0, 0, time.Local)
+		// 23:59 GIỜ VIỆT NAM tường minh (không phải giờ máy chủ): xem seedZone.
+		due := demoWallClock(today, as.DueOffsetDays, 23, 59)
 
 		assignment := model.Assignment{
 			SessionID:           &live.ID,

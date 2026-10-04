@@ -32,6 +32,11 @@ func (s *stubLeaderboardService) GetMyRank(ctx context.Context, userID uuid.UUID
 	return &dto.MyRankResponse{PeriodType: periodType}, nil
 }
 
+func (s *stubLeaderboardService) ListMyClassBoards(ctx context.Context, userID uuid.UUID) ([]dto.LeaderboardClassDTO, error) {
+	s.calls++
+	return []dto.LeaderboardClassDTO{}, nil
+}
+
 func TestLeaderboardHandler_PeriodQuery(t *testing.T) {
 	cases := []struct {
 		name       string

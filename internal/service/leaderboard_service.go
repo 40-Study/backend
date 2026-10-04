@@ -15,6 +15,8 @@ type LeaderboardServiceInterface interface {
 	// classID != nil (B-20): bảng xếp hạng riêng của lớp; chỉ thành viên lớp hoặc admin xem được.
 	GetLeaderboard(ctx context.Context, periodType string, limit int, viewer *LeaderboardViewer, classID *uuid.UUID) (*dto.LeaderboardResponse, error)
 	GetMyRank(ctx context.Context, userID uuid.UUID, periodType string) (*dto.MyRankResponse, error)
+	// ListMyClassBoards: các lớp mà người dùng mở được bảng xếp hạng riêng (?class_id=), để giao diện hiện ô chọn lớp.
+	ListMyClassBoards(ctx context.Context, userID uuid.UUID) ([]dto.LeaderboardClassDTO, error)
 }
 
 type LeaderboardService struct {
@@ -89,6 +91,20 @@ func (s *LeaderboardService) GetMyRank(ctx context.Context, userID uuid.UUID, pe
 		resp.Entry = &entry
 	}
 	return resp, nil
+}
+
+// ListMyClassBoards trả các lớp người dùng là học viên đang ghi danh hoặc giảng viên (cùng luật với việc mở
+// bảng theo lớp ở GetLeaderboard); không có lớp nào thì trả mảng rỗng, không phải null.
+func (s *LeaderboardService) ListMyClassBoards(ctx context.Context, userID uuid.UUID) ([]dto.LeaderboardClassDTO, error) {
+	rows, err := s.repo.ListClassBoardsForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]dto.LeaderboardClassDTO, len(rows))
+	for i, r := range rows {
+		out[i] = dto.LeaderboardClassDTO{ID: r.ID, Name: r.Name}
+	}
+	return out, nil
 }
 
 // leaderboardEntry dựng một dòng trả ra cho người xem, đã áp cài đặt riêng tư của chủ dòng.

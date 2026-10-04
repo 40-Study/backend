@@ -126,7 +126,11 @@ func TestS5_Schedule_GhiLichVaBuoiChiNguoiQuanLyLop(t *testing.T) {
 
 		gen := s5MakeSchedule(t, e, e.class.ID) // để GenerateSessions có lịch
 		_ = gen
-		_, err = svc.GenerateSessions(ctx, e.class.ID, a.user.ID, a.isAdmin, dto.GenerateSessionsDTO{StartDate: "2030-01-01", EndDate: "2030-01-07"})
+		// Mỗi actor một tuần riêng: GenerateSessions bỏ qua buổi trùng giờ (W2-B), nên actor sau sinh lại đúng
+		// tuần của actor trước sẽ nhận 409 thay vì kết quả quyền cần kiểm.
+		weekStart := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 7*i)
+		_, err = svc.GenerateSessions(ctx, e.class.ID, a.user.ID, a.isAdmin, dto.GenerateSessionsDTO{
+			StartDate: weekStart.Format("2006-01-02"), EndDate: weekStart.AddDate(0, 0, 6).Format("2006-01-02")})
 		s5WantWrite(t, "GenerateSessions", a, err)
 	}
 }

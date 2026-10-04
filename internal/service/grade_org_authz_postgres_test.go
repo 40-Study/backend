@@ -125,7 +125,7 @@ func (e *gradeOrgEnv) classOutsideOrgA(t *testing.T) model.Class {
 }
 
 func (e *gradeOrgEnv) gradeDTO() dto.CreateGradeDTO {
-	return dto.CreateGradeDTO{StudentID: e.student.ID.String(), GradeType: "assignment", Title: "Bài 1", Score: 8, MaxScore: 10}
+	return dto.CreateGradeDTO{StudentID: e.student.ID.String(), GradeType: "assignment", Title: "Bài 1", Score: gradeF64(8), MaxScore: 10}
 }
 
 func (e *gradeOrgEnv) gradeRows(classID uuid.UUID) int64 {

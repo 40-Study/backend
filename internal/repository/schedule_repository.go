@@ -32,6 +32,7 @@ type ScheduleRepositoryInterface interface {
 	GetNextSessionNumber(ctx context.Context, classID uuid.UUID) (int, error)
 	GetUpcomingSessions(ctx context.Context, classID uuid.UUID, limit int) ([]model.ClassSession, error)
 	GetSessionsByClassIDsAndDateRange(ctx context.Context, classIDs []uuid.UUID, startDate, endDate string) ([]model.ClassSession, error)
+	GetCancelledScheduledSessions(ctx context.Context, classIDs []uuid.UUID, startDate, endDate string) ([]model.ClassSession, error)
 	HasOverlappingSession(ctx context.Context, classID uuid.UUID, date time.Time, start, end model.TimeOfDay, excludeID *uuid.UUID) (bool, error)
 
 	// SessionAttendance
@@ -162,6 +163,18 @@ func (r *ScheduleRepository) GetSessionsByClassIDsAndDateRange(ctx context.Conte
 	return sessions, err
 }
 
+// GetCancelledScheduledSessions: buổi ĐÃ HUỶ sinh từ một lịch lặp (schedule_id != NULL) của nhiều lớp trong
+// [startDate, endDate]. GetSessionsByClassIDsAndDateRange loại buổi huỷ nên web không thể biết ngày nào của lịch lặp
+// đã không còn buổi học; danh sách này cho nó biết để không vẽ lại ngày đó theo giờ lặp gốc.
+func (r *ScheduleRepository) GetCancelledScheduledSessions(ctx context.Context, classIDs []uuid.UUID, startDate, endDate string) ([]model.ClassSession, error) {
+	var sessions []model.ClassSession
+	err := r.db.WithContext(ctx).
+		Where("class_id IN ? AND date >= ? AND date <= ? AND status = ? AND schedule_id IS NOT NULL", classIDs, startDate, endDate, model.SessionCancelled).
+		Order("date ASC").
+		Find(&sessions).Error
+	return sessions, err
+}
+
 func (r *ScheduleRepository) UpdateSession(ctx context.Context, session *model.ClassSession) error {
 	return r.db.WithContext(ctx).Save(session).Error
 }
@@ -203,6 +216,9 @@ func (r *ScheduleRepository) GetUpcomingSessions(ctx context.Context, classID uu
 func (r *ScheduleRepository) HasOverlappingSession(ctx context.Context, classID uuid.UUID, date time.Time, start, end model.TimeOfDay, excludeID *uuid.UUID) (bool, error) {
 	q := r.db.WithContext(ctx).
 		Table("class_sessions AS cs").
+		// Table("... AS cs") bỏ qua bộ lọc xoá mềm tự động của GORM, nên phải lọc tay: buổi đã xoá mềm và buổi của
+		// lớp đã xoá mềm không chiếm giờ (review R3 MINOR 3).
+		Where("cs.deleted_at IS NULL AND EXISTS (SELECT 1 FROM classes c WHERE c.id = cs.class_id AND c.deleted_at IS NULL)").
 		Where("cs.date = ?::date AND cs.status <> ?", date.Format("2006-01-02"), model.SessionCancelled).
 		Where("cs.start_time < ?::time AND cs.end_time > ?::time", string(end), string(start)).
 		Where(`(cs.class_id = ? OR cs.class_id IN (

@@ -52,15 +52,16 @@ type CreateGradeDTO struct {
 	StudentID string `json:"student_id" validate:"required,uuid"`
 	GradeType string `json:"grade_type" validate:"required,oneof=assignment quiz midterm final attendance participation project other"`
 	Title     string `json:"title" validate:"required,min=1,max=255"`
-	// Score dùng gte=0 thay cho required: required với số không-con-trỏ coi 0 là "thiếu", nên điểm 0 hợp lệ
-	// (học viên làm sai hết) từng bị từ chối 400. Có thiếu hay không đã được kiểm theo max_score bắt buộc.
-	Score        float64 `json:"score" validate:"gte=0"`
-	MaxScore     float64 `json:"max_score" validate:"required,gt=0"`
-	Weight       float64 `json:"weight,omitempty"`
-	AssignmentID string  `json:"assignment_id,omitempty" validate:"omitempty,uuid"`
-	QuizID       string  `json:"quiz_id,omitempty" validate:"omitempty,uuid"`
-	SessionID    string  `json:"session_id,omitempty" validate:"omitempty,uuid"`
-	Feedback     string  `json:"feedback,omitempty"`
+	// Score là con trỏ: required trên số không-con-trỏ coi 0 là "thiếu" (điểm 0 của bài làm sai hết bị 400),
+	// còn gte=0 một mình lại để body thiếu `score` ghi thầm thành 0. Con trỏ + required tách được hai trường hợp:
+	// thiếu field thì 400, gửi 0 thì hợp lệ.
+	Score        *float64 `json:"score" validate:"required,gte=0"`
+	MaxScore     float64  `json:"max_score" validate:"required,gt=0"`
+	Weight       float64  `json:"weight,omitempty"`
+	AssignmentID string   `json:"assignment_id,omitempty" validate:"omitempty,uuid"`
+	QuizID       string   `json:"quiz_id,omitempty" validate:"omitempty,uuid"`
+	SessionID    string   `json:"session_id,omitempty" validate:"omitempty,uuid"`
+	Feedback     string   `json:"feedback,omitempty"`
 }
 
 type UpdateGradeDTO struct {

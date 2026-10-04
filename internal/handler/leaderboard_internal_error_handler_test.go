@@ -29,6 +29,10 @@ func (failingLeaderboardService) GetMyRank(ctx context.Context, userID uuid.UUID
 	return nil, errors.New(leaderboardInternalErrText)
 }
 
+func (failingLeaderboardService) ListMyClassBoards(ctx context.Context, userID uuid.UUID) ([]dto.LeaderboardClassDTO, error) {
+	return nil, errors.New(leaderboardInternalErrText)
+}
+
 func TestLeaderboardHandler_InternalErrorNotLeaked(t *testing.T) {
 	h := NewLeaderboardHandler(failingLeaderboardService{}, nil)
 	endpoints := []struct {

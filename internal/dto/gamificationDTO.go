@@ -64,6 +64,11 @@ type LeaderboardResponse struct {
 	Total      int                   `json:"total"`
 }
 
+// LeaderboardClassDTO: một lớp có bảng xếp hạng riêng mà người xem được mở bằng ?class_id=.
+type LeaderboardClassDTO struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
 type MyRankResponse struct {
 	PeriodType string               `json:"period_type"`
 	Period     string               `json:"period"`
