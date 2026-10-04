@@ -116,6 +116,22 @@ type TypingGuard interface {
 	CanBroadcastTyping(userID uuid.UUID, conversationID uuid.UUID) (bool, error)
 }
 
+// TypingNamer là phần TUỲ CHỌN của authorizer: tên hiển thị của người đang gõ, do SERVER tra theo user đã xác thực.
+// Trước đây relay giữ nguyên `user_name` client gửi lên (thường rỗng, và client có thể tự điền tên người khác).
+type TypingNamer interface {
+	TypingDisplayName(userID uuid.UUID) string
+}
+
+// typingDisplayName — tên người gõ để gắn vào payload relay; authorizer không biết tên thì rỗng (không dùng giá trị
+// client gửi: đó là dữ liệu không tin cậy).
+func typingDisplayName(authorizer ChannelAuthorizer, userID uuid.UUID) string {
+	namer, ok := authorizer.(TypingNamer)
+	if !ok {
+		return ""
+	}
+	return namer.TypingDisplayName(userID)
+}
+
 // typingAllowed — false thì BỎ IM LẶNG sự kiện gõ (không báo lỗi: người gõ không cần biết, ô nhập của họ đã bị
 // khoá; và phía bên kia tuyệt đối không nhận gì). Lỗi hạ tầng hoặc id sai định dạng cũng bỏ (fail-closed): "đang
 // gõ" chỉ là tín hiệu thoáng qua, bỏ nhầm một lần không hại gì, còn lọt nhầm là rò rỉ cho người đã chặn.

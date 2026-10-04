@@ -37,6 +37,32 @@ type wsChannelAuthorizer struct {
 	// directBlocks nối sau khi dựng services (authorizer được tạo trước services trong app.New). nil = chưa nối:
 	// mọi "đang gõ" của người đã đăng ký kênh được chuyển tiếp như trước.
 	directBlocks directBlockChecker
+	// userNames tra tên hiển thị cho payload "đang gõ"; nil = chưa nối: relay để user_name rỗng.
+	userNames userNameLookup
+}
+
+// userNameLookup — phần UserRepository mà relay "đang gõ" cần để gắn tên người gõ.
+type userNameLookup interface {
+	FindUserByID(ctx context.Context, id uuid.UUID) (*model.User, error)
+}
+
+// SetUserNameLookup nối tra cứu tên cho sự kiện "đang gõ" (socket.TypingNamer).
+func (a *wsChannelAuthorizer) SetUserNameLookup(l userNameLookup) { a.userNames = l }
+
+// TypingDisplayName cài đặt socket.TypingNamer: họ tên, rơi về tên đăng nhập, lỗi/không thấy thì rỗng (tín hiệu
+// "đang gõ" thoáng qua, không đáng làm hỏng vì thiếu tên).
+func (a *wsChannelAuthorizer) TypingDisplayName(userID uuid.UUID) string {
+	if a.userNames == nil {
+		return ""
+	}
+	user, err := a.userNames.FindUserByID(context.Background(), userID)
+	if err != nil || user == nil {
+		return ""
+	}
+	if user.FullName != nil && strings.TrimSpace(*user.FullName) != "" {
+		return strings.TrimSpace(*user.FullName)
+	}
+	return user.UserName
 }
 
 // directBlockChecker — DM 1-1 giữa userID và người kia có chặn ở bất kỳ chiều nào không. Cài đặt thật là
