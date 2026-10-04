@@ -271,6 +271,32 @@ func TestW3BE_LopLuuTru_ChiDoc_Postgres(t *testing.T) {
 		}
 	})
 
+	// Các thao tác không nhận "người gọi" trong bảng ops (nộp bài, check-in/out, tạo livestream, tạo bài tập) cũng phải
+	// xét quyền TRƯỚC: người ngoài/học viên nhận lỗi quyền đúng loại, không bao giờ lộ 409 của lớp lưu trữ.
+	t.Run("đang lưu trữ: thao tác không nhận người gọi vẫn xét quyền trước 409", func(t *testing.T) {
+		want := func(what string, err, target error) {
+			t.Helper()
+			if errors.Is(err, ErrClassArchived) || !errors.Is(err, target) {
+				t.Errorf("%s: err=%v, muốn %v (quyền xét trước lưu trữ)", what, err, target)
+			}
+		}
+		_, err := submissions.Submit(ctx, false, dto.CreateSubmissionDTO{
+			AssignmentID: published.ID.String(), UserID: e.ownerB.ID.String(), Language: "go", Code: "x"})
+		want("người ngoài nộp bài", err, ErrAssignmentNotFound)
+		_, err = e.schedule.StudentCheckIn(ctx, today.ID, e.ownerB.ID)
+		want("người ngoài check-in", err, ErrClassSessionNotFound)
+		_, err = e.schedule.StudentCheckOut(ctx, today.ID, e.ownerB.ID)
+		want("người ngoài check-out", err, ErrClassSessionNotFound)
+		_, err = livestreams.Create(ctx, e.ownerB.ID, dto.CreateLivestreamDTO{Title: "x", ClassID: classID})
+		want("người ngoài tạo livestream", err, ErrClassNotFound)
+		_, err = livestreams.Create(ctx, e.student.ID, dto.CreateLivestreamDTO{Title: "x", ClassID: classID})
+		want("học viên tạo livestream", err, ErrNotClassTeacher)
+		for who, u := range map[string]model.User{"người ngoài": e.ownerB, "học viên": e.student} {
+			_, err = assignments.Create(ctx, u.ID, false, dto.CreateAssignmentDTO{
+				ClassID: classID, Title: "Bài lạ", Description: "d", Difficulty: "easy", Language: []string{"go"}})
+			want(who+" tạo bài tập", err, ErrAssignmentForbidden)
+		}
+	})
 	t.Run("đang lưu trữ: đọc vẫn được và người quản lý vẫn thấy can_manage để mở lại", func(t *testing.T) {
 		got, err := e.classes.GetClassByID(ctx, class.ID, e.ownerA.ID, false)
 		if err != nil || got.Status != "archived" || !got.CanManage {
