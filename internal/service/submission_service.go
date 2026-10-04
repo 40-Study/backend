@@ -656,6 +656,9 @@ func (s *SubmissionService) toResponseDTO(sub model.Submission) dto.SubmissionRe
 			ID:       sub.User.ID,
 			Username: sub.User.UserName,
 		}
+		if sub.User.FullName != nil {
+			resp.User.FullName = *sub.User.FullName
+		}
 	}
 
 	return resp

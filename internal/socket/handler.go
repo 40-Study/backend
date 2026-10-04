@@ -216,6 +216,7 @@ func (c *FiberClient) handleMessage(data []byte) {
 			if !typingAllowed(c.authorizer, c.UserID, payload.ConversationID) {
 				return
 			}
+			payload.UserName = typingDisplayName(c.authorizer, c.UserID)
 			c.Hub.SendToChannel(channelName, Message{
 				Event:   EventConversationTyping,
 				Payload: payload,

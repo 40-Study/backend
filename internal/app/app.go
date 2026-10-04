@@ -39,6 +39,7 @@ func New() (*App, error) {
 	repos := InitRepositories(resources.DB)
 	// S6: authorizer thật (kiểm participant/thành viên nhóm), thay defaultAuthorizer cho phép mọi kênh.
 	wsAuthorizer := newWSChannelAuthorizer(repos.ConversationParticipant, repos.GroupMember)
+	wsAuthorizer.SetUserNameLookup(repos.User)
 	socketHandler := socket.NewHandler(hub, wsAuthorizer)
 
 	// C-02 (audit 260909): PermissionChecker triển khai thật cho RequirePermissions (trước

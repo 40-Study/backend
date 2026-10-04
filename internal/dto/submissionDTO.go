@@ -12,6 +12,8 @@ type CreateSubmissionDTO struct {
 type SubmissionUserDTO struct {
 	ID       uuid.UUID `json:"id"`
 	Username string    `json:"username"`
+	// FullName để màn chấm bài hiện họ tên thay vì tên đăng nhập; trống khi người dùng chưa nhập họ tên.
+	FullName string `json:"full_name,omitempty"`
 }
 
 type SubmissionResponseDTO struct {
