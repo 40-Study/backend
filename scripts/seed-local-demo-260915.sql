@@ -1,61 +1,81 @@
 -- ============================================================================
 -- Seed DEMO cho MÔI TRƯỜNG LOCAL — 40Study, 2026-09-15
 -- ============================================================================
--- Lấp các vùng dữ liệu còn rỗng sau seed gốc 2026-09-11: quiz (+câu hỏi, đáp án,
--- lượt làm bài), đánh giá khoá học, giỏ hàng, và MỘT đơn hàng đã thanh toán.
--- Trước đó cả 14 đơn trong DB đều `cancelled`, nên không test được luồng mua
--- thành công, doanh thu, hay enroll-sau-thanh-toán.
+-- Bổ sung trên nền seed Go (`go run ./cmd/seed`): 2 quiz React (+câu hỏi, đáp án,
+-- lượt làm bài), đánh giá khoá học, giỏ hàng, và một đơn chuyển khoản đã hoàn
+-- tất (student2 mua khoá Docker) kèm enrollment.
 --
 -- KHÔNG dùng trên staging/production. Chỉ là dữ liệu demo.
 --
--- Idempotent: mọi hàng dùng UUID CỐ ĐỊNH + ON CONFLICT DO NOTHING, nên chạy lại
--- nhiều lần không nhân bản. Chạy:
+-- Idempotent: hàng do script tạo dùng UUID CỐ ĐỊNH + ON CONFLICT DO NOTHING (hoặc
+-- NOT EXISTS), nên chạy lại nhiều lần không nhân bản. Chạy:
 --   psql -h 127.0.0.1 -p 5432 -U <user> -d <db> -f scripts/seed-local-demo-260915.sql
 --
--- UUID người dùng/khoá học/bài học lấy từ seed gốc. Nếu bạn tạo lại DB từ đầu thì
--- chúng đổi và script dừng ngay ở bước 0 kèm thông báo, thay vì chèn nửa vời rồi
--- fail ở khoá ngoại. Khi đó lấy lại ID bằng:
---   SELECT id, email FROM users;  SELECT id, slug FROM courses;
+-- ID người dùng/khoá học/bài học KHÔNG gắn cứng: bước 0 tra theo khoá tự nhiên
+-- (email, slug khoá học, thứ tự bài học) rồi lưu vào biến psql bằng \gset, nên
+-- script chạy được trên DB vừa tạo lại. Vì dùng \gset, script CHỈ chạy qua psql.
+--
+-- Quiz Git trước đây nằm ở file này nay do seed Go tạo (cùng tiêu đề, cùng bài),
+-- nên đã bỏ khỏi đây để không sinh quiz trùng.
 -- ============================================================================
+
+\set ON_ERROR_STOP on
 
 BEGIN;
 
 -- ---------------------------------------------------------------------------
--- 0. Kiểm tra tiền đề. Không có bước này thì một DB đã tạo lại sẽ fail ở giữa
---    script với lỗi khoá ngoại khó lần ra nguyên nhân.
+-- 0. Tra ID theo khoá tự nhiên. Thiếu thứ gì thì dừng NGAY với thông báo rõ,
+--    thay vì để \gset gán chuỗi rỗng rồi fail ở ép kiểu uuid khó hiểu.
 -- ---------------------------------------------------------------------------
+CREATE TEMP TABLE seed_ref ON COMMIT DROP AS
+WITH react_lessons AS (
+  SELECT l.id, row_number() OVER (ORDER BY s.display_order, l.display_order) AS n
+  FROM lessons l
+  JOIN sections s ON s.id = l.section_id AND s.deleted_at IS NULL
+  JOIN courses  c ON c.id = s.course_id
+  WHERE c.slug = 'react-nextjs-tu-co-ban-den-nang-cao'
+)
+SELECT
+  (SELECT id FROM users   WHERE email = 'student1@demo.com' AND deleted_at IS NULL) AS student1,
+  (SELECT id FROM users   WHERE email = 'student2@demo.com' AND deleted_at IS NULL) AS student2,
+  (SELECT id FROM courses WHERE slug = 'react-nextjs-tu-co-ban-den-nang-cao')       AS course_react,
+  (SELECT id FROM courses WHERE slug = 'git-github-cho-nguoi-moi-bat-dau')          AS course_git,
+  (SELECT id FROM courses WHERE slug = 'python-cho-khoa-hoc-du-lieu')               AS course_data,
+  (SELECT id FROM courses WHERE slug = 'docker-kubernetes-thuc-chien')              AS course_docker,
+  (SELECT id FROM react_lessons WHERE n = 1)                                        AS lesson_react_1,
+  (SELECT id FROM react_lessons WHERE n = 2)                                        AS lesson_react_2;
+
 DO $checks$
+DECLARE r seed_ref;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM users WHERE id = 'e84f8be5-d5d2-4b58-a3ca-a1921252642f') THEN
-    RAISE EXCEPTION 'Khong tim thay student1@demo.com (UUID cu). DB nay khong phai ban seed goc 11/09 — doc phan dau file.';
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM lessons WHERE id = 'b1a3cb2b-d178-4bee-99c9-980e72d34b65') THEN
-    RAISE EXCEPTION 'Khong tim thay lesson React dau tien (UUID cu). Lay lai ID theo huong dan dau file.';
-  END IF;
+  SELECT * INTO r FROM seed_ref;
+  IF r.student1       IS NULL THEN RAISE EXCEPTION 'Thieu user student1@demo.com — chay go run ./cmd/seed truoc.'; END IF;
+  IF r.student2       IS NULL THEN RAISE EXCEPTION 'Thieu user student2@demo.com — chay go run ./cmd/seed truoc.'; END IF;
+  IF r.course_react   IS NULL THEN RAISE EXCEPTION 'Thieu khoa slug react-nextjs-tu-co-ban-den-nang-cao.'; END IF;
+  IF r.course_git     IS NULL THEN RAISE EXCEPTION 'Thieu khoa slug git-github-cho-nguoi-moi-bat-dau.'; END IF;
+  IF r.course_data    IS NULL THEN RAISE EXCEPTION 'Thieu khoa slug python-cho-khoa-hoc-du-lieu.'; END IF;
+  IF r.course_docker  IS NULL THEN RAISE EXCEPTION 'Thieu khoa slug docker-kubernetes-thuc-chien.'; END IF;
+  IF r.lesson_react_2 IS NULL THEN RAISE EXCEPTION 'Khoa React can it nhat 2 bai hoc.'; END IF;
 END
 $checks$;
 
+SELECT * FROM seed_ref \gset
+
 -- ---------------------------------------------------------------------------
--- 1. QUIZZES — 3 quiz: 2 cho khoá React (trả phí), 1 cho khoá Git (miễn phí).
---    Đặt một quiz vào khoá Git vì CẢ student1 và student2 đều đã enroll khoá đó,
---    nên kiểm được quiz dưới 2 tài khoản khác nhau mà không phải mua gì.
+-- 1. QUIZZES — 2 quiz cho khoá React (trả phí), gắn vào bài 1 và bài 2.
 -- ---------------------------------------------------------------------------
 INSERT INTO quizzes (id, created_at, updated_at, lesson_id, course_id, title, description,
                      time_limit_minutes, pass_percentage, max_attempts, trigger_type,
                      shuffle_questions, shuffle_answers, show_correct_answers, is_ai_generated)
 VALUES
   ('a1000000-0000-4000-8000-000000000001', now(), now(),
-   'b1a3cb2b-d178-4bee-99c9-980e72d34b65', 'f1451024-589c-40fb-9588-3f3d583b2759',
+   :'lesson_react_1', :'course_react',
    'Kiểm tra: Giới thiệu React', 'Ba câu hỏi ngắn về khái niệm cơ bản của React.',
    10, 70.00, 3, 'manual', true, true, true, false),
   ('a1000000-0000-4000-8000-000000000002', now(), now(),
-   '7495ca80-7d5c-49da-b8e7-3b7b5d9fc33e', 'f1451024-589c-40fb-9588-3f3d583b2759',
+   :'lesson_react_2', :'course_react',
    'Kiểm tra: Cài đặt môi trường', 'Xác nhận bạn đã dựng được môi trường phát triển.',
-   10, 70.00, 3, 'manual', true, true, true, false),
-  ('a1000000-0000-4000-8000-000000000003', now(), now(),
-   'd3a6c3a0-2922-420d-bb67-2bd9b112c67a', '489f0c01-a40a-4476-a5e2-d4322866f342',
-   'Kiểm tra: Cài đặt và cấu hình Git', 'Ba câu hỏi về cấu hình Git lần đầu.',
-   15, 70.00, 5, 'manual', true, true, true, false)
+   10, 70.00, 3, 'manual', true, true, true, false)
 ON CONFLICT (id) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
@@ -86,18 +106,7 @@ VALUES
    'Đúng. Next.js dev server chạy trên Node.js.', 1.00, 2, false),
   ('b1000000-0000-4000-8000-000000000203', now(), now(), 'a1000000-0000-4000-8000-000000000002',
    'Những tệp nào thường có ở thư mục gốc của dự án Next.js? (chọn nhiều)', 'multiple_choice',
-   'package.json và next.config.js nằm ở gốc. pom.xml thuộc Java, Gemfile thuộc Ruby.', 1.00, 3, false),
-
-  -- Quiz 3: Git
-  ('b1000000-0000-4000-8000-000000000301', now(), now(), 'a1000000-0000-4000-8000-000000000003',
-   'Lệnh nào đặt tên người dùng Git ở phạm vi toàn máy?', 'single_choice',
-   'git config --global user.name "Tên" — cờ --global ghi vào ~/.gitconfig.', 1.00, 1, false),
-  ('b1000000-0000-4000-8000-000000000302', now(), now(), 'a1000000-0000-4000-8000-000000000003',
-   'git init tạo một thư mục .git trong dự án.', 'true_false',
-   'Đúng. Toàn bộ lịch sử repo nằm trong .git.', 1.00, 2, false),
-  ('b1000000-0000-4000-8000-000000000303', now(), now(), 'a1000000-0000-4000-8000-000000000003',
-   'Lệnh nào xem được lịch sử commit? (chọn nhiều)', 'multiple_choice',
-   'git log và git reflog đều hiển thị lịch sử. git status chỉ xem trạng thái, git clone thì tải repo về.', 1.00, 3, false)
+   'package.json và next.config.js nằm ở gốc. pom.xml thuộc Java, Gemfile thuộc Ruby.', 1.00, 3, false)
 ON CONFLICT (id) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
@@ -131,21 +140,7 @@ VALUES
   ('c1000000-0000-4000-8000-000000022031', now(), 'b1000000-0000-4000-8000-000000000203', 'package.json',   true,  1),
   ('c1000000-0000-4000-8000-000000022032', now(), 'b1000000-0000-4000-8000-000000000203', 'next.config.js', true,  2),
   ('c1000000-0000-4000-8000-000000022033', now(), 'b1000000-0000-4000-8000-000000000203', 'pom.xml',        false, 3),
-  ('c1000000-0000-4000-8000-000000022034', now(), 'b1000000-0000-4000-8000-000000000203', 'Gemfile',        false, 4),
-
-  -- 3.1
-  ('c1000000-0000-4000-8000-000000033011', now(), 'b1000000-0000-4000-8000-000000000301', 'git config --global user.name "Tên"', true,  1),
-  ('c1000000-0000-4000-8000-000000033012', now(), 'b1000000-0000-4000-8000-000000000301', 'git set username "Tên"',              false, 2),
-  ('c1000000-0000-4000-8000-000000033013', now(), 'b1000000-0000-4000-8000-000000000301', 'git user --name "Tên"',               false, 3),
-  ('c1000000-0000-4000-8000-000000033014', now(), 'b1000000-0000-4000-8000-000000000301', 'git init --user "Tên"',               false, 4),
-  -- 3.2
-  ('c1000000-0000-4000-8000-000000033021', now(), 'b1000000-0000-4000-8000-000000000302', 'Đúng', true,  1),
-  ('c1000000-0000-4000-8000-000000033022', now(), 'b1000000-0000-4000-8000-000000000302', 'Sai',  false, 2),
-  -- 3.3
-  ('c1000000-0000-4000-8000-000000033031', now(), 'b1000000-0000-4000-8000-000000000303', 'git log',    true,  1),
-  ('c1000000-0000-4000-8000-000000033032', now(), 'b1000000-0000-4000-8000-000000000303', 'git reflog', true,  2),
-  ('c1000000-0000-4000-8000-000000033033', now(), 'b1000000-0000-4000-8000-000000000303', 'git status', false, 3),
-  ('c1000000-0000-4000-8000-000000033034', now(), 'b1000000-0000-4000-8000-000000000303', 'git clone',  false, 4)
+  ('c1000000-0000-4000-8000-000000022034', now(), 'b1000000-0000-4000-8000-000000000203', 'Gemfile',        false, 4)
 ON CONFLICT (id) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
@@ -157,11 +152,11 @@ INSERT INTO quiz_attempts (id, created_at, user_id, quiz_id, score, total_points
                            is_passed, time_spent_seconds, started_at, completed_at)
 VALUES
   ('d1000000-0000-4000-8000-000000000001', now() - interval '2 days',
-   'e84f8be5-d5d2-4b58-a3ca-a1921252642f', 'a1000000-0000-4000-8000-000000000001',
+   :'student1', 'a1000000-0000-4000-8000-000000000001',
    2.00, 3.00, 66.67, false, 185,
    now() - interval '2 days', now() - interval '2 days' + interval '185 seconds'),
   ('d1000000-0000-4000-8000-000000000002', now() - interval '1 day',
-   'e84f8be5-d5d2-4b58-a3ca-a1921252642f', 'a1000000-0000-4000-8000-000000000001',
+   :'student1', 'a1000000-0000-4000-8000-000000000001',
    3.00, 3.00, 100.00, true, 142,
    now() - interval '1 day', now() - interval '1 day' + interval '142 seconds')
 ON CONFLICT (id) DO NOTHING;
@@ -187,25 +182,28 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
--- 5. REVIEWS — chỉ đánh giá khoá mà người đó ĐÃ enroll (theo bảng enrollments
---    của seed gốc); nếu không, dữ liệu tự mâu thuẫn với luật nghiệp vụ.
+-- 5. REVIEWS — chỉ chèn khi người đó ĐÃ enroll khoá (lọc bằng EXISTS), nếu
+--    không dữ liệu tự mâu thuẫn với luật nghiệp vụ. Seed Go có thể đã tạo review
+--    cho cùng cặp (user, course); khi đó ON CONFLICT bỏ qua, giữ bản của seed Go.
 --    Unique index là PARTIAL (WHERE deleted_at IS NULL) nên ON CONFLICT phải
 --    nhắc lại đúng điều kiện đó, không thì Postgres không khớp được index.
 -- ---------------------------------------------------------------------------
 INSERT INTO reviews (id, created_at, updated_at, user_id, course_id, rating, comment)
-VALUES
-  ('f1000000-0000-4000-8000-000000000001', now() - interval '5 days', now() - interval '5 days',
-   'e84f8be5-d5d2-4b58-a3ca-a1921252642f', 'f1451024-589c-40fb-9588-3f3d583b2759', 5,
+SELECT v.id::uuid, v.at, v.at, v.user_id::uuid, v.course_id::uuid, v.rating, v.comment
+FROM (VALUES
+  ('f1000000-0000-4000-8000-000000000001', now() - interval '5 days', :'student1', :'course_react', 5,
    'Giảng viên đi từ dễ đến khó rất mạch lạc. Phần Server Component giải thích rõ hơn hẳn tài liệu chính thức.'),
-  ('f1000000-0000-4000-8000-000000000002', now() - interval '4 days', now() - interval '4 days',
-   'e84f8be5-d5d2-4b58-a3ca-a1921252642f', '489f0c01-a40a-4476-a5e2-d4322866f342', 4,
+  ('f1000000-0000-4000-8000-000000000002', now() - interval '4 days', :'student1', :'course_git', 4,
    'Khoá miễn phí mà chất lượng tốt. Mong có thêm bài về rebase và cách xử lý xung đột.'),
-  ('f1000000-0000-4000-8000-000000000003', now() - interval '3 days', now() - interval '3 days',
-   'f411e408-1505-4cf1-8610-d14a3113d7ee', 'df67de09-e52a-4ec6-a4ce-915d12612d27', 5,
+  ('f1000000-0000-4000-8000-000000000003', now() - interval '3 days', :'student2', :'course_data', 5,
    'Bài tập pandas sát thực tế. Học xong tự làm được báo cáo cho công việc hiện tại.'),
-  ('f1000000-0000-4000-8000-000000000004', now() - interval '2 days', now() - interval '2 days',
-   'f411e408-1505-4cf1-8610-d14a3113d7ee', '489f0c01-a40a-4476-a5e2-d4322866f342', 3,
+  ('f1000000-0000-4000-8000-000000000004', now() - interval '2 days', :'student2', :'course_git', 3,
    'Nội dung ổn nhưng âm thanh vài bài bị rè. Phần pull request hơi nhanh.')
+) AS v(id, at, user_id, course_id, rating, comment)
+WHERE EXISTS (
+  SELECT 1 FROM enrollments e
+  WHERE e.user_id = v.user_id::uuid AND e.course_id = v.course_id::uuid AND e.deleted_at IS NULL
+)
 ON CONFLICT (user_id, course_id) WHERE deleted_at IS NULL DO NOTHING;
 
 -- ---------------------------------------------------------------------------
@@ -214,17 +212,14 @@ ON CONFLICT (user_id, course_id) WHERE deleted_at IS NULL DO NOTHING;
 -- ---------------------------------------------------------------------------
 INSERT INTO cart_items (id, created_at, user_id, course_id)
 VALUES
-  ('a2000000-0000-4000-8000-000000000001', now() - interval '6 hours',
-   'e84f8be5-d5d2-4b58-a3ca-a1921252642f', '7c965803-1aff-4a25-94f0-eea87c3f6a61'),
-  ('a2000000-0000-4000-8000-000000000002', now() - interval '3 hours',
-   'f411e408-1505-4cf1-8610-d14a3113d7ee', 'f1451024-589c-40fb-9588-3f3d583b2759')
+  ('a2000000-0000-4000-8000-000000000001', now() - interval '6 hours', :'student1', :'course_docker'),
+  ('a2000000-0000-4000-8000-000000000002', now() - interval '3 hours', :'student2', :'course_react')
 ON CONFLICT (user_id, course_id) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
--- 7. MỘT ĐƠN ĐÃ THANH TOÁN + enrollment kèm theo.
---    student2 mua khoá Docker (799.000đ). Cả 14 đơn cũ đều `cancelled`, nên đây
---    là đơn hoàn tất đầu tiên trong DB: cần cho trang lịch sử đơn, doanh thu, và
---    để kiểm rằng enroll sau thanh toán hiển thị đúng.
+-- 7. MỘT ĐƠN CHUYỂN KHOẢN ĐÃ HOÀN TẤT + enrollment kèm theo.
+--    student2 mua khoá Docker (799.000đ) qua sepay — bổ sung luồng chuyển khoản
+--    cho các đơn demo của seed Go.
 --
 --    Trạng thái là `completed`, KHÔNG phải `paid`: `paid` không nằm trong
 --    model.OrderStatuses (SSOT) nên CHECK constraint chk_orders_status từ chối
@@ -240,7 +235,7 @@ INSERT INTO orders (id, created_at, updated_at, user_id, order_number, subtotal,
                     payment_transaction_id, paid_at, notes)
 VALUES
   ('a3000000-0000-4000-8000-000000000001', now() - interval '8 days', now() - interval '8 days' + interval '11 minutes',
-   'f411e408-1505-4cf1-8610-d14a3113d7ee', 'ORD-260907-0001',
+   :'student2', 'ORD-260907-0001',
    799000.00, 0.00, 0.00, 799000.00, 'VND', 'completed',
    'bank_transfer', 'sepay', 'DEMO-TXN-260907-0001',
    now() - interval '8 days' + interval '11 minutes',
@@ -250,7 +245,7 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO order_items (id, created_at, order_id, course_id, price, discount_amount, final_price)
 VALUES
   ('a4000000-0000-4000-8000-000000000001', now() - interval '8 days',
-   'a3000000-0000-4000-8000-000000000001', '7c965803-1aff-4a25-94f0-eea87c3f6a61',
+   'a3000000-0000-4000-8000-000000000001', :'course_docker',
    799000.00, 0.00, 799000.00)
 ON CONFLICT (id) DO NOTHING;
 
@@ -271,13 +266,11 @@ INSERT INTO enrollments (id, created_at, updated_at, user_id, course_id, enrolle
                          progress_percentage, last_accessed_at)
 SELECT 'a6000000-0000-4000-8000-000000000001', now() - interval '8 days' + interval '11 minutes',
        now() - interval '8 days' + interval '11 minutes',
-       'f411e408-1505-4cf1-8610-d14a3113d7ee', '7c965803-1aff-4a25-94f0-eea87c3f6a61',
+       :'student2', :'course_docker',
        now() - interval '8 days' + interval '11 minutes', 0, NULL
 WHERE NOT EXISTS (
   SELECT 1 FROM enrollments
-  WHERE user_id = 'f411e408-1505-4cf1-8610-d14a3113d7ee'
-    AND course_id = '7c965803-1aff-4a25-94f0-eea87c3f6a61'
-    AND deleted_at IS NULL
+  WHERE user_id = :'student2' AND course_id = :'course_docker' AND deleted_at IS NULL
 );
 
 COMMIT;
