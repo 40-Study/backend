@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -141,6 +143,13 @@ func (h *SystemRoleHandler) DeleteSystemRole(c *fiber.Ctx) error {
 	hardDelete := c.QueryBool("hard_delete", false)
 
 	if err := h.service.DeleteSystemRole(c.Context(), id, hardDelete); err != nil {
+		if errors.Is(err, service.ErrSystemRoleProtected) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"message": "Không thể xoá vai trò hệ thống dựng sẵn",
+				"error":   err.Error(),
+				"code":    "SYSTEM_ROLE_PROTECTED",
+			})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to delete system role",
 			"error":   err.Error(),

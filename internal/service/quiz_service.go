@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -104,6 +105,10 @@ var ErrQuizAttemptNotFound = errors.New("attempt not found")
 // quiz; handler trả 404 để không lộ quiz có bài làm hay không (S2).
 var ErrQuizResultsNotFound = errors.New("quiz not found")
 
+// ErrQuizNotFound: quiz không tồn tại (repo trả nil, nil). Phải là sentinel để handler (qua
+// respondQuizGateError) ánh xạ 404 — errors.New trần rơi vào nhánh 500 ở GET /quizzes/:id/attempts (S7).
+var ErrQuizNotFound = errors.New("quiz not found")
+
 // canViewOthersAttempt (S2): ai được xem bài làm CỦA NGƯỜI KHÁC — admin, người quản lý quiz (người
 // tạo hoặc giảng viên chủ khoá chứa quiz), hoặc phụ huynh đã liên kết active với chủ bài làm.
 // Chính chủ bài làm không đi qua hàm này. Lỗi tra cứu coi như không có quyền (fail-closed).
@@ -162,7 +167,7 @@ func (s *QuizService) checkQuizOwner(ctx context.Context, quizID, userID uuid.UU
 		return err
 	}
 	if quiz == nil {
-		return errors.New("quiz not found")
+		return ErrQuizNotFound
 	}
 	if quiz.CreatedBy != nil && *quiz.CreatedBy == userID {
 		return nil
@@ -327,7 +332,7 @@ func (s *QuizService) checkStandaloneQuizReader(ctx context.Context, quizID, use
 		return err
 	}
 	if quiz == nil {
-		return errors.New("quiz not found")
+		return ErrQuizNotFound
 	}
 	if !isStandaloneQuiz(quiz) || (quiz.CreatedBy != nil && *quiz.CreatedBy == userID) {
 		return nil
@@ -893,6 +898,10 @@ func (s *QuizService) CreateQuestion(ctx context.Context, quizID, userID uuid.UU
 	if err != nil || quiz == nil {
 		return nil, errors.New("quiz not found")
 	}
+	// QA T3: từ chối TRƯỚC khi ghi bất cứ thứ gì (câu hỏi + đáp án ghi hai bước, không transaction).
+	if err := validateQuestionAnswers(req.QuestionType, req.Answers); err != nil {
+		return nil, err
+	}
 
 	points := decimal.NewFromFloat(1.0)
 	if req.Points != nil {
@@ -989,6 +998,25 @@ func (s *QuizService) UpdateQuestion(ctx context.Context, quizID, questionID, us
 		return nil, errors.New("question does not belong to this quiz")
 	}
 
+	// QA T3: chỉ kiểm khi loại hoặc đáp án thay đổi, để sửa riêng text của câu cũ (đã hỏng) không bị chặn.
+	// Đáp án hiệu lực = đáp án gửi lên, hoặc đáp án đang lưu nếu chỉ đổi loại.
+	if req.QuestionType != nil || req.Answers != nil {
+		effType := question.QuestionType
+		if req.QuestionType != nil {
+			effType = *req.QuestionType
+		}
+		effAnswers := req.Answers
+		if req.Answers == nil {
+			effAnswers = make([]dto.CreateAnswerDTO, len(question.Answers))
+			for i, a := range question.Answers {
+				effAnswers[i] = dto.CreateAnswerDTO{AnswerText: a.AnswerText, IsCorrect: a.IsCorrect, DisplayOrder: a.DisplayOrder}
+			}
+		}
+		if err := validateQuestionAnswers(effType, effAnswers); err != nil {
+			return nil, err
+		}
+	}
+
 	if req.QuestionText != nil {
 		question.QuestionText = *req.QuestionText
 	}
@@ -1076,6 +1104,12 @@ func (s *QuizService) ReorderQuestions(ctx context.Context, quizID, userID uuid.
 }
 
 func (s *QuizService) BulkCreateQuestions(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.BulkCreateQuestionsDTO) ([]dto.QuestionResponseDTO, error) {
+	// QA T3: kiểm cả lô trước, để một câu sai không để lại các câu đứng trước đã ghi dở.
+	for i, qReq := range req.Questions {
+		if err := validateQuestionAnswers(qReq.QuestionType, qReq.Answers); err != nil {
+			return nil, fmt.Errorf("question %d: %w", i+1, err)
+		}
+	}
 	var results []dto.QuestionResponseDTO
 	for _, qReq := range req.Questions {
 		result, err := s.CreateQuestion(ctx, quizID, userID, isAdmin, qReq)
@@ -1624,6 +1658,7 @@ func (s *QuizService) mapAttemptToDTO(a *model.QuizAttempt) *dto.QuizAttemptResp
 		ID:            a.ID,
 		UserID:        a.UserID,
 		QuizID:        a.QuizID,
+		Mode:          a.Mode,
 		Score:         a.Score,
 		TotalPoints:   a.TotalPoints,
 		Percentage:    a.Percentage,

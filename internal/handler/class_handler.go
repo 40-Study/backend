@@ -300,8 +300,9 @@ func (h *ClassHandler) GetMyClasses(c *fiber.Ctx) error {
 func (h *ClassHandler) GetClassByID(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid class ID",
+		// QA T13: id không phải UUID thì không thể trỏ tới lớp nào => 404 như id hợp lệ nhưng không có.
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"message": "Class not found",
 			"error":   err.Error(),
 		})
 	}

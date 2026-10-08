@@ -25,6 +25,10 @@ type SystemRoleServiceInterface interface {
 	GetSystemRolePermissions(ctx context.Context, roleID uuid.UUID) ([]dto.PermissionResponseDTO, error)
 }
 
+// ErrSystemRoleProtected (QA A1): vai trò hệ thống dựng sẵn (STUDENT, TEACHER, SYSTEM_ADMIN...) không
+// được xoá qua API quản trị. Handler trả 409 SYSTEM_ROLE_PROTECTED.
+var ErrSystemRoleProtected = errors.New("built-in system role cannot be deleted")
+
 type SystemRoleService struct {
 	repo           repository.SystemRoleRepositoryInterface
 	permissionRepo repository.PermissionRepositoryInterface
@@ -119,6 +123,9 @@ func (s *SystemRoleService) DeleteSystemRole(ctx context.Context, id uuid.UUID, 
 	}
 	if role == nil {
 		return errors.New("system role not found")
+	}
+	if model.IsBuiltInSystemRole(role.Name) {
+		return ErrSystemRoleProtected
 	}
 
 	return s.repo.DeleteSystemRole(ctx, id, hardDelete)

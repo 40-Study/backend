@@ -24,7 +24,10 @@ type UserSystemRoleResponseDTO struct {
 	UserID       uuid.UUID              `json:"user_id"`
 	SystemRoleID uuid.UUID              `json:"system_role_id"`
 	SystemRole   *SystemRoleResponseDTO `json:"system_role,omitempty"`
-	GrantedAt    string                 `json:"granted_at"`
+	// User (QA A4): người giữ vai trò — CHỈ có ở GET /system-roles/:id/users (màn admin, đã gate
+	// ROLES_MANAGE_SYSTEM) để admin nhận ra ai đang giữ vai trò thay vì chỉ thấy UUID.
+	User      *RoleMemberDTO `json:"user,omitempty"`
+	GrantedAt string         `json:"granted_at"`
 	GrantedBy    *uuid.UUID             `json:"granted_by,omitempty"`
 	Notes        *string                `json:"notes,omitempty"`
 	Status       string                 `json:"status"`
@@ -32,6 +35,16 @@ type UserSystemRoleResponseDTO struct {
 	RevokedAt    *string                `json:"revoked_at,omitempty"`
 	CreatedAt    string                 `json:"created_at"`
 	UpdatedAt    string                 `json:"updated_at"`
+}
+
+// RoleMemberDTO - Thông tin định danh của người giữ vai trò (QA A4). Email có mặt vì endpoint chỉ
+// dành cho admin; KHÔNG dùng lại cho DTO gửi tới người khác (xem s2_no_student_email_test.go).
+type RoleMemberDTO struct {
+	ID        uuid.UUID `json:"id"`
+	UserName  string    `json:"user_name"`
+	FullName  *string   `json:"full_name,omitempty"`
+	Email     string    `json:"email"`
+	AvatarURL *string   `json:"avatar_url,omitempty"`
 }
 
 // UserSystemRoleListResponseDTO - Response for list of user system roles

@@ -205,12 +205,88 @@ func apvSection(t *testing.T, tx *gorm.DB, courseID uuid.UUID) model.Section {
 	return s
 }
 
-// apvLesson tạo 1 chương + 1 bài cho khoá (đủ điều kiện nộp duyệt theo D2).
+// apvLesson tạo 1 chương + 1 bài CÓ nội dung cho khoá (đủ điều kiện nộp duyệt theo D2 + T6).
 func apvLesson(t *testing.T, tx *gorm.DB, courseID uuid.UUID) {
 	t.Helper()
 	s := apvSection(t, tx, courseID)
-	if err := tx.Create(&model.Lesson{SectionID: s.ID, Title: "QA-bai", DisplayOrder: 1}).Error; err != nil {
+	lesson := apvEmptyLesson(t, tx, s.ID, "QA-bai", 1)
+	apvVideoContent(t, tx, lesson.ID)
+}
+
+// apvEmptyLesson tạo 1 bài học chưa có nội dung nào.
+func apvEmptyLesson(t *testing.T, tx *gorm.DB, sectionID uuid.UUID, title string, order int) model.Lesson {
+	t.Helper()
+	l := model.Lesson{SectionID: sectionID, Title: title, DisplayOrder: order}
+	if err := tx.Create(&l).Error; err != nil {
 		t.Fatal(err)
+	}
+	return l
+}
+
+func apvVideoContent(t *testing.T, tx *gorm.DB, lessonID uuid.UUID) {
+	t.Helper()
+	url := "https://example.test/qa.mp4"
+	if err := tx.Create(&model.LessonContent{LessonID: lessonID, Type: "video", VideoURL: &url}).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// T6 (QA 261008) trên SQL thật: nộp duyệt phải bị từ chối khi MỘT bài bất kỳ chưa có nội dung, và
+// lỗi nêu tên đúng các bài rỗng (theo thứ tự chương/bài). "Có nội dung" = có dòng lesson_contents
+// HOẶC có quiz gắn bài (quizzes.lesson_id, chưa xoá mềm). Khoá không ghi gì khi bị từ chối.
+func TestCourseReview_PG_SubmitRequiresContentInEveryLesson(t *testing.T) {
+	tx := apvPgTx(t)
+	ctx := context.Background()
+	teacher := apvUser(t, tx, "qa-t6-teacher")
+	course := model.Course{InstructorID: teacher.ID, Title: "QA-T6", Slug: "qa-t6-" + uuid.NewString(), Status: model.CourseStatusDraft}
+	if err := tx.Create(&course).Error; err != nil {
+		t.Fatal(err)
+	}
+	repo := NewCourseReviewRepository(tx)
+	submit := func() error {
+		_, err := repo.ApplyReviewAction(ctx, course.ID, CourseActionSubmit, &teacher.ID, nil, nil)
+		return err
+	}
+
+	sec := apvSection(t, tx, course.ID)
+	withVideo := apvEmptyLesson(t, tx, sec.ID, "Bai co video", 1)
+	apvVideoContent(t, tx, withVideo.ID)
+	emptyA := apvEmptyLesson(t, tx, sec.ID, "Bai rong A", 2)
+	withQuiz := apvEmptyLesson(t, tx, sec.ID, "Bai chi co quiz", 3)
+	if err := tx.Create(&model.Quiz{LessonID: &withQuiz.ID, Title: "QA quiz"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	emptyB := apvEmptyLesson(t, tx, sec.ID, "Bai rong B", 4)
+
+	err := submit()
+	var missing *CourseLessonsWithoutContentError
+	if !errors.As(err, &missing) || !errors.Is(err, ErrCourseLessonsWithoutContent) {
+		t.Fatalf("2 bai rong: err=%v, muon *CourseLessonsWithoutContentError", err)
+	}
+	if len(missing.Lessons) != 2 || missing.Lessons[0].ID != emptyA.ID || missing.Lessons[1].ID != emptyB.ID {
+		t.Fatalf("phai nêu đúng 2 bài rỗng theo thứ tự [A, B], nhận %+v", missing.Lessons)
+	}
+	var c model.Course
+	if err := tx.Where("id = ?", course.ID).First(&c).Error; err != nil {
+		t.Fatal(err)
+	}
+	if c.Status != model.CourseStatusDraft || c.SubmittedAt != nil {
+		t.Fatalf("nop that bai nhung khoa bi ghi: %+v", c)
+	}
+
+	// Quiz bị xoá mềm không còn được tính là nội dung.
+	if err := tx.Where("lesson_id = ?", withQuiz.ID).Delete(&model.Quiz{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := submit(); !errors.As(err, &missing) || len(missing.Lessons) != 3 {
+		t.Fatalf("quiz xoa mem khong duoc tinh la noi dung: err=%v", err)
+	}
+
+	apvVideoContent(t, tx, emptyA.ID)
+	apvVideoContent(t, tx, withQuiz.ID)
+	apvVideoContent(t, tx, emptyB.ID)
+	if err := submit(); err != nil {
+		t.Fatalf("moi bai deu co noi dung phai nop duoc: %v", err)
 	}
 }
 

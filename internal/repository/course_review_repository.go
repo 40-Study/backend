@@ -24,6 +24,33 @@ var (
 	ErrCourseEmptyContent = errors.New("course must have at least one lesson before submitting for review")
 )
 
+// LessonWithoutContent: một bài học chưa có nội dung nào (QA T6).
+type LessonWithoutContent struct {
+	ID    uuid.UUID `json:"id"`
+	Title string    `json:"title"`
+}
+
+// CourseLessonsWithoutContentError (QA T6): nộp duyệt khi còn bài học rỗng. Mang danh sách bài để
+// handler nêu tên từng bài cho giảng viên. Dùng errors.As để lấy; errors.Is(err, ErrCourseLessonsWithoutContent) cũng đúng.
+type CourseLessonsWithoutContentError struct {
+	Lessons []LessonWithoutContent
+}
+
+// ErrCourseLessonsWithoutContent là sentinel để errors.Is.
+var ErrCourseLessonsWithoutContent = errors.New("every lesson must have content before submitting for review")
+
+func (e *CourseLessonsWithoutContentError) Error() string {
+	titles := make([]string, len(e.Lessons))
+	for i, l := range e.Lessons {
+		titles[i] = l.Title
+	}
+	return ErrCourseLessonsWithoutContent.Error() + ": " + strings.Join(titles, ", ")
+}
+
+func (e *CourseLessonsWithoutContentError) Is(target error) bool {
+	return target == ErrCourseLessonsWithoutContent
+}
+
 // CourseReviewAction — các hành động của luồng duyệt.
 type CourseReviewAction string
 
@@ -132,6 +159,22 @@ func (r *CourseReviewRepository) ApplyReviewAction(
 			}
 			if lessonCount == 0 {
 				return ErrCourseEmptyContent
+			}
+			// QA T6: mọi bài phải có nội dung — dòng lesson_contents HOẶC quiz gắn bài (chưa xoá mềm).
+			// Cùng khoá dòng course nên cùng mức bảo đảm như phép đếm bài ở trên.
+			var empty []LessonWithoutContent
+			if err := tx.Table("lessons").
+				Select("lessons.id AS id, lessons.title AS title").
+				Joins("JOIN sections ON sections.id = lessons.section_id AND sections.deleted_at IS NULL").
+				Where("sections.course_id = ?", course.ID).
+				Where("NOT EXISTS (SELECT 1 FROM lesson_contents lc WHERE lc.lesson_id = lessons.id)").
+				Where("NOT EXISTS (SELECT 1 FROM quizzes q WHERE q.lesson_id = lessons.id AND q.deleted_at IS NULL)").
+				Order("sections.display_order, lessons.display_order, lessons.title").
+				Scan(&empty).Error; err != nil {
+				return err
+			}
+			if len(empty) > 0 {
+				return &CourseLessonsWithoutContentError{Lessons: empty}
 			}
 		}
 
