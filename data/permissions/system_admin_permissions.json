@@ -41,15 +41,15 @@
   },
   {
     "name": "PAYMENTS_MANAGE",
-    "description": "Xem toàn bộ đơn hàng và xử lý hoàn tiền (tính năng đơn hàng+hoàn tiền+doanh thu, 27/09/2026)"
+    "description": "Xem toàn bộ đơn hàng và xử lý hoàn tiền"
   },
   {
     "name": "REPORTS_MODERATE",
-    "description": "Kiểm duyệt report vi phạm: xem toàn bộ danh sách, đổi trạng thái, xoá report (A-P0-1, QA 260927)"
+    "description": "Kiểm duyệt report vi phạm: xem toàn bộ danh sách, đổi trạng thái, xoá report"
   },
   {
     "name": "WALLET_WITHDRAWALS_MANAGE",
-    "description": "Xem và xử lý yêu cầu rút tiền của giảng viên: duyệt, từ chối, xác nhận đã chuyển khoản (Phase 4, 28/09/2026)"
+    "description": "Xem và xử lý yêu cầu rút tiền của giảng viên: duyệt, từ chối, xác nhận đã chuyển khoản"
   },
   {
     "name": "CONTESTS_APPROVE_ALL",
