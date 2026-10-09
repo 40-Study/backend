@@ -629,21 +629,9 @@ func (s *CourseService) toLessonResponseDTO(lesson *model.Lesson, contents []mod
 
 	if len(contents) > 0 {
 		resp.Contents = make([]dto.LessonContentResponseDTO, len(contents))
-		for i, c := range contents {
-			resp.Contents[i] = dto.LessonContentResponseDTO{
-				ID:       c.ID,
-				LessonID: c.LessonID,
-				Type:     c.Type,
-				Title:    c.Title,
-				Duration: c.Duration,
-				// N10 (review vòng 2, từ review web): xem chú thích tại model.LessonContent.
-				LivestreamSessionID: c.LivestreamSessionID,
-				DisplayOrder:        c.DisplayOrder,
-				CreatedAt:           c.CreatedAt,
-				UpdatedAt:           c.UpdatedAt,
-			}
+		for i := range contents {
 			// URL video ký; URL file gốc chỉ cho chủ khoá/admin — xem applyVideoAccess.
-			applyVideoAccess(&resp.Contents[i], c.VideoURL, viewer)
+			resp.Contents[i] = lessonContentToDTO(&contents[i], viewer)
 		}
 	}
 

@@ -289,22 +289,10 @@ func (s *SectionService) toLessonResponseDTO(lesson *model.Lesson, contents []mo
 
 	if len(contents) > 0 {
 		resp.Contents = make([]dto.LessonContentResponseDTO, len(contents))
-		for i, c := range contents {
-			resp.Contents[i] = dto.LessonContentResponseDTO{
-				ID:       c.ID,
-				LessonID: c.LessonID,
-				Type:     c.Type,
-				Title:    c.Title,
-				Duration: c.Duration,
-				// N10 (review vòng 2, từ review web): xem chú thích tại model.LessonContent.
-				LivestreamSessionID: c.LivestreamSessionID,
-				DisplayOrder:        c.DisplayOrder,
-				CreatedAt:           c.CreatedAt,
-				UpdatedAt:           c.UpdatedAt,
-			}
+		for i := range contents {
 			// Hiện mọi caller đều truyền contents=nil; nếu sau này có caller truyền contents, video
-			// nội bộ KHÔNG được lộ URL chưa ký ở đây — muốn cấp URL phải đi qua đường đã kiểm quyền.
-			applyVideoAccess(&resp.Contents[i], c.VideoURL, withheldVideoViewer)
+			// nội bộ KHÔNG được lộ URL chưa ký ở đây — withheldVideoViewer không cấp URL nào.
+			resp.Contents[i] = lessonContentToDTO(&contents[i], withheldVideoViewer)
 		}
 	}
 
