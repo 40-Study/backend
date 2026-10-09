@@ -1,6 +1,7 @@
 package seeds
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -47,19 +48,23 @@ func (s *Seeder) SeedPermissions(filePath string) error {
 	}
 
 	for _, p := range permissions {
-		permission := model.Permission{
-			Name: p.Name,
-		}
-		permission.Description.String = p.Description
-		permission.Description.Valid = p.Description != ""
+		want := sql.NullString{String: p.Description, Valid: p.Description != ""}
+		permission := model.Permission{Name: p.Name, Description: want}
 
-		result := s.db.Where("name = ?", p.Name).FirstOrCreate(&permission)
-		if result.Error != nil {
-			return fmt.Errorf("failed to seed permission %s: %w", p.Name, result.Error)
+		// FirstOrCreate nạp dòng đã có vào `permission` (kể cả mô tả hiện trong DB). KHÔNG dựa vào
+		// result.RowsAffected để đoán "dòng đã có": GORM trả `tx` chưa chạy câu nào nên giá trị đó là
+		// 0 cho dòng đã có, và hành vi này không được tài liệu hoá. So sánh mô tả trực tiếp.
+		if err := s.db.Where("name = ?", p.Name).FirstOrCreate(&permission).Error; err != nil {
+			return fmt.Errorf("failed to seed permission %s: %w", p.Name, err)
 		}
 
-		if result.RowsAffected == 0 {
-			s.db.Model(&permission).Where("name = ?", p.Name).Update("description", p.Description)
+		// Đồng bộ mô tả mỗi lần khởi động (sửa chữ trong JSON phải tới DB đang chạy), nhưng chỉ ghi khi
+		// khác để không đổi updated_at của cả danh mục quyền mỗi lần boot. Lỗi được trả về thay vì bị
+		// nuốt: trong transaction của SeedAll một câu lỗi làm hỏng cả phiên.
+		if permission.Description != want {
+			if err := s.db.Model(&permission).Update("description", want).Error; err != nil {
+				return fmt.Errorf("failed to update description of permission %s: %w", p.Name, err)
+			}
 		}
 	}
 
