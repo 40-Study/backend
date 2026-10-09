@@ -60,9 +60,9 @@ func TestRunPostMigrations_RunsQuizBackfillAndGhostCleanupOnOldDB(t *testing.T) 
 	parent := ghostUser(t, db, "parent", "PARENT")
 	ghost := ghostRequest(t, db, parent.ID, "khong-ton-tai-"+strings.ToLower(uuid.NewString()[:8])+"@40study.test", "pending", nil)
 
-	// DB cũ: backfill chưa từng chạy (Migrate ở đầu test đã ghi dấu trên DB trống).
-	if err := db.Exec("DELETE FROM data_migrations WHERE name = ?", lessonContentQuizBackfillName).Error; err != nil {
-		t.Fatalf("xoá dấu backfill: %v", err)
+	// DB cũ: backfill và dọn dòng ma chưa từng chạy (Migrate ở đầu test đã ghi dấu cả hai trên DB trống).
+	if err := db.Exec("DELETE FROM data_migrations WHERE name IN (?, ?)", lessonContentQuizBackfillName, parentLinkGhostCleanupName).Error; err != nil {
+		t.Fatalf("xoá dấu backfill/dọn dòng ma: %v", err)
 	}
 	if err := RunPostMigrations(db); err != nil {
 		t.Fatalf("RunPostMigrations: %v", err)

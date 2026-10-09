@@ -1,6 +1,6 @@
 package database
 
-// Test Postgres THẬT cho runParentLinkGhostCleanup (parent_link_ghost_cleanup.go). Bỏ điều kiện
+// Test Postgres THẬT cho cancelGhostParentLinkRequests / runParentLinkGhostCleanup (parent_link_ghost_cleanup.go). Bỏ điều kiện
 // student_user_id IS NULL, bỏ lọc status='pending', bỏ kiểm tra vai STUDENT, hoặc đổi UPDATE
 // thành DELETE thì test ĐỎ.
 
@@ -92,7 +92,7 @@ func TestParentLinkGhostCleanup_SoftCancelsOnlyGhostPendingRows_IdempotentNeverD
 	buf := captureLog(t)
 
 	for run := 1; run <= 2; run++ {
-		if err := runParentLinkGhostCleanup(db); err != nil {
+		if err := cancelGhostParentLinkRequests(db); err != nil {
 			t.Fatalf("lần %d: %v", run, err)
 		}
 		for name, c := range map[string]struct {
@@ -148,7 +148,7 @@ func TestParentLinkGhostCleanup_LogsAtMost200IdsButCancelsAll(t *testing.T) {
 	}
 	buf := captureLog(t)
 
-	if err := runParentLinkGhostCleanup(db); err != nil {
+	if err := cancelGhostParentLinkRequests(db); err != nil {
 		t.Fatal(err)
 	}
 	var cancelled int64
@@ -167,5 +167,41 @@ func TestParentLinkGhostCleanup_LogsAtMost200IdsButCancelsAll(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "cancelled 205 ") {
 		t.Fatalf("log phải ghi tổng số 205; log = %q", buf.String())
+	}
+}
+
+// L4 (review 261009): dọn dòng ma chỉ chạy MỘT lần trên mỗi DB, không phải mỗi lần khởi động. Chạy mỗi lần khởi động thì
+// một yêu cầu pending hợp lệ mà tài khoản học sinh tạm thời không có vai STUDENT active lúc đó (vd đang được cấp lại
+// vai) bị huỷ vĩnh viễn. Sau D8 không còn dòng ma mới nào sinh ra, nên một lần là đủ.
+func TestParentLinkGhostCleanup_RunsOncePerDatabase(t *testing.T) {
+	db := pgtest.IsolatedSchema(t, Migrate)
+	// Migrate đã chạy bước dọn trên DB trống và ghi dấu; xoá dấu để mô phỏng DB cũ chưa từng chạy bước này.
+	if err := db.Exec("DELETE FROM data_migrations WHERE name = ?", parentLinkGhostCleanupName).Error; err != nil {
+		t.Fatalf("xoá dấu: %v", err)
+	}
+	parent := ghostUser(t, db, "parent", "PARENT")
+
+	legacyGhost := ghostRequest(t, db, parent.ID, "khong-ton-tai-"+uuid.NewString()[:8]+"@40study.test", "pending", nil)
+	if err := runParentLinkGhostCleanup(db); err != nil {
+		t.Fatalf("lần 1: %v", err)
+	}
+	if got := statusOf(t, db, legacyGhost); got != "cancelled" {
+		t.Fatalf("lần đầu phải huỷ dòng ma cũ: status = %q", got)
+	}
+
+	// Sau lần đầu: một dòng pending NULL-student mà email lúc này chưa khớp STUDENT active (học sinh tạm thời mất vai).
+	laterPending := ghostRequest(t, db, parent.ID, "tam-thoi-"+uuid.NewString()[:8]+"@40study.test", "pending", nil)
+	for run := 2; run <= 3; run++ {
+		if err := runParentLinkGhostCleanup(db); err != nil {
+			t.Fatalf("lần %d: %v", run, err)
+		}
+		if got := statusOf(t, db, laterPending); got != "pending" {
+			t.Fatalf("lần %d (các lần khởi động sau): dòng pending bị huỷ lại (status = %q); bước dọn chỉ được chạy một lần", run, got)
+		}
+	}
+	var marks int64
+	db.Raw("SELECT count(*) FROM data_migrations WHERE name = ?", parentLinkGhostCleanupName).Scan(&marks)
+	if marks != 1 {
+		t.Fatalf("data_migrations có %d dấu, muốn 1", marks)
 	}
 }

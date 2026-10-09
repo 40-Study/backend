@@ -11,7 +11,10 @@ package database
 // vai STUDENT (cùng điều kiện với ParentLinkRequestRepository.FindStudentIDByEmailCI). Dòng có email
 // nay đã khớp một học sinh thật (đăng ký sau) được GIỮ để học sinh đó còn trả lời.
 //
-// Idempotent: chỉ chạm dòng pending, chạy lại ở mỗi lần API khởi động không đổi gì và không log gì.
+// CHẠY ĐÚNG MỘT LẦN trên mỗi DB (runDataMigrationOnce, dấu trong data_migrations; QA 261009 L4). Chạy mỗi lần khởi động
+// thì một yêu cầu pending hợp lệ mà tài khoản học sinh lúc đó tạm thời không có vai STUDENT active (vd đang được cấp lại
+// vai) bị huỷ vĩnh viễn; sau D8 không còn dòng ma mới nào được tạo nên một lần là đủ. Câu UPDATE bản thân vẫn idempotent
+// (chỉ chạm dòng pending).
 // Khôi phục: UPDATE parent_link_requests SET status='pending' WHERE id IN (<id đã log>) AND responded_at IS NULL.
 
 import (
@@ -21,6 +24,9 @@ import (
 
 	"gorm.io/gorm"
 )
+
+// parentLinkGhostCleanupName: tên bản ghi đánh dấu trong data_migrations (runDataMigrationOnce).
+const parentLinkGhostCleanupName = "parent_link_ghost_cleanup"
 
 // parentLinkGhostLogCap giới hạn số id ghi vào log mỗi lần chạy (số dòng đã huỷ vẫn ghi đủ).
 const parentLinkGhostLogCap = 200
@@ -46,11 +52,19 @@ const parentLinkGhostCleanupSQL = `
 `
 
 // runParentLinkGhostCleanup chạy sau các bước parent_link_requests trong RunPostMigrations (cần cột
-// student_email đã backfill và CHECK status đã có).
+// student_email đã backfill và CHECK status đã có), đúng một lần trên mỗi DB — xem chú thích đầu file.
 func runParentLinkGhostCleanup(db *gorm.DB) error {
-	var ids []string
-	if err := db.Raw(parentLinkGhostCleanupSQL).Scan(&ids).Error; err != nil {
+	if err := runDataMigrationOnce(db, parentLinkGhostCleanupName, cancelGhostParentLinkRequests); err != nil {
 		return fmt.Errorf("post-migration %q failed: %w", "soft-cancel ghost parent_link_requests", err)
+	}
+	return nil
+}
+
+// cancelGhostParentLinkRequests huỷ mềm mọi dòng ma và log id đã huỷ (không log gì nếu không có dòng nào).
+func cancelGhostParentLinkRequests(tx *gorm.DB) error {
+	var ids []string
+	if err := tx.Raw(parentLinkGhostCleanupSQL).Scan(&ids).Error; err != nil {
+		return err
 	}
 	if len(ids) == 0 {
 		return nil
