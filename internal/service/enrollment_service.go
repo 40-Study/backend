@@ -395,12 +395,7 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 			return nil
 		})
 	}
-	err = write()
-	if errors.Is(err, errLessonProgressInsertRace) {
-		// Chi can MOT lan: ban ghi da ton tai, lan nay FOR UPDATE khoa duoc no va di nhanh UPDATE.
-		err = write()
-	}
-	if err != nil {
+	if err = retryOnLessonProgressInsertRace(write); err != nil {
 		return nil, err
 	}
 	return s.finishLessonProgressStateUpdate(ctx, enrollment, saved, nextLessonUnlocked(lessonOrder, lessonID, sequential, saved.Status))
@@ -409,6 +404,96 @@ func (s *EnrollmentService) UpdateLessonProgress(ctx context.Context, userID, le
 // errLessonProgressInsertRace: nhanh INSERT cua writeLessonProgressLocked thua race tao ban ghi.
 // Chi dung noi bo UpdateLessonProgress de rollback roi chay lai dung MOT lan.
 var errLessonProgressInsertRace = errors.New("lesson progress created concurrently")
+
+// retryOnLessonProgressInsertRace chay write, neu thua race INSERT thi chay lai dung MOT lan: ban ghi da ton
+// tai, lan nay FOR UPDATE khoa duoc no va di nhanh UPDATE. Dung chung cho moi duong ghi lesson_progress.
+func retryOnLessonProgressInsertRace(write func() error) error {
+	err := write()
+	if errors.Is(err, errLessonProgressInsertRace) {
+		err = write()
+	}
+	return err
+}
+
+// CompleteLessonByQuizPass (QA 261009, H1): danh dau bai hoc la completed cho hoc vien vua DO mot lan lam quiz
+// CHINH THUC cua bai do. Server la nguon su that: bai chi co quiz khong co video/nut "hoan thanh" nao phia
+// web, thieu duong nay thi khoa tuan tu ket vinh vien o bai do va tien do/chung chi khong bao gio dat.
+//
+// Dung lai nguyen co che ghi cua UpdateLessonProgress (khoa dong FOR UPDATE, INSERT ON CONFLICT DO NOTHING +
+// chay lai, recalculateProgress) — khac o cho khong qua resolveLessonStatus (khong co video de do) va khong
+// kiem khoa bai: nguoi goi (QuizService.SubmitQuiz) da qua cong truy cap quiz luc /start. Idempotent: bai da
+// completed thi khong ghi gi them (giu nguyen completed_at). Nguoi khong ghi danh khoa (chu khoa/admin lam thu)
+// la no-op, khong phai loi.
+func (s *EnrollmentService) CompleteLessonByQuizPass(ctx context.Context, userID, lessonID uuid.UUID) error {
+	courseID, err := s.enrollmentRepo.GetCourseIDByLessonID(ctx, lessonID)
+	if err != nil {
+		return err
+	}
+	enrollment, err := s.enrollmentRepo.GetByUserAndCourse(ctx, userID, courseID)
+	if err != nil {
+		return err
+	}
+	if enrollment == nil {
+		return nil
+	}
+
+	now := time.Now()
+	changed := false
+	write := func() error {
+		changed = false
+		return s.enrollmentRepo.WithLessonProgressLock(ctx, userID, lessonID, func(repo repository.EnrollmentRepositoryInterface, progress *model.LessonProgress) error {
+			var werr error
+			changed, werr = markLessonProgressCompleted(ctx, repo, progress, userID, lessonID, enrollment.ID, now)
+			return werr
+		})
+	}
+	if err := retryOnLessonProgressInsertRace(write); err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	return s.recalculateProgress(ctx, enrollment)
+}
+
+// markLessonProgressCompleted ghi completed cho MOT ban ghi lesson_progress da khoa FOR UPDATE (progress == nil
+// neu chua co). changed=false khi ban ghi da completed san. Chi goi ben trong WithLessonProgressLock.
+func markLessonProgressCompleted(
+	ctx context.Context,
+	repo repository.EnrollmentRepositoryInterface,
+	progress *model.LessonProgress,
+	userID, lessonID, enrollmentID uuid.UUID,
+	now time.Time,
+) (changed bool, err error) {
+	if progress == nil {
+		inserted, err := repo.InsertLessonProgressIfAbsent(ctx, &model.LessonProgress{
+			UserID: userID, LessonID: lessonID, EnrollmentID: enrollmentID,
+			Status: "completed", CompletedAt: &now, LastAccessedAt: now,
+		})
+		if err != nil {
+			return false, err
+		}
+		if !inserted {
+			return false, errLessonProgressInsertRace
+		}
+		return true, nil
+	}
+	if progress.Status == "completed" {
+		return false, nil
+	}
+	updates := map[string]interface{}{"status": "completed", "last_accessed_at": now, "updated_at": now}
+	if progress.CompletedAt == nil {
+		updates["completed_at"] = now
+	}
+	updated, err := repo.UpdateLessonProgressFields(ctx, userID, lessonID, updates, nil)
+	if err != nil {
+		return false, err
+	}
+	if updated == nil {
+		return false, errors.New("lesson progress not found")
+	}
+	return true, nil
+}
 
 // writeLessonProgressLocked: doc -> hop nhat played_ranges -> ghi cho MOT ban ghi lesson_progress.
 // CHI goi ben trong EnrollmentRepository.WithLessonProgressLock: progress la ban ghi da khoa FOR

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -85,6 +86,21 @@ type QuizService struct {
 	// parentLinks (S2): cho phụ huynh đã liên kết active xem bài làm của con. nil = không phụ huynh
 	// nào được xem (fail-closed) — nối qua SetParentLinkChecker.
 	parentLinks AttemptParentLinkChecker
+	// lessonCompleter (QA 261009, H1): chốt bài học hoàn thành khi học viên ĐỖ quiz chính thức của bài đó. nil = không
+	// chốt gì (test/dựng tay) — nối qua SetLessonCompleter, wireQuizLessonCompletion ở app/services.go.
+	lessonCompleter LessonCompletionRecorder
+}
+
+// LessonCompletionRecorder: ghi tiến độ "bài học đã hoàn thành" từ kết quả quiz. EnrollmentService hiện thực
+// (dùng lại đường ghi lesson_progress + tính lại tiến độ khoá, không viết lần hai).
+type LessonCompletionRecorder interface {
+	CompleteLessonByQuizPass(ctx context.Context, userID, lessonID uuid.UUID) error
+}
+
+// SetLessonCompleter nối bộ ghi hoàn thành bài học (H1). Setter vì EnrollmentService dựng sau QuizService trong
+// InitServices và các test dựng QuizService không cần nó.
+func (s *QuizService) SetLessonCompleter(c LessonCompletionRecorder) {
+	s.lessonCompleter = c
 }
 
 // AttemptParentLinkChecker trả true khi parentID đang là phụ huynh có liên kết ACTIVE của studentID.
@@ -96,6 +112,9 @@ type AttemptParentLinkChecker interface {
 func (s *QuizService) SetParentLinkChecker(c AttemptParentLinkChecker) {
 	s.parentLinks = c
 }
+
+// QuizAttemptModeOfficial: quiz_attempts.mode mặc định — tính vào max_attempts và chốt hoàn thành bài khi đỗ.
+const QuizAttemptModeOfficial = "official"
 
 // ErrQuizAttemptNotFound gộp "bài làm không tồn tại" và "người gọi không được xem" thành MỘT lỗi
 // để handler trả 404 cho cả hai — không cho dò được sự tồn tại của bài làm người khác (S2).
@@ -1175,12 +1194,12 @@ func (s *QuizService) StartQuiz(ctx context.Context, quizID, userID uuid.UUID, i
 
 	mode := req.Mode
 	if mode == "" {
-		mode = "official"
+		mode = QuizAttemptModeOfficial
 	}
 
 	// Check max attempts — CHỈ đếm attempt "official" (contract §6: practice "không đếm vào
 	// quiz_max_attempts"). CountAttemptsByUserAndQuiz đã tự lọc mode='official' ở tầng SQL.
-	if quiz.MaxAttempts != nil && mode == "official" {
+	if quiz.MaxAttempts != nil && mode == QuizAttemptModeOfficial {
 		count, _ := s.repo.CountAttemptsByUserAndQuiz(ctx, userID, quizID)
 		if count >= int64(*quiz.MaxAttempts) {
 			return nil, errors.New("max attempts reached")
@@ -1308,7 +1327,21 @@ func (s *QuizService) SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, 
 		return nil, ErrQuizAttemptAlreadySubmitted
 	}
 
+	s.completeLessonOnPass(ctx, quiz, attempt)
 	return s.mapAttemptToDTO(attempt), nil
+}
+
+// completeLessonOnPass (H1): lần làm CHÍNH THỨC đỗ của quiz gắn một bài học chốt bài đó completed — luyện tập và
+// lần trượt không chốt gì. Điểm đã ghi xong và không thu hồi được, nên lỗi ở bước này KHÔNG làm hỏng phản hồi nộp
+// bài (client sẽ nộp lại và nhận "đã nộp"): chỉ ghi log để vận hành thấy; lần đỗ chính thức sau sẽ chốt lại (idempotent).
+func (s *QuizService) completeLessonOnPass(ctx context.Context, quiz *model.Quiz, attempt *model.QuizAttempt) {
+	if s.lessonCompleter == nil || quiz.LessonID == nil || attempt.Mode != QuizAttemptModeOfficial ||
+		attempt.IsPassed == nil || !*attempt.IsPassed {
+		return
+	}
+	if err := s.lessonCompleter.CompleteLessonByQuizPass(ctx, attempt.UserID, *quiz.LessonID); err != nil {
+		log.Printf("[Quiz] đỗ quiz %s nhưng không chốt được bài học %s cho user %s: %v", quiz.ID, *quiz.LessonID, attempt.UserID, err)
+	}
 }
 
 // gradeSubmission chấm một lần nộp — dùng chung cho SubmitQuiz và SubmitContestAttempt để bài thi
