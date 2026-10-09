@@ -199,3 +199,10 @@ func TestIdempotency_RedisDown_FailsClosed503(t *testing.T) {
 		t.Fatal("Redis down mà handler vẫn chạy (có thể gửi trùng)")
 	}
 }
+
+// Golden: tên header là một phần contract C3 mà web phải khớp từng ký tự (đổi ở đây thì cập nhật contract.md và web).
+func TestIdempotency_HeaderNamesAreContract(t *testing.T) {
+	if IdempotencyKeyHeader != "Idempotency-Key" || IdempotencyReplayHeader != "Idempotent-Replay" {
+		t.Fatalf("tên header lệch contract C3: %q / %q", IdempotencyKeyHeader, IdempotencyReplayHeader)
+	}
+}
