@@ -34,6 +34,11 @@ type LessonRepositoryInterface interface {
 	DeleteContent(ctx context.Context, id uuid.UUID) error
 	ReorderContents(ctx context.Context, items []ReorderItem) error
 	CountContentsByIDsAndLesson(ctx context.Context, ids []uuid.UUID, lessonID uuid.UUID) (int64, error)
+	// GetQuizForContent / GetContentByQuizID (C1, type='quiz'): quiz chưa xoá mềm (nil = không có) và dòng nội
+	// dung đang giữ quiz đó (nil = chưa gắn). Chỗ duy nhất LessonContentService đọc quizzes — không thêm quiz
+	// repo vào constructor (D7: lane không sửa DI).
+	GetQuizForContent(ctx context.Context, quizID uuid.UUID) (*model.Quiz, error)
+	GetContentByQuizID(ctx context.Context, quizID uuid.UUID) (*model.LessonContent, error)
 
 	// GetLegacyVideoDurationByLessonID doc duration (giay) tu bang legacy lesson_videos
 	// (model.LessonVideo) — la nguon du phong THU HAI trong chuoi uu tien server-truth cua B-1
@@ -202,6 +207,30 @@ func (r *LessonRepository) CountContentsByIDsAndLesson(ctx context.Context, ids 
 		Where("id IN ? AND lesson_id = ?", ids, lessonID).
 		Count(&count).Error
 	return count, err
+}
+
+func (r *LessonRepository) GetQuizForContent(ctx context.Context, quizID uuid.UUID) (*model.Quiz, error) {
+	var quiz model.Quiz
+	err := r.db.WithContext(ctx).Where("id = ?", quizID).First(&quiz).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &quiz, nil
+}
+
+func (r *LessonRepository) GetContentByQuizID(ctx context.Context, quizID uuid.UUID) (*model.LessonContent, error) {
+	var content model.LessonContent
+	err := r.db.WithContext(ctx).Where("quiz_id = ?", quizID).First(&content).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &content, nil
 }
 
 func (r *LessonRepository) GetLegacyVideoDurationByLessonID(ctx context.Context, lessonID uuid.UUID) (int, error) {

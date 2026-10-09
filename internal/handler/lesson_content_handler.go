@@ -52,6 +52,19 @@ func writeUploadOwnership(c *fiber.Ctx, err error) bool {
 	return false
 }
 
+// writeLessonContentRule ánh xạ lỗi nghiệp vụ article/quiz (C1) sang envelope {message, code} với đúng status:
+// 400 ARTICLE_BODY_REQUIRED / ARTICLE_BODY_TOO_LONG / QUIZ_ID_REQUIRED / CONTENT_TYPE_IMMUTABLE, 404
+// QUIZ_NOT_FOUND, 409 QUIZ_LESSON_MISMATCH / QUIZ_ALREADY_LINKED. Message tiếng Việt có dấu để web hiện nguyên
+// văn (không sửa error-messages.ts). Trả true nếu đã ghi response.
+func writeLessonContentRule(c *fiber.Ctx, err error) bool {
+	var rule *service.LessonContentRuleError
+	if !errors.As(err, &rule) {
+		return false
+	}
+	_ = c.Status(rule.Status).JSON(fiber.Map{"message": rule.Message, "code": rule.Code})
+	return true
+}
+
 func (h *LessonContentHandler) CreateContent(c *fiber.Ctx) error {
 	lessonID, err := uuid.Parse(c.Params("lesson_id"))
 	if err != nil {
@@ -84,6 +97,9 @@ func (h *LessonContentHandler) CreateContent(c *fiber.Ctx) error {
 
 	content, err := h.service.CreateContent(c.Context(), lessonID, userID, isAdmin, req)
 	if err != nil {
+		if writeLessonContentRule(c, err) {
+			return nil
+		}
 		if writeCourseLocked(c, err) {
 			return nil
 		}
@@ -180,6 +196,9 @@ func (h *LessonContentHandler) UpdateContent(c *fiber.Ctx) error {
 
 	content, err := h.service.UpdateContent(c.Context(), contentID, userID, isAdmin, req)
 	if err != nil {
+		if writeLessonContentRule(c, err) {
+			return nil
+		}
 		if writeCourseLocked(c, err) {
 			return nil
 		}

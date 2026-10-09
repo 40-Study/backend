@@ -138,9 +138,13 @@ func (s *LessonContentService) CreateContent(ctx context.Context, lessonID uuid.
 	if req.DisplayOrder != nil {
 		content.DisplayOrder = *req.DisplayOrder
 	}
+	// C1: article_body / quiz_id (và lỗi 400/404/409 riêng) — chỉ khi loại là article / quiz.
+	if err := s.applyCreateTypeFields(ctx, content, req.ArticleBody, req.QuizID); err != nil {
+		return nil, err
+	}
 
 	if err := s.lessonRepo.CreateContent(ctx, content); err != nil {
-		return nil, err
+		return nil, mapQuizLinkWriteError(content, err)
 	}
 
 	// Đã qua requireLessonCourseOwnerOrAdmin ở trên: actor là chủ khoá / admin nên được xem file gốc.
@@ -294,6 +298,14 @@ func (s *LessonContentService) UpdateContent(ctx context.Context, contentID, act
 		return nil, err
 	}
 
+	// C1: đổi loại từ/sang article|quiz bị từ chối — cột article_body/quiz_id gắn chặt với loại.
+	if req.Type != nil && *req.Type != content.Type && (isArticleOrQuiz(*req.Type) || isArticleOrQuiz(content.Type)) {
+		return nil, ErrContentTypeImmutable
+	}
+	if err := s.applyUpdateTypeFields(ctx, content, req.ArticleBody, req.QuizID); err != nil {
+		return nil, err
+	}
+
 	if req.Type != nil {
 		content.Type = *req.Type
 	}
@@ -325,7 +337,7 @@ func (s *LessonContentService) UpdateContent(ctx context.Context, contentID, act
 	}
 
 	if err := s.lessonRepo.UpdateContent(ctx, content); err != nil {
-		return nil, err
+		return nil, mapQuizLinkWriteError(content, err)
 	}
 
 	return s.toContentResponseDTO(content, videoViewer{userID: actorUserID, original: true}), nil
@@ -421,6 +433,16 @@ func (s *LessonContentService) toContentResponseDTO(c *model.LessonContent, view
 		SubtitleURL:         c.SubtitleURL,
 		CreatedAt:           c.CreatedAt,
 		UpdatedAt:           c.UpdatedAt,
+	}
+
+	// C1: article_body + reading_time_minutes (tính tại đây, không lưu) và quiz_id — omitempty khi không áp dụng.
+	if c.Type == model.LessonContentTypeArticle && c.ArticleBody != nil {
+		minutes := articleReadingTimeMinutes(*c.ArticleBody)
+		resp.ArticleBody = c.ArticleBody
+		resp.ReadingTimeMinutes = &minutes
+	}
+	if c.Type == model.LessonContentTypeQuiz {
+		resp.QuizID = c.QuizID
 	}
 
 	// Thay URL video đã lưu bằng URL KÝ (video_hls_url), và chỉ chủ khoá/admin mới còn video_url
