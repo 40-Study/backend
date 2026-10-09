@@ -103,6 +103,11 @@ func TestLessonContentQuizBackfill_EveryOrphanLessonQuizGetsOneRow_RunsOnce(t *t
 	}
 	f.quiz(nil, &f.courseID, "Quiz chỉ gắn khoá, không gắn bài")
 
+	// Migrate (RunPostMigrations, phase 8) đã chạy backfill một lần trên DB còn trống và ghi dấu. Xoá dấu để mô phỏng
+	// DB CŨ khởi động lần đầu với bản mới: lúc đó mới có quiz mồ côi để backfill xử lý.
+	if err := db.Exec("DELETE FROM data_migrations WHERE name = ?", lessonContentQuizBackfillName).Error; err != nil {
+		t.Fatalf("xoá dấu backfill: %v", err)
+	}
 	before := f.countQuizRows() // 1: dòng đã có
 	if err := runLessonContentQuizBackfill(db); err != nil {
 		t.Fatalf("backfill lần 1: %v", err)
