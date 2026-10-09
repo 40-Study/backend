@@ -140,12 +140,7 @@ func New() (*App, error) {
 	// (config.Config.ResolvedAllowedOrigins) — dung chung voi middleware.SameOriginRequired o
 	// enrollment_router.go, tranh hai noi troi default lang le khoi nhau.
 	allowedOrigins := resources.Config.ResolvedAllowedOrigins()
-	fiberApp.Use(cors.New(cors.Config{
-		AllowOrigins:     allowedOrigins,
-		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS, PATCH",
-		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
-		AllowCredentials: true,
-	}))
+	fiberApp.Use(cors.New(BuildCORSConfig(allowedOrigins)))
 
 	// Setup WebSocket route with auth middleware
 	auth := middleware.AuthMiddleware(resources.Config, resources.Redis)
