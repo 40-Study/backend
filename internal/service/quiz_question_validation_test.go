@@ -180,3 +180,8 @@ func TestUpdateQuestion_ChiSuaChu_CauCuKhongCoDapAnDung_VanDuocSua(t *testing.T)
 		t.Errorf("updateQuestions=%d, muốn 1", repo.updateQuestions)
 	}
 }
+
+// CountQuestionsByQuizIDs (QA T10): danh sách quiz giờ đếm câu hỏi qua repo; fake này không có câu hỏi nào.
+func (r *repoQuestionWrites) CountQuestionsByQuizIDs(context.Context, []uuid.UUID) (map[uuid.UUID]int, error) {
+	return map[uuid.UUID]int{}, nil
+}

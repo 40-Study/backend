@@ -439,3 +439,8 @@ func TestStartQuiz_BaiKhoa_TraErrLessonLocked_KhongTaoAttempt(t *testing.T) {
 		t.Fatalf("result = %+v, muon nil khi bai dang khoa", result)
 	}
 }
+
+// CountQuestionsByQuizIDs (QA T10): danh sách quiz giờ đếm câu hỏi qua repo; fake này không có câu hỏi nào.
+func (r *fakeQuizRepoForAccessLock) CountQuestionsByQuizIDs(context.Context, []uuid.UUID) (map[uuid.UUID]int, error) {
+	return map[uuid.UUID]int{}, nil
+}
