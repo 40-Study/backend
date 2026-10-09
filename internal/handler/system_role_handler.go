@@ -6,6 +6,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 )
 
@@ -47,6 +48,9 @@ func (h *SystemRoleHandler) CreateSystemRole(c *fiber.Ctx) error {
 			"error":   err.Error(),
 		})
 	}
+
+	// Id nằm trong response chứ không ở URL: đặt đích cho middleware Audit.
+	middleware.SetAuditTarget(c, role.ID.String())
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message": "System role created successfully",

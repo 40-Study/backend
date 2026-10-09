@@ -196,3 +196,37 @@ func TestAudit_RouteWithoutTargetParamHasNoTargetID(t *testing.T) {
 		t.Fatalf("entries = %+v", spy.entries)
 	}
 }
+
+// Ngoại lệ hẹp: handler gọi SetAuditRecordOnFailure thì dòng nhật ký được ghi dù status không phải 2xx;
+// handler không gọi thì vẫn không ghi (D6 giữ nguyên), và Go error vẫn không bao giờ được ghi.
+func TestAudit_RecordOnFailureOnlyWhenHandlerOptsIn(t *testing.T) {
+	optIn := func(status int) fiber.Handler {
+		return func(c *fiber.Ctx) error {
+			SetAuditRecordOnFailure(c)
+			SetAuditMeta(c, map[string]any{"delivered": 7})
+			return c.Status(status).SendString("body")
+		}
+	}
+	spy := &auditSpy{}
+	if got, _ := auditCall(t, auditApp(spy, uuid.New(), optIn(500))); got != 500 {
+		t.Fatalf("status = %d, muốn 500", got)
+	}
+	if len(spy.entries) != 1 || spy.entries[0].StatusCode != 500 || spy.entries[0].Metadata["delivered"] != 7 {
+		t.Fatalf("opt-in 500 phải ghi đúng 1 dòng kèm metadata, có %+v", spy.entries)
+	}
+
+	spy = &auditSpy{}
+	auditCall(t, auditApp(spy, uuid.New(), respond(500)))
+	if len(spy.entries) != 0 {
+		t.Errorf("không opt-in thì 500 không được ghi, có %d dòng", len(spy.entries))
+	}
+
+	spy = &auditSpy{}
+	auditApp(spy, uuid.New(), func(c *fiber.Ctx) error {
+		SetAuditRecordOnFailure(c)
+		return errors.New("boom")
+	}).Test(httptest.NewRequest("POST", "/things/abc-123/act", nil), -1) //nolint:errcheck
+	if len(spy.entries) != 0 {
+		t.Errorf("Go error không bao giờ được ghi dù đã opt-in, có %d dòng", len(spy.entries))
+	}
+}

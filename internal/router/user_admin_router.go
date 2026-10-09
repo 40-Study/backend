@@ -6,6 +6,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 )
 
 // SetupUserAdminRoutes — Phase 1 quản lý người dùng (2026-09-28). Đứng ở group "/users" riêng
@@ -18,6 +19,7 @@ func SetupUserAdminRoutes(
 	userAdminHandler *handler.UserAdminHandler,
 	redis *redis.Client,
 	permChecker *middleware.PermissionChecker,
+	auditRec middleware.AuditRecorder,
 ) {
 	auth := middleware.AuthMiddleware(cfg, redis)
 	viewPerm := permChecker.RequirePermissions("USERS_VIEW_ALL")
@@ -30,5 +32,6 @@ func SetupUserAdminRoutes(
 	// GET /users/:id — chi tiết 1 user
 	users.Get("/:id", auth, viewPerm, userAdminHandler.GetUser)
 	// PUT /users/:id/status — khoá / mở khoá
-	users.Put("/:id/status", auth, banPerm, userAdminHandler.UpdateUserStatus)
+	// Mặc định ghi user.lock; handler đổi sang user.unlock khi mở khoá (SetAuditAction).
+	users.Put("/:id/status", auth, banPerm, middleware.Audit(auditRec, model.AuditActionUserLock, "user", "id"), userAdminHandler.UpdateUserStatus)
 }

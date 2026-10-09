@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"log"
 	"slices"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/service"
@@ -321,6 +323,12 @@ func (h *AdminOrderHandler) UpdatePlatformFeeSetting(c *fiber.Ctx) error {
 		})
 	}
 
+	// Giá trị cũ để ghi nhật ký (old/new). Đọc lỗi thì chỉ log: không chặn việc đổi phí, nhật ký thiếu "old".
+	oldPercent, oldErr := h.platformFeeService.GetPlatformFeePercent(c.Context())
+	if oldErr != nil {
+		log.Printf("[Audit] không đọc được phí nền tảng cũ trước khi cập nhật: %v", oldErr)
+	}
+
 	if err := h.platformFeeService.SetPlatformFeePercent(c.Context(), actorID, req.PlatformFeePercent); err != nil {
 		if errors.Is(err, service.ErrInvalidPlatformFeePercent) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -333,6 +341,13 @@ func (h *AdminOrderHandler) UpdatePlatformFeeSetting(c *fiber.Ctx) error {
 			"error":   err.Error(),
 		})
 	}
+
+	feeMeta := map[string]any{"new": req.PlatformFeePercent.String()}
+	if oldErr == nil {
+		feeMeta["old"] = oldPercent.String()
+	}
+	middleware.SetAuditTarget(c, "platform_fee")
+	middleware.SetAuditMeta(c, feeMeta)
 
 	return c.JSON(fiber.Map{
 		"message": "Platform fee updated",

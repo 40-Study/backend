@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
@@ -83,8 +84,31 @@ func (h *AdminBroadcastHandler) Send(c *fiber.Ctx) error {
 	}
 	out, err := h.svc.Send(c.Context(), req)
 	if err != nil {
+		var partial *service.BroadcastPartialError
+		if errors.As(err, &partial) {
+			// Gửi dở dang là 500 nhưng một phần người nhận ĐÃ nhận, không thu hồi được: vẫn ghi nhật ký
+			// (ngoại lệ hẹp của D6) để quản trị viên biết số người đã nhận.
+			middleware.SetAuditRecordOnFailure(c)
+			middleware.SetAuditMeta(c, broadcastAuditMeta(req.Audience, req.Roles, req.Title, partial.Delivered))
+			middleware.SetAuditMeta(c, map[string]any{"partial": true})
+		}
 		return broadcastServiceError(c, "send", err)
 	}
 	c.Locals(BroadcastDeliveredLocal, out.RecipientCount)
+	middleware.SetAuditMeta(c, broadcastAuditMeta(out.Audience, out.Roles, req.Title, out.RecipientCount))
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"message": "Đã gửi thông báo", "data": out})
+}
+
+// broadcastAuditMeta: metadata dòng nhật ký notification.broadcast (audience, roles, recipient_count, title).
+// recipient_count là số người đã nhận thật (khi gửi dở dang là số đã gửi được).
+func broadcastAuditMeta(audience string, roles []string, title string, delivered int64) map[string]any {
+	meta := map[string]any{
+		"audience":        audience,
+		"recipient_count": delivered,
+		"title":           title,
+	}
+	if len(roles) > 0 {
+		meta["roles"] = roles
+	}
+	return meta
 }

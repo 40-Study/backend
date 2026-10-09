@@ -10,6 +10,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 )
 
 const (
@@ -21,7 +22,7 @@ const (
 
 // SetupAdminBroadcastRoutes — POST /admin/notifications/broadcast[/preview] (SYSTEM_SETTINGS_MANAGE, contract C3).
 // Chỉ route gửi bị giới hạn tần suất; xem trước thì không (nó không gửi gì).
-func SetupAdminBroadcastRoutes(api fiber.Router, cfg *config.Config, h *handler.AdminBroadcastHandler, rdb *redis.Client, permChecker *middleware.PermissionChecker) {
+func SetupAdminBroadcastRoutes(api fiber.Router, cfg *config.Config, h *handler.AdminBroadcastHandler, rdb *redis.Client, permChecker *middleware.PermissionChecker, auditRec middleware.AuditRecorder) {
 	admin := api.Group("/admin/notifications", middleware.AuthMiddleware(cfg, rdb), permChecker.RequirePermissions("SYSTEM_SETTINGS_MANAGE"))
 
 	sendLimiter := middleware.RateLimiter(rdb, middleware.RateLimitConfig{
@@ -39,5 +40,6 @@ func SetupAdminBroadcastRoutes(api fiber.Router, cfg *config.Config, h *handler.
 	})
 
 	admin.Post("/broadcast/preview", h.Preview)
-	admin.Post("/broadcast", sendLimiter, h.Send)
+	// Audit đứng SAU limiter (429 không ghi) và chỉ route gửi (preview không). Handler tự bật ghi cả khi gửi dở dang (500 BROADCAST_PARTIAL).
+	admin.Post("/broadcast", sendLimiter, middleware.Audit(auditRec, model.AuditActionNotificationBroadcast, "", ""), h.Send)
 }

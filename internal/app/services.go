@@ -100,6 +100,9 @@ type Services struct {
 
 	// ===== Notification =====
 	Notification *service.NotificationService
+	// Broadcast (phase 4) lấy Notification làm đường giao nên gán sau literal; AuditLog (phase 3).
+	Broadcast *service.BroadcastService
+	AuditLog  *service.AuditLogService
 
 	// ===== User Preference =====
 	UserPreference *service.UserPreferenceService
@@ -577,6 +580,9 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 	// Phụ huynh có liên kết active được xem chứng chỉ của con (GET /certificates/:id).
 	s.Certificate.SetParentLinkChecker(repos.ParentStudent)
 	wireContest(s, repos)
+	// Notification nằm trong literal &Services{...} nên field anh em không tham chiếu được: gán ở đây.
+	s.Broadcast = service.NewBroadcastService(repos.BroadcastAudience, s.Notification)
+	s.AuditLog = service.NewAuditLogService(repos.AuditLog)
 	return s
 }
 

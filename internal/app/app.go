@@ -270,16 +270,22 @@ func New() (*App, error) {
 		resources.Redis,
 		resources.MinioClient,
 		resources.Queue,
+		// Recorder của middleware.Audit cho mọi route quản trị được ghi nhật ký (plan 261008 phase 8).
+		services.AuditLog,
 	)
 
 	// Phase 4 rút tiền giảng viên: đăng ký riêng thay vì thêm tham số vào SetupAllRoutes (router
 	// dùng chung nhiều lane đang sửa song song). Group "/api" thứ 2 chỉ là tiền tố, không kèm
 	// middleware nào nên không ảnh hưởng route đã đăng ký trong SetupAllRoutes.
-	router.SetupWithdrawalRoutes(fiberApp.Group("/api"), resources.Config, handlers.Withdrawal, resources.Redis, permChecker)
+	router.SetupWithdrawalRoutes(fiberApp.Group("/api"), resources.Config, handlers.Withdrawal, resources.Redis, permChecker, services.AuditLog)
 	// QA vòng 2 lane E: liên kết phụ huynh-học sinh do phụ huynh khởi xướng — cùng lý do đăng ký riêng.
 	router.SetupParentLinkRoutes(fiberApp.Group("/api"), resources.Config, handlers.ParentLink, resources.Redis)
 	// Bạn bè (phase 01 plan 260930): đăng ký riêng, cùng lý do.
 	router.SetupFriendRoutes(fiberApp.Group("/api"), resources.Config, handlers.Friendship, resources.Redis)
+	// Plan 261008: nhật ký hoạt động quản trị, broadcast thông báo hệ thống, cấu hình hệ thống — cùng lý do đăng ký riêng.
+	router.SetupAuditLogRoutes(fiberApp.Group("/api"), resources.Config, handlers.AuditLog, resources.Redis, permChecker)
+	router.SetupAdminBroadcastRoutes(fiberApp.Group("/api"), resources.Config, handlers.AdminBroadcast, resources.Redis, permChecker, services.AuditLog)
+	router.SetupAdminSettingsRoutes(fiberApp.Group("/api"), resources.Config, handlers.AdminSettings, resources.Redis, permChecker)
 
 	return &App{
 		Resources: resources,

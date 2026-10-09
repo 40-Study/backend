@@ -6,6 +6,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 )
 
 func SetupUserSystemRoleRoutes(
@@ -14,6 +15,7 @@ func SetupUserSystemRoleRoutes(
 	userSystemRoleHandler *handler.UserSystemRoleHandler,
 	redis *redis.Client,
 	permChecker *middleware.PermissionChecker,
+	auditRec middleware.AuditRecorder,
 ) {
 	//User Routes (Authenticated)
 	// GET /me/system-roles - Lấy system roles của chính mình
@@ -39,10 +41,10 @@ func SetupUserSystemRoleRoutes(
 	users.Get("/:user_id/system-roles", usersAuth, usersAdminPerm, userSystemRoleHandler.GetUserSystemRoles)
 
 	// POST /users/:user_id/system-roles - Gán system roles cho user
-	users.Post("/:user_id/system-roles", usersAuth, usersAdminPerm, userSystemRoleHandler.AssignSystemRolesToUser)
+	users.Post("/:user_id/system-roles", usersAuth, usersAdminPerm, middleware.Audit(auditRec, model.AuditActionUserRoleAssign, "user", "user_id"), userSystemRoleHandler.AssignSystemRolesToUser)
 
 	// DELETE /users/:user_id/system-roles/:system_role_id - Gỡ system role khỏi user
-	users.Delete("/:user_id/system-roles/:system_role_id", usersAuth, usersAdminPerm, userSystemRoleHandler.RevokeSystemRoleFromUser)
+	users.Delete("/:user_id/system-roles/:system_role_id", usersAuth, usersAdminPerm, middleware.Audit(auditRec, model.AuditActionUserRoleRevoke, "user", "user_id"), userSystemRoleHandler.RevokeSystemRoleFromUser)
 
 	// ============ System Role User Management ============
 	systemRoles := api.Group("/system-roles")

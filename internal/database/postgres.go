@@ -76,6 +76,8 @@ func Migrate(db *gorm.DB) error {
 		&model.ParentInvitation{},
 		&model.ParentLinkRequest{},
 		&model.ParentLinkAttempt{},
+		// Nhật ký hoạt động quản trị (plan 261008 phase 3): không FK, không ràng buộc thứ tự.
+		&model.AuditLog{},
 
 		// ===== 3. Roles & Permissions (phụ thuộc Organization) =====
 		&model.SystemRole{},

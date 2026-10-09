@@ -6,6 +6,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 )
 
 func SetupOrderRoutes(api fiber.Router,
@@ -13,7 +14,8 @@ func SetupOrderRoutes(api fiber.Router,
 	orderHandler *handler.OrderHandler,
 	adminOrderHandler *handler.AdminOrderHandler,
 	redis *redis.Client,
-	permChecker *middleware.PermissionChecker) {
+	permChecker *middleware.PermissionChecker,
+	auditRec middleware.AuditRecorder) {
 	orders := api.Group("/orders")
 
 	// H-01 (audit 260909): AuthMiddleware(nil, nil) khiến utils.ParseToken truy cập
@@ -29,9 +31,9 @@ func SetupOrderRoutes(api fiber.Router,
 	adminOrders := orders.Group("/admin", authMiddleware, permChecker.RequirePermissions("PAYMENTS_MANAGE"))
 	adminOrders.Get("/", adminOrderHandler.ListOrders)
 	adminOrders.Get("/:id", adminOrderHandler.GetOrder)
-	adminOrders.Post("/:id/refund", adminOrderHandler.RefundOrder)
+	adminOrders.Post("/:id/refund", middleware.Audit(auditRec, model.AuditActionOrderRefund, "order", "id"), adminOrderHandler.RefundOrder)
 	// Đánh dấu "đã hoàn tiền xong" cho khoản tiền về muộn của đơn đã đóng (cờ refund_needed).
-	adminOrders.Post("/:id/late-refund", adminOrderHandler.MarkLatePaymentRefunded)
+	adminOrders.Post("/:id/late-refund", middleware.Audit(auditRec, model.AuditActionOrderLateRefund, "order", "id"), adminOrderHandler.MarkLatePaymentRefunded)
 
 	orders.Post("/", authMiddleware, orderHandler.CreateOrder)
 	orders.Get("/me", authMiddleware, orderHandler.GetUserOrders)
@@ -48,5 +50,6 @@ func SetupOrderRoutes(api fiber.Router,
 
 	adminSettings := api.Group("/admin/settings", authMiddleware, permChecker.RequirePermissions("SYSTEM_SETTINGS_MANAGE"))
 	adminSettings.Get("/platform-fee", adminOrderHandler.GetPlatformFeeSetting)
-	adminSettings.Put("/platform-fee", adminOrderHandler.UpdatePlatformFeeSetting)
+	// Đích "platform_fee" và metadata {old,new} do handler đặt (SetAuditTarget/SetAuditMeta).
+	adminSettings.Put("/platform-fee", middleware.Audit(auditRec, model.AuditActionSettingPlatformFeeUpdate, "setting", ""), adminOrderHandler.UpdatePlatformFeeSetting)
 }

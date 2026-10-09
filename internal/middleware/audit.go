@@ -22,6 +22,9 @@ type auditState struct {
 	action   string
 	targetID string
 	meta     map[string]any
+	// recordOnFailure: handler đã chủ động đánh dấu "ghi cả khi response không phải 2xx" (xem
+	// SetAuditRecordOnFailure). Mặc định false: D6 chỉ ghi 2xx.
+	recordOnFailure bool
 }
 
 // Audit ghi một dòng nhật ký quản trị khi handler phía sau THÀNH CÔNG (plan D5/D6, contract C2).
@@ -46,7 +49,7 @@ func Audit(rec AuditRecorder, action, targetType, targetParam string) fiber.Hand
 			return err
 		}
 		status := c.Response().StatusCode()
-		if status < fiber.StatusOK || status >= fiber.StatusMultipleChoices {
+		if (status < fiber.StatusOK || status >= fiber.StatusMultipleChoices) && !st.recordOnFailure {
 			return nil
 		}
 
@@ -96,6 +99,17 @@ func auditStateOf(c *fiber.Ctx) *auditState {
 func SetAuditAction(c *fiber.Ctx, action string) {
 	if st := auditStateOf(c); st != nil {
 		st.action = action
+	}
+}
+
+// SetAuditRecordOnFailure cho phép dòng nhật ký được ghi dù response KHÔNG phải 2xx (ngoại lệ hẹp so với
+// D6, chỉ handler đã đánh dấu mới được hưởng). Dùng cho hành động có tác dụng phụ dở dang không hoàn
+// tác được, vd broadcast gửi tới một phần người nhận rồi lỗi (500 BROADCAST_PARTIAL): thiếu dòng nhật
+// ký thì quản trị viên không biết đã có bao nhiêu người nhận. Handler trả Go error vẫn KHÔNG được ghi.
+// No-op khi route không gắn middleware Audit.
+func SetAuditRecordOnFailure(c *fiber.Ctx) {
+	if st := auditStateOf(c); st != nil {
+		st.recordOnFailure = true
 	}
 }
 

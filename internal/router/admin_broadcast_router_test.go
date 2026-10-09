@@ -67,7 +67,7 @@ func newBroadcastRouteEnv(t *testing.T, perms ...string) *broadcastRouteEnv {
 
 	svc := &broadcastRouteSvc{}
 	app := fiber.New()
-	SetupAdminBroadcastRoutes(app.Group("/api"), cfg, handler.NewAdminBroadcastHandler(svc), rdb, permChecker)
+	SetupAdminBroadcastRoutes(app.Group("/api"), cfg, handler.NewAdminBroadcastHandler(svc), rdb, permChecker, &auditSpyRouter{})
 	return &broadcastRouteEnv{app: app, svc: svc, tok: tok}
 }
 
