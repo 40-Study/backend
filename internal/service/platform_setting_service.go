@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"study.com/v1/internal/dto"
 	"study.com/v1/internal/repository"
 )
 
@@ -17,6 +18,8 @@ var ErrInvalidPlatformFeePercent = errors.New("platform fee percent must be betw
 type PlatformSettingServiceInterface interface {
 	GetPlatformFeePercent(ctx context.Context) (decimal.Decimal, error)
 	SetPlatformFeePercent(ctx context.Context, actorID uuid.UUID, percent decimal.Decimal) error
+	// GetSettings — toàn bộ cấu hình cho trang /admin/settings (contract C4).
+	GetSettings(ctx context.Context) (*dto.AdminSettingsDTO, error)
 }
 
 type PlatformSettingService struct {
@@ -36,4 +39,30 @@ func (s *PlatformSettingService) SetPlatformFeePercent(ctx context.Context, acto
 		return ErrInvalidPlatformFeePercent
 	}
 	return s.repo.SetPlatformFeePercent(ctx, percent, actorID)
+}
+
+// GetSettings đọc dòng singleton + tên người cập nhật. Chưa từng cấu hình: phí 0, updated_at và
+// updated_by null (mặc định theo quyết định #2). Khi thêm tham số cấu hình mới, thêm trường vào
+// dto.AdminSettingsDTO và điền ở đây.
+func (s *PlatformSettingService) GetSettings(ctx context.Context) (*dto.AdminSettingsDTO, error) {
+	row, err := s.repo.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return &dto.AdminSettingsDTO{PlatformFeePercent: decimal.Zero}, nil
+	}
+	out := &dto.AdminSettingsDTO{PlatformFeePercent: row.PlatformFeePercent}
+	// Dòng được tạo bởi SetPlatformFeePercent nên luôn có updated_by; dòng cũ/thủ công thì không
+	// có -> updated_at vẫn trả, updated_by null.
+	updatedAt := row.UpdatedAt
+	out.UpdatedAt = &updatedAt
+	if row.UpdatedBy != nil {
+		name, err := s.repo.GetUpdaterName(ctx, *row.UpdatedBy)
+		if err != nil {
+			return nil, err
+		}
+		out.UpdatedBy = &dto.AdminSettingsUpdaterDTO{ID: *row.UpdatedBy, Name: name}
+	}
+	return out, nil
 }
