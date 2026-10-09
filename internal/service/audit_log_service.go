@@ -191,19 +191,39 @@ func toAuditItemDTO(r repository.AuditLogRow) (dto.AuditLogItemDTO, error) {
 	return item, nil
 }
 
-// sanitizeAuditMetadata trả bản sao đã bỏ mọi khoá nhạy cảm, kể cả trong map lồng nhau.
+// sanitizeAuditMetadata trả bản sao đã bỏ mọi khoá nhạy cảm, kể cả trong map lồng nhau và trong phần tử của slice.
 func sanitizeAuditMetadata(in map[string]any) map[string]any {
 	out := make(map[string]any, len(in))
 	for k, v := range in {
 		if auditSensitiveKey.MatchString(k) {
 			continue
 		}
-		if nested, ok := v.(map[string]any); ok {
-			v = sanitizeAuditMetadata(nested)
-		}
-		out[k] = v
+		out[k] = sanitizeAuditValue(v)
 	}
 	return out
+}
+
+// sanitizeAuditValue làm sạch một giá trị metadata: map/slice được duyệt (và sao chép) đệ quy, giá trị vô hướng và
+// slice thuần vô hướng ([]string, []int...) giữ nguyên.
+func sanitizeAuditValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		return sanitizeAuditMetadata(t)
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = sanitizeAuditValue(e)
+		}
+		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(t))
+		for i, e := range t {
+			out[i] = sanitizeAuditMetadata(e)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func truncateRunes(s string, max int) string {

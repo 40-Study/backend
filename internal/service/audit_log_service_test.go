@@ -262,3 +262,35 @@ func TestAuditService_ActionsReturnsCopyOfSSOT(t *testing.T) {
 		seen[a] = true
 	}
 }
+
+// L5 (review 261009): khoá nhạy cảm bị loại cả khi nằm trong phần tử của slice ([]any, []map[string]any, slice lồng
+// slice, slice trong map lồng nhau). Trước đây chỉ map lồng map được duyệt nên `[]any{map{"password": ...}}` lọt qua.
+func TestSanitizeAuditMetadata_WalksSlices(t *testing.T) {
+	in := map[string]any{
+		"keep":      1,
+		"any_slice": []any{map[string]any{"password": "x", "ok": "a"}, "scalar", 7},
+		"map_slice": []map[string]any{{"api_token": "t", "ok": "b"}},
+		"deep":      []any{[]any{map[string]any{"client_secret": "s", "ok": "c"}}},
+		"nested":    map[string]any{"items": []any{map[string]any{"authorization": "Bearer z", "ok": "d"}}},
+		"strings":   []string{"a", "b"},
+	}
+	out := sanitizeAuditMetadata(in)
+
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leaked := range []string{"password", "api_token", "client_secret", "authorization", `"x"`, `"t"`, `"s"`, "Bearer"} {
+		if strings.Contains(string(raw), leaked) {
+			t.Errorf("metadata đã làm sạch còn lọt %q: %s", leaked, raw)
+		}
+	}
+	want := `{"any_slice":[{"ok":"a"},"scalar",7],"deep":[[{"ok":"c"}]],"keep":1,"map_slice":[{"ok":"b"}],"nested":{"items":[{"ok":"d"}]},"strings":["a","b"]}`
+	if string(raw) != want {
+		t.Errorf("metadata làm sạch = %s\nmuốn            = %s", raw, want)
+	}
+	// Không sửa đầu vào (bản sao): phần tử gốc vẫn giữ khoá nhạy cảm.
+	if _, still := in["any_slice"].([]any)[0].(map[string]any)["password"]; !still {
+		t.Error("sanitizeAuditMetadata không được sửa map đầu vào")
+	}
+}
