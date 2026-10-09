@@ -162,6 +162,17 @@ func TestQAFollowupContract_BroadcastRequest_JSONKeys(t *testing.T) {
 	if errs := utils.ValidateStruct(BroadcastPreviewRequestDTO{Audience: "nobody"}); len(errs) != 1 || errs[0].Field != "audience" {
 		t.Fatalf("preview audience lạ phải bị từ chối đúng 1 lỗi: %+v", errs)
 	}
+	// M3 (261009): preview nhận notification_type tuỳ chọn để áp cùng bộ lọc khuyến mãi như lúc gửi.
+	var withType BroadcastPreviewRequestDTO
+	if err := json.Unmarshal([]byte(`{"audience":"all","notification_type":"promotion"}`), &withType); err != nil || withType.NotificationType != "promotion" {
+		t.Fatalf("preview notification_type decode lệch contract C3: %+v, %v", withType, err)
+	}
+	if errs := utils.ValidateStruct(BroadcastPreviewRequestDTO{Audience: "all"}); len(errs) != 0 {
+		t.Fatalf("preview bỏ trống notification_type phải hợp lệ: %+v", errs)
+	}
+	if errs := utils.ValidateStruct(BroadcastPreviewRequestDTO{Audience: "all", NotificationType: "course_update"}); len(errs) != 1 || errs[0].Field != "notification_type" {
+		t.Fatalf("preview notification_type lạ phải bị từ chối đúng 1 lỗi: %+v", errs)
+	}
 }
 
 func TestQAFollowupContract_BroadcastResponses(t *testing.T) {

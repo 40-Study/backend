@@ -21,6 +21,7 @@ const (
 	broadcastTitleMaxChars   = 255
 	broadcastContentMaxChars = 2000
 	broadcastDefaultType     = "system"
+	broadcastPromotionType   = "promotion"
 )
 
 // BroadcastError là lỗi nghiệp vụ mang sẵn HTTP status + mã máy đọc + thông điệp tiếng Việt (contract C3).
@@ -124,20 +125,36 @@ func (s *BroadcastService) resolveAudience(ctx context.Context, audience string,
 	return names, nil
 }
 
-// Preview đếm số người sẽ nhận (không gửi gì).
+// resolveBroadcastType chuẩn hoá loại thông báo (bỏ trống = system) và kiểm giá trị hợp lệ.
+func resolveBroadcastType(nType string) (string, error) {
+	if nType == "" {
+		return broadcastDefaultType, nil
+	}
+	if nType != broadcastDefaultType && nType != broadcastPromotionType {
+		return "", errBroadcastType
+	}
+	return nType, nil
+}
+
+// Preview đếm số người sẽ nhận (không gửi gì), áp CÙNG bộ lọc như Send theo loại thông báo.
 func (s *BroadcastService) Preview(ctx context.Context, req dto.BroadcastPreviewRequestDTO) (*dto.BroadcastPreviewDTO, error) {
+	nType, err := resolveBroadcastType(req.NotificationType)
+	if err != nil {
+		return nil, err
+	}
 	roles, err := s.resolveAudience(ctx, req.Audience, req.Roles)
 	if err != nil {
 		return nil, err
 	}
-	n, err := s.audience.CountRecipients(ctx, req.Audience, roles)
+	n, err := s.audience.CountRecipients(ctx, req.Audience, roles, nType == broadcastPromotionType)
 	if err != nil {
 		return nil, err
 	}
 	return &dto.BroadcastPreviewDTO{RecipientCount: n}, nil
 }
 
-// Send gửi theo từng lô broadcastChunkSize qua NotificationService.SendNotification (lưu DB + đẩy WS).
+// Send gửi theo từng lô broadcastChunkSize qua NotificationService.SendNotification (lưu DB + đẩy WS). Loại
+// "promotion" chỉ tới người đã bật push_promotions (M3); "system" tới mọi tài khoản đang hoạt động.
 // Duyệt người nhận bằng keyset nên mỗi người nhận đúng một lần. Lỗi giữa chừng trả *BroadcastPartialError.
 func (s *BroadcastService) Send(ctx context.Context, req dto.BroadcastRequestDTO) (*dto.BroadcastResultDTO, error) {
 	title := strings.TrimSpace(req.Title)
@@ -148,22 +165,20 @@ func (s *BroadcastService) Send(ctx context.Context, req dto.BroadcastRequestDTO
 	if content == "" || utf8.RuneCountInString(content) > broadcastContentMaxChars {
 		return nil, errBroadcastContent
 	}
-	nType := req.NotificationType
-	if nType == "" {
-		nType = broadcastDefaultType
-	}
-	if nType != "system" && nType != "promotion" {
-		return nil, errBroadcastType
+	nType, err := resolveBroadcastType(req.NotificationType)
+	if err != nil {
+		return nil, err
 	}
 	roles, err := s.resolveAudience(ctx, req.Audience, req.Roles)
 	if err != nil {
 		return nil, err
 	}
 
+	promotionOnly := nType == broadcastPromotionType
 	var delivered int64
 	after := uuid.Nil
 	for {
-		ids, err := s.audience.StreamRecipientIDs(ctx, req.Audience, roles, after, broadcastChunkSize)
+		ids, err := s.audience.StreamRecipientIDs(ctx, req.Audience, roles, promotionOnly, after, broadcastChunkSize)
 		if err != nil {
 			return nil, partialOrPlain(delivered, err)
 		}

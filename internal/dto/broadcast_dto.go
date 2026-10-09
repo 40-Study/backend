@@ -12,10 +12,13 @@ type BroadcastRequestDTO struct {
 	NotificationType string   `json:"notification_type,omitempty" validate:"omitempty,oneof=system promotion"`
 }
 
-// BroadcastPreviewRequestDTO — POST /api/admin/notifications/broadcast/preview.
+// BroadcastPreviewRequestDTO — POST /api/admin/notifications/broadcast/preview. notification_type (tuỳ chọn, bỏ trống =
+// "system") PHẢI trùng với loại sẽ gửi: loại "promotion" chỉ tới người đã bật nhận khuyến mãi, nên số người xem trước
+// phụ thuộc loại thông báo.
 type BroadcastPreviewRequestDTO struct {
-	Audience string   `json:"audience" validate:"required,oneof=all roles"`
-	Roles    []string `json:"roles,omitempty"`
+	Audience         string   `json:"audience" validate:"required,oneof=all roles"`
+	Roles            []string `json:"roles,omitempty"`
+	NotificationType string   `json:"notification_type,omitempty" validate:"omitempty,oneof=system promotion"`
 }
 
 // BroadcastPreviewDTO — data của preview.

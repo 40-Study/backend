@@ -17,12 +17,16 @@ const (
 // BroadcastAudienceRepositoryInterface xác định tập người nhận của một đợt thông báo hệ thống.
 // Người nhận = tài khoản đang hoạt động (users.is_active) và, với audience=roles, đang giữ ÍT NHẤT MỘT
 // trong các vai trò hệ thống được nêu ở trạng thái active (user_system_roles.status).
+//
+// promotionOptInOnly (M3, review 261009): true khi đợt gửi là loại "promotion" — chỉ giữ người đã BẬT nhận khuyến mãi
+// (notification_settings.push_promotions = true). Mặc định cột này là false và người chưa có hàng cài đặt cũng được
+// coi là mặc định, tức chưa đồng ý. Phải truyền cùng giá trị cho cả đếm xem trước lẫn gửi thật.
 type BroadcastAudienceRepositoryInterface interface {
 	// CountRecipients đếm người nhận (dùng cho bước xem trước).
-	CountRecipients(ctx context.Context, audience string, roles []string) (int64, error)
+	CountRecipients(ctx context.Context, audience string, roles []string, promotionOptInOnly bool) (int64, error)
 	// StreamRecipientIDs trả tối đa limit id người nhận có id > afterID, tăng dần (keyset pagination: mỗi
 	// người đúng một lần dù bảng users thay đổi giữa các lượt). afterID = uuid.Nil nghĩa là từ đầu.
-	StreamRecipientIDs(ctx context.Context, audience string, roles []string, afterID uuid.UUID, limit int) ([]uuid.UUID, error)
+	StreamRecipientIDs(ctx context.Context, audience string, roles []string, promotionOptInOnly bool, afterID uuid.UUID, limit int) ([]uuid.UUID, error)
 	// ExistingRoleNames trả lại những tên trong names có thật trong system_roles (để service báo UNKNOWN_ROLE).
 	ExistingRoleNames(ctx context.Context, names []string) ([]string, error)
 }
@@ -37,8 +41,16 @@ func NewBroadcastAudienceRepository(db *gorm.DB) *BroadcastAudienceRepository {
 
 // recipientsQuery dựng truy vấn người nhận. Subquery vai trò lọc deleted_at tường minh vì Table() của GORM
 // không tự thêm điều kiện xoá mềm (khác Model()).
-func (r *BroadcastAudienceRepository) recipientsQuery(ctx context.Context, audience string, roles []string) *gorm.DB {
+func (r *BroadcastAudienceRepository) recipientsQuery(ctx context.Context, audience string, roles []string, promotionOptInOnly bool) *gorm.DB {
 	q := r.db.WithContext(ctx).Model(&model.User{}).Where("users.is_active = ?", true)
+	if promotionOptInOnly {
+		q = q.Where("EXISTS (?)",
+			r.db.WithContext(ctx).
+				Table("notification_settings ns").
+				Select("1").
+				Where("ns.user_id = users.id AND ns.push_promotions = ? AND ns.deleted_at IS NULL", true),
+		)
+	}
 	if audience != BroadcastAudienceRoles {
 		return q
 	}
@@ -51,16 +63,16 @@ func (r *BroadcastAudienceRepository) recipientsQuery(ctx context.Context, audie
 	)
 }
 
-func (r *BroadcastAudienceRepository) CountRecipients(ctx context.Context, audience string, roles []string) (int64, error) {
+func (r *BroadcastAudienceRepository) CountRecipients(ctx context.Context, audience string, roles []string, promotionOptInOnly bool) (int64, error) {
 	var n int64
-	if err := r.recipientsQuery(ctx, audience, roles).Count(&n).Error; err != nil {
+	if err := r.recipientsQuery(ctx, audience, roles, promotionOptInOnly).Count(&n).Error; err != nil {
 		return 0, err
 	}
 	return n, nil
 }
 
-func (r *BroadcastAudienceRepository) StreamRecipientIDs(ctx context.Context, audience string, roles []string, afterID uuid.UUID, limit int) ([]uuid.UUID, error) {
-	q := r.recipientsQuery(ctx, audience, roles)
+func (r *BroadcastAudienceRepository) StreamRecipientIDs(ctx context.Context, audience string, roles []string, promotionOptInOnly bool, afterID uuid.UUID, limit int) ([]uuid.UUID, error) {
+	q := r.recipientsQuery(ctx, audience, roles, promotionOptInOnly)
 	if afterID != uuid.Nil {
 		q = q.Where("users.id > ?", afterID)
 	}

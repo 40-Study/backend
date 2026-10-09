@@ -282,7 +282,7 @@ func TestBroadcast_FailureMidway_NeuSoDaGiao(t *testing.T) {
 
 func TestBroadcast_NoiDungVaLoai(t *testing.T) {
 	db := broadcastDB(t)
-	broadcastUsers(t, db, 1)
+	setPushPromotions(t, db, broadcastUsers(t, db, 1)[0].ID, true) // loại promotion chỉ tới người đã bật nhận khuyến mãi (M3)
 	sender := &fakeBroadcastSender{}
 	svc := newBroadcastSvc(db, sender)
 
@@ -304,10 +304,10 @@ func TestBroadcast_NoiDungVaLoai(t *testing.T) {
 // Biên kiểm tra đầu vào (không cần DB: repo giả trả 1 người nhận cố định nên lỗi chỉ đến từ validate).
 type fakeBroadcastAudience struct{ roles []string }
 
-func (f *fakeBroadcastAudience) CountRecipients(context.Context, string, []string) (int64, error) {
+func (f *fakeBroadcastAudience) CountRecipients(context.Context, string, []string, bool) (int64, error) {
 	return 1, nil
 }
-func (f *fakeBroadcastAudience) StreamRecipientIDs(_ context.Context, _ string, _ []string, after uuid.UUID, _ int) ([]uuid.UUID, error) {
+func (f *fakeBroadcastAudience) StreamRecipientIDs(_ context.Context, _ string, _ []string, _ bool, after uuid.UUID, _ int) ([]uuid.UUID, error) {
 	if after != uuid.Nil {
 		return nil, nil
 	}
@@ -358,5 +358,96 @@ func TestBroadcast_ValidationBounds(t *testing.T) {
 				t.Fatal("đầu vào sai mà vẫn gửi")
 			}
 		})
+	}
+}
+
+// setPushPromotions ghi hàng notification_settings của user với push_promotions = on (cột có default:false nên ghi
+// tường minh bằng Update sau Create, tránh GORM bỏ qua zero-value).
+func setPushPromotions(t *testing.T, db *gorm.DB, userID uuid.UUID, on bool) {
+	t.Helper()
+	ns := model.NotificationSettings{UserID: userID}
+	if err := db.Create(&ns).Error; err != nil {
+		t.Fatalf("tạo notification_settings: %v", err)
+	}
+	if err := db.Model(&ns).Update("push_promotions", on).Error; err != nil {
+		t.Fatalf("đặt push_promotions: %v", err)
+	}
+}
+
+// M3 (review 261009): thông báo loại "promotion" chỉ tới người đã bật nhận khuyến mãi (push_promotions = true; mặc định
+// false và người chưa có hàng cài đặt cũng được coi là mặc định, tức chưa đồng ý). Loại "system" vẫn tới mọi người.
+// Số xem trước phải áp CÙNG bộ lọc, nếu không admin xem "3 người" mà thực tế chỉ gửi cho 1.
+func TestBroadcast_Promotion_ChiNguoiBatNhanKhuyenMai_PreviewKhop(t *testing.T) {
+	db := broadcastDB(t)
+	users := broadcastUsers(t, db, 5)
+	setPushPromotions(t, db, users[0].ID, true)  // đồng ý
+	setPushPromotions(t, db, users[1].ID, false) // tắt rõ ràng
+	// users[2]: chưa có hàng cài đặt (mặc định = chưa đồng ý)
+	setPushPromotions(t, db, users[3].ID, true)
+	lockBroadcastUser(t, db, users[3].ID) // đồng ý nhưng tài khoản bị khoá: vẫn bị loại
+	setPushPromotions(t, db, users[4].ID, true)
+	ctx := context.Background()
+
+	prevPromo, err := newBroadcastSvc(db, &fakeBroadcastSender{}).Preview(ctx, dto.BroadcastPreviewRequestDTO{Audience: "all", NotificationType: "promotion"})
+	if err != nil || prevPromo.RecipientCount != 2 {
+		t.Fatalf("preview promotion = %+v, %v; muốn 2 (user 0 và 4)", prevPromo, err)
+	}
+	prevSystem, err := newBroadcastSvc(db, &fakeBroadcastSender{}).Preview(ctx, dto.BroadcastPreviewRequestDTO{Audience: "all", NotificationType: "system"})
+	if err != nil || prevSystem.RecipientCount != 4 {
+		t.Fatalf("preview system = %+v, %v; muốn 4 (mọi tài khoản đang hoạt động)", prevSystem, err)
+	}
+	prevDefault, err := newBroadcastSvc(db, &fakeBroadcastSender{}).Preview(ctx, dto.BroadcastPreviewRequestDTO{Audience: "all"})
+	if err != nil || prevDefault.RecipientCount != 4 {
+		t.Fatalf("preview bỏ trống type = %+v, %v; muốn 4 (mặc định system)", prevDefault, err)
+	}
+
+	sender := &fakeBroadcastSender{}
+	req := broadcastReq("all")
+	req.NotificationType = "promotion"
+	res, err := newBroadcastSvc(db, sender).Send(ctx, req)
+	if err != nil {
+		t.Fatalf("send promotion: %v", err)
+	}
+	got := sender.delivered()
+	if res.RecipientCount != 2 || len(got) != 2 || got[users[0].ID] != 1 || got[users[4].ID] != 1 {
+		t.Fatalf("promotion giao cho %v (recipient_count=%d); muốn đúng user 0 và 4", got, res.RecipientCount)
+	}
+	if res.RecipientCount != prevPromo.RecipientCount {
+		t.Fatalf("preview (%d) lệch số giao thật (%d)", prevPromo.RecipientCount, res.RecipientCount)
+	}
+
+	sysSender := &fakeBroadcastSender{}
+	sysRes, err := newBroadcastSvc(db, sysSender).Send(ctx, broadcastReq("all"))
+	if err != nil || sysRes.RecipientCount != 4 || len(sysSender.delivered()) != 4 {
+		t.Fatalf("system phải tới cả 4 tài khoản hoạt động, được %+v, %v, %v", sysRes, err, sysSender.delivered())
+	}
+}
+
+// Bộ lọc khuyến mãi cộng với audience=roles, và không ai đồng ý => 422 NO_RECIPIENTS như mọi đợt rỗng.
+func TestBroadcast_Promotion_KetHopVaiTro_VaKhongAiDongY_422(t *testing.T) {
+	db := broadcastDB(t)
+	users := broadcastUsers(t, db, 3)
+	student := broadcastRole(t, db, "BC_PROMO_STUDENT")
+	grantBroadcastRole(t, db, users[0].ID, student.ID, "active")
+	grantBroadcastRole(t, db, users[1].ID, student.ID, "active")
+	setPushPromotions(t, db, users[0].ID, true)
+	setPushPromotions(t, db, users[2].ID, true) // đồng ý nhưng không có vai trò được chọn
+	ctx := context.Background()
+
+	prev, err := newBroadcastSvc(db, &fakeBroadcastSender{}).Preview(ctx, dto.BroadcastPreviewRequestDTO{Audience: "roles", Roles: []string{"BC_PROMO_STUDENT"}, NotificationType: "promotion"})
+	if err != nil || prev.RecipientCount != 1 {
+		t.Fatalf("preview roles+promotion = %+v, %v; muốn 1 (chỉ user 0)", prev, err)
+	}
+
+	if err := db.Model(&model.NotificationSettings{}).Where("user_id = ?", users[0].ID).Update("push_promotions", false).Error; err != nil {
+		t.Fatal(err)
+	}
+	sender := &fakeBroadcastSender{}
+	req := broadcastReq("roles", "BC_PROMO_STUDENT")
+	req.NotificationType = "promotion"
+	_, err = newBroadcastSvc(db, sender).Send(ctx, req)
+	requireBroadcastCode(t, err, 422, "NO_RECIPIENTS")
+	if len(sender.calls) != 0 {
+		t.Fatal("không ai đồng ý mà vẫn gửi")
 	}
 }
