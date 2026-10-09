@@ -42,3 +42,8 @@ func TestCheckQuizOwner_QuizKhongTonTai_TraErrQuizNotFound(t *testing.T) {
 		t.Fatalf("checkQuizOwner(quiz không tồn tại): muốn ErrQuizNotFound, nhận %v", err)
 	}
 }
+
+// CountQuestionsByQuizIDs (QA T10): danh sách quiz giờ đếm câu hỏi qua repo; fake này không có câu hỏi nào.
+func (r repoQuizAbsent) CountQuestionsByQuizIDs(context.Context, []uuid.UUID) (map[uuid.UUID]int, error) {
+	return map[uuid.UUID]int{}, nil
+}

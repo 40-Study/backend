@@ -606,7 +606,18 @@ func (s *QuizService) CreateQuiz(ctx context.Context, userID uuid.UUID, req dto.
 		return nil, err
 	}
 
+	// Quiz vừa tạo chưa có câu hỏi nào (câu hỏi thêm qua endpoint riêng): 0 là số THẬT, không phải mặc định.
 	return s.mapQuizToDTO(quiz, 0), nil
+}
+
+// questionCounts (QA T10): số câu hỏi chưa xoá của từng quiz, một truy vấn cho cả danh sách. Quiz không có
+// câu hỏi vắng trong map nên map[id] = 0 là đúng; lỗi truy vấn trả ra, KHÔNG lặng lẽ rơi về 0 (đúng cái lỗi T10).
+func (s *QuizService) questionCounts(ctx context.Context, quizzes []*model.Quiz) (map[uuid.UUID]int, error) {
+	ids := make([]uuid.UUID, len(quizzes))
+	for i, q := range quizzes {
+		ids[i] = q.ID
+	}
+	return s.repo.CountQuestionsByQuizIDs(ctx, ids)
 }
 
 func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, sessionID *uuid.UUID, userID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.QuizListDTO, error) {
@@ -630,7 +641,7 @@ func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, ses
 	// quiz gắn course_id/session_id bỏ qua hoàn toàn, lộ cho người chưa enroll. `total` vẫn là số
 	// đếm THÔ từ repo (không trừ phần bị lọc) — chấp nhận được vì GetQuizzesByLesson (đường web
 	// thật sự dùng) chỉ đọc `data`, không đọc `total`; đây là giới hạn đã biết, không phải bug ẩn.
-	data := make([]dto.QuizResponseDTO, 0, len(quizzes))
+	visible := make([]*model.Quiz, 0, len(quizzes))
 	for i := range quizzes {
 		q := &quizzes[i]
 		// Contract "Cuộc thi" §3.2: quiz gắn cuộc thi bị loại khỏi danh sách với người không phải
@@ -653,7 +664,16 @@ func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, ses
 			}
 			return nil, err
 		}
-		data = append(data, *s.mapQuizToDTO(q, 0))
+		visible = append(visible, q)
+	}
+
+	counts, err := s.questionCounts(ctx, visible)
+	if err != nil {
+		return nil, err
+	}
+	data := make([]dto.QuizResponseDTO, len(visible))
+	for i, q := range visible {
+		data[i] = *s.mapQuizToDTO(q, counts[q.ID])
 	}
 
 	return &dto.QuizListDTO{Data: data, Total: total, Page: page, PageSize: pageSize}, nil
@@ -795,7 +815,11 @@ func (s *QuizService) UpdateQuiz(ctx context.Context, id, userID uuid.UUID, isAd
 	}
 
 	s.invalidateQuizCache(ctx, id)
-	return s.mapQuizToDTO(quiz, 0), nil
+	counts, err := s.questionCounts(ctx, []*model.Quiz{quiz})
+	if err != nil {
+		return nil, err
+	}
+	return s.mapQuizToDTO(quiz, counts[quiz.ID]), nil
 }
 
 func (s *QuizService) DeleteQuiz(ctx context.Context, id, userID uuid.UUID, isAdmin bool) error {
@@ -1588,9 +1612,17 @@ func (s *QuizService) GetMyCreatedQuizzes(ctx context.Context, userID uuid.UUID,
 		return nil, err
 	}
 
+	ptrs := make([]*model.Quiz, len(quizzes))
+	for i := range quizzes {
+		ptrs[i] = &quizzes[i]
+	}
+	counts, err := s.questionCounts(ctx, ptrs)
+	if err != nil {
+		return nil, err
+	}
 	data := make([]dto.QuizResponseDTO, len(quizzes))
-	for i, q := range quizzes {
-		data[i] = *s.mapQuizToDTO(&q, 0)
+	for i := range quizzes {
+		data[i] = *s.mapQuizToDTO(&quizzes[i], counts[quizzes[i].ID])
 	}
 
 	return &dto.QuizListDTO{Data: data, Total: total, Page: page, PageSize: pageSize}, nil
