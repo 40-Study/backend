@@ -49,7 +49,7 @@ func contentTestApp(svc service.LessonContentServiceInterface) *fiber.App {
 	return app
 }
 
-func doJSON(t *testing.T, app *fiber.App, method, path, body string) (int, map[string]any) {
+func contentJSON(t *testing.T, app *fiber.App, method, path, body string) (int, map[string]any) {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -86,7 +86,7 @@ func TestLessonContentArticleQuizHandler_RuleErrorsUseContractEnvelope(t *testin
 			{http.MethodPost, "/lessons/" + lesson + "/contents", `{"type":"article","article_body":"<p>x</p>"}`},
 			{http.MethodPut, "/lessons/" + lesson + "/contents/" + content, `{"title":"t"}`},
 		} {
-			status, body := doJSON(t, contentTestApp(&stubContentService{err: c.err}), call.method, call.path, call.body)
+			status, body := contentJSON(t, contentTestApp(&stubContentService{err: c.err}), call.method, call.path, call.body)
 			if status != c.status || body["code"] != c.code {
 				t.Errorf("%s %s: %d %v, muốn %d %s", call.method, c.code, status, body, c.status, c.code)
 			}
@@ -99,7 +99,7 @@ func TestLessonContentArticleQuizHandler_RuleErrorsUseContractEnvelope(t *testin
 
 func TestLessonContentArticleQuizHandler_WrappedRuleErrorStillMapped(t *testing.T) {
 	wrapped := errors.Join(errors.New("ctx"), service.ErrQuizAlreadyLinked)
-	status, body := doJSON(t, contentTestApp(&stubContentService{err: wrapped}), http.MethodPost,
+	status, body := contentJSON(t, contentTestApp(&stubContentService{err: wrapped}), http.MethodPost,
 		"/lessons/"+uuid.NewString()+"/contents", `{"type":"quiz","quiz_id":"`+uuid.NewString()+`"}`)
 	if status != 409 || body["code"] != "QUIZ_ALREADY_LINKED" {
 		t.Fatalf("lỗi bọc vẫn phải ra 409 QUIZ_ALREADY_LINKED, nhận %d %v", status, body)
@@ -108,11 +108,11 @@ func TestLessonContentArticleQuizHandler_WrappedRuleErrorStillMapped(t *testing.
 
 func TestLessonContentArticleQuizHandler_NonOwnerIs403AndOtherErrorsKeepLegacyShape(t *testing.T) {
 	path := "/lessons/" + uuid.NewString() + "/contents"
-	status, body := doJSON(t, contentTestApp(&stubContentService{err: service.ErrNotLessonCourseOwner}), http.MethodPost, path, `{"type":"article","article_body":"<p>x</p>"}`)
+	status, body := contentJSON(t, contentTestApp(&stubContentService{err: service.ErrNotLessonCourseOwner}), http.MethodPost, path, `{"type":"article","article_body":"<p>x</p>"}`)
 	if status != 403 || body["message"] != "Forbidden" {
 		t.Errorf("không phải chủ khoá: %d %v, muốn 403 Forbidden", status, body)
 	}
-	status, body = doJSON(t, contentTestApp(&stubContentService{err: errors.New("lesson not found")}), http.MethodPost, path, `{"type":"article","article_body":"<p>x</p>"}`)
+	status, body = contentJSON(t, contentTestApp(&stubContentService{err: errors.New("lesson not found")}), http.MethodPost, path, `{"type":"article","article_body":"<p>x</p>"}`)
 	if status != 400 || body["message"] != "Failed to create content" || body["code"] != nil {
 		t.Errorf("lỗi thường giữ hình dạng cũ: %d %v", status, body)
 	}
@@ -123,29 +123,29 @@ func TestLessonContentArticleQuizHandler_BodiesReachServiceAndTypeSetIsValidated
 	quizID := uuid.New()
 
 	svc := &stubContentService{}
-	status, _ := doJSON(t, contentTestApp(svc), http.MethodPost, path, `{"type":"article","title":"Bài đọc","article_body":"<p>html</p>","is_mandatory":true,"display_order":0}`)
+	status, _ := contentJSON(t, contentTestApp(svc), http.MethodPost, path, `{"type":"article","title":"Bài đọc","article_body":"<p>html</p>","is_mandatory":true,"display_order":0}`)
 	if status != 201 || svc.gotCreate == nil || svc.gotCreate.ArticleBody == nil || *svc.gotCreate.ArticleBody != "<p>html</p>" {
 		t.Fatalf("POST article (ví dụ C1): %d, req=%+v", status, svc.gotCreate)
 	}
 
 	svc = &stubContentService{}
-	status, _ = doJSON(t, contentTestApp(svc), http.MethodPost, path, `{"type":"quiz","title":"Kiểm tra","quiz_id":"`+quizID.String()+`","is_mandatory":true}`)
+	status, _ = contentJSON(t, contentTestApp(svc), http.MethodPost, path, `{"type":"quiz","title":"Kiểm tra","quiz_id":"`+quizID.String()+`","is_mandatory":true}`)
 	if status != 201 || svc.gotCreate == nil || svc.gotCreate.QuizID == nil || *svc.gotCreate.QuizID != quizID {
 		t.Fatalf("POST quiz (ví dụ C1): %d, req=%+v", status, svc.gotCreate)
 	}
 
 	for _, typ := range []string{"video", "livestream", "exercise"} {
 		svc = &stubContentService{}
-		if status, _ = doJSON(t, contentTestApp(svc), http.MethodPost, path, `{"type":"`+typ+`"}`); status != 201 {
+		if status, _ = contentJSON(t, contentTestApp(svc), http.MethodPost, path, `{"type":"`+typ+`"}`); status != 201 {
 			t.Errorf("loại cũ %q không được bị validate từ chối: %d", typ, status)
 		}
 	}
 	svc = &stubContentService{}
-	if status, _ = doJSON(t, contentTestApp(svc), http.MethodPost, path, `{"type":"podcast"}`); status != 400 || svc.gotCreate != nil {
+	if status, _ = contentJSON(t, contentTestApp(svc), http.MethodPost, path, `{"type":"podcast"}`); status != 400 || svc.gotCreate != nil {
 		t.Errorf("loại ngoài tập C1 phải bị validate chặn trước service: %d", status)
 	}
 	svc = &stubContentService{}
-	status, _ = doJSON(t, contentTestApp(svc), http.MethodPut, path+"/"+uuid.NewString(), `{"type":"article","article_body":"<p>mới</p>"}`)
+	status, _ = contentJSON(t, contentTestApp(svc), http.MethodPut, path+"/"+uuid.NewString(), `{"type":"article","article_body":"<p>mới</p>"}`)
 	if status != 200 || svc.gotUpdate == nil || svc.gotUpdate.Type == nil || *svc.gotUpdate.Type != "article" || svc.gotUpdate.ArticleBody == nil {
 		t.Errorf("PUT article: %d, req=%+v", status, svc.gotUpdate)
 	}
