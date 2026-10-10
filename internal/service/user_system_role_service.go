@@ -252,8 +252,16 @@ func (s *UserSystemRoleService) GetUsersBySystemRole(
 		return nil, err
 	}
 
+	items := s.mapToResponseDTOs(userSystemRoles)
+	// QA A4: chỉ endpoint admin này gắn định danh người giữ vai trò (các mapper dùng chung giữ nguyên).
+	for i := range items {
+		if u := userSystemRoles[i].User; u != nil {
+			items[i].User = &dto.RoleMemberDTO{ID: u.ID, UserName: u.UserName, FullName: u.FullName, Email: u.Email, AvatarURL: u.AvatarURL}
+		}
+	}
+
 	return &dto.UserSystemRoleListResponseDTO{
-		UserSystemRoles: s.mapToResponseDTOs(userSystemRoles),
+		UserSystemRoles: items,
 		Total:           total,
 		Page:            page,
 		PageSize:        pageSize,

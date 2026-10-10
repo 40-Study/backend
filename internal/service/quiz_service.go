@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -84,6 +86,21 @@ type QuizService struct {
 	// parentLinks (S2): cho phụ huynh đã liên kết active xem bài làm của con. nil = không phụ huynh
 	// nào được xem (fail-closed) — nối qua SetParentLinkChecker.
 	parentLinks AttemptParentLinkChecker
+	// lessonCompleter (QA 261009, H1): chốt bài học hoàn thành khi học viên ĐỖ quiz chính thức của bài đó. nil = không
+	// chốt gì (test/dựng tay) — nối qua SetLessonCompleter, wireQuizLessonCompletion ở app/services.go.
+	lessonCompleter LessonCompletionRecorder
+}
+
+// LessonCompletionRecorder: ghi tiến độ "bài học đã hoàn thành" từ kết quả quiz. EnrollmentService hiện thực
+// (dùng lại đường ghi lesson_progress + tính lại tiến độ khoá, không viết lần hai).
+type LessonCompletionRecorder interface {
+	CompleteLessonByQuizPass(ctx context.Context, userID, lessonID uuid.UUID) error
+}
+
+// SetLessonCompleter nối bộ ghi hoàn thành bài học (H1). Setter vì EnrollmentService dựng sau QuizService trong
+// InitServices và các test dựng QuizService không cần nó.
+func (s *QuizService) SetLessonCompleter(c LessonCompletionRecorder) {
+	s.lessonCompleter = c
 }
 
 // AttemptParentLinkChecker trả true khi parentID đang là phụ huynh có liên kết ACTIVE của studentID.
@@ -96,6 +113,9 @@ func (s *QuizService) SetParentLinkChecker(c AttemptParentLinkChecker) {
 	s.parentLinks = c
 }
 
+// QuizAttemptModeOfficial: quiz_attempts.mode mặc định — tính vào max_attempts và chốt hoàn thành bài khi đỗ.
+const QuizAttemptModeOfficial = "official"
+
 // ErrQuizAttemptNotFound gộp "bài làm không tồn tại" và "người gọi không được xem" thành MỘT lỗi
 // để handler trả 404 cho cả hai — không cho dò được sự tồn tại của bài làm người khác (S2).
 var ErrQuizAttemptNotFound = errors.New("attempt not found")
@@ -103,6 +123,10 @@ var ErrQuizAttemptNotFound = errors.New("attempt not found")
 // ErrQuizResultsNotFound: người gọi không quản lý quiz nên không được xem kết quả/thống kê của cả
 // quiz; handler trả 404 để không lộ quiz có bài làm hay không (S2).
 var ErrQuizResultsNotFound = errors.New("quiz not found")
+
+// ErrQuizNotFound: quiz không tồn tại (repo trả nil, nil). Phải là sentinel để handler (qua
+// respondQuizGateError) ánh xạ 404 — errors.New trần rơi vào nhánh 500 ở GET /quizzes/:id/attempts (S7).
+var ErrQuizNotFound = errors.New("quiz not found")
 
 // canViewOthersAttempt (S2): ai được xem bài làm CỦA NGƯỜI KHÁC — admin, người quản lý quiz (người
 // tạo hoặc giảng viên chủ khoá chứa quiz), hoặc phụ huynh đã liên kết active với chủ bài làm.
@@ -162,7 +186,7 @@ func (s *QuizService) checkQuizOwner(ctx context.Context, quizID, userID uuid.UU
 		return err
 	}
 	if quiz == nil {
-		return errors.New("quiz not found")
+		return ErrQuizNotFound
 	}
 	if quiz.CreatedBy != nil && *quiz.CreatedBy == userID {
 		return nil
@@ -327,7 +351,7 @@ func (s *QuizService) checkStandaloneQuizReader(ctx context.Context, quizID, use
 		return err
 	}
 	if quiz == nil {
-		return errors.New("quiz not found")
+		return ErrQuizNotFound
 	}
 	if !isStandaloneQuiz(quiz) || (quiz.CreatedBy != nil && *quiz.CreatedBy == userID) {
 		return nil
@@ -601,7 +625,18 @@ func (s *QuizService) CreateQuiz(ctx context.Context, userID uuid.UUID, req dto.
 		return nil, err
 	}
 
+	// Quiz vừa tạo chưa có câu hỏi nào (câu hỏi thêm qua endpoint riêng): 0 là số THẬT, không phải mặc định.
 	return s.mapQuizToDTO(quiz, 0), nil
+}
+
+// questionCounts (QA T10): số câu hỏi chưa xoá của từng quiz, một truy vấn cho cả danh sách. Quiz không có
+// câu hỏi vắng trong map nên map[id] = 0 là đúng; lỗi truy vấn trả ra, KHÔNG lặng lẽ rơi về 0 (đúng cái lỗi T10).
+func (s *QuizService) questionCounts(ctx context.Context, quizzes []*model.Quiz) (map[uuid.UUID]int, error) {
+	ids := make([]uuid.UUID, len(quizzes))
+	for i, q := range quizzes {
+		ids[i] = q.ID
+	}
+	return s.repo.CountQuestionsByQuizIDs(ctx, ids)
 }
 
 func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, sessionID *uuid.UUID, userID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.QuizListDTO, error) {
@@ -625,7 +660,7 @@ func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, ses
 	// quiz gắn course_id/session_id bỏ qua hoàn toàn, lộ cho người chưa enroll. `total` vẫn là số
 	// đếm THÔ từ repo (không trừ phần bị lọc) — chấp nhận được vì GetQuizzesByLesson (đường web
 	// thật sự dùng) chỉ đọc `data`, không đọc `total`; đây là giới hạn đã biết, không phải bug ẩn.
-	data := make([]dto.QuizResponseDTO, 0, len(quizzes))
+	visible := make([]*model.Quiz, 0, len(quizzes))
 	for i := range quizzes {
 		q := &quizzes[i]
 		// Contract "Cuộc thi" §3.2: quiz gắn cuộc thi bị loại khỏi danh sách với người không phải
@@ -648,7 +683,16 @@ func (s *QuizService) GetAllQuizzes(ctx context.Context, lessonID, courseID, ses
 			}
 			return nil, err
 		}
-		data = append(data, *s.mapQuizToDTO(q, 0))
+		visible = append(visible, q)
+	}
+
+	counts, err := s.questionCounts(ctx, visible)
+	if err != nil {
+		return nil, err
+	}
+	data := make([]dto.QuizResponseDTO, len(visible))
+	for i, q := range visible {
+		data[i] = *s.mapQuizToDTO(q, counts[q.ID])
 	}
 
 	return &dto.QuizListDTO{Data: data, Total: total, Page: page, PageSize: pageSize}, nil
@@ -790,7 +834,11 @@ func (s *QuizService) UpdateQuiz(ctx context.Context, id, userID uuid.UUID, isAd
 	}
 
 	s.invalidateQuizCache(ctx, id)
-	return s.mapQuizToDTO(quiz, 0), nil
+	counts, err := s.questionCounts(ctx, []*model.Quiz{quiz})
+	if err != nil {
+		return nil, err
+	}
+	return s.mapQuizToDTO(quiz, counts[quiz.ID]), nil
 }
 
 func (s *QuizService) DeleteQuiz(ctx context.Context, id, userID uuid.UUID, isAdmin bool) error {
@@ -893,6 +941,10 @@ func (s *QuizService) CreateQuestion(ctx context.Context, quizID, userID uuid.UU
 	if err != nil || quiz == nil {
 		return nil, errors.New("quiz not found")
 	}
+	// QA T3: từ chối TRƯỚC khi ghi bất cứ thứ gì (câu hỏi + đáp án ghi hai bước, không transaction).
+	if err := validateQuestionAnswers(req.QuestionType, req.Answers); err != nil {
+		return nil, err
+	}
 
 	points := decimal.NewFromFloat(1.0)
 	if req.Points != nil {
@@ -989,6 +1041,25 @@ func (s *QuizService) UpdateQuestion(ctx context.Context, quizID, questionID, us
 		return nil, errors.New("question does not belong to this quiz")
 	}
 
+	// QA T3: chỉ kiểm khi loại hoặc đáp án thay đổi, để sửa riêng text của câu cũ (đã hỏng) không bị chặn.
+	// Đáp án hiệu lực = đáp án gửi lên, hoặc đáp án đang lưu nếu chỉ đổi loại.
+	if req.QuestionType != nil || req.Answers != nil {
+		effType := question.QuestionType
+		if req.QuestionType != nil {
+			effType = *req.QuestionType
+		}
+		effAnswers := req.Answers
+		if req.Answers == nil {
+			effAnswers = make([]dto.CreateAnswerDTO, len(question.Answers))
+			for i, a := range question.Answers {
+				effAnswers[i] = dto.CreateAnswerDTO{AnswerText: a.AnswerText, IsCorrect: a.IsCorrect, DisplayOrder: a.DisplayOrder}
+			}
+		}
+		if err := validateQuestionAnswers(effType, effAnswers); err != nil {
+			return nil, err
+		}
+	}
+
 	if req.QuestionText != nil {
 		question.QuestionText = *req.QuestionText
 	}
@@ -1076,6 +1147,12 @@ func (s *QuizService) ReorderQuestions(ctx context.Context, quizID, userID uuid.
 }
 
 func (s *QuizService) BulkCreateQuestions(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool, req dto.BulkCreateQuestionsDTO) ([]dto.QuestionResponseDTO, error) {
+	// QA T3: kiểm cả lô trước, để một câu sai không để lại các câu đứng trước đã ghi dở.
+	for i, qReq := range req.Questions {
+		if err := validateQuestionAnswers(qReq.QuestionType, qReq.Answers); err != nil {
+			return nil, fmt.Errorf("question %d: %w", i+1, err)
+		}
+	}
 	var results []dto.QuestionResponseDTO
 	for _, qReq := range req.Questions {
 		result, err := s.CreateQuestion(ctx, quizID, userID, isAdmin, qReq)
@@ -1117,12 +1194,12 @@ func (s *QuizService) StartQuiz(ctx context.Context, quizID, userID uuid.UUID, i
 
 	mode := req.Mode
 	if mode == "" {
-		mode = "official"
+		mode = QuizAttemptModeOfficial
 	}
 
 	// Check max attempts — CHỈ đếm attempt "official" (contract §6: practice "không đếm vào
 	// quiz_max_attempts"). CountAttemptsByUserAndQuiz đã tự lọc mode='official' ở tầng SQL.
-	if quiz.MaxAttempts != nil && mode == "official" {
+	if quiz.MaxAttempts != nil && mode == QuizAttemptModeOfficial {
 		count, _ := s.repo.CountAttemptsByUserAndQuiz(ctx, userID, quizID)
 		if count >= int64(*quiz.MaxAttempts) {
 			return nil, errors.New("max attempts reached")
@@ -1250,7 +1327,21 @@ func (s *QuizService) SubmitQuiz(ctx context.Context, quizID, userID uuid.UUID, 
 		return nil, ErrQuizAttemptAlreadySubmitted
 	}
 
+	s.completeLessonOnPass(ctx, quiz, attempt)
 	return s.mapAttemptToDTO(attempt), nil
+}
+
+// completeLessonOnPass (H1): lần làm CHÍNH THỨC đỗ của quiz gắn một bài học chốt bài đó completed — luyện tập và
+// lần trượt không chốt gì. Điểm đã ghi xong và không thu hồi được, nên lỗi ở bước này KHÔNG làm hỏng phản hồi nộp
+// bài (client sẽ nộp lại và nhận "đã nộp"): chỉ ghi log để vận hành thấy; lần đỗ chính thức sau sẽ chốt lại (idempotent).
+func (s *QuizService) completeLessonOnPass(ctx context.Context, quiz *model.Quiz, attempt *model.QuizAttempt) {
+	if s.lessonCompleter == nil || quiz.LessonID == nil || attempt.Mode != QuizAttemptModeOfficial ||
+		attempt.IsPassed == nil || !*attempt.IsPassed {
+		return
+	}
+	if err := s.lessonCompleter.CompleteLessonByQuizPass(ctx, attempt.UserID, *quiz.LessonID); err != nil {
+		log.Printf("[Quiz] đỗ quiz %s nhưng không chốt được bài học %s cho user %s: %v", quiz.ID, *quiz.LessonID, attempt.UserID, err)
+	}
 }
 
 // gradeSubmission chấm một lần nộp — dùng chung cho SubmitQuiz và SubmitContestAttempt để bài thi
@@ -1554,9 +1645,17 @@ func (s *QuizService) GetMyCreatedQuizzes(ctx context.Context, userID uuid.UUID,
 		return nil, err
 	}
 
+	ptrs := make([]*model.Quiz, len(quizzes))
+	for i := range quizzes {
+		ptrs[i] = &quizzes[i]
+	}
+	counts, err := s.questionCounts(ctx, ptrs)
+	if err != nil {
+		return nil, err
+	}
 	data := make([]dto.QuizResponseDTO, len(quizzes))
-	for i, q := range quizzes {
-		data[i] = *s.mapQuizToDTO(&q, 0)
+	for i := range quizzes {
+		data[i] = *s.mapQuizToDTO(&quizzes[i], counts[quizzes[i].ID])
 	}
 
 	return &dto.QuizListDTO{Data: data, Total: total, Page: page, PageSize: pageSize}, nil
@@ -1624,6 +1723,7 @@ func (s *QuizService) mapAttemptToDTO(a *model.QuizAttempt) *dto.QuizAttemptResp
 		ID:            a.ID,
 		UserID:        a.UserID,
 		QuizID:        a.QuizID,
+		Mode:          a.Mode,
 		Score:         a.Score,
 		TotalPoints:   a.TotalPoints,
 		Percentage:    a.Percentage,

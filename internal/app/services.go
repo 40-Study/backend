@@ -100,6 +100,9 @@ type Services struct {
 
 	// ===== Notification =====
 	Notification *service.NotificationService
+	// Broadcast (phase 4) lấy Notification làm đường giao nên gán sau literal; AuditLog (phase 3).
+	Broadcast *service.BroadcastService
+	AuditLog  *service.AuditLogService
 
 	// ===== User Preference =====
 	UserPreference *service.UserPreferenceService
@@ -577,6 +580,10 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 	// Phụ huynh có liên kết active được xem chứng chỉ của con (GET /certificates/:id).
 	s.Certificate.SetParentLinkChecker(repos.ParentStudent)
 	wireContest(s, repos)
+	wireQuizLessonCompletion(s)
+	// Notification nằm trong literal &Services{...} nên field anh em không tham chiếu được: gán ở đây.
+	s.Broadcast = service.NewBroadcastService(repos.BroadcastAudience, s.Notification)
+	s.AuditLog = service.NewAuditLogService(repos.AuditLog)
 	return s
 }
 
@@ -593,6 +600,12 @@ func wireContest(s *Services, repos *Repositories) {
 	)
 	s.Quiz.SetContestGate(s.Contest)
 	s.Quiz.SetParentLinkChecker(repos.ParentStudent)
+}
+
+// wireQuizLessonCompletion — QA 261009 H1: đỗ quiz chính thức của một bài học chốt bài đó completed (EnrollmentService
+// ghi tiến độ). Quên nối thì quiz-only lesson không bao giờ hoàn thành (test wiring ở services_quiz_completion_test.go).
+func wireQuizLessonCompletion(s *Services) {
+	s.Quiz.SetLessonCompleter(s.Enrollment)
 }
 
 // initTransactionService creates the transaction gRPC service

@@ -18,12 +18,15 @@ import (
 
 // Luồng "phụ huynh gửi yêu cầu liên kết, con xác nhận" (QA vòng 2 lane E, quyết định Q4).
 //
-// Chống dò tài khoản học sinh (review đối kháng PR #81, MAJOR-1): với phụ huynh, phản hồi cho một
-// email KHÔNG phụ thuộc email đó có phải tài khoản học sinh hay không, ở mọi trạng thái hạn mức:
-//   - Hạn mức đếm MỌI lần bấm gửi (bảng parent_link_attempts) và được kiểm TRƯỚC khi tra email.
-//   - Email hợp lệ nào cũng tạo một yêu cầu `pending` giống hệt nhau, lưu theo email; yêu cầu tới
-//     email không phải học sinh chỉ đơn giản là không ai trả lời.
-//   - Trùng yêu cầu đang chờ được xét theo email, trước khi tra tài khoản.
+// Email không có tài khoản học sinh (quyết định D8, đảo thiết kế chống dò của PR #81 MAJOR-1): email
+// không tồn tại VÀ email của tài khoản không giữ vai STUDENT nhận CÙNG một 404 STUDENT_NOT_FOUND và
+// KHÔNG tạo dòng yêu cầu nào — phụ huynh biết ngay mình gõ sai email thay vì chờ mãi một yêu cầu
+// không ai trả lời. Đổi lại việc dò email bị chặn bằng hạn mức, không bằng phản hồi giống hệt:
+//   - Hạn mức đếm MỌI lần bấm gửi (bảng parent_link_attempts), kể cả lần 404, và được kiểm TRƯỚC
+//     khi tra email.
+//   - Rate-limit theo IP ở router.
+//   - Email không phải học sinh và email không tồn tại trả cùng một phản hồi, nên 404 không cho biết
+//     email đó có phải tài khoản (giáo viên, quản trị...) hay không.
 //
 // Chỉ các lỗi dựa trên điều phụ huynh ĐÃ biết mới khác nhau: đã liên kết với con (thấy trong danh
 // sách con), con vừa từ chối/huỷ liên kết (phụ huynh đã thấy "Con đã từ chối" / mất quyền xem).
@@ -58,8 +61,10 @@ var (
 	errLinkSelf               = linkErr(http.StatusBadRequest, "LINK_SELF", "Bạn không thể gửi yêu cầu liên kết cho chính mình.")
 	errLinkAlreadyActive      = linkErr(http.StatusConflict, "LINK_ALREADY_ACTIVE", "Bạn đã liên kết với học sinh này.")
 	errLinkCircular           = linkErr(http.StatusConflict, "LINK_CIRCULAR", "Tài khoản này đang là phụ huynh của bạn, không thể liên kết ngược lại.")
-	errLinkPendingExists      = linkErr(http.StatusConflict, "LINK_REQUEST_PENDING", "Bạn đã gửi yêu cầu tới email này, vui lòng chờ con xác nhận.")
-	errLinkDailyLimit         = linkErr(http.StatusTooManyRequests, "LINK_REQUEST_DAILY_LIMIT",
+	errLinkStudentNotFound    = linkErr(http.StatusNotFound, "STUDENT_NOT_FOUND",
+		"Không tìm thấy tài khoản học sinh với email này. Hãy kiểm tra lại email hoặc nhờ con đăng ký trước.")
+	errLinkPendingExists = linkErr(http.StatusConflict, "LINK_REQUEST_PENDING", "Bạn đã gửi yêu cầu tới email này, vui lòng chờ con xác nhận.")
+	errLinkDailyLimit    = linkErr(http.StatusTooManyRequests, "LINK_REQUEST_DAILY_LIMIT",
 		fmt.Sprintf("Bạn đã gửi tối đa %d yêu cầu liên kết trong 24 giờ. Vui lòng thử lại sau.", ParentLinkDailyLimit))
 	errLinkRequestNotFound = linkErr(http.StatusNotFound, "LINK_REQUEST_NOT_FOUND", "Không tìm thấy yêu cầu liên kết.")
 	errLinkNotPending      = linkErr(http.StatusConflict, "LINK_REQUEST_NOT_PENDING", "Yêu cầu này đã được xử lý trước đó.")
@@ -137,21 +142,24 @@ func (s *ParentLinkService) CreateRequest(ctx context.Context, parentID uuid.UUI
 			bizErr = errLinkSelf
 			return nil
 		}
+		// Tra tài khoản học sinh TRƯỚC khi xét yêu cầu đang chờ: email không có học sinh luôn là 404,
+		// kể cả khi còn một dòng pending rác từ thiết kế cũ (không được trả 409 "chờ con xác nhận").
+		studentID, err := r.FindStudentIDByEmailCI(ctx, email)
+		if err != nil {
+			return err
+		}
+		if studentID == nil {
+			bizErr = errLinkStudentNotFound
+			return nil
+		}
 		if pending, err := r.FindPending(ctx, parentID, email); err != nil {
 			return err
 		} else if pending != nil {
 			bizErr = errLinkPendingExists
 			return nil
 		}
-
-		studentID, err := r.FindStudentIDByEmailCI(ctx, email)
-		if err != nil {
+		if bizErr, err = s.checkKnownRelation(ctx, r, parentID, *studentID, now); err != nil || bizErr != nil {
 			return err
-		}
-		if studentID != nil {
-			if bizErr, err = s.checkKnownRelation(ctx, r, parentID, *studentID, now); err != nil || bizErr != nil {
-				return err
-			}
 		}
 		created = &model.ParentLinkRequest{
 			ParentUserID:  parentID,

@@ -201,6 +201,9 @@ type QuizAttemptResponseDTO struct {
 	ID            uuid.UUID        `json:"id"`
 	UserID        uuid.UUID        `json:"user_id"`
 	QuizID        uuid.UUID        `json:"quiz_id"`
+	// Mode (QA S4): "official" | "practice" | "contest" — client cần để không đếm bài luyện tập
+	// vào "số lần làm chính thức còn lại". Không omitempty: cột NOT NULL default 'official'.
+	Mode          string           `json:"mode"`
 	Score         *decimal.Decimal `json:"score,omitempty"`
 	TotalPoints   *decimal.Decimal `json:"total_points,omitempty"`
 	Percentage    *decimal.Decimal `json:"percentage,omitempty"`

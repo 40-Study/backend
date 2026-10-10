@@ -49,3 +49,21 @@ type SystemRolePermissionSeed struct {
 func (SystemRolePermissionSeed) TableName() string {
 	return "system_role_permission_seeds"
 }
+
+// BuiltInSystemRoleNames: vai trò hệ thống do seed (data/roles.json) tạo và code đăng nhập / phân
+// quyền / đăng ký phụ thuộc theo TÊN. Xoá một vai trò trong số này làm hỏng nền tảng (QA A1) nên
+// API quản trị từ chối. Phải khớp roles.json — test trong package service pin sự khớp đó.
+var BuiltInSystemRoleNames = []string{
+	"SYSTEM_ADMIN", "ORG_OWNER", "TEACHER", "TEACHER_APPLICANT", "STUDENT", "PARENT",
+}
+
+// IsBuiltInSystemRole báo name có phải vai trò hệ thống dựng sẵn không (so khớp chính xác, vì
+// code phụ thuộc đúng chuỗi này).
+func IsBuiltInSystemRole(name string) bool {
+	for _, n := range BuiltInSystemRoleNames {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}

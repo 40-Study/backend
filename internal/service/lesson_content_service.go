@@ -138,9 +138,13 @@ func (s *LessonContentService) CreateContent(ctx context.Context, lessonID uuid.
 	if req.DisplayOrder != nil {
 		content.DisplayOrder = *req.DisplayOrder
 	}
+	// C1: article_body / quiz_id (và lỗi 400/404/409 riêng) — chỉ khi loại là article / quiz.
+	if err := s.applyCreateTypeFields(ctx, content, req.ArticleBody, req.QuizID); err != nil {
+		return nil, err
+	}
 
 	if err := s.lessonRepo.CreateContent(ctx, content); err != nil {
-		return nil, err
+		return nil, mapQuizLinkWriteError(content, err)
 	}
 
 	// Đã qua requireLessonCourseOwnerOrAdmin ở trên: actor là chủ khoá / admin nên được xem file gốc.
@@ -294,6 +298,14 @@ func (s *LessonContentService) UpdateContent(ctx context.Context, contentID, act
 		return nil, err
 	}
 
+	// C1: đổi loại từ/sang article|quiz bị từ chối — cột article_body/quiz_id gắn chặt với loại.
+	if req.Type != nil && *req.Type != content.Type && (isArticleOrQuiz(*req.Type) || isArticleOrQuiz(content.Type)) {
+		return nil, ErrContentTypeImmutable
+	}
+	if err := s.applyUpdateTypeFields(ctx, content, req.ArticleBody, req.QuizID); err != nil {
+		return nil, err
+	}
+
 	if req.Type != nil {
 		content.Type = *req.Type
 	}
@@ -325,7 +337,7 @@ func (s *LessonContentService) UpdateContent(ctx context.Context, contentID, act
 	}
 
 	if err := s.lessonRepo.UpdateContent(ctx, content); err != nil {
-		return nil, err
+		return nil, mapQuizLinkWriteError(content, err)
 	}
 
 	return s.toContentResponseDTO(content, videoViewer{userID: actorUserID, original: true}), nil
@@ -407,25 +419,6 @@ func (s *LessonContentService) ReorderContents(ctx context.Context, lessonID uui
 }
 
 func (s *LessonContentService) toContentResponseDTO(c *model.LessonContent, viewer videoViewer) *dto.LessonContentResponseDTO {
-	resp := &dto.LessonContentResponseDTO{
-		ID:          c.ID,
-		LessonID:    c.LessonID,
-		Type:        c.Type,
-		Title:       c.Title,
-		Duration:    c.Duration,
-		ExerciseID:  c.ExerciseID,
-		IsMandatory: c.IsMandatory,
-		// N10 (review vòng 2, từ review web): xem chú thích tại model.LessonContent.
-		LivestreamSessionID: c.LivestreamSessionID,
-		DisplayOrder:        c.DisplayOrder,
-		SubtitleURL:         c.SubtitleURL,
-		CreatedAt:           c.CreatedAt,
-		UpdatedAt:           c.UpdatedAt,
-	}
-
-	// Thay URL video đã lưu bằng URL KÝ (video_hls_url), và chỉ chủ khoá/admin mới còn video_url
-	// trỏ file gốc — xem applyVideoAccess.
-	applyVideoAccess(resp, c.VideoURL, viewer)
-
-	return resp
+	resp := lessonContentToDTO(c, viewer)
+	return &resp
 }

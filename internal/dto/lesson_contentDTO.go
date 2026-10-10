@@ -7,10 +7,10 @@ import (
 )
 
 // LessonContent DTOs
-// Type: video, livestream, exercise
+// Type: video, livestream, exercise, article, quiz (SSOT: model.LessonContentTypes; contract C1)
 
 type CreateLessonContentDTO struct {
-	Type         string     `json:"type" validate:"required,oneof=video livestream exercise"`
+	Type         string     `json:"type" validate:"required,oneof=video livestream exercise article quiz"`
 	Title        *string    `json:"title"`
 	VideoURL     *string    `json:"video_url"`
 	Duration     *int       `json:"duration"`
@@ -19,10 +19,14 @@ type CreateLessonContentDTO struct {
 	DisplayOrder *int       `json:"display_order"`
 	// SubtitleURL (Phase 1 §4): URL file .vtt đã upload sẵn qua luồng presigned có sẵn.
 	SubtitleURL *string `json:"subtitle_url"`
+	// ArticleBody (C1): HTML Tiptap của type=article. Bắt buộc, <= 200000 ký tự — service kiểm (có mã lỗi riêng).
+	ArticleBody *string `json:"article_body"`
+	// QuizID (C1): quiz gắn vào bài của type=quiz. Bắt buộc với type=quiz.
+	QuizID *uuid.UUID `json:"quiz_id"`
 }
 
 type UpdateLessonContentDTO struct {
-	Type         *string    `json:"type" validate:"omitempty,oneof=video livestream exercise"`
+	Type         *string    `json:"type" validate:"omitempty,oneof=video livestream exercise article quiz"`
 	Title        *string    `json:"title"`
 	VideoURL     *string    `json:"video_url"`
 	Duration     *int       `json:"duration"`
@@ -31,6 +35,10 @@ type UpdateLessonContentDTO struct {
 	DisplayOrder *int       `json:"display_order"`
 	// SubtitleURL (Phase 1 §4): gửi chuỗi rỗng "" hoặc null để gỡ phụ đề đang có.
 	SubtitleURL *string `json:"subtitle_url"`
+	// ArticleBody / QuizID (C1): chỉ áp dụng cho nội dung đã là article / quiz. Đổi loại từ/sang
+	// article|quiz bị từ chối (CONTENT_TYPE_IMMUTABLE).
+	ArticleBody *string    `json:"article_body"`
+	QuizID      *uuid.UUID `json:"quiz_id"`
 }
 
 type LessonContentResponseDTO struct {
@@ -52,7 +60,12 @@ type LessonContentResponseDTO struct {
 	LivestreamSessionID *uuid.UUID `json:"livestream_session_id"`
 	DisplayOrder        int        `json:"display_order"`
 	// SubtitleURL (Phase 1 §4): null khi bài chưa có phụ đề — web tự ẩn panel transcript.
-	SubtitleURL *string   `json:"subtitle_url"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	SubtitleURL *string `json:"subtitle_url"`
+	// ArticleBody / ReadingTimeMinutes / QuizID (C1): chỉ xuất hiện khi áp dụng. ReadingTimeMinutes
+	// TÍNH lúc trả response từ nội dung bài, không lưu DB.
+	ArticleBody        *string    `json:"article_body,omitempty"`
+	ReadingTimeMinutes *int       `json:"reading_time_minutes,omitempty"`
+	QuizID             *uuid.UUID `json:"quiz_id,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }

@@ -178,3 +178,8 @@ func TestQuizCourseGuard_CreateRequiresCourseOwner(t *testing.T) {
 		}
 	}
 }
+
+// CountQuestionsByQuizIDs (QA T10): danh sách quiz giờ đếm câu hỏi qua repo; fake này không có câu hỏi nào.
+func (r *guardQuizRepo) CountQuestionsByQuizIDs(context.Context, []uuid.UUID) (map[uuid.UUID]int, error) {
+	return map[uuid.UUID]int{}, nil
+}

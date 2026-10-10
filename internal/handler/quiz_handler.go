@@ -53,6 +53,8 @@ func respondLessonLockError(c *fiber.Ctx, svcErr error) (resp error, handled boo
 // bị nuốt thành 400/404/500 và web phân biệt được "quiz đang dùng cho cuộc thi".
 func respondQuizGateError(c *fiber.Ctx, svcErr error) (resp error, handled bool) {
 	switch {
+	case errors.Is(svcErr, service.ErrQuizNotFound):
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "Quiz not found"}), true
 	case errors.Is(svcErr, service.ErrQuizLockedByContest):
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"message": "Quiz đang được dùng cho một cuộc thi",

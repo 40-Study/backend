@@ -6,6 +6,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 )
 
 func SetupReportRoutes(
@@ -14,6 +15,7 @@ func SetupReportRoutes(
 	reportHandler *handler.ReportHandler,
 	redis *redis.Client,
 	permChecker *middleware.PermissionChecker,
+	auditRec middleware.AuditRecorder,
 ) {
 	auth := middleware.AuthMiddleware(cfg, redis)
 
@@ -30,7 +32,7 @@ func SetupReportRoutes(
 		reports.Get("/", requireModerate, reportHandler.ListReports)
 		reports.Get("/my", reportHandler.GetMyReports)
 		reports.Get("/:id", reportHandler.GetReportByID)
-		reports.Put("/:id/status", requireModerate, reportHandler.UpdateReportStatus)
-		reports.Delete("/:id", requireModerate, reportHandler.DeleteReport)
+		reports.Put("/:id/status", requireModerate, middleware.Audit(auditRec, model.AuditActionReportStatusUpdate, "report", "id"), reportHandler.UpdateReportStatus)
+		reports.Delete("/:id", requireModerate, middleware.Audit(auditRec, model.AuditActionReportDelete, "report", "id"), reportHandler.DeleteReport)
 	}
 }

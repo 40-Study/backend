@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"study.com/v1/internal/model"
 )
 
 // fakePlatformSettingRepo — fake trong-bộ-nhớ, không cần DB thật (test thuần logic validate %).
@@ -21,6 +22,16 @@ func (f *fakePlatformSettingRepo) GetPlatformFeePercent(ctx context.Context) (de
 func (f *fakePlatformSettingRepo) SetPlatformFeePercent(ctx context.Context, percent decimal.Decimal, updatedBy uuid.UUID) error {
 	f.percent = percent
 	return nil
+}
+
+// Get/GetUpdaterName: bắt buộc để thoả interface sau khi mở rộng cho GET /admin/settings (phase 5);
+// các test ở file này không dùng tới (hành vi thật được test ở handler/admin_settings_handler_test.go).
+func (f *fakePlatformSettingRepo) Get(ctx context.Context) (*model.PlatformSetting, error) {
+	return nil, nil
+}
+
+func (f *fakePlatformSettingRepo) GetUpdaterName(ctx context.Context, userID uuid.UUID) (string, error) {
+	return "", nil
 }
 
 // TestSetPlatformFeePercent_RejectsOutOfRange (quyết định #2: % phải hợp lệ 0-100) — âm hoặc

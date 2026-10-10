@@ -6,6 +6,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 )
 
 // SetupWithdrawalRoutes — Phase 4 rút tiền giảng viên (2026-09-28).
@@ -21,6 +22,7 @@ func SetupWithdrawalRoutes(
 	h *handler.WithdrawalHandler,
 	redis *redis.Client,
 	permChecker *middleware.PermissionChecker,
+	auditRec middleware.AuditRecorder,
 ) {
 	auth := middleware.AuthMiddleware(cfg, redis)
 	manage := permChecker.RequirePermissions("WALLET_WITHDRAWALS_MANAGE")
@@ -34,7 +36,7 @@ func SetupWithdrawalRoutes(
 	admin := api.Group("/admin/withdrawals")
 	admin.Get("/", auth, manage, h.AdminListWithdrawals)
 	admin.Get("/negative-balances", auth, manage, h.AdminNegativeBalances)
-	admin.Post("/:id/approve", auth, manage, h.ApproveWithdrawal)
-	admin.Post("/:id/reject", auth, manage, h.RejectWithdrawal)
-	admin.Post("/:id/mark-completed", auth, manage, h.MarkWithdrawalCompleted)
+	admin.Post("/:id/approve", auth, manage, middleware.Audit(auditRec, model.AuditActionWithdrawalApprove, "withdrawal", "id"), h.ApproveWithdrawal)
+	admin.Post("/:id/reject", auth, manage, middleware.Audit(auditRec, model.AuditActionWithdrawalReject, "withdrawal", "id"), h.RejectWithdrawal)
+	admin.Post("/:id/mark-completed", auth, manage, middleware.Audit(auditRec, model.AuditActionWithdrawalMarkCompleted, "withdrawal", "id"), h.MarkWithdrawalCompleted)
 }

@@ -511,27 +511,14 @@ func (s *LessonService) toLessonResponseDTO(lesson *model.Lesson, contents []mod
 
 	if len(contents) > 0 {
 		resp.Contents = make([]dto.LessonContentResponseDTO, len(contents))
-		for i, c := range contents {
-			item := dto.LessonContentResponseDTO{
-				ID:       c.ID,
-				LessonID: c.LessonID,
-				Type:     c.Type,
-				Title:    c.Title,
-				Duration: c.Duration,
-				// N10 (review vòng 2, từ review web): xem chú thích tại model.LessonContent.
-				LivestreamSessionID: c.LivestreamSessionID,
-				DisplayOrder:        c.DisplayOrder,
-				SubtitleURL:         c.SubtitleURL,
-				CreatedAt:           c.CreatedAt,
-				UpdatedAt:           c.UpdatedAt,
-			}
+		for i := range contents {
+			// URL video ký (video_hls_url); URL file gốc chỉ cho chủ khoá/admin — xem applyVideoAccess.
+			item := lessonContentToDTO(&contents[i], viewer)
 			// Phase 1 §4: web doc subtitle_url AUTHORITATIVE tu chinh lesson content (item o
 			// tren); truong resp.SubtitleURL o cap lesson chi la BAN DU PHONG (web tu ghi chu
 			// "giu field nay lam du phong neu curriculum cung tra kem") — gan tu content video.
-			// URL video ký (video_hls_url); URL file gốc chỉ cho chủ khoá/admin — xem applyVideoAccess.
-			applyVideoAccess(&item, c.VideoURL, viewer)
 			// Dùng bản ĐÃ KÝ của item (bucket video private), không phải URL thô đã lưu.
-			if c.Type == "video" && item.SubtitleURL != nil {
+			if contents[i].Type == "video" && item.SubtitleURL != nil {
 				resp.SubtitleURL = item.SubtitleURL
 			}
 			resp.Contents[i] = item

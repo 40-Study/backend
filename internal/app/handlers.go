@@ -79,6 +79,10 @@ type Handlers struct {
 
 	// ===== Notification =====
 	Notification *handler.NotificationHandler
+	// Broadcast (phase 4), nhật ký hoạt động (phase 3), cấu hình hệ thống (phase 5).
+	AdminBroadcast *handler.AdminBroadcastHandler
+	AuditLog       *handler.AuditLogHandler
+	AdminSettings  *handler.AdminSettingsHandler
 
 	// ===== User Preference =====
 	UserPreference *handler.UserPreferenceHandler
@@ -205,7 +209,10 @@ func InitHandlers(services *Services, repos *Repositories, minioClient *storage.
 		Note: handler.NewNoteHandler(services.Note),
 
 		// ===== Notification =====
-		Notification: handler.NewNotificationHandler(services.Notification),
+		Notification:   handler.NewNotificationHandler(services.Notification),
+		AdminBroadcast: handler.NewAdminBroadcastHandler(services.Broadcast),
+		AuditLog:       handler.NewAuditLogHandler(services.AuditLog),
+		AdminSettings:  handler.NewAdminSettingsHandler(services.PlatformSetting),
 
 		// ===== User Preference =====
 		UserPreference: handler.NewUserPreferenceHandler(services.UserPreference),

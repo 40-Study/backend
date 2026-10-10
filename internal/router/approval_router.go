@@ -6,6 +6,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 )
 
 // SetupApprovalRoutes — Phase 3 duyệt khoá học + duyệt giáo viên (2026-09-28).
@@ -21,6 +22,7 @@ func SetupApprovalRoutes(
 	approvalHandler *handler.ApprovalHandler,
 	redis *redis.Client,
 	permChecker *middleware.PermissionChecker,
+	auditRec middleware.AuditRecorder,
 ) {
 	auth := middleware.AuthMiddleware(cfg, redis)
 	// Quyết định #3: chỉ SYSTEM_ADMIN duyệt khoá (COURSES_APPROVE_ALL; KHÔNG dùng _OWN_ORG).
@@ -36,12 +38,12 @@ func SetupApprovalRoutes(
 		approvalHandler.WithdrawCourseReview)
 
 	api.Get("/admin/courses", auth, approveCourses, approvalHandler.ListCoursesForReview)
-	api.Post("/admin/courses/:id/approve", auth, approveCourses, approvalHandler.ApproveCourse)
-	api.Post("/admin/courses/:id/reject", auth, approveCourses, approvalHandler.RejectCourse)
+	api.Post("/admin/courses/:id/approve", auth, approveCourses, middleware.Audit(auditRec, model.AuditActionCourseApprove, "course", "id"), approvalHandler.ApproveCourse)
+	api.Post("/admin/courses/:id/reject", auth, approveCourses, middleware.Audit(auditRec, model.AuditActionCourseReject, "course", "id"), approvalHandler.RejectCourse)
 
 	api.Get("/admin/teacher-applications", auth, manageRoles, approvalHandler.ListTeacherApplications)
-	api.Post("/admin/teacher-applications/:userId/approve", auth, manageRoles, approvalHandler.ApproveTeacherApplication)
-	api.Post("/admin/teacher-applications/:userId/reject", auth, manageRoles, approvalHandler.RejectTeacherApplication)
+	api.Post("/admin/teacher-applications/:userId/approve", auth, manageRoles, middleware.Audit(auditRec, model.AuditActionTeacherApplicationApprove, "user", "userId"), approvalHandler.ApproveTeacherApplication)
+	api.Post("/admin/teacher-applications/:userId/reject", auth, manageRoles, middleware.Audit(auditRec, model.AuditActionTeacherApplicationReject, "user", "userId"), approvalHandler.RejectTeacherApplication)
 
 	// Người nộp hồ sơ tự xem trạng thái / nộp lại (quyết định #5).
 	api.Get("/teacher-profiles/me", auth, approvalHandler.GetMyTeacherApplication)

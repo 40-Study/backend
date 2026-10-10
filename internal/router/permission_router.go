@@ -6,6 +6,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 )
 
 func SetupPermissionRoutes(
@@ -14,6 +15,7 @@ func SetupPermissionRoutes(
 	permissionHandler *handler.PermissionHandler,
 	redis *redis.Client,
 	permChecker *middleware.PermissionChecker,
+	auditRec middleware.AuditRecorder,
 ) {
 	permissions := api.Group("/permissions", middleware.AuthMiddleware(cfg, redis))
 	{
@@ -21,6 +23,6 @@ func SetupPermissionRoutes(
 		permissions.Get("/", permissionHandler.GetAllPermissions)
 		permissions.Get("/:id", permissionHandler.GetPermissionByID)
 		// Sửa permission là thao tác quản trị RBAC hệ thống.
-		permissions.Put("/:id", permChecker.RequirePermissions("ROLES_MANAGE_SYSTEM"), permissionHandler.UpdatePermission)
+		permissions.Put("/:id", permChecker.RequirePermissions("ROLES_MANAGE_SYSTEM"), middleware.Audit(auditRec, model.AuditActionPermissionUpdate, "permission", "id"), permissionHandler.UpdatePermission)
 	}
 }

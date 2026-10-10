@@ -326,7 +326,7 @@ func newAdminLiveEnv(t *testing.T) *adminLiveEnv {
 
 	app := fiber.New()
 	api := app.Group("/api")
-	SetupUserAdminRoutes(api, cfg, adminHandler, rdb, pc)
+	SetupUserAdminRoutes(api, cfg, adminHandler, rdb, pc, &auditSpyRouter{})
 	SetupAuthRoutes(api, cfg, handler.NewAuthHandler(authSvc), nil, rdb, nil)
 	// Route bảo vệ tối thiểu để quan sát trực tiếp phản ứng của AuthMiddleware (không đi qua
 	// permission nào) — mô phỏng "request kế tiếp của student2" tới BẤT KỲ route nào cần đăng

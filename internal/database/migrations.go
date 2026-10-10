@@ -413,6 +413,15 @@ func RunPostMigrations(db *gorm.DB) error {
 			sql: `CREATE UNIQUE INDEX IF NOT EXISTS uq_friendships_pair
 				ON friendships (LEAST(requester_id, addressee_id), GREATEST(requester_id, addressee_id))`,
 		},
+		{
+			// Lesson ARTICLE + QUIZ content (plan 261008 phase 1): AutoMigrate không bao giờ ghi lại CHECK đã
+			// tồn tại (chỉ tạo constraint thiếu theo TÊN), nên DB cũ giữ IN ('video','livestream','exercise')
+			// và từ chối type='article'/'quiz' bằng CHECK violation (500). Mẫu NOT VALID + VALIDATE: rollback
+			// về binary cũ vẫn khởi động được.
+			name: "sync chk_lesson_contents_type to model.LessonContentTypes (article/quiz)",
+			sql: buildCheckConstraintSQL("lesson_contents", "chk_lesson_contents_type",
+				"type", model.LessonContentTypes),
+		},
 	}
 	statements = append(statements, contestPostMigrations()...)
 
@@ -433,6 +442,11 @@ func RunPostMigrations(db *gorm.DB) error {
 	if err := runCourseDiscountPriceCleanup(db); err != nil {
 		return err
 	}
+	// Yêu cầu liên kết "ma" (pending, NULL student, không có tài khoản STUDENT) -> cancelled, xem
+	// parent_link_ghost_cleanup.go. Cần student_email đã backfill và CHECK status: chạy SAU vòng statements.
+	if err := runParentLinkGhostCleanup(db); err != nil {
+		return err
+	}
 	// Chép mã thanh toán của đơn chưa hoàn tất sang orders.payment_code, xem order_payment_code_backfill.go.
 	if err := runOrderPaymentCodeBackfill(db); err != nil {
 		return err
@@ -445,6 +459,12 @@ func RunPostMigrations(db *gorm.DB) error {
 
 	// Sửa một lần dữ liệu cũ của lane R2 (hội thoại nhóm mồ côi, user_name chứa '@'), xem r2_social_privacy_cleanup.go.
 	if err := runR2SocialPrivacyCleanup(db); err != nil {
+		return err
+	}
+
+	// Quiz gắn bài chưa có dòng lesson_contents -> một dòng type='quiz' (một lần), xem lesson_content_backfill.go.
+	// Phải chạy SAU vòng statements: cần CHECK đã mở rộng và cột quiz_id.
+	if err := runLessonContentQuizBackfill(db); err != nil {
 		return err
 	}
 

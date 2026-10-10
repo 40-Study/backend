@@ -300,7 +300,7 @@ func newApvEnv(t *testing.T) *apvEnv {
 
 	app := fiber.New()
 	api := app.Group("/api")
-	SetupApprovalRoutes(api, cfg, approvalH, rdb, pc)
+	SetupApprovalRoutes(api, cfg, approvalH, rdb, pc, &auditSpyRouter{})
 	SetupAuthRoutes(api, cfg, handler.NewAuthHandler(authSvc), nil, rdb, nil)
 	SetupCourseRoutes(api, cfg, courseH, nil, nil, nil, nil, nil, nil, nil, rdb)
 	e.app = app

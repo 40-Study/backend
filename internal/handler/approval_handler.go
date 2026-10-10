@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -69,6 +70,19 @@ func courseReviewError(c *fiber.Ctx, err error, invalidStatusMsg string) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "You are not the instructor of this course"})
 	case errors.Is(err, repository.ErrCourseInvalidReviewStatus):
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": invalidStatusMsg, "code": "INVALID_COURSE_STATUS"})
+	case errors.Is(err, repository.ErrCourseLessonsWithoutContent):
+		// T6 (QA 261008): còn bài học chưa có nội dung — 422 như COURSE_EMPTY, nêu tên từng bài.
+		var missing *repository.CourseLessonsWithoutContentError
+		_ = errors.As(err, &missing)
+		titles := make([]string, len(missing.Lessons))
+		for i, l := range missing.Lessons {
+			titles[i] = l.Title
+		}
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"message": "Every lesson must have content before submitting for review. Lessons without content: " + strings.Join(titles, ", "),
+			"code":    "COURSE_LESSON_NO_CONTENT",
+			"lessons": missing.Lessons,
+		})
 	case errors.Is(err, repository.ErrCourseEmptyContent):
 		// D2 (QA vòng 2): dữ liệu khoá chưa đủ để nộp — 422, không phải trạng thái sai.
 		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{

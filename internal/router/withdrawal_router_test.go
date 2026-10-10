@@ -148,7 +148,7 @@ func newWithdrawalRouteEnv(t *testing.T) *wdEnv {
 
 	svc := &wdFakeService{}
 	app := fiber.New()
-	SetupWithdrawalRoutes(app.Group("/api"), cfg, handler.NewWithdrawalHandler(svc), rdb, pc)
+	SetupWithdrawalRoutes(app.Group("/api"), cfg, handler.NewWithdrawalHandler(svc), rdb, pc, &auditSpyRouter{})
 	return &wdEnv{app: app, svc: svc, teacherID: teacherID, adminTok: tok(adminID, "SYSTEM_ADMIN"), teacherTok: tok(teacherID, "TEACHER")}
 }
 

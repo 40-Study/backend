@@ -144,11 +144,30 @@ func (Lesson) TableName() string {
 	return "lessons"
 }
 
+// Loại nội dung bài học. SSOT cho CHECK chk_lesson_contents_type: tag `check:` của LessonContent.Type phải khớp
+// LessonContentTypes (TestLessonContentTypeTagMatchesSSOT) — tag cho DB mới (AutoMigrate), slice cho DB cũ
+// (RunPostMigrations đồng bộ constraint theo slice bằng buildCheckConstraintSQL, NOT VALID rồi VALIDATE).
+const (
+	LessonContentTypeVideo      = "video"
+	LessonContentTypeLivestream = "livestream"
+	LessonContentTypeExercise   = "exercise"
+	LessonContentTypeArticle    = "article"
+	LessonContentTypeQuiz       = "quiz"
+)
+
+var LessonContentTypes = []string{
+	LessonContentTypeVideo,
+	LessonContentTypeLivestream,
+	LessonContentTypeExercise,
+	LessonContentTypeArticle,
+	LessonContentTypeQuiz,
+}
+
 type LessonContent struct {
 	ID       uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	LessonID uuid.UUID `gorm:"type:uuid;not null;index" json:"lesson_id"`
 
-	Type string `gorm:"type:varchar(20);not null;check:type IN ('video','livestream','exercise')" json:"type"`
+	Type string `gorm:"type:varchar(20);not null;check:type IN ('video','livestream','exercise','article','quiz')" json:"type"`
 
 	Title *string `gorm:"type:varchar(255)" json:"title,omitempty"`
 
@@ -161,6 +180,15 @@ type LessonContent struct {
 
 	// Exercise fields (bài tập khóa học)
 	ExerciseID *uuid.UUID `gorm:"type:uuid" json:"exercise_id,omitempty"`
+
+	// Article fields (type='article'): HTML Tiptap, chỉ render qua web/src/lib/sanitize-html.ts. Thời gian
+	// đọc KHÔNG lưu — tính lúc trả response (toContentResponseDTO).
+	ArticleBody *string `gorm:"type:text;column:article_body" json:"article_body,omitempty"`
+
+	// Quiz fields (type='quiz'): quiz được hiện như một nội dung của bài. Mỗi quiz tối đa MỘT dòng nội dung
+	// (unique một phần, tag tạo qua AutoMigrate) nên DB cũng chặn liên kết đôi khi hai request chạy song song.
+	// FK ON DELETE SET NULL cho xoá cứng; xoá mềm quiz dọn dòng này trong QuizRepository.DeleteQuiz.
+	QuizID *uuid.UUID `gorm:"type:uuid;column:quiz_id;uniqueIndex:uq_lesson_contents_quiz_id,where:quiz_id IS NOT NULL" json:"quiz_id,omitempty"`
 
 	// Bắt buộc hoàn thành mới được học tiếp
 	IsMandatory bool `gorm:"default:true" json:"is_mandatory"`
@@ -182,6 +210,7 @@ type LessonContent struct {
 
 	Lesson   Lesson          `gorm:"foreignKey:LessonID;constraint:OnDelete:CASCADE" json:"-"`
 	Exercise *CourseExercise `gorm:"foreignKey:ExerciseID" json:"exercise,omitempty"`
+	Quiz     *Quiz           `gorm:"foreignKey:QuizID;constraint:OnDelete:SET NULL" json:"-"`
 }
 
 func (LessonContent) TableName() string {

@@ -114,6 +114,9 @@ type Repositories struct {
 
 	// ===== Notification =====
 	Notification *repository.NotificationRepository
+	// Broadcast thông báo hệ thống (plan 261008 phase 4) + nhật ký hoạt động quản trị (phase 3).
+	BroadcastAudience *repository.BroadcastAudienceRepository
+	AuditLog          *repository.AuditLogRepository
 
 	// ===== User Preference =====
 	UserPreference *repository.UserPreferenceRepository
@@ -248,7 +251,9 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		Note: repository.NewNoteRepository(db),
 
 		// ===== Notification =====
-		Notification: repository.NewNotificationRepository(db),
+		Notification:      repository.NewNotificationRepository(db),
+		BroadcastAudience: repository.NewBroadcastAudienceRepository(db),
+		AuditLog:          repository.NewAuditLogRepository(db),
 
 		// ===== User Preference =====
 		UserPreference: repository.NewUserPreferenceRepository(db),

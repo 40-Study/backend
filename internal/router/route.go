@@ -76,6 +76,7 @@ func SetupAllRoutes(
 	redis *redis.Client,
 	minio *minio.Client,
 	aq *asynq_queue.Queue,
+	auditRec middleware.AuditRecorder,
 ) {
 	api := app.Group("/api")
 
@@ -89,16 +90,16 @@ func SetupAllRoutes(
 
 	SetupAuthRoutes(api, cfg, authHandler, oauthHandler, redis, permChecker)
 	SetupOrgRoleRoutes(api, cfg, roleHandler, redis, permChecker)
-	SetupSystemRoleRoutes(api, cfg, systemRoleHandler, redis, permChecker)
-	SetupUserSystemRoleRoutes(api, cfg, userSystemRoleHandler, redis, permChecker)
+	SetupSystemRoleRoutes(api, cfg, systemRoleHandler, redis, permChecker, auditRec)
+	SetupUserSystemRoleRoutes(api, cfg, userSystemRoleHandler, redis, permChecker, auditRec)
 	SetupUserOrganizationRoleRoutes(api, cfg, userOrgRoleHandler, redis, permChecker)
-	SetupUserAdminRoutes(api, cfg, userAdminHandler, redis, permChecker)
-	SetupPermissionRoutes(api, cfg, permissionHandler, redis, permChecker)
+	SetupUserAdminRoutes(api, cfg, userAdminHandler, redis, permChecker, auditRec)
+	SetupPermissionRoutes(api, cfg, permissionHandler, redis, permChecker, auditRec)
 	SetupOrganizationRoutes(api, cfg, organizationHandler, redis, permChecker)
 	SetupProfileRoutes(api, cfg, profileHandler, redis)
 	SetupTeacherRoutes(api, cfg, teacherHandler, redis, permChecker)
 	// Phase 3: PHẢI trước SetupTeacherProfileRoutes — "/teacher-profiles/me" tĩnh phải thắng "/:id".
-	SetupApprovalRoutes(api, cfg, approvalHandler, redis, permChecker)
+	SetupApprovalRoutes(api, cfg, approvalHandler, redis, permChecker, auditRec)
 	SetupTeacherProfileRoutes(api, cfg, teacherProfileHandler, redis)
 	SetupClassRoutes(api, cfg, classHandler, attendanceHandler, redis, permChecker)
 	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis, permChecker)
@@ -117,7 +118,7 @@ func SetupAllRoutes(
 	SetupAnalyticsRoutes(api, cfg, analyticsHandler, redis)
 
 	// Order & Payment routes
-	SetupOrderRoutes(api, cfg, orderHandler, adminOrderHandler, redis, permChecker)
+	SetupOrderRoutes(api, cfg, orderHandler, adminOrderHandler, redis, permChecker, auditRec)
 	SetupVoucherRoutes(api, cfg, voucherHandler, redis, permChecker)
 
 	// Gamification routes
@@ -162,7 +163,7 @@ func SetupAllRoutes(
 	SetupCertificateRoutes(api, cfg, certificateHandler, redis)
 
 	// Report routes
-	SetupReportRoutes(api, cfg, reportHandler, redis, permChecker)
+	SetupReportRoutes(api, cfg, reportHandler, redis, permChecker, auditRec)
 
 	// Coin routes
 	SetupCoinRoutes(api, cfg, coinHandler, redis, permChecker)

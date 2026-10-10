@@ -195,7 +195,7 @@ func newCatRepAuthzEnv(t *testing.T, roleName string) *catRepAuthzEnv {
 	reportSvc := &fakeReportSvcCR{}
 
 	SetupCategoryRoutes(api, cfg, handler.NewCategoryHandler(categorySvc), handler.NewTagHandler(tagSvc), rdb, permChecker)
-	SetupReportRoutes(api, cfg, handler.NewReportHandler(reportSvc, permChecker), rdb, permChecker)
+	SetupReportRoutes(api, cfg, handler.NewReportHandler(reportSvc, permChecker), rdb, permChecker, &auditSpyRouter{})
 
 	return &catRepAuthzEnv{app: app, token: accessToken, categorySvc: categorySvc, tagSvc: tagSvc, reportSvc: reportSvc}
 }

@@ -520,3 +520,8 @@ func TestGetQuizByID_QuizGanSessionID_DaEnrollKhoaChuaSession_TraDuLieu(t *testi
 		t.Fatal("result = nil, muon co du lieu")
 	}
 }
+
+// CountQuestionsByQuizIDs (QA T10): danh sách quiz giờ đếm câu hỏi qua repo; fake này không có câu hỏi nào.
+func (r *fakeQuizRepoForSubmit) CountQuestionsByQuizIDs(context.Context, []uuid.UUID) (map[uuid.UUID]int, error) {
+	return map[uuid.UUID]int{}, nil
+}

@@ -196,8 +196,9 @@ func (h *CourseHandler) GetMyCourses(c *fiber.Ctx) error {
 func (h *CourseHandler) GetCourseByID(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid course ID",
+		// QA T13: id không phải UUID thì không thể trỏ tới khoá nào => 404 như id hợp lệ nhưng không có.
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"message": "Course not found",
 			"error":   err.Error(),
 		})
 	}

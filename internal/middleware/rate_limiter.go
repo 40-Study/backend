@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -24,6 +25,11 @@ type RateLimitConfig struct {
 	Message string
 	// Skip rate limiting for certain conditions
 	Skip func(c *fiber.Ctx) bool
+	// Refund (nil = không bao giờ hoàn): chạy SAU handler; trả true thì lượt vừa tính được hoàn lại (DECR), tức request
+	// đó không tiêu hạn mức. Dùng cho hành động tốn hạn mức chỉ khi THỰC SỰ có tác dụng (vd broadcast gửi tới >= 1
+	// người): lỗi validate/không có người nhận không được khoá quản trị viên. Vẫn INCR trước handler nên hạn mức
+	// nguyên tử với request song song; chỉ request bị chặn 429 hoặc Skip mới không bao giờ chạm tới Refund.
+	Refund func(c *fiber.Ctx) bool
 	// TrustedProxies (review vòng 2, PR #69): dùng bởi KeyGenerator mặc định (khi không set
 	// riêng) để suy ra IP client qua ClientIP() thay vì c.IP() mặc định của Fiber — xem
 	// ClientIPFromXFF (client_ip.go) cho lý do đầy đủ. nil/rỗng -> không IP nào được coi là
@@ -97,7 +103,30 @@ func RateLimiter(rdb *redis.Client, config RateLimitConfig) fiber.Handler {
 			})
 		}
 
-		return c.Next()
+		if config.Refund == nil {
+			return c.Next()
+		}
+		nextErr := c.Next()
+		if config.Refund(c) {
+			refundRateLimitSlot(ctx, rdb, key)
+		}
+		return nextErr
+	}
+}
+
+// refundRateLimitSlot trả lại MỘT lượt vừa INCR (xem RateLimitConfig.Refund). Nếu key đã hết hạn giữa INCR và DECR,
+// DECR tạo ra bộ đếm âm KHÔNG có TTL — nó không bao giờ tự xoá và sẽ làm lệch mọi cửa sổ sau, nên xoá ngay. Lỗi Redis
+// ở đây chỉ log: lượt đã tiêu giữ nguyên (nghiêng về phía chặn, an toàn cho hành động không hoàn tác được).
+func refundRateLimitSlot(ctx context.Context, rdb *redis.Client, key string) {
+	n, err := rdb.Decr(ctx, key).Result()
+	if err != nil {
+		log.Printf("[RateLimiter] không hoàn được lượt cho %s: %v", key, err)
+		return
+	}
+	if n < 0 {
+		if err := rdb.Del(ctx, key).Err(); err != nil {
+			log.Printf("[RateLimiter] không xoá được bộ đếm âm %s: %v", key, err)
+		}
 	}
 }
 

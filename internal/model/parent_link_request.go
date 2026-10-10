@@ -14,18 +14,18 @@ import (
 // con bấm xác nhận thì dòng quan hệ `active` mới được tạo/kích hoạt, nên trước lúc đó phụ huynh
 // không có bất kỳ dòng quan hệ nào để lọt qua kiểm tra quyền (chống IDOR theo cấu trúc).
 //
-// Vì sao lưu theo EMAIL và StudentUserID có thể rỗng (review đối kháng PR #81, MAJOR-1): nếu chỉ
-// lưu khi email là tài khoản học sinh thì phản hồi cho "email học sinh" khác "email lạ", tức form
-// thành công cụ dò xem một email có phải tài khoản học sinh (trẻ vị thành niên) hay không. Nay mọi
-// email hợp lệ đều tạo một yêu cầu `pending` giống hệt nhau; yêu cầu tới email không phải học
-// sinh đơn giản là không bao giờ có ai trả lời.
+// Vì sao vẫn lưu theo EMAIL và StudentUserID vẫn nullable: từ quyết định D8 (đảo thiết kế chống dò
+// của PR #81, MAJOR-1) yêu cầu chỉ được tạo khi email thuộc một tài khoản HỌC SINH, và
+// StudentUserID được gán ngay lúc tạo; email không phải học sinh nhận 404 STUDENT_NOT_FOUND và
+// không có dòng nào. Cột vẫn nullable (và truy vấn khớp theo email cho dòng NULL vẫn giữ) chỉ vì
+// các dòng cũ tạo trước D8; runParentLinkGhostCleanup huỷ mềm những dòng cũ không còn ai trả lời.
 //
 // Chiều ngược lại (học sinh mời phụ huynh qua email) vẫn ở parent_invitations.
 type ParentLinkRequest struct {
 	ID           uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	ParentUserID uuid.UUID `gorm:"type:uuid;not null;index:idx_plr_parent" json:"parent_user_id"`
-	// StudentUserID: nil khi email chưa thuộc tài khoản học sinh nào lúc gửi; được gán khi học
-	// sinh có email đó trả lời.
+	// StudentUserID: được gán ngay lúc tạo (D8). Chỉ còn nil ở các dòng cũ tạo trước D8, khi email
+	// chưa thuộc tài khoản học sinh nào; những dòng đó được gán khi học sinh có email đó trả lời.
 	StudentUserID *uuid.UUID `gorm:"type:uuid;index:idx_plr_student" json:"student_user_id,omitempty"`
 	// StudentEmail: email phụ huynh nhập, đã chuẩn hoá (trim + chữ thường). default '' chỉ để
 	// AutoMigrate thêm được cột NOT NULL trên bảng đã có dòng; RunPostMigrations điền lại.

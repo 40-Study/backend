@@ -18,6 +18,9 @@ type QuizRepositoryInterface interface {
 	UpdateQuiz(ctx context.Context, quiz *model.Quiz) error
 	DeleteQuiz(ctx context.Context, id uuid.UUID) error
 	GetQuizzesByCreator(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]model.Quiz, int64, error)
+	// CountQuestionsByQuizIDs (QA T10): số câu hỏi CHƯA xoá của từng quiz trong MỘT truy vấn (tránh N+1
+	// khi liệt kê). Quiz không có câu hỏi vắng mặt trong map — caller đọc map[id] = 0 là đúng.
+	CountQuestionsByQuizIDs(ctx context.Context, quizIDs []uuid.UUID) (map[uuid.UUID]int, error)
 
 	// Question
 	CreateQuestion(ctx context.Context, question *model.Question) error
@@ -138,8 +141,39 @@ func (r *QuizRepository) UpdateQuiz(ctx context.Context, quiz *model.Quiz) error
 	return r.db.WithContext(ctx).Save(quiz).Error
 }
 
+// DeleteQuiz xoá mềm quiz VÀ xoá dòng lesson_contents (type='quiz') đang trỏ tới nó trong CÙNG một
+// transaction. Xoá mềm không kích hoạt FK ON DELETE SET NULL, nên không dọn ở đây thì bài học còn lại
+// một mục "quiz" trỏ vào quiz đã xoá (học viên bấm vào sẽ 404).
 func (r *QuizRepository) DeleteQuiz(ctx context.Context, id uuid.UUID) error {
-	return r.db.WithContext(ctx).Delete(&model.Quiz{}, "id = ?", id).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&model.LessonContent{}, "quiz_id = ?", id).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.Quiz{}, "id = ?", id).Error
+	})
+}
+
+func (r *QuizRepository) CountQuestionsByQuizIDs(ctx context.Context, quizIDs []uuid.UUID) (map[uuid.UUID]int, error) {
+	counts := make(map[uuid.UUID]int, len(quizIDs))
+	if len(quizIDs) == 0 {
+		return counts, nil
+	}
+	var rows []struct {
+		QuizID uuid.UUID
+		N      int
+	}
+	err := r.db.WithContext(ctx).Model(&model.Question{}).
+		Select("quiz_id, COUNT(*) AS n").
+		Where("quiz_id IN ?", quizIDs).
+		Group("quiz_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		counts[row.QuizID] = row.N
+	}
+	return counts, nil
 }
 
 func (r *QuizRepository) GetQuizzesByCreator(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]model.Quiz, int64, error) {

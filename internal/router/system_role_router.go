@@ -6,6 +6,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 )
 
 func SetupSystemRoleRoutes(
@@ -14,6 +15,7 @@ func SetupSystemRoleRoutes(
 	systemRoleHandler *handler.SystemRoleHandler,
 	redis *redis.Client,
 	permChecker *middleware.PermissionChecker,
+	auditRec middleware.AuditRecorder,
 ) {
 	// A-P2-1 (QA 260927): trước đây route này public hoàn toàn (comment cũ "allow clients to list
 	// system roles without auth"). Đã grep web/src: màn hình cần danh sách vai trò TRƯỚC khi đăng
@@ -26,15 +28,16 @@ func SetupSystemRoleRoutes(
 	// Protected routes: require auth + quyền quản trị RBAC hệ thống cho mọi thao tác ghi.
 	systemRoles := api.Group("/system-roles", middleware.AuthMiddleware(cfg, redis), permChecker.RequirePermissions("ROLES_MANAGE_SYSTEM"))
 	{
-		systemRoles.Post("/", systemRoleHandler.CreateSystemRole)
+		// Id vai trò mới nằm trong response, handler đặt đích bằng SetAuditTarget.
+		systemRoles.Post("/", middleware.Audit(auditRec, model.AuditActionSystemRoleCreate, "system_role", ""), systemRoleHandler.CreateSystemRole)
 		systemRoles.Get("/:id", systemRoleHandler.GetSystemRole)
-		systemRoles.Put("/:id", systemRoleHandler.UpdateSystemRole)
-		systemRoles.Delete("/:id", systemRoleHandler.DeleteSystemRole)
-		systemRoles.Patch("/:id/restore", systemRoleHandler.RestoreSystemRole)
+		systemRoles.Put("/:id", middleware.Audit(auditRec, model.AuditActionSystemRoleUpdate, "system_role", "id"), systemRoleHandler.UpdateSystemRole)
+		systemRoles.Delete("/:id", middleware.Audit(auditRec, model.AuditActionSystemRoleDelete, "system_role", "id"), systemRoleHandler.DeleteSystemRole)
+		systemRoles.Patch("/:id/restore", middleware.Audit(auditRec, model.AuditActionSystemRoleRestore, "system_role", "id"), systemRoleHandler.RestoreSystemRole)
 
 		systemRoles.Get("/:id/permissions", systemRoleHandler.GetSystemRolePermissions)
-		systemRoles.Post("/:id/permissions", systemRoleHandler.AddPermissionsToSystemRole)
-		systemRoles.Put("/:id/permissions", systemRoleHandler.SetSystemRolePermissions)
-		systemRoles.Delete("/:id/permissions", systemRoleHandler.RemovePermissionsFromSystemRole)
+		systemRoles.Post("/:id/permissions", middleware.Audit(auditRec, model.AuditActionSystemRolePermissions, "system_role", "id"), systemRoleHandler.AddPermissionsToSystemRole)
+		systemRoles.Put("/:id/permissions", middleware.Audit(auditRec, model.AuditActionSystemRolePermissions, "system_role", "id"), systemRoleHandler.SetSystemRolePermissions)
+		systemRoles.Delete("/:id/permissions", middleware.Audit(auditRec, model.AuditActionSystemRolePermissions, "system_role", "id"), systemRoleHandler.RemovePermissionsFromSystemRole)
 	}
 }

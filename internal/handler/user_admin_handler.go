@@ -6,6 +6,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/service"
 )
@@ -143,6 +145,8 @@ func (h *UserAdminHandler) UpdateUserStatus(c *fiber.Ctx) error {
 	message := "Account locked"
 	if req.IsActive {
 		message = "Account unlocked"
+		// Cùng một route phục vụ khoá và mở khoá: middleware Audit mặc định ghi user.lock.
+		middleware.SetAuditAction(c, model.AuditActionUserUnlock)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
