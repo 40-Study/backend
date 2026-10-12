@@ -111,7 +111,17 @@ func NewEnrollmentRepository(db *gorm.DB) *EnrollmentRepository {
 	return &EnrollmentRepository{db: db}
 }
 
+// Create ghi danh mới và đặt total_lessons = số bài bắt buộc HIỆN CÓ của khoá ngay lúc tạo, để ghi danh
+// không hiện "0/0 bài" cho tới lần tính lại tiến độ đầu tiên (QA 261010 follow-up 2c/2d, quan sát 1).
+// Dùng đúng CountTotalMandatory mà recalculateProgress dùng (một định nghĩa "tổng bài" duy nhất) và
+// đặt ở repository để MỌI đường tạo ghi danh (tự ghi danh, hoàn tất đơn, trong hay ngoài transaction —
+// r.db là tx khi repo dựng từ tx) đi qua cùng một chỗ. completed_lessons / progress_percentage giữ 0.
 func (r *EnrollmentRepository) Create(ctx context.Context, enrollment *model.Enrollment) error {
+	total, err := r.CountTotalMandatory(ctx, enrollment.CourseID)
+	if err != nil {
+		return err
+	}
+	enrollment.TotalLessons = int(total)
 	return r.db.WithContext(ctx).Create(enrollment).Error
 }
 
@@ -178,7 +188,18 @@ func (r *EnrollmentRepository) buildRestoreAndReactivateQuery(ctx context.Contex
 	return r.db.WithContext(ctx).Unscoped().Model(&model.Enrollment{}).Where("id = ?", id).Updates(updates)
 }
 
+// RestoreAndReactivate cũng làm tươi total_lessons (khoá có thể đã thêm/bớt bài từ lúc học viên rời đi) và
+// ghi giá trị đó lại vào updates["total_lessons"] (int) để caller dựng DTO không phải đếm lần nữa.
 func (r *EnrollmentRepository) RestoreAndReactivate(ctx context.Context, id uuid.UUID, updates map[string]interface{}) error {
+	var current model.Enrollment
+	if err := r.db.WithContext(ctx).Unscoped().Select("course_id").Where("id = ?", id).Limit(1).Find(&current).Error; err != nil {
+		return err
+	}
+	total, err := r.CountTotalMandatory(ctx, current.CourseID)
+	if err != nil {
+		return err
+	}
+	updates["total_lessons"] = int(total)
 	return r.buildRestoreAndReactivateQuery(ctx, id, updates).Error
 }
 

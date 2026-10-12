@@ -157,6 +157,9 @@ func (s *EnrollmentService) Enroll(ctx context.Context, userID, courseID uuid.UU
 		existing.CompletedAt = nil
 		existing.LastAccessedAt = nil
 		existing.ProgressPercent = decimal.Zero
+		if total, ok := updates["total_lessons"].(int); ok { // repo làm tươi tổng bài, xem RestoreAndReactivate
+			existing.TotalLessons = total
+		}
 		if err := s.courseRepo.IncrementTotalStudents(ctx, courseID, 1); err != nil {
 			return nil, err
 		}
