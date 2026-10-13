@@ -19,4 +19,8 @@ func registerQA2BE3Routes(fiberApp *fiber.App, res *Resources, repos *Repositori
 	// F-10 wishlist.
 	wishlistSvc := service.NewWishlistService(repository.NewWishlistRepository(res.DB), repos.Course)
 	router.SetupWishlistRoutes(api, res.Config, handler.NewWishlistHandler(wishlistSvc), res.Redis)
+
+	// PG-M2 trang giảng viên công khai.
+	publicTeacherSvc := service.NewPublicTeacherProfileService(repository.NewPublicTeacherProfileRepository(res.DB))
+	router.SetupPublicTeacherProfileRoutes(api, handler.NewPublicTeacherProfileHandler(publicTeacherSvc))
 }
