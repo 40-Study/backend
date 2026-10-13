@@ -2,6 +2,9 @@ package handler
 
 import (
 	"errors"
+	"log"
+	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -114,6 +117,16 @@ func (h *UserAdminHandler) UpdateUserStatus(c *fiber.Ctx) error {
 		})
 	}
 
+	// ADM-N3: mở khoá xoá locked_reason/locked_at khỏi users, nên đọc lý do cũ TRƯỚC để ghi vào nhật ký. Chỉ để ghi
+	// nhật ký: đọc lỗi thì mở khoá vẫn tiếp tục và dòng nhật ký không có previous_reason (không bịa), có log cảnh báo.
+	var previous *dto.AdminUserDetailDTO
+	if req.IsActive {
+		if previous, err = h.userAdminService.GetUserDetail(c.Context(), userID); err != nil {
+			log.Printf("[Audit] không đọc được lý do khoá cũ của %s trước khi mở khoá: %v", userID, err)
+			previous = nil
+		}
+	}
+
 	result, err := h.userAdminService.UpdateUserStatus(c.Context(), userID, actorID, req.IsActive, req.Reason)
 	if err != nil {
 		switch {
@@ -147,6 +160,15 @@ func (h *UserAdminHandler) UpdateUserStatus(c *fiber.Ctx) error {
 		message = "Account unlocked"
 		// Cùng một route phục vụ khoá và mở khoá: middleware Audit mặc định ghi user.lock.
 		middleware.SetAuditAction(c, model.AuditActionUserUnlock)
+		if previous != nil && previous.LockedReason != nil {
+			middleware.SetAuditMeta(c, map[string]any{"previous_reason": *previous.LockedReason})
+			if previous.LockedAt != nil {
+				middleware.SetAuditMeta(c, map[string]any{"previous_locked_at": previous.LockedAt.Format(time.RFC3339)})
+			}
+		}
+	} else if req.Reason != nil {
+		// Lý do khoá là bắt buộc (service đã chặn rỗng); nhật ký là nơi duy nhất còn giữ nó sau khi mở khoá.
+		middleware.SetAuditMeta(c, map[string]any{"reason": strings.TrimSpace(*req.Reason)})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

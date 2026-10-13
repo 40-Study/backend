@@ -53,6 +53,11 @@ func (auditUserAdminSvc) UpdateUserStatus(context.Context, uuid.UUID, uuid.UUID,
 	return &dto.AdminUserDetailDTO{}, nil
 }
 
+// Mở khoá đọc lý do khoá cũ trước (ADM-N3) nên service giả cần GetUserDetail.
+func (auditUserAdminSvc) GetUserDetail(context.Context, uuid.UUID) (*dto.AdminUserDetailDTO, error) {
+	return &dto.AdminUserDetailDTO{}, nil
+}
+
 func TestUserAdminHandler_LockAndUnlockSetAuditAction(t *testing.T) {
 	h := NewUserAdminHandler(auditUserAdminSvc{})
 	id := uuid.New().String()
