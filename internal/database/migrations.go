@@ -473,6 +473,12 @@ func RunPostMigrations(db *gorm.DB) error {
 		return err
 	}
 
+	// Voucher seed "đơn hàng đầu tiên" chưa có cờ first_order_only trên DB cũ -> bật (một lần), xem first_order_voucher_backfill.go.
+	// Phải chạy SAU AutoMigrate: cần cột vouchers.first_order_only.
+	if err := runFirstOrderVoucherBackfill(db); err != nil {
+		return err
+	}
+
 	logNotValidCheckConstraints(db)
 
 	log.Printf("Post-migrations applied: %d statement group(s)\n", len(statements))

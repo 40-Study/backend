@@ -16,7 +16,7 @@ func (s *Seeder) SeedDemoVouchers() error {
 
 	vouchers := []model.Voucher{
 		{
-			Code:                    "WELCOME20",
+			Code:                    model.SeededFirstOrderVoucherCode,
 			Name:                    "Chào mừng học viên mới - giảm 20%",
 			Description:             "Giảm 20% cho đơn hàng đầu tiên, tối đa 200.000đ.",
 			DiscountUnit:            model.DiscountUnitMoney,
@@ -27,6 +27,7 @@ func (s *Seeder) SeedDemoVouchers() error {
 			AcceptAllPaymentMethods: true,
 			UsageLimit:              1000,
 			UsagePerUser:            1,
+			FirstOrderOnly:          true, // mô tả "đơn hàng đầu tiên" là luật thật (QA2 F-02), không chỉ chữ
 			StartDate:               &start,
 			EndDate:                 &end,
 			IsActive:                true,
@@ -69,6 +70,13 @@ func (s *Seeder) SeedDemoVouchers() error {
 			Attrs(record).
 			FirstOrCreate(&record).Error; err != nil {
 			return fmt.Errorf("failed to seed voucher %s: %w", v.Code, err)
+		}
+		// FirstOrCreate không chạm dòng đã có: DB demo seed trước QA2 F-02 vẫn thiếu cờ first_order_only.
+		if v.FirstOrderOnly && !record.FirstOrderOnly {
+			if err := s.db.Model(&model.Voucher{}).Where("id = ?", record.ID).
+				Update("first_order_only", true).Error; err != nil {
+				return fmt.Errorf("failed to flag voucher %s first_order_only: %w", v.Code, err)
+			}
 		}
 	}
 

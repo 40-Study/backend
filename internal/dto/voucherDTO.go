@@ -41,6 +41,8 @@ type CreateVoucherRequest struct {
 	IsActive  *bool      `json:"is_active"`
 	// HoldersOnly: nil/false = công khai (mặc định); true = chỉ người đã được cấp/đã lưu mới dùng được.
 	HoldersOnly *bool `json:"holders_only"`
+	// FirstOrderOnly: nil/false = ai cũng dùng được (mặc định); true = chỉ user chưa từng có đơn thành công.
+	FirstOrderOnly *bool `json:"first_order_only"`
 }
 
 type UpdateVoucherRequest struct {
@@ -67,6 +69,8 @@ type UpdateVoucherRequest struct {
 	// HoldersOnly: nil = giữ nguyên; true/false = đổi. Bật sau khi voucher đã phát hành thì người đã
 	// lưu/được cấp vẫn dùng được, người chưa có thì không.
 	HoldersOnly *bool `json:"holders_only"`
+	// FirstOrderOnly: nil = giữ nguyên; true/false = đổi.
+	FirstOrderOnly *bool `json:"first_order_only"`
 
 	// Cờ xoá (L6 mục 8) — chỉ do UnmarshalJSON đặt (clearable_update_dto.go): trường gửi `null` hoặc ""
 	// nghĩa là XOÁ giá trị (đặt NULL / 0 = không có), vắng mặt = giữ nguyên. Trước đây ô trống ở form

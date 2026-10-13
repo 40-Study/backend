@@ -326,6 +326,15 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 			if errors.Is(err, ErrVoucherNotApplicable) && subtotal.IsZero() {
 				return nil, ErrVoucherNotApplicableToFreeOrder
 			}
+			// QA2 F-02: nguyên nhân user hiểu và sửa được ("mã chỉ cho đơn đầu tiên") — không làm phẳng.
+			// Ngoại lệ: user đặt lại đúng giỏ đang mở (đơn processing giữ voucher) thì vẫn phải nhận lỗi đơn
+			// đang mở như trước F-02, không phải lỗi "đơn đầu tiên".
+			if errors.Is(err, ErrVoucherFirstOrderOnly) {
+				if openErr := s.openOrderConflict(userID, courseIDs, req.CouponCode); openErr != nil {
+					return nil, openErr
+				}
+				return nil, ErrVoucherFirstOrderOnly
+			}
 			return nil, ErrCouponInvalid
 		}
 	}
@@ -1010,6 +1019,20 @@ func orderHoldExpiresAt(order *model.Order) *time.Time {
 // tới trả lần 2 (qua "Mua ngay"/checkout). Vòng 4: đơn này (và đơn có mã vừa huỷ) bị
 // paymentVerificationHoldExists chặn trước với ErrPreviousOrderVerifying (409 ERR_PAYMENT_VERIFYING);
 // hết chặn khi đối chiếu xong (completed/expired) hoặc hết 30 phút sau khi huỷ.
+// openOrderConflict trả đúng lỗi mà bước dùng-lại-đơn-đang-mở của CreateOrder sẽ trả (ErrOrderInProgress,
+// ErrPreviousOrderVerifying) cho yêu cầu này, nil nếu không có đơn đang mở nào cản đường.
+func (s *OrderService) openOrderConflict(userID uuid.UUID, courseIDs []uuid.UUID, couponCode string) error {
+	var conflict error
+	err := s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
+		_, _, conflict = findReusableOpenOrder(txRepo.TxDB(), userID, courseIDs, couponCode, decimal.Zero, decimal.Zero)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return conflict
+}
+
 func findReusableOpenOrder(txDB *gorm.DB, userID uuid.UUID, courseIDs []uuid.UUID, couponCode string, totalAmount, discountAmount decimal.Decimal) (uuid.UUID, *model.Order, error) {
 	now := time.Now()
 	if held, err := paymentVerificationHoldExists(txDB, userID, courseIDs, now); err != nil {

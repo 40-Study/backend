@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/utils"
 )
@@ -50,6 +51,9 @@ type CourseFilterDBParams struct {
 	Page         int
 	PageSize     int
 }
+
+// ErrCourseHasEnrollments — xem service.ErrCourseHasEnrollments.
+var ErrCourseHasEnrollments = errors.New("Khoá học đã có học viên ghi danh nên không thể xoá. Hãy chọn \"Lưu trữ\" để ngừng bán khoá này.")
 
 type CourseRepository struct {
 	db *gorm.DB
@@ -195,8 +199,47 @@ func (r *CourseRepository) Update(ctx context.Context, course *model.Course) err
 	return r.db.WithContext(ctx).Save(course).Error
 }
 
+// Delete xoá mềm khoá học KÈM cả cây con trong MỘT transaction (QA2 Q2-01): trước đây chỉ courses.deleted_at
+// được đặt nên chương và quiz của khoá vẫn "sống" — danh sách quiz của giảng viên vẫn hiện chúng.
+//   - sections: xoá mềm. lessons / lesson_contents không có cột deleted_at (xoá bài là xoá thật, xem
+//     LessonRepository.Delete) nên được ẩn đúng như xoá chương lẻ: mọi đường truy cập đi qua
+//     sections.deleted_at IS NULL (GetCourseIDByLessonID, RecalculateLessonStats...).
+//   - quizzes: xoá mềm quiz cấp khoá (course_id) và quiz gắn vào bài của khoá (lesson_id).
+//   - lesson_contents loại quiz trỏ vào các quiz đó bị gỡ, giống QuizRepository.DeleteQuiz, để không còn
+//     dòng nội dung trỏ vào quiz đã xoá.
+//
+// Khoá còn ghi danh hoạt động (enrollments chưa xoá mềm) bị từ chối bằng ErrCourseHasEnrollments, không ghi gì.
 func (r *CourseRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	return r.db.WithContext(ctx).Delete(&model.Course{}, "id = ?", id).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Review M2 (quyết định chủ dự án): khoá còn ghi danh hoạt động không xoá được. Khoá dòng khoá học rồi đếm
+		// trong cùng transaction với phần cascade, để việc kiểm và việc xoá không tách rời nhau.
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&model.Course{}, "id = ?", id).Error; err != nil {
+			return err
+		}
+		var enrolled int64
+		if err := tx.Model(&model.Enrollment{}).Where("course_id = ?", id).Count(&enrolled).Error; err != nil {
+			return err
+		}
+		if enrolled > 0 {
+			return ErrCourseHasEnrollments
+		}
+		lessonIDs := tx.Table("lessons").Select("lessons.id").
+			Joins("JOIN sections ON sections.id = lessons.section_id").
+			Where("sections.course_id = ?", id)
+		courseQuizIDs := tx.Model(&model.Quiz{}).Select("id").
+			Where("course_id = ? OR lesson_id IN (?)", id, lessonIDs)
+
+		if err := tx.Delete(&model.LessonContent{}, "quiz_id IN (?)", courseQuizIDs).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&model.Quiz{}, "id IN (?)", courseQuizIDs).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&model.Section{}, "course_id = ?", id).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.Course{}, "id = ?", id).Error
+	})
 }
 
 // SlugExists checks if a course with the given slug already exists

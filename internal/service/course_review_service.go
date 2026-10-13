@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -55,8 +56,19 @@ type CourseReviewServiceInterface interface {
 	Reject(ctx context.Context, courseID, adminID uuid.UUID, rawReason string) (*dto.CourseReviewResultDTO, error)
 }
 
+// CourseReviewNoticeRefType: reference_type của thông báo duyệt / từ chối khoá học (reference_id = id khoá).
+// Khác "course" (đích /courses/:id công khai) vì khoá bị từ chối chưa có trang công khai — web điều hướng
+// giảng viên tới trang quản lý khoá /teacher/courses/:id.
+const CourseReviewNoticeRefType = "course_review"
+
+// CourseReviewNotifier: phần của NotificationService mà luồng duyệt khoá cần (interface hẹp để test thay được).
+type CourseReviewNotifier interface {
+	SendNotification(req dto.CreateNotificationDTO) error
+}
+
 type CourseReviewService struct {
-	repo repository.CourseReviewRepositoryInterface
+	repo     repository.CourseReviewRepositoryInterface
+	notifier CourseReviewNotifier
 	// mapper: tái dùng CourseService.toCourseResponseDTO (một nguồn map DTO duy nhất) — hàm này
 	// không đọc field nào của receiver nên zero-value là đủ.
 	mapper *CourseService
@@ -65,6 +77,10 @@ type CourseReviewService struct {
 func NewCourseReviewService(repo repository.CourseReviewRepositoryInterface) *CourseReviewService {
 	return &CourseReviewService{repo: repo, mapper: &CourseService{}}
 }
+
+// SetNotifier nối bộ gửi thông báo cho giảng viên (setter để không đổi chữ ký constructor, giống
+// FriendshipService.SetNotifier). nil = không gửi thông báo.
+func (s *CourseReviewService) SetNotifier(n CourseReviewNotifier) { s.notifier = n }
 
 func toReviewResult(c *model.Course) *dto.CourseReviewResultDTO {
 	out := &dto.CourseReviewResultDTO{ID: c.ID, Status: c.Status}
@@ -133,7 +149,29 @@ func (s *CourseReviewService) Approve(ctx context.Context, courseID, adminID uui
 	if err != nil {
 		return nil, err
 	}
+	s.notifyTeacher(course, "Khoá học đã được duyệt",
+		"Khoá học \""+course.Title+"\" của bạn đã được duyệt và xuất bản.")
 	return toReviewResult(course), nil
+}
+
+// notifyTeacher báo kết quả duyệt cho giảng viên chủ khoá (ADM-N1). Chạy SAU khi trạng thái khoá đã commit
+// nên một lần gửi lỗi chỉ được log, không kéo lùi quyết định của admin.
+func (s *CourseReviewService) notifyTeacher(course *model.Course, title, content string) {
+	if s.notifier == nil {
+		return
+	}
+	refType, refID := CourseReviewNoticeRefType, course.ID
+	err := s.notifier.SendNotification(dto.CreateNotificationDTO{
+		Title:            title,
+		Content:          content,
+		NotificationType: "course_update",
+		ReferenceType:    &refType,
+		ReferenceID:      &refID,
+		UserIDs:          []uuid.UUID{course.InstructorID},
+	})
+	if err != nil {
+		log.Printf("course-review: gửi thông báo duyệt khoá %s cho giảng viên %s lỗi: %v", course.ID, course.InstructorID, err)
+	}
 }
 
 func (s *CourseReviewService) Reject(ctx context.Context, courseID, adminID uuid.UUID, rawReason string) (*dto.CourseReviewResultDTO, error) {
@@ -145,5 +183,7 @@ func (s *CourseReviewService) Reject(ctx context.Context, courseID, adminID uuid
 	if err != nil {
 		return nil, err
 	}
+	s.notifyTeacher(course, "Khoá học bị từ chối",
+		"Khoá học \""+course.Title+"\" chưa được duyệt. Lý do: "+reason+". Bạn có thể chỉnh sửa và gửi duyệt lại.")
 	return toReviewResult(course), nil
 }

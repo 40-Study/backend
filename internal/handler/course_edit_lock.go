@@ -41,3 +41,16 @@ func writeDiscountPriceInvalid(c *fiber.Ctx, err error) bool {
 	})
 	return true
 }
+
+// CourseHasEnrollmentsCode — mã lỗi 409 khi xoá khoá học còn ghi danh hoạt động (QA2 Q2-01, review M2). Web đọc mã
+// này để gợi ý "Lưu trữ" thay vì xoá.
+const CourseHasEnrollmentsCode = "COURSE_HAS_ENROLLMENTS"
+
+// writeCourseHasEnrollments ghi 409 nếu err là service.ErrCourseHasEnrollments; trả false để handler đi tiếp.
+func writeCourseHasEnrollments(c *fiber.Ctx, err error) bool {
+	if !errors.Is(err, service.ErrCourseHasEnrollments) {
+		return false
+	}
+	_ = c.Status(fiber.StatusConflict).JSON(fiber.Map{"message": err.Error(), "code": CourseHasEnrollmentsCode})
+	return true
+}

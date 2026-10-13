@@ -111,6 +111,19 @@ func (r *VoucherRepository) CountUserHeldOrders(ctx context.Context, userID, vou
 	return count, err
 }
 
+// CountUserPriorOrders đếm đơn khiến user KHÔNG còn là khách mới đối với voucher first_order_only (QA2 F-02):
+// completed = đã mua; refunded = đã mua rồi được hoàn; processing = đã có mã thanh toán đang đối chiếu (có thể
+// vừa trả tiền) — mọi processing đều tính, kể cả đơn đang giữ chính voucher này. pending/cancelled/expired/failed
+// không tính: user chưa mua được gì thì vẫn là khách mới. excludeOrderID loại một đơn khỏi phép đếm (kiểm lại
+// lúc đơn đó xin mã thanh toán thì không tự tính chính nó); uuid.Nil = không loại đơn nào.
+func (r *VoucherRepository) CountUserPriorOrders(ctx context.Context, userID, excludeOrderID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Order{}).
+		Where("user_id = ? AND id <> ? AND status IN ('completed','refunded','processing')", userID, excludeOrderID).
+		Count(&count).Error
+	return count, err
+}
+
 // LockVoucherForUpdate (I-02, review vòng 5) — SELECT ... FOR UPDATE trên đúng 1 dòng voucher.
 // BẮT BUỘC gọi trên "r" đã được dựng từ *gorm.DB của MỘT TRANSACTION ĐANG MỞ
 // (repository.NewVoucherRepository(txDB) — xem VoucherService.LockAndCheckUsagePerUser) — gọi
