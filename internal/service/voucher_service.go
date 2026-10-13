@@ -305,7 +305,7 @@ func ensureFirstOrderEligible(ctx context.Context, repo *repository.VoucherRepos
 	if !v.FirstOrderOnly || userID == uuid.Nil {
 		return nil
 	}
-	prior, err := repo.CountUserPriorOrders(ctx, userID)
+	prior, err := repo.CountUserPriorOrders(ctx, userID, v.ID)
 	if err != nil {
 		return err
 	}
