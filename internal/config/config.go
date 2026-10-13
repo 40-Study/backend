@@ -197,7 +197,7 @@ func LoadConfig() (*Config, error) {
 	viper.Set("ENVIRONMENT", env)
 
 	// Set default values
-	viper.SetDefault("PORT", "5001") // 5000 bị AirPlay Receiver của macOS chiếm
+	viper.SetDefault("PORT", "5000")
 	viper.SetDefault("HOST", "localhost")
 	viper.SetDefault("REDIS_DB", 0)
 	viper.SetDefault("MINIO_USE_SSL", false)

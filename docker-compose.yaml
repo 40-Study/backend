@@ -304,7 +304,7 @@ services:
   #   container_name: go_backend
   #   working_dir: /app
   #   ports:
-  #     - "5001:5001"
+  #     - "5000:5000"
   #   volumes:
   #     - .:/app
   #   command: air
