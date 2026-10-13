@@ -107,6 +107,13 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 				"message": err.Error(),
 			})
 		}
+		// QA2 F-02: voucher "đơn hàng đầu tiên" mà user đã có đơn — cùng mã lỗi với GET /vouchers/code/:code.
+		if errors.Is(err, service.ErrVoucherFirstOrderOnly) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"code":    "VOUCHER_FIRST_ORDER_ONLY",
+				"message": err.Error(),
+			})
+		}
 		// Review #76 vòng 4: đơn trước cùng khoá đã cấp mã và đang đối chiếu (kể cả vừa huỷ) →
 		// 409 ERR_PAYMENT_VERIFYING kèm câu riêng của ErrPreviousOrderVerifying.
 		if body, ok := paymentStateConflict(err); ok {

@@ -89,6 +89,13 @@ func (h *VoucherHandler) GetVoucherByCode(c *fiber.Ctx) error {
 	viewerID, _ := getAuthUserID(c)
 	voucher, err := h.voucherService.GetVoucherByCodeForViewer(c.Context(), code, viewerID)
 	if err != nil {
+		// QA2 F-02: mã "đơn hàng đầu tiên" mà người xem đã mua rồi — 409 với mã riêng để web báo đúng lý do.
+		if errors.Is(err, service.ErrVoucherFirstOrderOnly) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"code":    "VOUCHER_FIRST_ORDER_ONLY",
+				"message": err.Error(),
+			})
+		}
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"code":    "ERR_NOT_FOUND",
 			"message": "Voucher not found",

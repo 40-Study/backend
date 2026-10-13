@@ -111,6 +111,22 @@ func (r *VoucherRepository) CountUserHeldOrders(ctx context.Context, userID, vou
 	return count, err
 }
 
+// PriorSuccessfulOrderStatuses (QA2 F-02): trạng thái đơn tính là "user đã mua" cho voucher
+// first_order_only. completed = đã mua; processing = đã có mã thanh toán đang đối chiếu (có thể vừa
+// trả tiền); refunded = đã mua rồi được hoàn. pending/cancelled/expired/failed không tính — user
+// chưa mua được gì thì vẫn là khách mới.
+var PriorSuccessfulOrderStatuses = []string{"completed", "processing", "refunded"}
+
+// CountUserPriorOrders đếm đơn của user ở các trạng thái PriorSuccessfulOrderStatuses — dùng cho luật
+// voucher first_order_only (VoucherService.ensureFirstOrderEligible).
+func (r *VoucherRepository) CountUserPriorOrders(ctx context.Context, userID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Order{}).
+		Where("user_id = ? AND status IN ?", userID, PriorSuccessfulOrderStatuses).
+		Count(&count).Error
+	return count, err
+}
+
 // LockVoucherForUpdate (I-02, review vòng 5) — SELECT ... FOR UPDATE trên đúng 1 dòng voucher.
 // BẮT BUỘC gọi trên "r" đã được dựng từ *gorm.DB của MỘT TRANSACTION ĐANG MỞ
 // (repository.NewVoucherRepository(txDB) — xem VoucherService.LockAndCheckUsagePerUser) — gọi

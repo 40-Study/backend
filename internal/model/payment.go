@@ -257,6 +257,11 @@ type Voucher struct {
 	// danh sách /vouchers/public. not null + default false: voucher cũ vẫn công khai như trước.
 	HoldersOnly bool `gorm:"type:bool;not null;default:false" json:"holders_only"`
 
+	// FirstOrderOnly (QA2 F-02): true = voucher "đơn hàng đầu tiên" — chỉ user CHƯA từng có đơn thành
+	// công (xem repository.VoucherRepository.CountUserPriorOrders) mới áp dụng được. Là cờ dữ liệu của
+	// từng voucher, KHÔNG gắn với tên mã nào. not null + default false: voucher cũ giữ nguyên hành vi.
+	FirstOrderOnly bool `gorm:"type:bool;not null;default:false" json:"first_order_only"`
+
 	// Soft delete
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 

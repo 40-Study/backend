@@ -326,6 +326,10 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 			if errors.Is(err, ErrVoucherNotApplicable) && subtotal.IsZero() {
 				return nil, ErrVoucherNotApplicableToFreeOrder
 			}
+			// QA2 F-02: nguyên nhân user hiểu và sửa được ("mã chỉ cho đơn đầu tiên") — không làm phẳng.
+			if errors.Is(err, ErrVoucherFirstOrderOnly) {
+				return nil, ErrVoucherFirstOrderOnly
+			}
 			return nil, ErrCouponInvalid
 		}
 	}
