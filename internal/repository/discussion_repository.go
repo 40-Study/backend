@@ -22,7 +22,8 @@ type DiscussionRepositoryInterface interface {
 	GetUserVote(ctx context.Context, userID, discussionID uuid.UUID) (*model.DiscussionVote, error)
 	GetUserVotes(ctx context.Context, userID uuid.UUID, discussionIDs []uuid.UUID) ([]model.DiscussionVote, error)
 	IncrementUpvoteCount(ctx context.Context, id uuid.UUID, delta int) error
-	IncrementReplyCount(ctx context.Context, id uuid.UUID, delta int) error
+	// CreateReply chèn một trả lời và đếm lại reply_count của bài gốc trong CÙNG giao dịch (khoá dòng bài gốc).
+	CreateReply(ctx context.Context, reply *model.Discussion) error
 	DeletePost(ctx context.Context, id uuid.UUID) error
 }
 
@@ -172,31 +173,69 @@ func (r *DiscussionRepository) IncrementUpvoteCount(ctx context.Context, id uuid
 		Update("upvote_count", gorm.Expr("upvote_count + ?", delta)).Error
 }
 
-func (r *DiscussionRepository) IncrementReplyCount(ctx context.Context, id uuid.UUID, delta int) error {
-	return r.db.WithContext(ctx).
-		Model(&model.Discussion{}).
-		Where("id = ?", id).
-		Update("reply_count", gorm.Expr("reply_count + ?", delta)).Error
-}
-
-// recountThreadRepliesSQL: tìm bài gốc của dòng `id` (đi lên theo parent_id, tính cả dòng vừa xoá mềm) rồi ghi lại
-// reply_count của nó theo số trả lời còn sống thật.
-const recountThreadRepliesSQL = `WITH RECURSIVE up AS (
+// threadRootSQL: bài gốc của dòng `?` (đi lên theo parent_id, tính cả dòng đã xoá mềm). UNION nên vòng parent_id (dữ
+// liệu hỏng) vẫn dừng.
+const threadRootSQL = `WITH RECURSIVE up AS (
 		SELECT id, parent_id FROM discussions WHERE id = ?
 		UNION
 		SELECT p.id, p.parent_id FROM discussions p JOIN up ON p.id = up.parent_id
-	)
-	UPDATE discussions d SET reply_count = ` + model.DiscussionLiveReplyCountSQL + `
-	WHERE d.deleted_at IS NULL AND d.id IN (SELECT id FROM up WHERE parent_id IS NULL)`
+	) SELECT id FROM up WHERE parent_id IS NULL LIMIT 1`
+
+// recountRepliesSQL: ghi lại reply_count của bài gốc `?` theo số trả lời còn sống thật.
+const recountRepliesSQL = `UPDATE discussions d SET reply_count = ` + model.DiscussionLiveReplyCountSQL + `
+	WHERE d.deleted_at IS NULL AND d.id = ?`
+
+// lockThreadRoot tìm bài gốc của dòng fromID và khoá dòng đó (FOR UPDATE) cho tới hết giao dịch. Mọi thay đổi đếm
+// (thêm/xoá trả lời) khoá bài gốc TRƯỚC khi đổi dòng và đếm lại, nên hai thao tác đồng thời trên cùng một bài xếp hàng và
+// lần đếm sau luôn thấy kết quả đã commit của lần trước (không đếm trên ảnh chụp cũ rồi ghi đè).
+func lockThreadRoot(tx *gorm.DB, fromID uuid.UUID) (uuid.UUID, error) {
+	var roots []string
+	if err := tx.Raw(threadRootSQL, fromID).Scan(&roots).Error; err != nil {
+		return uuid.Nil, err
+	}
+	if len(roots) == 0 {
+		return uuid.Nil, gorm.ErrRecordNotFound
+	}
+	rootID, err := uuid.Parse(roots[0])
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if err := tx.Exec("SELECT 1 FROM discussions WHERE id = ? FOR UPDATE", rootID).Error; err != nil {
+		return uuid.Nil, err
+	}
+	return rootID, nil
+}
 
 // DeletePost xoá mềm một bài/trả lời. Xoá một TRẢ LỜI thì đếm lại reply_count của bài gốc trong CÙNG giao dịch
 // (QA2 F-05: trước đây chỉ có +1 ở AddComment, không bao giờ -1). Đếm lại theo số thật thay vì trừ 1 nên số lệch
 // từ dữ liệu cũ tự được sửa, không thể thành số âm. Xoá bài gốc: không có bộ đếm của ai bị ảnh hưởng.
 func (r *DiscussionRepository) DeletePost(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		rootID, err := lockThreadRoot(tx, id)
+		if err != nil {
+			return err
+		}
 		if err := tx.Delete(&model.Discussion{}, "id = ?", id).Error; err != nil {
 			return err
 		}
-		return tx.Exec(recountThreadRepliesSQL, id).Error
+		return tx.Exec(recountRepliesSQL, rootID).Error
+	})
+}
+
+// CreateReply (review L2): chèn trả lời + đếm lại bài gốc của CHUỖI cha của nó trong một giao dịch. Bài gốc lấy theo
+// parent_id thật của trả lời nên một parent_id trỏ sang bài khác cộng đúng vào bài chứa nó, không lệch bài đang mở.
+func (r *DiscussionRepository) CreateReply(ctx context.Context, reply *model.Discussion) error {
+	if reply.ParentID == nil {
+		return errors.New("reply requires parent_id")
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		rootID, err := lockThreadRoot(tx, *reply.ParentID)
+		if err != nil {
+			return err
+		}
+		if err := tx.Create(reply).Error; err != nil {
+			return err
+		}
+		return tx.Exec(recountRepliesSQL, rootID).Error
 	})
 }

@@ -124,3 +124,56 @@ func TestDeletePost_Reply_SelfHealsDriftedCounter(t *testing.T) {
 		t.Errorf("reply_count = %d, muốn 1 (số trả lời còn sống), không được âm hay giữ số lệch", got)
 	}
 }
+
+// Review L2: AddComment chèn trả lời rồi cộng +1 ở hai câu lệnh riêng; một lần đếm lại của DeletePost chen vào giữa thì
+// +1 cộng lên số đã có trả lời mới (lệch 1). Thêm trả lời nay cũng đếm lại theo số thật trong cùng giao dịch, nên số
+// lệch sẵn được sửa ở ngay lần thêm.
+func TestAddComment_RecountsFromTruth_SelfHealsDrift(t *testing.T) {
+	d := newDiscussionCountFixture(t)
+	d.reply(nil)
+	d.reply(nil)
+	d.f.exec("UPDATE discussions SET reply_count = 7 WHERE id = ?", d.post.ID) // lệch cao
+
+	d.reply(nil)
+	if got := d.storedCount(); got != 3 {
+		t.Errorf("reply_count = %d, muốn 3 (số trả lời còn sống), không phải 8 (số lệch + 1)", got)
+	}
+}
+
+// Thêm và xoá trả lời chạy ĐỒNG THỜI trên cùng một bài: số lưu phải bằng số trả lời còn sống. Cả hai đường khoá dòng bài
+// gốc trước khi đếm nên không có lần đếm nào dựa trên ảnh chụp cũ của đường kia.
+func TestReplyCount_ConcurrentAddAndDelete_MatchesLiveReplies(t *testing.T) {
+	d := newDiscussionCountFixture(t)
+	const seeded, adders = 10, 15
+	var toDelete []uuid.UUID
+	for i := 0; i < seeded; i++ {
+		toDelete = append(toDelete, d.reply(nil))
+	}
+
+	errs := make(chan error, seeded+adders)
+	for i := 0; i < adders; i++ {
+		go func() {
+			_, err := d.svc.AddComment(context.Background(), d.post.Slug, d.user, dto.CreateForumCommentDTO{Content: "đồng thời"})
+			errs <- err
+		}()
+	}
+	for _, id := range toDelete {
+		go func(id uuid.UUID) { errs <- d.svc.DeletePost(context.Background(), id, d.user) }(id)
+	}
+	for i := 0; i < seeded+adders; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("thao tác đồng thời lỗi: %v", err)
+		}
+	}
+
+	var live int64
+	if err := d.f.db.Model(&model.Discussion{}).Where("parent_id = ?", d.post.ID).Count(&live).Error; err != nil {
+		t.Fatal(err)
+	}
+	if live != adders {
+		t.Fatalf("còn %d trả lời sống, muốn %d", live, adders)
+	}
+	if got := d.storedCount(); got != int(live) {
+		t.Errorf("reply_count = %d, muốn %d (số trả lời còn sống)", got, live)
+	}
+}
