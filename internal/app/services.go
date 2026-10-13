@@ -574,6 +574,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 	s.Conversation.SetParentTeacherChecker(repos.ParentStudent)
 	s.UserStats.SetFriendshipChecker(s.Friendship)
 	s.Group.SetNotifier(s.Notification)
+	wireCourseReviewNotifications(s)
 	// Lane S2: moi vao nhom dung chung guard nhan tin cua Conversation (Lane G).
 	s.Group.SetInviteGuard(s.Conversation)
 	s.Group.SetChannelEvictor(notifier)
@@ -600,6 +601,12 @@ func wireContest(s *Services, repos *Repositories) {
 	)
 	s.Quiz.SetContestGate(s.Contest)
 	s.Quiz.SetParentLinkChecker(repos.ParentStudent)
+}
+
+// wireCourseReviewNotifications — QA2 ADM-N1: duyệt / từ chối khoá báo cho giảng viên qua NotificationService. Quên nối
+// thì CourseReviewService im lặng (notifier nil = không gửi); test wiring ở services_course_review_test.go.
+func wireCourseReviewNotifications(s *Services) {
+	s.CourseReview.SetNotifier(s.Notification)
 }
 
 // wireQuizLessonCompletion — QA 261009 H1: đỗ quiz chính thức của một bài học chốt bài đó completed (EnrollmentService
