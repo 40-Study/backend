@@ -1,0 +1,8 @@
+# Pin line endings in the repo itself: core.autocrlf is per-clone config and cannot be relied on.
+# Text files are stored with LF in the index and checked out with LF on every platform (Go tooling,
+# shell scripts and Dockerfiles all require LF; gofmt rewrites CRLF files, which is how a one-line
+# change used to turn into a whole-file diff, e.g. internal/handler/order_handler.go).
+* text=auto eol=lf
+
+# Never touch binary documents.
+*.pdf binary
