@@ -47,7 +47,7 @@ func (h *EnrollmentHandler) Enroll(c *fiber.Ctx) error {
 		}
 		if err == service.ErrPaymentRequired {
 			return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
-				"message": "Khóa học trả phí, vui lòng thanh toán qua đơn hàng",
+				"message": "Khoá học trả phí, vui lòng thanh toán qua đơn hàng",
 			})
 		}
 		// Review QA2 H2: khoá ngừng bán (archived) không nhận ghi danh mới.
