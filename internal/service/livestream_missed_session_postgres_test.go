@@ -18,10 +18,11 @@ import (
 )
 
 type missedSessionFixture struct {
-	t   *testing.T
-	f   *orderFixture
-	svc *LivestreamService
-	ids map[string]uuid.UUID
+	host uuid.UUID
+	t    *testing.T
+	f    *orderFixture
+	svc  *LivestreamService
+	ids  map[string]uuid.UUID
 }
 
 func newMissedSessionFixture(t *testing.T) *missedSessionFixture {
@@ -65,13 +66,24 @@ func newMissedSessionFixture(t *testing.T) *missedSessionFixture {
 		ids["real-"+string(st)] = s.ID
 	}
 	svc := NewLivestreamService(repository.NewLivestreamRepository(f.db), nil, nil, nil, nil, nil, nil, nil, nil, nil)
-	return &missedSessionFixture{t: t, f: f, svc: svc, ids: ids}
+	return &missedSessionFixture{host: host, t: t, f: f, svc: svc, ids: ids}
 }
 
-// statusByKey đọc danh sách như API: key -> trạng thái trả ra, chỉ gồm phiên của fixture.
+// statusByKey đọc danh sách như API (người xem KHÔNG phải chủ buổi): key -> trạng thái trả ra, chỉ gồm phiên của fixture.
 func (m *missedSessionFixture) statusByKey(filter string) map[string]string {
 	m.t.Helper()
-	out, err := m.svc.GetAll(context.Background(), uuid.New(), true, 1, 100, filter, nil, nil)
+	return m.viewAs(uuid.New(), true, filter).status
+}
+
+type missedView struct {
+	status  map[string]string
+	overdue map[string]bool
+}
+
+// viewAs đọc danh sách với tư cách (userID, isAdmin) và trả cả status lẫn is_overdue theo key.
+func (m *missedSessionFixture) viewAs(userID uuid.UUID, isAdmin bool, filter string) missedView {
+	m.t.Helper()
+	out, err := m.svc.GetAll(context.Background(), userID, isAdmin, 1, 100, filter, nil, nil)
 	if err != nil {
 		m.t.Fatalf("GetAll(%q): %v", filter, err)
 	}
@@ -79,11 +91,12 @@ func (m *missedSessionFixture) statusByKey(filter string) map[string]string {
 	for k, id := range m.ids {
 		byID[id] = k
 	}
-	got := map[string]string{}
+	v := missedView{status: map[string]string{}, overdue: map[string]bool{}}
 	for _, d := range out.Data {
-		got[byID[d.ID]] = d.Status
+		v.status[byID[d.ID]] = d.Status
+		v.overdue[byID[d.ID]] = d.IsOverdue
 	}
-	return got
+	return v
 }
 
 func TestLivestreamGetAll_PastScheduledSessionNoLongerShownScheduled(t *testing.T) {
@@ -153,4 +166,74 @@ func TestLivestreamEffectiveStatus_Boundary(t *testing.T) {
 func missedSortedKeys(keys []string) string {
 	sort.Strings(keys)
 	return strings.Join(keys, ",")
+}
+
+// Review L3: học viên thấy buổi đã qua giờ là "ended", nhưng CHỦ buổi vẫn Start được nên phải còn tìm thấy nó ở danh sách
+// "scheduled" của mình, kèm is_overdue=true để UI đánh dấu quá giờ. Web giảng viên (/teacher/schedule) gọi
+// GET /livestream?host_id=<mình> không lọc status nên không cần đổi gì.
+func TestLivestreamGetAll_HostStillFindsOverdueSessionAsScheduled(t *testing.T) {
+	m := newMissedSessionFixture(t)
+
+	own := m.viewAs(m.host, false, "")
+	for _, k := range []string{"missed-with-end", "missed-no-end"} {
+		if own.status[k] != "scheduled" || !own.overdue[k] {
+			t.Errorf("chủ buổi, %s: status=%q is_overdue=%v, muốn scheduled + overdue", k, own.status[k], own.overdue[k])
+		}
+	}
+	for _, k := range []string{"in-window", "upcoming", "no-schedule", "real-ended", "real-live", "real-cancelled"} {
+		if own.overdue[k] {
+			t.Errorf("chủ buổi, %s: is_overdue = true, muốn false", k)
+		}
+	}
+	if own.status["real-ended"] != "ended" {
+		t.Errorf("chủ buổi, buổi đã kết thúc thật: status = %q, muốn ended", own.status["real-ended"])
+	}
+
+	// Người khác (admin không phải chủ): vẫn "ended" nhưng is_overdue=true cho biết buổi chưa từng bắt đầu.
+	other := m.viewAs(uuid.New(), true, "")
+	if other.status["missed-with-end"] != "ended" || !other.overdue["missed-with-end"] {
+		t.Errorf("người xem khác: status=%q is_overdue=%v, muốn ended + overdue", other.status["missed-with-end"], other.overdue["missed-with-end"])
+	}
+}
+
+func TestLivestreamGetAll_StatusFilterKeepsHostOverdueInScheduled(t *testing.T) {
+	m := newMissedSessionFixture(t)
+	keys := func(v missedView) string {
+		var ks []string
+		for k := range v.status {
+			ks = append(ks, k)
+		}
+		return missedSortedKeys(ks)
+	}
+	if got, want := keys(m.viewAs(m.host, false, "scheduled")),
+		missedSortedKeys([]string{"in-window", "upcoming", "no-schedule", "missed-with-end", "missed-no-end"}); got != want {
+		t.Errorf("chủ buổi, status=scheduled -> %s, muốn %s", got, want)
+	}
+	if got, want := keys(m.viewAs(m.host, false, "ended")), missedSortedKeys([]string{"real-ended"}); got != want {
+		t.Errorf("chủ buổi, status=ended -> %s, muốn %s (buổi quá giờ của chính mình không còn ở đây)", got, want)
+	}
+	// Người xem khác giữ nguyên hành vi F-06.
+	if got, want := keys(m.viewAs(uuid.New(), true, "scheduled")), missedSortedKeys([]string{"in-window", "upcoming", "no-schedule"}); got != want {
+		t.Errorf("người xem khác, status=scheduled -> %s, muốn %s", got, want)
+	}
+}
+
+// GET /livestream/:id cũng theo người xem: chủ buổi thấy scheduled + overdue, người khác thấy ended + overdue.
+func TestLivestreamGetByID_StatusFollowsViewer(t *testing.T) {
+	m := newMissedSessionFixture(t)
+	id := m.ids["missed-with-end"]
+	own, err := m.svc.GetByID(context.Background(), m.host, false, id)
+	if err != nil || own == nil {
+		t.Fatalf("GetByID chủ buổi: %v %v", own, err)
+	}
+	if own.Status != "scheduled" || !own.IsOverdue {
+		t.Errorf("chủ buổi: status=%q is_overdue=%v, muốn scheduled + overdue", own.Status, own.IsOverdue)
+	}
+	other, err := m.svc.GetByID(context.Background(), uuid.New(), true, id)
+	if err != nil || other == nil {
+		t.Fatalf("GetByID người khác: %v %v", other, err)
+	}
+	if other.Status != "ended" || !other.IsOverdue {
+		t.Errorf("người khác: status=%q is_overdue=%v, muốn ended + overdue", other.Status, other.IsOverdue)
+	}
 }

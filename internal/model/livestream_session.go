@@ -27,20 +27,26 @@ var LivestreamMissedSQL = fmt.Sprintf(
 	"(status = 'scheduled' AND scheduled_at IS NOT NULL AND COALESCE(scheduled_end_at, scheduled_at + interval '%d seconds') < NOW())",
 	int(LivestreamDefaultDuration.Seconds()))
 
-// EffectiveStatus: trạng thái hiển thị tại thời điểm now (QA2 F-06). Buổi còn "scheduled" mà đã qua giờ kết thúc dự
-// kiến (không có thì scheduled_at + LivestreamDefaultDuration) chưa từng bắt đầu và sẽ không tự bắt đầu nữa, nên
-// hiển thị là LivestreamStatusEnded thay vì "sắp diễn ra" mãi. Tính khi đọc (như Contest.Phase), KHÔNG ghi ngược
-// vào cột status: buổi vẫn Start được nếu GV dời lịch hoặc bấm bắt đầu muộn. Buổi không có lịch, đang live, đã
-// kết thúc hay đã huỷ giữ nguyên trạng thái đã lưu.
-func (s LivestreamSession) EffectiveStatus(now time.Time) LivestreamSessionStatus {
+// IsOverdue: buổi còn "scheduled" mà đã qua giờ kết thúc dự kiến (không có thì scheduled_at +
+// LivestreamDefaultDuration) — chưa từng bắt đầu và sẽ không tự bắt đầu nữa. Buổi không có lịch, đang live, đã kết
+// thúc hay đã huỷ thì không. Cùng định nghĩa với LivestreamMissedSQL.
+func (s LivestreamSession) IsOverdue(now time.Time) bool {
 	if s.Status != LivestreamStatusScheduled || s.ScheduledAt == nil {
-		return s.Status
+		return false
 	}
 	end := s.ScheduledAt.Add(LivestreamDefaultDuration)
 	if s.ScheduledEndAt != nil {
 		end = *s.ScheduledEndAt
 	}
-	if end.Before(now) {
+	return end.Before(now)
+}
+
+// EffectiveStatus: trạng thái hiển thị tại thời điểm now cho người xem KHÔNG phải chủ buổi (QA2 F-06). Buổi quá giờ
+// (IsOverdue) hiển thị là LivestreamStatusEnded thay vì "sắp diễn ra" mãi. Tính khi đọc (như Contest.Phase), KHÔNG ghi
+// ngược vào cột status: buổi vẫn Start được nếu GV dời lịch hoặc bấm bắt đầu muộn — vì vậy CHỦ buổi được giữ ở
+// "scheduled" (xem LivestreamService.responseFor). Các trạng thái khác giữ nguyên.
+func (s LivestreamSession) EffectiveStatus(now time.Time) LivestreamSessionStatus {
+	if s.IsOverdue(now) {
 		return LivestreamStatusEnded
 	}
 	return s.Status

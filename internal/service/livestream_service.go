@@ -414,7 +414,7 @@ func (s *LivestreamService) GetByID(ctx context.Context, userID uuid.UUID, isAdm
 	}
 
 	detail := &dto.LivestreamDetailDTO{
-		LivestreamResponseDTO: s.toResponseDTO(*session),
+		LivestreamResponseDTO: s.responseFor(*session, userID),
 	}
 	if session.Status == model.LivestreamStatusLive {
 		if room, err := s.livekitSvc.GetRoom(ctx, session.RoomName); err == nil {
@@ -450,7 +450,7 @@ func (s *LivestreamService) GetAll(ctx context.Context, userID uuid.UUID, isAdmi
 
 	var data []dto.LivestreamResponseDTO
 	for _, session := range sessions {
-		data = append(data, s.toResponseDTO(session))
+		data = append(data, s.responseFor(session, userID))
 	}
 
 	return &dto.LivestreamListDTO{
@@ -1102,6 +1102,17 @@ func (s *LivestreamService) StopScreenShare(ctx context.Context, actorID uuid.UU
 	return err
 }
 
+// responseFor: DTO theo người xem (review L3). Buổi quá giờ chưa từng bắt đầu hiển thị "ended" cho mọi người, trừ CHỦ
+// buổi (host) — họ vẫn Start được nên giữ "scheduled", và is_overdue=true ở cả hai để UI đánh dấu quá giờ. Giữ khớp với
+// bộ lọc ?status= ở repository (livestreamStatusCondition).
+func (s *LivestreamService) responseFor(session model.LivestreamSession, viewerID uuid.UUID) dto.LivestreamResponseDTO {
+	out := s.toResponseDTO(session)
+	if out.IsOverdue && session.HostID == viewerID {
+		out.Status = string(session.Status)
+	}
+	return out
+}
+
 func (s *LivestreamService) toResponseDTO(session model.LivestreamSession) dto.LivestreamResponseDTO {
 	var startedAt, endedAt *string
 	if session.StartedAt != nil {
@@ -1137,6 +1148,7 @@ func (s *LivestreamService) toResponseDTO(session model.LivestreamSession) dto.L
 		LessonContentID: session.LessonContentID,
 		RoomName:        session.RoomName,
 		Status:          string(session.EffectiveStatus(time.Now())),
+		IsOverdue:       session.IsOverdue(time.Now()),
 		StartedAt:       startedAt,
 		EndedAt:         endedAt,
 		ScheduledAt:     scheduledAt,

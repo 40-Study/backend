@@ -67,22 +67,25 @@ func (r *LivestreamRepository) GetByRoomName(ctx context.Context, roomName strin
 }
 
 // livestreamStatusCondition (QA2 F-06): bộ lọc ?status= theo trạng thái HIỂN THỊ (LivestreamSession.EffectiveStatus)
-// chứ không theo cột thô — "scheduled" loại buổi đã qua giờ, "ended" gồm cả buổi đã qua giờ chưa từng bắt đầu. Các
-// giá trị còn lại so thẳng với cột như trước.
-func livestreamStatusCondition(statuses []string) (string, []interface{}) {
+// chứ không theo cột thô — "scheduled" loại buổi đã qua giờ, "ended" gồm cả buổi đã qua giờ chưa từng bắt đầu. Review
+// L3: CHỦ buổi (viewerID) vẫn Start được buổi quá giờ của mình nên với họ buổi đó ở lại "scheduled", không sang "ended"
+// (khớp LivestreamService.responseFor). Các giá trị còn lại so thẳng với cột như trước.
+func livestreamStatusCondition(statuses []string, viewerID uuid.UUID) (string, []interface{}) {
 	var conds []string
 	var plain []string
+	var args []interface{}
 	for _, st := range statuses {
 		switch st {
 		case string(model.LivestreamStatusScheduled):
-			conds = append(conds, "(status = 'scheduled' AND NOT "+model.LivestreamMissedSQL+")")
+			conds = append(conds, "(status = 'scheduled' AND (NOT "+model.LivestreamMissedSQL+" OR host_id = ?))")
+			args = append(args, viewerID)
 		case string(model.LivestreamStatusEnded):
-			conds = append(conds, "(status = 'ended' OR "+model.LivestreamMissedSQL+")")
+			conds = append(conds, "(status = 'ended' OR ("+model.LivestreamMissedSQL+" AND host_id <> ?))")
+			args = append(args, viewerID)
 		default:
 			plain = append(plain, st)
 		}
 	}
-	var args []interface{}
 	if len(plain) > 0 {
 		conds = append(conds, "status IN ?")
 		args = append(args, plain)
@@ -102,7 +105,7 @@ func buildGetAllQuery(db *gorm.DB, userID uuid.UUID, isAdmin bool, status string
 	query := db.Model(&model.LivestreamSession{})
 	if status != "" {
 		// Handle comma-separated status values (e.g., "live,scheduled")
-		if cond, args := livestreamStatusCondition(utils.SplitAndTrim(status, ",")); cond != "" {
+		if cond, args := livestreamStatusCondition(utils.SplitAndTrim(status, ","), userID); cond != "" {
 			query = query.Where(cond, args...)
 		}
 	}
