@@ -3,10 +3,15 @@ package seeds
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"study.com/v1/internal/model"
 )
+
+// progressPlaceholder trong Content được thay bằng % tiến độ THẬT (làm tròn) của enrollment mà
+// notificationSpec.ProgressOf + CourseSlug chỉ tới — số trong thông báo không bao giờ lệch trang tiến độ của con.
+const progressPlaceholder = "{progress}"
 
 // notificationSpec mô tả một thông báo demo. CourseSlug (nếu có) gắn reference_type="course"
 // để toast WebSocket phía web dẫn tới /courses/:id — loại tham chiếu web đang hiểu.
@@ -17,6 +22,8 @@ type notificationSpec struct {
 	CourseSlug string
 	HoursAgo   int
 	IsRead     bool
+	// ProgressOf: email học viên có enrollment (khoá CourseSlug) cấp giá trị cho {progress} trong Content.
+	ProgressOf string
 }
 
 var demoNotifications = map[string][]notificationSpec{
@@ -51,9 +58,9 @@ var demoNotifications = map[string][]notificationSpec{
 		{Title: "Liên kết tài khoản con thành công", Content: "Bạn đã liên kết với tài khoản của Lê Văn C và có thể theo dõi tiến độ học tập.", Type: "system", HoursAgo: 200, IsRead: true},
 		{Title: "Con bạn đã nhận chứng chỉ", Content: "Lê Văn C vừa hoàn thành khoá \"Git & GitHub cho người mới bắt đầu\" và nhận chứng chỉ.", Type: "certificate_earned", CourseSlug: "git-github-cho-nguoi-moi-bat-dau", HoursAgo: 70, IsRead: true},
 		{Title: "Con bạn mở khoá huy hiệu mới", Content: "Lê Văn C đạt huy hiệu \"Chuỗi 7 ngày\" nhờ học đều đặn cả tuần.", Type: "achievement", HoursAgo: 50},
-		{Title: "Tiến độ tuần này của Lê Văn C", Content: "Tuần này con hoàn thành 4 bài học, tổng 95 phút. Khoá React + Next.js đạt khoảng 65%.", Type: "course_update", CourseSlug: "react-nextjs-tu-co-ban-den-nang-cao", HoursAgo: 18},
+		{Title: "Tiến độ tuần này của Lê Văn C", Content: "Tuần này con hoàn thành 4 bài học, tổng 95 phút. Khoá React + Next.js đạt khoảng {progress}%.", Type: "course_update", CourseSlug: "react-nextjs-tu-co-ban-den-nang-cao", HoursAgo: 18, ProgressOf: "student1@demo.com"},
 		{Title: "Con bạn sắp mất chuỗi học tập", Content: "Hôm nay Lê Văn C chưa học bài nào. Một lời nhắc nhỏ có thể giúp con giữ chuỗi 12 ngày.", Type: "streak", HoursAgo: 3},
-		{Title: "Ưu đãi gia đình: giảm 50.000đ", Content: "Mã SUMMER50K áp dụng cho đơn từ 300.000đ khi mua khoá học cho con.", Type: "promotion", HoursAgo: 30},
+		{Title: "Ưu đãi gia đình: giảm 50.000đ", Content: "Mã SUMMER50K áp dụng cho đơn từ 300.000đ khi bạn mua khoá học bằng tài khoản phụ huynh của mình.", Type: "promotion", HoursAgo: 30},
 	},
 }
 
@@ -68,10 +75,14 @@ func (s *Seeder) SeedDemoNotifications(users map[string]model.User, courses map[
 			return err
 		}
 		for _, spec := range specs {
+			content, err := s.resolveNotificationContent(users, courses, spec)
+			if err != nil {
+				return err
+			}
 			n := model.Notification{
 				UserID:           user.ID,
 				Title:            spec.Title,
-				Content:          spec.Content,
+				Content:          content,
 				NotificationType: spec.Type,
 				IsRead:           spec.IsRead,
 				CreatedAt:        time.Now().Add(-time.Duration(spec.HoursAgo) * time.Hour),
@@ -88,8 +99,9 @@ func (s *Seeder) SeedDemoNotifications(users map[string]model.User, courses map[
 				n.ReferenceType = ptr("course")
 				n.ReferenceID = ptr(course.ID)
 			}
+			// Assign: dòng đã seed từ trước (DB đang chạy) được sửa nội dung; is_read/read_at giữ nguyên.
 			if err := s.db.Where("user_id = ? AND title = ?", user.ID, spec.Title).
-				Attrs(n).FirstOrCreate(&n).Error; err != nil {
+				Attrs(n).Assign(map[string]interface{}{"content": content}).FirstOrCreate(&n).Error; err != nil {
 				return fmt.Errorf("failed to seed notification %q for %s: %w", spec.Title, email, err)
 			}
 			count++
@@ -97,4 +109,26 @@ func (s *Seeder) SeedDemoNotifications(users map[string]model.User, courses map[
 	}
 	log.Printf("Seeded %d demo notifications\n", count)
 	return nil
+}
+
+// resolveNotificationContent thay {progress} bằng % tiến độ thật của enrollment (làm tròn như trang con).
+// Thiếu enrollment -> lỗi rõ ràng (seed enrollments phải chạy trước), không in số đoán.
+func (s *Seeder) resolveNotificationContent(users map[string]model.User, courses map[string]model.Course, spec notificationSpec) (string, error) {
+	if !strings.Contains(spec.Content, progressPlaceholder) {
+		return spec.Content, nil
+	}
+	student, err := demoUser(users, spec.ProgressOf)
+	if err != nil {
+		return "", err
+	}
+	course, err := demoCourse(courses, spec.CourseSlug)
+	if err != nil {
+		return "", err
+	}
+	var enrollment model.Enrollment
+	if err := s.db.Where("user_id = ? AND course_id = ?", student.ID, course.ID).First(&enrollment).Error; err != nil {
+		return "", fmt.Errorf("notification %q cần enrollment của %s ở khoá %s (chạy SeedDemoEnrollments trước): %w",
+			spec.Title, spec.ProgressOf, spec.CourseSlug, err)
+	}
+	return strings.ReplaceAll(spec.Content, progressPlaceholder, enrollment.ProgressPercent.Round(0).String()), nil
 }
