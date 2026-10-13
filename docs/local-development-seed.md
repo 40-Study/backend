@@ -18,7 +18,7 @@ việc với chấm bài, livestream hoặc thanh toán.
 Các biến host phải trỏ về máy local:
 
 ```
-PORT=5000
+PORT=5001
 DB_HOST=localhost
 REDIS_HOST=localhost
 MINIO_HOST=localhost
@@ -54,7 +54,7 @@ bài học + nội dung bài học, 4 lượt ghi danh kèm tiến độ, 3 vouc
 ## 4. Chạy server
 
 ```bash
-go run ./cmd/api    # backend :5000, tự AutoMigrate khi khởi động
+go run ./cmd/api    # backend :5001, tự AutoMigrate khi khởi động
 ```
 
 ## 5. Tài khoản demo
@@ -87,7 +87,7 @@ Login có rate limit — gọi liên tiếp nhiều tài khoản sẽ nhận `42
 Trong `web/.env`:
 
 ```
-NEXT_PUBLIC_API_URL=http://localhost:5000/api
+NEXT_PUBLIC_API_URL=http://localhost:5001/api
 ```
 
 ```bash

@@ -99,7 +99,7 @@ func ClientIPFromXFF(peerIP string, xffHeader string, trusted *TrustedProxySet) 
 // RÀNG BUỘC TRIỂN KHAI BẮT BUỘC (review vòng 3, PR #69): thuật toán này CHỈ an toàn khi TCP peer
 // mà backend nhìn thấy KHÔNG THỂ là chính kẻ tấn công — nghĩa là backend không được lộ trực tiếp
 // ra ngoài, chỉ nhận kết nối từ nginx (`nginx/nginx.conf`, đã đúng `$proxy_add_x_forwarded_for`).
-// Nếu cổng backend (PORT, mặc định 5000) lộ thẳng ra ngoài (bind sai địa chỉ, firewall hỏng,
+// Nếu cổng backend (PORT, mặc định 5001) lộ thẳng ra ngoài (bind sai địa chỉ, firewall hỏng,
 // tunnel debug quên tắt, ...), một client gọi thẳng có thể tự gửi `X-Forwarded-For` — Next.js
 // (nếu Next là hop TRUNG GIAN) chỉ tự đặt `??= socket.remoteAddress` KHI header CHƯA có, nên vẫn
 // giữ nguyên giá trị client tự khai nếu client gọi thẳng Next không qua nginx — client xoay XFF
