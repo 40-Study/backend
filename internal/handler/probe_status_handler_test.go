@@ -18,7 +18,7 @@ type probeCourseStub struct {
 	err error
 }
 
-func (s probeCourseStub) GetCourseBySlug(context.Context, string) (*dto.CourseDetailDTO, error) {
+func (s probeCourseStub) GetCourseBySlug(context.Context, string, uuid.UUID, bool) (*dto.CourseDetailDTO, error) {
 	return nil, s.err
 }
 

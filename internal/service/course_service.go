@@ -101,7 +101,9 @@ type CourseServiceInterface interface {
 	// GET /courses/:id là đường vòng lộ contents[].video_url bỏ qua hoàn toàn ResolveLessonLock
 	// (đúng lớp lỗ của B-2, chỉ khác endpoint). Xem chú thích ở phần thân hàm.
 	GetCourseByID(ctx context.Context, id, userID uuid.UUID, isAdmin bool) (*dto.CourseDetailDTO, error)
-	GetCourseBySlug(ctx context.Context, slug string) (*dto.CourseDetailDTO, error)
+	// GetCourseBySlug: viewerID/isAdmin (uuid.Nil/false cho khách) quyết định khoá archived có mở ra hay không: trang học
+	// của người ĐÃ ghi danh gọi route này theo slug (smoke QA2 13/10).
+	GetCourseBySlug(ctx context.Context, slug string, viewerID uuid.UUID, isAdmin bool) (*dto.CourseDetailDTO, error)
 	UpdateCourse(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateCourseDTO) (*dto.CourseResponseDTO, error)
 	DeleteCourse(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool) error
 }
@@ -314,14 +316,25 @@ func (s *CourseService) GetCourseByID(ctx context.Context, id, userID uuid.UUID,
 }
 
 // GetCourseBySlug retrieves course detail by its URL slug
-func (s *CourseService) GetCourseBySlug(ctx context.Context, slug string) (*dto.CourseDetailDTO, error) {
+func (s *CourseService) GetCourseBySlug(ctx context.Context, slug string, viewerID uuid.UUID, isAdmin bool) (*dto.CourseDetailDTO, error) {
 	course, err := s.courseRepo.GetDetailBySlug(ctx, slug)
 	if err != nil {
 		return nil, err
 	}
 	// ErrCourseHidden (không phải errors.New trần): handler chỉ map sentinel này sang 404, lỗi khác là 500.
-	if course == nil || course.Status != model.CourseStatusPublished {
+	if course == nil {
 		return nil, ErrCourseHidden
+	}
+	// Khoá published: ai cũng xem. Khoá nháp/chờ duyệt/bị từ chối/archived: chỉ chủ khoá, admin và người ĐÃ ghi danh
+	// (cùng canViewCourse với mọi đường đọc khác); người khác nhận 404 như khoá không tồn tại.
+	if course.Status != model.CourseStatusPublished {
+		enrolled, err := isEnrolledInCourse(ctx, s.enrollmentRepo, viewerID, course.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !canViewCourse(course, viewerID, isAdmin, enrolled) {
+			return nil, ErrCourseHidden
+		}
 	}
 
 	detail := &dto.CourseDetailDTO{

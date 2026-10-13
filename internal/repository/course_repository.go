@@ -164,7 +164,8 @@ func (r *CourseRepository) GetDetailByID(ctx context.Context, id uuid.UUID) (*mo
 	return &course, nil
 }
 
-// GetDetailBySlug retrieves a course with all relations by its URL slug
+// GetDetailBySlug retrieves a course with all relations by its URL slug, mọi trạng thái: caller PHẢI tự quyết ai được xem
+// (smoke QA2 13/10: người đã ghi danh vẫn học được khoá archived nên không thể lọc cứng published ở đây).
 func (r *CourseRepository) GetDetailBySlug(ctx context.Context, slug string) (*model.Course, error) {
 	var course model.Course
 	err := r.db.WithContext(ctx).
@@ -180,7 +181,7 @@ func (r *CourseRepository) GetDetailBySlug(ctx context.Context, slug string) (*m
 		Preload("Sections.Lessons.Contents", func(db *gorm.DB) *gorm.DB {
 			return db.Order("display_order ASC")
 		}).
-		Where("slug = ? AND status = ?", slug, "published").
+		Where("slug = ?", slug).
 		First(&course).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
