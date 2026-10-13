@@ -22,7 +22,12 @@ type ReportServiceInterface interface {
 
 type ReportService struct {
 	repo repository.ReportRepositoryInterface
+	// targets (ADM-N4): tra tóm tắt đối tượng bị báo cáo cho người kiểm duyệt; nil = không đính kèm target.
+	targets ReportTargetResolverInterface
 }
+
+// SetTargetResolver bật đính kèm `target` vào report trả cho người kiểm duyệt (xem registerQA2BE3Routes).
+func (s *ReportService) SetTargetResolver(r ReportTargetResolverInterface) { s.targets = r }
 
 func NewReportService(repo repository.ReportRepositoryInterface) *ReportService {
 	return &ReportService{repo: repo}
@@ -73,7 +78,28 @@ func (s *ReportService) GetReportByID(ctx context.Context, id, actorID uuid.UUID
 	if !isModerator && report.ReporterID != actorID {
 		return nil, ErrReportNotFound
 	}
-	return s.mapReportToDTO(report), nil
+	out := s.mapReportToDTO(report)
+	if isModerator {
+		if err := s.attachTargets(ctx, []model.Report{*report}, []*dto.ReportResponseDTO{out}); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// attachTargets gắn Target vào từng DTO (cùng thứ tự với reports). Không có resolver thì giữ nguyên.
+func (s *ReportService) attachTargets(ctx context.Context, reports []model.Report, outs []*dto.ReportResponseDTO) error {
+	if s.targets == nil || len(reports) == 0 {
+		return nil
+	}
+	targets, err := s.targets.Resolve(ctx, reports)
+	if err != nil {
+		return err
+	}
+	for i := range reports {
+		outs[i].Target = targets[reports[i].ID]
+	}
+	return nil
 }
 
 func (s *ReportService) ListReports(ctx context.Context, status, reportedType string, page, pageSize int) (*dto.ReportListDTO, error) {
@@ -90,8 +116,14 @@ func (s *ReportService) ListReports(ctx context.Context, status, reportedType st
 	}
 
 	data := make([]dto.ReportResponseDTO, len(reports))
+	ptrs := make([]*dto.ReportResponseDTO, len(reports))
 	for i, r := range reports {
 		data[i] = *s.mapReportToDTO(&r)
+		ptrs[i] = &data[i]
+	}
+	// ListReports chỉ mở cho người kiểm duyệt (REPORTS_MODERATE), nên luôn đính kèm target.
+	if err := s.attachTargets(ctx, reports, ptrs); err != nil {
+		return nil, err
 	}
 
 	return &dto.ReportListDTO{Data: data, Total: total, Page: page, PageSize: pageSize}, nil
@@ -150,7 +182,9 @@ func (s *ReportService) GetMyReports(ctx context.Context, reporterID uuid.UUID, 
 	return &dto.ReportListDTO{Data: data, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
-func (s *ReportService) mapReportToDTO(r *model.Report) *dto.ReportResponseDTO {
+func (s *ReportService) mapReportToDTO(r *model.Report) *dto.ReportResponseDTO { return reportToDTO(r) }
+
+func reportToDTO(r *model.Report) *dto.ReportResponseDTO {
 	reporterName := ""
 	if r.Reporter.FullName != nil {
 		reporterName = *r.Reporter.FullName

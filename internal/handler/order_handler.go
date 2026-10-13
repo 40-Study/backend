@@ -36,6 +36,9 @@ func paymentStateConflict(err error) (fiber.Map, bool) {
 		return fiber.Map{"code": "ERR_ORDER_ALREADY_PAID", "message": "Đơn hàng đã được thanh toán, khóa học đã được thêm vào tài khoản của bạn."}, true
 	case errors.Is(err, service.ErrPaymentVerificationPending):
 		return fiber.Map{"code": "ERR_PAYMENT_VERIFYING", "message": err.Error()}, true
+	// Review QA2 H2: khoa ngung ban (archived) -> 409 COURSE_NOT_FOR_SALE (cart/buy_now va mo phien thanh toan cua don cu).
+	case errors.Is(err, service.ErrCourseNotForSale):
+		return fiber.Map{"code": "COURSE_NOT_FOR_SALE", "message": service.ErrCourseNotForSale.Message}, true
 	}
 	return nil, false
 }

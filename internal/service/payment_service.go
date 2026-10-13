@@ -279,6 +279,11 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 	if order.Status != "pending" {
 		return nil, ErrInvalidStateTransition
 	}
+	// Review QA2 H2: đơn tạo TRƯỚC khi khoá bị ngừng bán không được mở phiên thanh toán mới (không thu tiền khoá đã gỡ).
+	// Đơn đã processing/có mã còn hạn (nhánh trên) và tiền đang về vẫn được xử lý như cũ.
+	if err := s.ensureOrderCoursesForSale(ctx, order.ID); err != nil {
+		return nil, err
+	}
 
 	// Generate payment code
 	paymentCode := s.generatePaymentCode()

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
@@ -237,12 +238,21 @@ func (h *CourseHandler) GetCourseBySlug(c *fiber.Ctx) error {
 		})
 	}
 
-	course, err := h.service.GetCourseBySlug(c.Context(), slug)
+	// Route dùng OptionalAuth: khách vẫn xem khoá published; người đã đăng nhập (đã ghi danh / chủ khoá / admin) mới xem
+	// được khoá archived. Không có user_id = khách (uuid.Nil), không lặng lẽ coi là admin.
+	viewerID, _ := c.Locals("user_id").(uuid.UUID)
+	isAdmin := viewerID != uuid.Nil && isAdminActor(c, h.permChecker, viewerID)
+	course, err := h.service.GetCourseBySlug(c.Context(), slug, viewerID, isAdmin)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Course not found",
-			"error":   err.Error(),
-		})
+		// Review web #1: 404 CHỈ cho "không có / chưa xuất bản"; lỗi khác (DB, timeout) là 500 để web probe và crawler
+		// không coi cả catalog là biến mất khi hạ tầng chập chờn.
+		if errors.Is(err, service.ErrCourseHidden) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"message": "Course not found",
+				"error":   err.Error(),
+			})
+		}
+		return RespondServiceError(c, err, "Failed to get course")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

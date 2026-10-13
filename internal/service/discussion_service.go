@@ -118,7 +118,8 @@ func (s *DiscussionService) GetPostBySlug(ctx context.Context, slug string, user
 	if err != nil {
 		return nil, err
 	}
-	if post == nil {
+	// Review QA2 H1: bài đã bị kiểm duyệt ẩn chỉ người kiểm duyệt còn xem được (để duyệt lại trước khi bỏ ẩn).
+	if post == nil || (post.IsHidden && !IsModeratorView(ctx)) {
 		return nil, errors.New("post not found")
 	}
 
@@ -126,6 +127,7 @@ func (s *DiscussionService) GetPostBySlug(ctx context.Context, slug string, user
 	if err != nil {
 		return nil, err
 	}
+	comments = visibleComments(ctx, comments)
 
 	// Gather all IDs for vote lookup
 	var userVoteMap map[uuid.UUID]string
@@ -246,7 +248,8 @@ func (s *DiscussionService) AddComment(ctx context.Context, postSlug string, use
 	if err != nil {
 		return nil, err
 	}
-	if post == nil {
+	// Bài đã ẩn không nhận thêm bình luận (kể cả từ người kiểm duyệt: bỏ ẩn trước rồi mới trả lời).
+	if post == nil || post.IsHidden {
 		return nil, errors.New("post not found")
 	}
 

@@ -59,13 +59,13 @@ var ErrCourseHidden = errors.New("course not found")
 // người đã ghi danh xem được. Trước bản vá, mọi route đọc (GET /courses/:id, /courses/:id/sections,
 // /sections/:id...) chỉ cần đăng nhập, nên giảng viên khác đọc được khoá nháp và giáo trình của
 // nhau. Giữ "enrolled" vì khoá đã bán có thể bị đưa về nháp (archived -> draft) mà học viên cũ vẫn
-// phải vào học được; published/archived vẫn mở như trước.
+// phải vào học được. Review QA2 H2: khoá archived (ngừng bán) cũng chỉ còn mở cho chủ khoá/admin/người đã ghi danh; chỉ published mở cho mọi người.
 //
 // Liệt kê TƯỜNG MINH các trạng thái riêng tư (denylist) thay vì allowlist: cột status có CHECK
 // constraint theo model.CourseStatuses nên dữ liệu thật chỉ có 5 giá trị, và
 // TestCanViewCourse_EveryStatusClassified đỏ ngay khi có trạng thái mới chưa được xếp loại.
 func canViewCourse(course *model.Course, viewerID uuid.UUID, isAdmin, enrolled bool) bool {
-	if !isPrivateCourseStatus(course.Status) {
+	if !isInsiderOnlyCourseStatus(course.Status) {
 		return true
 	}
 	return isAdmin || enrolled || (viewerID != uuid.Nil && course.InstructorID == viewerID)
@@ -101,7 +101,9 @@ type CourseServiceInterface interface {
 	// GET /courses/:id là đường vòng lộ contents[].video_url bỏ qua hoàn toàn ResolveLessonLock
 	// (đúng lớp lỗ của B-2, chỉ khác endpoint). Xem chú thích ở phần thân hàm.
 	GetCourseByID(ctx context.Context, id, userID uuid.UUID, isAdmin bool) (*dto.CourseDetailDTO, error)
-	GetCourseBySlug(ctx context.Context, slug string) (*dto.CourseDetailDTO, error)
+	// GetCourseBySlug: viewerID/isAdmin (uuid.Nil/false cho khách) quyết định khoá archived có mở ra hay không: trang học
+	// của người ĐÃ ghi danh gọi route này theo slug (smoke QA2 13/10).
+	GetCourseBySlug(ctx context.Context, slug string, viewerID uuid.UUID, isAdmin bool) (*dto.CourseDetailDTO, error)
 	UpdateCourse(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool, req dto.UpdateCourseDTO) (*dto.CourseResponseDTO, error)
 	DeleteCourse(ctx context.Context, id, actorUserID uuid.UUID, isAdmin bool) error
 }
@@ -314,16 +316,25 @@ func (s *CourseService) GetCourseByID(ctx context.Context, id, userID uuid.UUID,
 }
 
 // GetCourseBySlug retrieves course detail by its URL slug
-func (s *CourseService) GetCourseBySlug(ctx context.Context, slug string) (*dto.CourseDetailDTO, error) {
+func (s *CourseService) GetCourseBySlug(ctx context.Context, slug string, viewerID uuid.UUID, isAdmin bool) (*dto.CourseDetailDTO, error) {
 	course, err := s.courseRepo.GetDetailBySlug(ctx, slug)
 	if err != nil {
 		return nil, err
 	}
+	// ErrCourseHidden (không phải errors.New trần): handler chỉ map sentinel này sang 404, lỗi khác là 500.
 	if course == nil {
-		return nil, errors.New("course not found")
+		return nil, ErrCourseHidden
 	}
-	if course.Status != "published" {
-		return nil, errors.New("course not found")
+	// Khoá published: ai cũng xem. Khoá nháp/chờ duyệt/bị từ chối/archived: chỉ chủ khoá, admin và người ĐÃ ghi danh
+	// (cùng canViewCourse với mọi đường đọc khác); người khác nhận 404 như khoá không tồn tại.
+	if course.Status != model.CourseStatusPublished {
+		enrolled, err := isEnrolledInCourse(ctx, s.enrollmentRepo, viewerID, course.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !canViewCourse(course, viewerID, isAdmin, enrolled) {
+			return nil, ErrCourseHidden
+		}
 	}
 
 	detail := &dto.CourseDetailDTO{

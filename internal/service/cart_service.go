@@ -44,6 +44,10 @@ func (s *CartService) AddToCart(ctx context.Context, userID uuid.UUID, req dto.A
 	if course == nil || isPrivateCourseStatus(course.Status) {
 		return nil, apperr.NotFound("course not found")
 	}
+	// Review QA2 H2: khoá ngừng bán (archived) không thêm vào giỏ.
+	if isCourseNotForSale(course.Status) {
+		return nil, ErrCourseNotForSale
+	}
 
 	// Check if course is already in cart
 	exists, err := s.cartRepo.Exists(ctx, userID, req.CourseID)
@@ -130,29 +134,7 @@ func (s *CartService) toCartItemResponseDTO(item *model.CartItem, course *model.
 		CreatedAt: utils.FormatTimestamp(item.CreatedAt),
 	}
 
-	if course != nil {
-		resp.Course = &dto.CartCourseInfoDTO{
-			ID:                course.ID,
-			Title:             course.Title,
-			Slug:              course.Slug,
-			ThumbnailURL:      getStringPointer(course.ThumbnailURL),
-			Price:             course.Price,
-			Level:             course.Level,
-			TotalDurationMins: course.TotalDurationMins,
-			TotalLessons:      course.TotalLessons,
-			AverageRating:     course.AverageRating,
-			TotalStudents:     course.TotalStudents,
-		}
-
-		if course.DiscountPrice != nil {
-			resp.Course.DiscountPrice = course.DiscountPrice
-		}
-
-		// Get instructor name
-		if course.InstructorID != uuid.Nil && course.Instructor.FullName != nil {
-			resp.Course.InstructorName = *course.Instructor.FullName
-		}
-	}
+	resp.Course = toCartCourseInfoDTO(course)
 
 	return resp
 }
@@ -162,4 +144,31 @@ func getStringPointer(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// toCartCourseInfoDTO: tóm tắt khoá học dùng chung cho giỏ hàng và wishlist (F-10); nil khi course nil.
+func toCartCourseInfoDTO(course *model.Course) *dto.CartCourseInfoDTO {
+	if course == nil {
+		return nil
+	}
+	info := &dto.CartCourseInfoDTO{
+		ID:                course.ID,
+		Title:             course.Title,
+		Slug:              course.Slug,
+		ThumbnailURL:      getStringPointer(course.ThumbnailURL),
+		Price:             course.Price,
+		Level:             course.Level,
+		TotalDurationMins: course.TotalDurationMins,
+		TotalLessons:      course.TotalLessons,
+		AverageRating:     course.AverageRating,
+		TotalStudents:     course.TotalStudents,
+	}
+	if course.DiscountPrice != nil {
+		info.DiscountPrice = course.DiscountPrice
+	}
+	// Get instructor name
+	if course.InstructorID != uuid.Nil && course.Instructor.FullName != nil {
+		info.InstructorName = *course.Instructor.FullName
+	}
+	return info
 }

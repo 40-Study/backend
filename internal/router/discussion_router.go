@@ -13,7 +13,8 @@ func SetupDiscussionRoutes(api fiber.Router, cfg *config.Config, h *handler.Disc
 
 	// Public routes
 	discussions.Get("/", h.ListPosts)
-	discussions.Get("/:slug", h.GetPostBySlug)
+	// OptionalAuth (review QA2 H1): khách vẫn xem được; người kiểm duyệt đăng nhập mới xem được bài đã ẩn (và user_vote đúng).
+	discussions.Get("/:slug", middleware.OptionalAuth(cfg, redis), h.GetPostBySlug)
 
 	// Auth-required routes
 	auth := discussions.Group("")

@@ -727,7 +727,7 @@ func (s *QuizService) GetQuizByID(ctx context.Context, id, userID uuid.UUID, isA
 			return nil, err
 		}
 		if quiz == nil {
-			return nil, errors.New("quiz not found")
+			return nil, ErrQuizNotFound
 		}
 
 		questions := make([]dto.QuestionResponseDTO, len(quiz.Questions))

@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"context"
 	"errors"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
@@ -26,6 +28,15 @@ func mapDiscussionLessonErr(c *fiber.Ctx, err error) error {
 
 type DiscussionHandler struct {
 	svc service.DiscussionServiceInterface
+	// isModerator (review QA2 H1): người kiểm duyệt được xem bài đã ẩn. nil = không ai được (an toàn mặc định).
+	isModerator func(c *fiber.Ctx, userID uuid.UUID) bool
+}
+
+// SetModeratorChecker bật quyền xem bài đã ẩn cho người có REPORTS_MODERATE (gọi ở registerQA2BE3Routes).
+func (h *DiscussionHandler) SetModeratorChecker(permChecker *middleware.PermissionChecker) {
+	h.isModerator = func(c *fiber.Ctx, userID uuid.UUID) bool {
+		return actorHasPermission(c, permChecker, userID, "REPORTS_MODERATE")
+	}
 }
 
 func NewDiscussionHandler(svc service.DiscussionServiceInterface) *DiscussionHandler {
@@ -125,7 +136,11 @@ func (h *DiscussionHandler) GetPostBySlug(c *fiber.Ctx) error {
 		userID = &uid
 	}
 
-	post, err := h.svc.GetPostBySlug(c.Context(), slug, userID)
+	ctx := context.Context(c.Context())
+	if userID != nil && h.isModerator != nil && h.isModerator(c, *userID) {
+		ctx = service.WithModeratorView(ctx)
+	}
+	post, err := h.svc.GetPostBySlug(ctx, slug, userID)
 	if err != nil {
 		if err.Error() == "post not found" {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "post not found"})

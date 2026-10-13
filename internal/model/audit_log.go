@@ -26,6 +26,7 @@ const (
 	AuditActionTeacherApplicationReject  = "teacher_application.reject"
 	AuditActionReportStatusUpdate        = "report.status_update"
 	AuditActionReportDelete              = "report.delete"
+	AuditActionReportModerate            = "report.moderate"
 	AuditActionOrderRefund               = "order.refund"
 	AuditActionOrderLateRefund           = "order.late_refund"
 	AuditActionWithdrawalApprove         = "withdrawal.approve"
@@ -43,7 +44,7 @@ var AuditActions = []string{
 	AuditActionPermissionUpdate,
 	AuditActionCourseApprove, AuditActionCourseReject,
 	AuditActionTeacherApplicationApprove, AuditActionTeacherApplicationReject,
-	AuditActionReportStatusUpdate, AuditActionReportDelete,
+	AuditActionReportStatusUpdate, AuditActionReportDelete, AuditActionReportModerate,
 	AuditActionOrderRefund, AuditActionOrderLateRefund,
 	AuditActionWithdrawalApprove, AuditActionWithdrawalReject, AuditActionWithdrawalMarkCompleted,
 	AuditActionSettingPlatformFeeUpdate,

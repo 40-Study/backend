@@ -108,6 +108,10 @@ func (s *EnrollmentService) Enroll(ctx context.Context, userID, courseID uuid.UU
 	if course == nil || isPrivateCourseStatus(course.Status) {
 		return nil, ErrCourseHidden
 	}
+	// Review QA2 H2: khoá ngừng bán (archived) không nhận ghi danh mới, kể cả miễn phí / ghi danh lại.
+	if isCourseNotForSale(course.Status) {
+		return nil, ErrCourseNotForSale
+	}
 	// C-06: endpoint tự-ghi-danh chỉ dành cho khóa MIỄN PHÍ. Khóa trả phí phải đi qua
 	// payment_service.CheckAndProcessPayment (lane khác) sau khi đơn hàng completed.
 	//

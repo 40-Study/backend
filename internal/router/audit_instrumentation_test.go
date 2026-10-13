@@ -80,6 +80,7 @@ var auditRoutes = []auditRoute{
 	{"POST", "/api/admin/teacher-applications/:userId/reject", model.AuditActionTeacherApplicationReject, "user", "userId"},
 	{"PUT", "/api/reports/:id/status", model.AuditActionReportStatusUpdate, "report", "id"},
 	{"DELETE", "/api/reports/:id", model.AuditActionReportDelete, "report", "id"},
+	{"POST", "/api/reports/:id/actions", model.AuditActionReportModerate, "report", "id"},
 	{"POST", "/api/orders/admin/:id/refund", model.AuditActionOrderRefund, "order", "id"},
 	{"POST", "/api/orders/admin/:id/late-refund", model.AuditActionOrderLateRefund, "order", "id"},
 	{"POST", "/api/admin/withdrawals/:id/approve", model.AuditActionWithdrawalApprove, "withdrawal", "id"},
@@ -137,9 +138,10 @@ func newAuditEnv(t *testing.T) *auditEnv {
 		}
 	}
 	fn.Call(args)
-	// Hai nhóm route app.go đăng ký ngoài SetupAllRoutes và nằm trong bảng audit.
+	// Các nhóm route app.go đăng ký ngoài SetupAllRoutes và nằm trong bảng audit.
 	SetupWithdrawalRoutes(app.Group("/api"), cfg, nil, rdb, pc, rec)
 	SetupAdminBroadcastRoutes(app.Group("/api"), cfg, nil, rdb, pc, rec)
+	SetupReportModerationRoutes(app.Group("/api"), cfg, nil, rdb, pc, rec)
 
 	stub := func(c *fiber.Ctx) error {
 		status, err := strconv.Atoi(c.Get(stubStatusHeader))
