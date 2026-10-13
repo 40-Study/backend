@@ -281,6 +281,8 @@ func New() (*App, error) {
 	router.SetupAuditLogRoutes(fiberApp.Group("/api"), resources.Config, handlers.AuditLog, resources.Redis, permChecker)
 	router.SetupAdminBroadcastRoutes(fiberApp.Group("/api"), resources.Config, handlers.AdminBroadcast, resources.Redis, permChecker, services.AuditLog)
 	router.SetupAdminSettingsRoutes(fiberApp.Group("/api"), resources.Config, handlers.AdminSettings, resources.Redis, permChecker)
+	// QA vòng 2 261013 lane BE3 (wishlist, hành động kiểm duyệt, hồ sơ giáo viên công khai) - xem qa2_be3_routes.go.
+	registerQA2BE3Routes(fiberApp, resources, repos, services, permChecker)
 
 	return &App{
 		Resources: resources,
