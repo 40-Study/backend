@@ -37,13 +37,16 @@ type PublicTeacherCourseDTO struct {
 }
 
 type PublicTeacherPageDTO struct {
-	ID         uuid.UUID `json:"id"`
-	UserName   string    `json:"user_name"`
-	FullName   *string   `json:"full_name"`
-	AvatarURL  *string   `json:"avatar_url"`
-	Bio        *string   `json:"bio"`
-	IsVerified bool      `json:"is_verified"`
-	JoinedAt   time.Time `json:"joined_at"`
+	ID         uuid.UUID  `json:"id"`
+	UserName   string     `json:"user_name"`
+	FullName   *string    `json:"full_name"`
+	AvatarURL  *string    `json:"avatar_url"`
+	Bio        *string    `json:"bio"`
+	IsVerified bool       `json:"is_verified"`
+	JoinedAt   *time.Time `json:"joined_at"`
+	// ProfileHidden (review QA2 L4): chủ hồ sơ đặt "Hiển thị hồ sơ" khác public -> chỉ còn tên + khoá đã xuất bản; bio, avatar,
+	// hồ sơ chuyên môn, stats, joined_at, is_verified đều ẩn (null/false).
+	ProfileHidden bool `json:"profile_hidden"`
 
 	// Chỉ có giá trị khi hồ sơ giảng viên đã được duyệt (approved); ngược lại là null.
 	Specialization  *string `json:"specialization"`
@@ -51,6 +54,6 @@ type PublicTeacherPageDTO struct {
 	ExperienceYears *int    `json:"experience_years"`
 	Department      *string `json:"department"`
 
-	Stats   PublicTeacherStatsDTO    `json:"stats"`
+	Stats   *PublicTeacherStatsDTO   `json:"stats"`
 	Courses []PublicTeacherCourseDTO `json:"courses"`
 }

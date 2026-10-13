@@ -27,6 +27,8 @@ type PublicTeacherProfileRepositoryInterface interface {
 	GetTeacher(ctx context.Context, id uuid.UUID) (*model.User, error)
 	// GetApprovedProfile: hồ sơ giảng viên đã duyệt; nil khi chưa có hoặc chưa/không được duyệt.
 	GetApprovedProfile(ctx context.Context, userID uuid.UUID) (*model.TeacherProfile, error)
+	// ProfileVisibility: user_preferences.profile_visibility; chưa có dòng cài đặt = "public" (mặc định của cột).
+	ProfileVisibility(ctx context.Context, userID uuid.UUID) (string, error)
 	PublishedCourseStats(ctx context.Context, instructorID uuid.UUID) (PublicTeacherCourseStats, error)
 	ListPublishedCourses(ctx context.Context, instructorID uuid.UUID) ([]model.Course, error)
 }
@@ -64,6 +66,15 @@ func (r *PublicTeacherProfileRepository) GetApprovedProfile(ctx context.Context,
 		return nil, nil
 	}
 	return &p, err
+}
+
+func (r *PublicTeacherProfileRepository) ProfileVisibility(ctx context.Context, userID uuid.UUID) (string, error) {
+	var pref model.UserPreference
+	err := r.db.WithContext(ctx).Select("profile_visibility").Where("user_id = ?", userID).First(&pref).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && pref.ProfileVisibility == "") {
+		return "public", nil
+	}
+	return pref.ProfileVisibility, err
 }
 
 func (r *PublicTeacherProfileRepository) PublishedCourseStats(ctx context.Context, instructorID uuid.UUID) (PublicTeacherCourseStats, error) {

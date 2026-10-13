@@ -36,11 +36,7 @@ func (s *PublicTeacherProfileService) Get(ctx context.Context, teacherID uuid.UU
 	if user == nil {
 		return nil, ErrTeacherPublicProfileNotFound
 	}
-	profile, err := s.repo.GetApprovedProfile(ctx, teacherID)
-	if err != nil {
-		return nil, err
-	}
-	stats, err := s.repo.PublishedCourseStats(ctx, teacherID)
+	visibility, err := s.repo.ProfileVisibility(ctx, teacherID)
 	if err != nil {
 		return nil, err
 	}
@@ -50,29 +46,46 @@ func (s *PublicTeacherProfileService) Get(ctx context.Context, teacherID uuid.UU
 	}
 
 	page := &dto.PublicTeacherPageDTO{
-		ID:         user.ID,
-		UserName:   user.UserName,
-		FullName:   user.FullName,
-		AvatarURL:  user.AvatarURL,
-		Bio:        user.Bio,
-		IsVerified: user.IsVerified,
-		JoinedAt:   user.CreatedAt,
-		Stats: dto.PublicTeacherStatsDTO{
-			CourseCount:   stats.CourseCount,
-			StudentCount:  stats.StudentCount,
-			ReviewCount:   stats.ReviewCount,
-			AverageRating: weightedAverageRating(stats.RatingPoints, stats.ReviewCount),
-		},
-		Courses: make([]dto.PublicTeacherCourseDTO, 0, len(courses)),
+		ID:       user.ID,
+		UserName: user.UserName,
+		FullName: user.FullName,
+		Courses:  make([]dto.PublicTeacherCourseDTO, 0, len(courses)),
 	}
-	if profile != nil {
-		page.Specialization, page.Education, page.ExperienceYears, page.Department =
-			profile.Specialization, profile.Education, profile.ExperienceYears, profile.Department
+	// Review QA2 L4: người xem trang này là khách ẩn danh, nên chỉ `public` được xem đầy đủ; mọi giá trị khác (hidden,
+	// private, friends, giá trị lạ - fail-closed) chỉ còn tên + khoá đã xuất bản.
+	if visibility != ProfileVisibilityPublic {
+		page.ProfileHidden = true
+	} else if err := s.fillFullProfile(ctx, page, user); err != nil {
+		return nil, err
 	}
 	for _, c := range courses {
 		page.Courses = append(page.Courses, toPublicTeacherCourseDTO(c))
 	}
 	return page, nil
+}
+
+// fillFullProfile: phần chỉ dành cho hồ sơ công khai đầy đủ: avatar, bio, hồ sơ chuyên môn đã duyệt, thống kê, ngày tham gia.
+func (s *PublicTeacherProfileService) fillFullProfile(ctx context.Context, page *dto.PublicTeacherPageDTO, user *model.User) error {
+	profile, err := s.repo.GetApprovedProfile(ctx, user.ID)
+	if err != nil {
+		return err
+	}
+	stats, err := s.repo.PublishedCourseStats(ctx, user.ID)
+	if err != nil {
+		return err
+	}
+	page.AvatarURL, page.Bio, page.IsVerified, page.JoinedAt = user.AvatarURL, user.Bio, user.IsVerified, &user.CreatedAt
+	page.Stats = &dto.PublicTeacherStatsDTO{
+		CourseCount:   stats.CourseCount,
+		StudentCount:  stats.StudentCount,
+		ReviewCount:   stats.ReviewCount,
+		AverageRating: weightedAverageRating(stats.RatingPoints, stats.ReviewCount),
+	}
+	if profile != nil {
+		page.Specialization, page.Education, page.ExperienceYears, page.Department =
+			profile.Specialization, profile.Education, profile.ExperienceYears, profile.Department
+	}
+	return nil
 }
 
 // weightedAverageRating = Σ(rating×reviews)/Σreviews, 2 chữ số thập phân; 0 khi chưa có đánh giá nào.
