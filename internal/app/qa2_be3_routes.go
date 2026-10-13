@@ -20,6 +20,12 @@ func registerQA2BE3Routes(fiberApp *fiber.App, res *Resources, repos *Repositori
 	wishlistSvc := service.NewWishlistService(repository.NewWishlistRepository(res.DB), repos.Course)
 	router.SetupWishlistRoutes(api, res.Config, handler.NewWishlistHandler(wishlistSvc), res.Redis)
 
+	// ADM-N4 kiểm duyệt từ báo cáo: đính kèm `target` vào GET /reports(/:id) và thêm POST /reports/:id/actions.
+	targetResolver := service.NewReportTargetResolver(repository.NewReportTargetRepository(res.DB))
+	services.Report.SetTargetResolver(targetResolver)
+	moderationSvc := service.NewReportModerationService(repos.Report, repository.NewReportModerationRepository(res.DB), targetResolver, services.Notification)
+	router.SetupReportModerationRoutes(api, res.Config, handler.NewReportModerationHandler(moderationSvc), res.Redis, permChecker, services.AuditLog)
+
 	// PG-M2 trang giảng viên công khai.
 	publicTeacherSvc := service.NewPublicTeacherProfileService(repository.NewPublicTeacherProfileRepository(res.DB))
 	router.SetupPublicTeacherProfileRoutes(api, handler.NewPublicTeacherProfileHandler(publicTeacherSvc))
