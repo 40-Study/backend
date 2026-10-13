@@ -122,26 +122,29 @@ func (s *NotificationService) DeleteNotification(id, userID uuid.UUID) error {
 	return notificationNotFound(s.repo.Delete(id, userID))
 }
 
+// defaultNotificationSettings là giá trị mặc định của người chưa từng lưu cài đặt thông báo.
+func defaultNotificationSettings(userID uuid.UUID) *model.NotificationSettings {
+	return &model.NotificationSettings{
+		UserID:               userID,
+		EmailCourseUpdates:   true,
+		EmailPromotions:      true,
+		EmailRecommendations: true,
+		PushCourseUpdates:    true,
+		PushQuizReminders:    true,
+		PushPromotions:       false,
+		PushAchievements:     true,
+		PushStreakReminders:  true,
+	}
+}
+
 func (s *NotificationService) GetSettings(userID uuid.UUID) (*dto.NotificationSettingsResponseDTO, error) {
 	settings, err := s.repo.GetSettingsByUserID(userID)
 	if err != nil {
 		return nil, err
 	}
 	if settings == nil {
-		settings = &model.NotificationSettings{
-			UserID:               userID,
-			EmailCourseUpdates:   true,
-			EmailPromotions:      true,
-			EmailRecommendations: true,
-			PushCourseUpdates:    true,
-			PushQuizReminders:    true,
-			PushPromotions:       false,
-			PushAchievements:     true,
-			PushStreakReminders:  true,
-		}
-		if err := s.repo.UpsertSettings(settings); err != nil {
-			return nil, err
-		}
+		// F-22: GET không ghi. Chưa có dòng -> trả mặc định; dòng chỉ được tạo ở UpdateSettings (PUT).
+		settings = defaultNotificationSettings(userID)
 	}
 	return mapSettingsToDTO(settings), nil
 }
@@ -152,17 +155,7 @@ func (s *NotificationService) UpdateSettings(userID uuid.UUID, req dto.UpdateNot
 		return nil, err
 	}
 	if settings == nil {
-		settings = &model.NotificationSettings{
-			UserID:               userID,
-			EmailCourseUpdates:   true,
-			EmailPromotions:      true,
-			EmailRecommendations: true,
-			PushCourseUpdates:    true,
-			PushQuizReminders:    true,
-			PushPromotions:       false,
-			PushAchievements:     true,
-			PushStreakReminders:  true,
-		}
+		settings = defaultNotificationSettings(userID)
 	}
 	if req.EmailCourseUpdates != nil {
 		settings.EmailCourseUpdates = *req.EmailCourseUpdates

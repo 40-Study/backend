@@ -20,21 +20,24 @@ func NewUserPreferenceService(repo repository.UserPreferenceRepositoryInterface)
 	return &UserPreferenceService{repo: repo}
 }
 
+// defaultUserPreference là cài đặt riêng tư mặc định của người chưa từng lưu.
+func defaultUserPreference(userID uuid.UUID) *model.UserPreference {
+	return &model.UserPreference{
+		UserID:             userID,
+		ProfileVisibility:  "public",
+		ActivityStatus:     "everyone",
+		LeaderboardDisplay: "name",
+	}
+}
+
 func (s *UserPreferenceService) GetPrivacySettings(userID uuid.UUID) (*dto.PrivacySettingsResponseDTO, error) {
 	pref, err := s.repo.GetByUserID(userID)
 	if err != nil {
 		return nil, err
 	}
 	if pref == nil {
-		pref = &model.UserPreference{
-			UserID:             userID,
-			ProfileVisibility:  "public",
-			ActivityStatus:     "everyone",
-			LeaderboardDisplay: "name",
-		}
-		if err := s.repo.Upsert(pref); err != nil {
-			return nil, err
-		}
+		// F-22: GET không ghi. Chưa có dòng -> trả mặc định; dòng chỉ được tạo ở UpdatePrivacySettings (PUT).
+		pref = defaultUserPreference(userID)
 	}
 	return mapPrivacyToDTO(pref), nil
 }
@@ -45,12 +48,7 @@ func (s *UserPreferenceService) UpdatePrivacySettings(userID uuid.UUID, req dto.
 		return nil, err
 	}
 	if pref == nil {
-		pref = &model.UserPreference{
-			UserID:             userID,
-			ProfileVisibility:  "public",
-			ActivityStatus:     "everyone",
-			LeaderboardDisplay: "name",
-		}
+		pref = defaultUserPreference(userID)
 	}
 	if req.ProfileVisibility != nil {
 		pref.ProfileVisibility = *req.ProfileVisibility
