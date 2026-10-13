@@ -420,11 +420,14 @@ func (s *AdminOrderService) GetRevenueReport(ctx context.Context, from, to time.
 		return nil, err
 	}
 
-	// Ngữ nghĩa (một nguồn sự thật): gross = MỌI đơn đã thu tiền trong kỳ (completed + refunded — đơn
-	// đã hoàn đổi status sang 'refunded' nên không còn là 'completed'); refund = phần refunded;
+	// Ngữ nghĩa (một nguồn sự thật): kỳ báo cáo = nhóm đơn TẠO trong kỳ (lọc theo orders.created_at,
+	// cho mọi số liệu kể cả refund). gross = MỌI đơn tạo trong kỳ đã thu tiền (completed + refunded —
+	// đơn đã hoàn đổi status sang 'refunded' nên không còn là 'completed'); refund = phần refunded;
 	// net = gross − refund (= đúng phần completed, không bao giờ âm). Phí nền tảng chỉ tính trên
 	// đơn completed (đơn hoàn trả đủ tiền cho học viên nên phí được hoàn theo, khớp
 	// teacherEarningsJoins chỉ cộng đơn completed), nên phần giảng viên = net − phí.
+	// Lưu ý: đơn tạo ở kỳ A rồi hoàn ở kỳ B vẫn thuộc kỳ A (kỳ B không có refund của đơn đó) — một lần
+	// hoàn tiền sau này làm báo cáo của kỳ tạo đơn được tính lại (restate): refund tăng, net giảm.
 	netRevenue := agg.GrossRevenue.Sub(agg.RefundAmount)
 	report := &dto.RevenueReportResponse{
 		GrossRevenue:       agg.GrossRevenue,

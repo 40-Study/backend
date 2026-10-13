@@ -84,7 +84,7 @@ type TeacherEarningsRow struct {
 // Σ phần GV + phí đơn = tổng final_price của đơn, đúng tới từng xu (review Phase 4, MINOR).
 //
 // Dùng SỐ TIỀN phí đã chốt (không tính lại từ %) để khớp đúng báo cáo doanh thu admin
-// (teacher_share = gross − platform_fee_amount) với đơn 1 khoá. Đơn tạo trước khi có phí có
+// (teacher_share = net − platform_fee_amount) với đơn 1 khoá. Đơn tạo trước khi có phí có
 // platform_fee_amount = 0 nên phần GV = final_price như trước. Chỉ đơn `completed` được tính: đơn
 // `refunded` rơi khỏi tổng (đó là cách "trừ doanh thu giảng viên khi hoàn tiền" của Phase 2).
 const teacherEarningsJoins = `JOIN orders ON orders.id = order_items.order_id
