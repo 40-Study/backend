@@ -179,6 +179,24 @@ func (r *DiscussionRepository) IncrementReplyCount(ctx context.Context, id uuid.
 		Update("reply_count", gorm.Expr("reply_count + ?", delta)).Error
 }
 
+// recountThreadRepliesSQL: tìm bài gốc của dòng `id` (đi lên theo parent_id, tính cả dòng vừa xoá mềm) rồi ghi lại
+// reply_count của nó theo số trả lời còn sống thật.
+const recountThreadRepliesSQL = `WITH RECURSIVE up AS (
+		SELECT id, parent_id FROM discussions WHERE id = ?
+		UNION
+		SELECT p.id, p.parent_id FROM discussions p JOIN up ON p.id = up.parent_id
+	)
+	UPDATE discussions d SET reply_count = ` + model.DiscussionLiveReplyCountSQL + `
+	WHERE d.deleted_at IS NULL AND d.id IN (SELECT id FROM up WHERE parent_id IS NULL)`
+
+// DeletePost xoá mềm một bài/trả lời. Xoá một TRẢ LỜI thì đếm lại reply_count của bài gốc trong CÙNG giao dịch
+// (QA2 F-05: trước đây chỉ có +1 ở AddComment, không bao giờ -1). Đếm lại theo số thật thay vì trừ 1 nên số lệch
+// từ dữ liệu cũ tự được sửa, không thể thành số âm. Xoá bài gốc: không có bộ đếm của ai bị ảnh hưởng.
 func (r *DiscussionRepository) DeletePost(ctx context.Context, id uuid.UUID) error {
-	return r.db.WithContext(ctx).Delete(&model.Discussion{}, "id = ?", id).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&model.Discussion{}, "id = ?", id).Error; err != nil {
+			return err
+		}
+		return tx.Exec(recountThreadRepliesSQL, id).Error
+	})
 }

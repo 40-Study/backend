@@ -473,6 +473,11 @@ func RunPostMigrations(db *gorm.DB) error {
 		return err
 	}
 
+	// discussions.reply_count lệch khỏi số trả lời còn sống -> đếm lại một lần, xem forum_reply_count_backfill.go.
+	if err := runForumReplyCountBackfill(db); err != nil {
+		return err
+	}
+
 	// Voucher seed "đơn hàng đầu tiên" chưa có cờ first_order_only trên DB cũ -> bật (một lần), xem first_order_voucher_backfill.go.
 	// Phải chạy SAU AutoMigrate: cần cột vouchers.first_order_only.
 	if err := runFirstOrderVoucherBackfill(db); err != nil {
