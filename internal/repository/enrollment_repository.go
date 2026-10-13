@@ -238,7 +238,10 @@ func (r *EnrollmentRepository) GetByUserID(ctx context.Context, userID uuid.UUID
 	var enrollments []model.Enrollment
 	var total int64
 
-	query := r.db.WithContext(ctx).Model(&model.Enrollment{}).Where("user_id = ?", userID)
+	// QA2 Q2-01: bỏ ghi danh của khoá đã bị xoá mềm — nếu không danh sách "khoá học của tôi" hiện một
+	// dòng trống tên (Preload("Course") không tìm thấy khoá nên trả struct rỗng).
+	query := r.db.WithContext(ctx).Model(&model.Enrollment{}).Where("user_id = ?", userID).
+		Where("EXISTS (SELECT 1 FROM courses WHERE courses.id = enrollments.course_id AND courses.deleted_at IS NULL)")
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
