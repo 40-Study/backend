@@ -55,7 +55,7 @@ func NewGitHubProvider(cfg *config.GithubOAuthConfig, httpClient *http.Client) *
 	return &GitHubProvider{
 		clientID:     cfg.ClientID,     // clientID là bắt buộc, lấy từ config
 		clientSecret: cfg.ClientSecret, // clientSecret là bắt buộc, lấy từ config
-		redirectURL:  cfg.RedirectURL,  // redirectURL phải trùng với URL đã đăng ký trên GitHub developer, hiện tại là http://localhost:5000/oauth/github/callback
+		redirectURL:  cfg.RedirectURL,  // redirectURL phải trùng với URL đã đăng ký trên GitHub developer, dev local dùng http://localhost:5001/oauth/github/callback (PORT=5001); OAuth App cũ đăng ký localhost:5000 phải sửa callback
 		authURL:      cfg.Endpoint.AuthURL,
 		tokenURL:     cfg.Endpoint.TokenURL,
 		scopes:       cfg.Scopes, // là mảng string để dễ mở rộng nếu sau này muốn thêm scope, hiện tại ["user:email", "read:user"] để lấy email và thông tin cơ bản
@@ -73,7 +73,7 @@ func (p *GitHubProvider) Name() string {
 func (p *GitHubProvider) GetAuthURL(state string) string {
 	params := url.Values{}
 	params.Set("client_id", p.clientID)              // client_id là bắt buộc, lấy từ config
-	params.Set("redirect_uri", p.redirectURL)        // redirect_uri phải trùng với URL đã đăng ký trên GitHub developer, hiện tại là http://localhost:5000/oauth/github/callback
+	params.Set("redirect_uri", p.redirectURL)        // redirect_uri phải trùng với URL đã đăng ký trên GitHub developer, dev local dùng http://localhost:5001/oauth/github/callback (PORT=5001); OAuth App cũ đăng ký localhost:5000 phải sửa callback
 	params.Set("scope", strings.Join(p.scopes, " ")) // scope: "user:email" để lấy email, "read:user" để lấy thông tin cơ bản
 	params.Set("state", state)                       // state để verify khi callback về, chống CSRF, VD: "randomstring123 + deviceId"
 	return p.authURL + "?" + params.Encode()

@@ -18,7 +18,7 @@ việc với chấm bài, livestream hoặc thanh toán.
 Các biến host phải trỏ về máy local:
 
 ```
-PORT=5000
+PORT=5001
 DB_HOST=localhost
 REDIS_HOST=localhost
 MINIO_HOST=localhost
@@ -29,6 +29,12 @@ RABBITMQ_USER=guest
 RABBITMQ_PASSWORD=guest
 RABBITMQ_VHOST=/
 ```
+
+> `PORT=5001` chỉ áp dụng cho dev local (macOS AirPlay chiếm cổng 5000; web `.env.example` cũng trỏ về 5001).
+> Production giữ `PORT` riêng của nó (hiện 5000, khớp upstream trong `nginx/nginx.conf`); đổi cổng prod
+> phải sửa `.env` prod và nginx trong cùng một lần deploy. Giá trị mặc định trong code vẫn là 5000 khi
+> không có `PORT`. Nếu GitHub OAuth App local đã đăng ký callback `http://localhost:5000/oauth/github/callback`,
+> hãy sửa thành `http://localhost:5001/oauth/github/callback`.
 
 Thiếu nhóm `RABBITMQ_*` thì backend vẫn chạy nhưng báo `403 username or password
 not allowed`, kèm theo đó là queue bài tập / chứng chỉ / lời mời phụ huynh không
@@ -54,7 +60,7 @@ bài học + nội dung bài học, 4 lượt ghi danh kèm tiến độ, 3 vouc
 ## 4. Chạy server
 
 ```bash
-go run ./cmd/api    # backend :5000, tự AutoMigrate khi khởi động
+go run ./cmd/api    # backend :5001, tự AutoMigrate khi khởi động
 ```
 
 ## 5. Tài khoản demo
@@ -87,7 +93,7 @@ Login có rate limit — gọi liên tiếp nhiều tài khoản sẽ nhận `42
 Trong `web/.env`:
 
 ```
-NEXT_PUBLIC_API_URL=http://localhost:5000/api
+NEXT_PUBLIC_API_URL=http://localhost:5001/api
 ```
 
 ```bash

@@ -153,7 +153,15 @@ func TestRefundOrder_CertificateIsReinstatedOnlyAfterCompletingAgain(t *testing.
 	}
 
 	// Học xong lần nữa -> cấp lại đúng số cũ, trang verify hợp lệ trở lại.
-	rc.exec("UPDATE enrollments SET completed_at = now(), progress_percentage = 100 WHERE user_id = ? AND course_id = ?", rc.student, rc.course)
+	// completed_at phải đứng SAU revoked_at nhưng KHÔNG được lấy từ đồng hồ DB (`now()`): revoked_at do
+	// Go ghi (time.Now() trong RevokeCertificates), còn đồng hồ của Postgres (container, có thể lệch
+	// vài ms đến hàng chục ms) khiến `completed_at > revoked_at` đôi khi sai -> test chập chờn. Neo vào
+	// chính revoked_at đã lưu để thứ tự không phụ thuộc đồng hồ nào.
+	var cert model.Certificate
+	if err := rc.db.Where("certificate_number = ?", rc.number).First(&cert).Error; err != nil || cert.RevokedAt == nil {
+		t.Fatalf("đọc chứng chỉ đã thu hồi: %+v err=%v, muốn revoked_at khác nil", cert, err)
+	}
+	rc.exec("UPDATE enrollments SET completed_at = ?, progress_percentage = 100 WHERE user_id = ? AND course_id = ?", cert.RevokedAt.Add(time.Minute), rc.student, rc.course)
 	list, err := rc.certSvc.GetMyCertificates(ctx, rc.student, 1, 10)
 	if err != nil || list.Total != 1 || list.Data[0].CertificateNumber != rc.number {
 		t.Fatalf("học xong lần hai: %+v err=%v, muốn 1 chứng chỉ số %s", list, err, rc.number)
