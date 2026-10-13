@@ -468,6 +468,11 @@ func RunPostMigrations(db *gorm.DB) error {
 		return err
 	}
 
+	// enrollments.total_lessons kẹt ở 0 -> số bài bắt buộc hiện có (một lần), xem enrollment_total_lessons_backfill.go.
+	if err := runEnrollmentTotalLessonsBackfill(db); err != nil {
+		return err
+	}
+
 	logNotValidCheckConstraints(db)
 
 	log.Printf("Post-migrations applied: %d statement group(s)\n", len(statements))
