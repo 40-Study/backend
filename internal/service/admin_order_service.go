@@ -404,7 +404,7 @@ func (s *AdminOrderService) GetRevenueReport(ctx context.Context, from, to time.
 	if err := db.Model(&model.Order{}).
 		Where("created_at BETWEEN ? AND ?", from, to).
 		Select(`
-			COALESCE(SUM(total_amount) FILTER (WHERE status = 'completed'), 0) AS gross_revenue,
+			COALESCE(SUM(total_amount) FILTER (WHERE status IN ('completed', 'refunded')), 0) AS gross_revenue,
 			COALESCE(SUM(total_amount) FILTER (WHERE status = 'refunded'), 0) AS refund_amount,
 			COALESCE(SUM(platform_fee_amount) FILTER (WHERE status = 'completed'), 0) AS platform_fee_amount,
 			COUNT(*) FILTER (WHERE status = 'completed') AS completed_count,
@@ -420,12 +420,21 @@ func (s *AdminOrderService) GetRevenueReport(ctx context.Context, from, to time.
 		return nil, err
 	}
 
+	// Ngữ nghĩa (một nguồn sự thật): kỳ báo cáo = nhóm đơn TẠO trong kỳ (lọc theo orders.created_at,
+	// cho mọi số liệu kể cả refund). gross = MỌI đơn tạo trong kỳ đã thu tiền (completed + refunded —
+	// đơn đã hoàn đổi status sang 'refunded' nên không còn là 'completed'); refund = phần refunded;
+	// net = gross − refund (= đúng phần completed, không bao giờ âm). Phí nền tảng chỉ tính trên
+	// đơn completed (đơn hoàn trả đủ tiền cho học viên nên phí được hoàn theo, khớp
+	// teacherEarningsJoins chỉ cộng đơn completed), nên phần giảng viên = net − phí.
+	// Lưu ý: đơn tạo ở kỳ A rồi hoàn ở kỳ B vẫn thuộc kỳ A (kỳ B không có refund của đơn đó) — một lần
+	// hoàn tiền sau này làm báo cáo của kỳ tạo đơn được tính lại (restate): refund tăng, net giảm.
+	netRevenue := agg.GrossRevenue.Sub(agg.RefundAmount)
 	report := &dto.RevenueReportResponse{
 		GrossRevenue:       agg.GrossRevenue,
 		RefundAmount:       agg.RefundAmount,
-		NetRevenue:         agg.GrossRevenue.Sub(agg.RefundAmount),
+		NetRevenue:         netRevenue,
 		PlatformFeeAmount:  agg.PlatformFeeAmount,
-		TeacherShareAmount: agg.GrossRevenue.Sub(agg.PlatformFeeAmount),
+		TeacherShareAmount: netRevenue.Sub(agg.PlatformFeeAmount),
 		TransactionCount:   agg.TransactionCount,
 		CompletedCount:     agg.CompletedCount,
 		RefundedCount:      agg.RefundedCount,

@@ -278,6 +278,12 @@ type LateRefundResponse struct {
 // PlatformFeeAmount/TeacherShareAmount (LỆCH so với ví dụ JSON gốc ở phase-02-orders-refund.md —
 // xem ghi chú "Deviation" đầu file đó): quyết định chủ dự án #2 yêu cầu báo cáo hiện "gộp / phí
 // nền tảng / phần giảng viên" — 2 field này bổ sung, KHÔNG có trong bản phác thảo ban đầu.
+//
+// Ngữ nghĩa: mọi số liệu tính trên các đơn TẠO trong kỳ (lọc theo orders.created_at). GrossRevenue =
+// mọi đơn tạo trong kỳ đã thu tiền (completed + refunded); RefundAmount = phần refunded;
+// NetRevenue = Gross − Refund (= phần completed, trước phí nền tảng); PlatformFeeAmount tính trên đơn
+// completed; TeacherShareAmount = Net − PlatformFeeAmount. Đơn hoàn tiền SAU kỳ tạo đơn làm báo cáo
+// của kỳ tạo đơn được tính lại (refund tăng, net giảm); kỳ hoàn tiền không ghi nhận refund đó.
 type RevenueReportResponse struct {
 	GrossRevenue       decimal.Decimal  `json:"gross_revenue"`
 	RefundAmount       decimal.Decimal  `json:"refund_amount"`
