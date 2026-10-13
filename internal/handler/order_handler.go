@@ -214,10 +214,6 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 		if body, ok := paymentStateConflict(err); ok {
 			return c.Status(fiber.StatusConflict).JSON(body)
 		}
-		// QA2 F-02 (review M1): voucher "đơn hàng đầu tiên" bị kiểm lại lúc xin mã thanh toán.
-		if writeVoucherFirstOrderOnly(c, err) {
-			return nil
-		}
 		if status := orderErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{
 				"code":    "ERR_NOT_FOUND",
@@ -277,6 +273,10 @@ func (h *OrderHandler) CreatePaymentIntent(c *fiber.Ctx) error {
 		// nghiệp vụ có code riêng để web báo đúng tình huống thay vì lỗi chung.
 		if body, ok := paymentStateConflict(err); ok {
 			return c.Status(fiber.StatusConflict).JSON(body)
+		}
+		// QA2 F-02 (review M1): voucher "đơn hàng đầu tiên" bị kiểm lại lúc xin mã thanh toán -> 409 có mã riêng.
+		if writeVoucherFirstOrderOnly(c, err) {
+			return nil
 		}
 		if status := orderErrorStatus(err); status != 0 {
 			return c.Status(status).JSON(fiber.Map{
