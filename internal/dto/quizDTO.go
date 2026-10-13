@@ -18,8 +18,8 @@ type CreateQuizDTO struct {
 	Title              string `json:"title" validate:"required,min=3,max=255"`
 	Description        string `json:"description,omitempty"`
 	TimeLimitMins      *int   `json:"time_limit_minutes,omitempty"`
-	PassPercentage     *float64 `json:"pass_percentage,omitempty"`
-	MaxAttempts        *int   `json:"max_attempts,omitempty"`
+	PassPercentage     *float64 `json:"pass_percentage,omitempty" validate:"omitnil,gte=0,lte=100"`
+	MaxAttempts        *int   `json:"max_attempts,omitempty" validate:"omitnil,gte=1,lte=100"`
 	TriggerType        string `json:"trigger_type" validate:"omitempty,oneof=manual scheduled ai_triggered video_checkpoint"`
 	ScheduledAt        string `json:"scheduled_at,omitempty"`
 	VideoTimestamp     *int   `json:"video_timestamp,omitempty"`
@@ -32,8 +32,8 @@ type UpdateQuizDTO struct {
 	Title              *string  `json:"title" validate:"omitempty,min=3,max=255"`
 	Description        *string  `json:"description"`
 	TimeLimitMins      *int     `json:"time_limit_minutes"`
-	PassPercentage     *float64 `json:"pass_percentage"`
-	MaxAttempts        *int     `json:"max_attempts"`
+	PassPercentage     *float64 `json:"pass_percentage" validate:"omitnil,gte=0,lte=100"`
+	MaxAttempts        *int     `json:"max_attempts" validate:"omitnil,gte=1,lte=100"`
 	TriggerType        *string  `json:"trigger_type" validate:"omitempty,oneof=manual scheduled ai_triggered video_checkpoint"`
 	ScheduledAt        *string  `json:"scheduled_at"`
 	VideoTimestamp     *int     `json:"video_timestamp"`
