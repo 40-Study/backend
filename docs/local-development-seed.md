@@ -30,6 +30,12 @@ RABBITMQ_PASSWORD=guest
 RABBITMQ_VHOST=/
 ```
 
+> `PORT=5001` chỉ áp dụng cho dev local (macOS AirPlay chiếm cổng 5000; web `.env.example` cũng trỏ về 5001).
+> Production giữ `PORT` riêng của nó (hiện 5000, khớp upstream trong `nginx/nginx.conf`); đổi cổng prod
+> phải sửa `.env` prod và nginx trong cùng một lần deploy. Giá trị mặc định trong code vẫn là 5000 khi
+> không có `PORT`. Nếu GitHub OAuth App local đã đăng ký callback `http://localhost:5000/oauth/github/callback`,
+> hãy sửa thành `http://localhost:5001/oauth/github/callback`.
+
 Thiếu nhóm `RABBITMQ_*` thì backend vẫn chạy nhưng báo `403 username or password
 not allowed`, kèm theo đó là queue bài tập / chứng chỉ / lời mời phụ huynh không
 hoạt động.

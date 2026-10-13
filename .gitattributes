@@ -4,5 +4,19 @@
 # change used to turn into a whole-file diff, e.g. internal/handler/order_handler.go).
 * text=auto eol=lf
 
-# Never touch binary documents.
+# Never touch binary files.
 *.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.zip binary
+*.xlsx binary
+*.docx binary
+*.mp4 binary
+*.mp3 binary
