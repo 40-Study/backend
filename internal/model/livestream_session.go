@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,36 @@ const (
 	LivestreamStatusEnded     LivestreamSessionStatus = "ended"
 	LivestreamStatusCancelled LivestreamSessionStatus = "cancelled"
 )
+
+// LivestreamDefaultDuration: độ dài buổi khi không có scheduled_end_at (lịch vẽ mặc định 1 giờ — xem chú thích
+// ScheduledEndAt). Dùng để biết một buổi "đã qua giờ".
+const LivestreamDefaultDuration = time.Hour
+
+// LivestreamMissedSQL: điều kiện SQL (cột trần của livestream_sessions) cho buổi ĐÃ QUA: còn "scheduled" mà
+// giờ kết thúc dự kiến đã trôi qua. SSOT SQL của EffectiveStatus — bộ lọc status ở repository dùng cùng định nghĩa
+// nên danh sách lọc và trạng thái trả ra không lệch nhau.
+var LivestreamMissedSQL = fmt.Sprintf(
+	"(status = 'scheduled' AND scheduled_at IS NOT NULL AND COALESCE(scheduled_end_at, scheduled_at + interval '%d seconds') < NOW())",
+	int(LivestreamDefaultDuration.Seconds()))
+
+// EffectiveStatus: trạng thái hiển thị tại thời điểm now (QA2 F-06). Buổi còn "scheduled" mà đã qua giờ kết thúc dự
+// kiến (không có thì scheduled_at + LivestreamDefaultDuration) chưa từng bắt đầu và sẽ không tự bắt đầu nữa, nên
+// hiển thị là LivestreamStatusEnded thay vì "sắp diễn ra" mãi. Tính khi đọc (như Contest.Phase), KHÔNG ghi ngược
+// vào cột status: buổi vẫn Start được nếu GV dời lịch hoặc bấm bắt đầu muộn. Buổi không có lịch, đang live, đã
+// kết thúc hay đã huỷ giữ nguyên trạng thái đã lưu.
+func (s LivestreamSession) EffectiveStatus(now time.Time) LivestreamSessionStatus {
+	if s.Status != LivestreamStatusScheduled || s.ScheduledAt == nil {
+		return s.Status
+	}
+	end := s.ScheduledAt.Add(LivestreamDefaultDuration)
+	if s.ScheduledEndAt != nil {
+		end = *s.ScheduledEndAt
+	}
+	if end.Before(now) {
+		return LivestreamStatusEnded
+	}
+	return s.Status
+}
 
 type ParticipantRole string
 

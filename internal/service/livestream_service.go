@@ -1136,7 +1136,7 @@ func (s *LivestreamService) toResponseDTO(session model.LivestreamSession) dto.L
 		CourseID:        session.CourseID,
 		LessonContentID: session.LessonContentID,
 		RoomName:        session.RoomName,
-		Status:          string(session.Status),
+		Status:          string(session.EffectiveStatus(time.Now())),
 		StartedAt:       startedAt,
 		EndedAt:         endedAt,
 		ScheduledAt:     scheduledAt,
