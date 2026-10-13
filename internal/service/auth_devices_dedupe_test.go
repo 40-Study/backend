@@ -67,29 +67,67 @@ func TestGetAllDevices_GopPhienTrungDauVanTay(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("có %d dòng, muốn 2 (3 phiên Chrome trùng gộp thành 1 + 1 điện thoại): %+v", len(got), got)
 	}
+	if got[0].SessionCount != 3 || got[1].SessionCount != 1 {
+		t.Errorf("session_count sai: [%d, %d], muốn [3, 1]", got[0].SessionCount, got[1].SessionCount)
+	}
 	if got[0].DeviceID != newest.String() || got[1].DeviceID != phone.String() {
 		t.Errorf("thứ tự/đại diện sai: [%s, %s], muốn [mới nhất %s, điện thoại %s]", got[0].DeviceID, got[1].DeviceID, newest, phone)
 	}
 }
 
-func TestGetAllDevices_GopGiuThietBiHienTai(t *testing.T) {
+// Review M3: hai máy cùng Chrome/OS gửi user_agent y hệt. Phiên của máy thứ hai (có thể là kẻ lạ) KHÔNG được
+// chìm vào dòng "thiết bị này": phải hiện thành dòng riêng.
+func TestGetAllDevices_KhongGopVaoDongThietBiHienTai(t *testing.T) {
 	svc, rdb := newDevicesTestService(t)
 	user := uuid.New()
-	current, newer := uuid.New(), uuid.New()
+	current, other := uuid.New(), uuid.New()
 	seedDeviceSessions(t, rdb, user, []devSeed{
 		{current, "Chrome Browser", chromeMac, 24 * time.Hour},
-		{newer, "Chrome Browser", chromeMac, time.Hour},
+		{other, "Chrome Browser", chromeMac, time.Hour},
 	})
 
 	got, err := svc.GetAllDevices(context.Background(), user, current)
 	if err != nil {
 		t.Fatalf("GetAllDevices: %v", err)
 	}
-	if len(got) != 1 || got[0].DeviceID != current.String() || !got[0].IsCurrent {
-		t.Fatalf("nhóm chứa thiết bị hiện tại phải đại diện bằng chính nó và is_current=true: %+v", got)
+	if len(got) != 2 {
+		t.Fatalf("có %d dòng, muốn 2 (phiên khác phải hiện riêng, không gộp vào thiết bị hiện tại): %+v", len(got), got)
 	}
-	if at, err := time.Parse(time.RFC3339, got[0].LoggedInAt); err != nil || time.Since(at) > 2*time.Hour {
-		t.Errorf("giờ hiển thị phải là phiên MỚI NHẤT của nhóm (~1h trước), nhận %q", got[0].LoggedInAt)
+	if got[0].DeviceID != current.String() || !got[0].IsCurrent || got[0].SessionCount != 1 || len(got[0].DeviceIDs) != 1 {
+		t.Errorf("dòng đầu phải là thiết bị hiện tại, session_count=1, một device_id: %+v", got[0])
+	}
+	if got[1].DeviceID != other.String() || got[1].IsCurrent {
+		t.Errorf("dòng sau phải là phiên khác, không is_current: %+v", got[1])
+	}
+}
+
+// Các dòng KHÔNG phải thiết bị hiện tại, trùng vân tay, gộp lại nhưng PHẢI nói rõ số phiên và liệt kê đủ
+// device_ids (để mọi thao tác thu hồi theo dòng chạm tới từng phiên trong nhóm).
+func TestGetAllDevices_NhomTraSessionCountVaDeviceIDs(t *testing.T) {
+	svc, rdb := newDevicesTestService(t)
+	user := uuid.New()
+	a, b, c := uuid.New(), uuid.New(), uuid.New()
+	seedDeviceSessions(t, rdb, user, []devSeed{
+		{a, "Chrome Browser", chromeMac, 72 * time.Hour},
+		{b, "Chrome Browser", chromeMac, 24 * time.Hour},
+		{c, "Chrome Browser", chromeMac, time.Hour},
+	})
+
+	got, err := svc.GetAllDevices(context.Background(), user, uuid.New())
+	if err != nil {
+		t.Fatalf("GetAllDevices: %v", err)
+	}
+	if len(got) != 1 || got[0].SessionCount != 3 {
+		t.Fatalf("muốn 1 dòng session_count=3, nhận %+v", got)
+	}
+	have := map[string]bool{}
+	for _, id := range got[0].DeviceIDs {
+		have[id] = true
+	}
+	for _, id := range []uuid.UUID{a, b, c} {
+		if !have[id.String()] {
+			t.Errorf("device_ids thiếu %s: %v", id, got[0].DeviceIDs)
+		}
 	}
 }
 

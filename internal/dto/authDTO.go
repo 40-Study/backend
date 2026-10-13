@@ -44,6 +44,10 @@ type DeviceSessionDto struct {
 	UserAgent  string `json:"user_agent,omitempty" example:"Mozilla/5.0..."`
 	LoggedInAt string `json:"logged_in_at" example:"2024-01-01T00:00:00Z"`
 	IsCurrent  bool   `json:"is_current,omitempty"`
+	// SessionCount / DeviceIDs: chỉ có ở GET /auth/devices. Một dòng có thể đại diện nhiều phiên cùng
+	// device_name + user_agent (không bao giờ gồm thiết bị hiện tại); DeviceIDs liệt kê MỌI phiên của dòng.
+	SessionCount int      `json:"session_count,omitempty"`
+	DeviceIDs    []string `json:"device_ids,omitempty"`
 }
 
 // SystemRoleDto - System role (STUDENT, TEACHER, PARENT, ORG_OWNER)
