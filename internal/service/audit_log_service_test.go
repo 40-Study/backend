@@ -210,7 +210,8 @@ func TestAuditService_List_FiltersJoinAndOrderOnPostgres(t *testing.T) {
 	check("from lấy cả ngày đó", dto.AuditLogFilterDTO{From: "2026-10-05"}, 2)
 	check("to ngày thuần gồm cả ngày đó", dto.AuditLogFilterDTO{To: "2026-10-03"}, 2)
 	check("range rfc3339", dto.AuditLogFilterDTO{From: base.Add(30 * time.Minute).Format(time.RFC3339), To: base.Add(49 * time.Hour).Format(time.RFC3339)}, 2)
-	check("không khớp", dto.AuditLogFilterDTO{Action: "nope"}, 0)
+	// Mã hợp lệ nhưng không có dòng nào -> 0 (mã LẠ là 400, xem audit_log_action_filter_test.go - ADM-L7).
+	check("không khớp", dto.AuditLogFilterDTO{Action: model.AuditActionOrderRefund}, 0)
 
 	page2, err := svc.List(t.Context(), dto.AuditLogFilterDTO{Page: 2, PageSize: 3})
 	if err != nil || page2.Total != 4 || len(page2.Items) != 1 || page2.Items[0].Action != model.AuditActionUserLock {
