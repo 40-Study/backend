@@ -273,6 +273,11 @@ type Voucher struct {
 	Logs            []VoucherLog           `gorm:"foreignKey:VoucherID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
+// SeededFirstOrderVoucherCode: mã voucher demo mà seed đánh dấu first_order_only (mô tả "đơn hàng đầu tiên"). MỘT hằng
+// dùng chung cho seed (seeds/demo_vouchers.go) và bước sửa dữ liệu cũ (database.runFirstOrderVoucherBackfill) để hai nơi
+// không lệch nhau; luật first_order_only bản thân vẫn là cờ dữ liệu của từng voucher, không gắn với tên mã.
+const SeededFirstOrderVoucherCode = "WELCOME20"
+
 func (Voucher) TableName() string {
 	return "vouchers"
 }

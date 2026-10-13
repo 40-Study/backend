@@ -16,7 +16,7 @@ func (s *Seeder) SeedDemoVouchers() error {
 
 	vouchers := []model.Voucher{
 		{
-			Code:                    "WELCOME20",
+			Code:                    model.SeededFirstOrderVoucherCode,
 			Name:                    "Chào mừng học viên mới - giảm 20%",
 			Description:             "Giảm 20% cho đơn hàng đầu tiên, tối đa 200.000đ.",
 			DiscountUnit:            model.DiscountUnitMoney,
