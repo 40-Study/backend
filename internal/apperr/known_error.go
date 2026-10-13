@@ -18,6 +18,8 @@ import "net/http"
 type KnownError struct {
 	Status  int
 	Message string
+	// Code (tuỳ chọn): mã lỗi ổn định cho client xử lý theo mã thay vì theo câu chữ (vd COURSE_NOT_FOR_SALE).
+	Code string
 }
 
 func (e *KnownError) Error() string { return e.Message }
@@ -44,4 +46,9 @@ func Forbidden(message string) *KnownError {
 // chính client). HTTP 400.
 func BadRequest(message string) *KnownError {
 	return &KnownError{Status: http.StatusBadRequest, Message: message}
+}
+
+// ConflictCode: như Conflict (HTTP 409) nhưng kèm mã lỗi ổn định cho client.
+func ConflictCode(code, message string) *KnownError {
+	return &KnownError{Status: http.StatusConflict, Message: message, Code: code}
 }

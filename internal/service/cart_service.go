@@ -44,6 +44,10 @@ func (s *CartService) AddToCart(ctx context.Context, userID uuid.UUID, req dto.A
 	if course == nil || isPrivateCourseStatus(course.Status) {
 		return nil, apperr.NotFound("course not found")
 	}
+	// Review QA2 H2: khoá ngừng bán (archived) không thêm vào giỏ.
+	if isCourseNotForSale(course.Status) {
+		return nil, ErrCourseNotForSale
+	}
 
 	// Check if course is already in cart
 	exists, err := s.cartRepo.Exists(ctx, userID, req.CourseID)

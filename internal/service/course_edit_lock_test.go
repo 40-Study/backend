@@ -271,7 +271,7 @@ func TestCanViewCourse_EveryStatusClassified(t *testing.T) {
 		model.CourseStatusPendingReview: true,
 		model.CourseStatusRejected:      true,
 		model.CourseStatusPublished:     false,
-		model.CourseStatusArchived:      false,
+		model.CourseStatusArchived:      true, // review QA2 H2: khoá ngừng bán chỉ chủ/admin/người đã ghi danh xem
 	}
 	owner, stranger := uuid.New(), uuid.New()
 	for _, s := range model.CourseStatuses {

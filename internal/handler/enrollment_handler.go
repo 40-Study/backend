@@ -50,6 +50,12 @@ func (h *EnrollmentHandler) Enroll(c *fiber.Ctx) error {
 				"message": "Khóa học trả phí, vui lòng thanh toán qua đơn hàng",
 			})
 		}
+		// Review QA2 H2: khoá ngừng bán (archived) không nhận ghi danh mới.
+		if errors.Is(err, service.ErrCourseNotForSale) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"code": "COURSE_NOT_FOR_SALE", "message": service.ErrCourseNotForSale.Message,
+			})
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to enroll", "error": err.Error(),
 		})

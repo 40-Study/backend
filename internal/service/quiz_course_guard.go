@@ -83,7 +83,7 @@ func (s *QuizService) ensureQuizCourseVisible(ctx context.Context, quiz *model.Q
 		return err
 	}
 	for _, course := range courses {
-		if !isPrivateCourseStatus(course.Status) {
+		if !isInsiderOnlyCourseStatus(course.Status) {
 			continue
 		}
 		enrolled, err := isEnrolledInCourse(ctx, s.enrollmentRepo, userID, course.ID)

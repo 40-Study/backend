@@ -59,13 +59,13 @@ var ErrCourseHidden = errors.New("course not found")
 // người đã ghi danh xem được. Trước bản vá, mọi route đọc (GET /courses/:id, /courses/:id/sections,
 // /sections/:id...) chỉ cần đăng nhập, nên giảng viên khác đọc được khoá nháp và giáo trình của
 // nhau. Giữ "enrolled" vì khoá đã bán có thể bị đưa về nháp (archived -> draft) mà học viên cũ vẫn
-// phải vào học được; published/archived vẫn mở như trước.
+// phải vào học được. Review QA2 H2: khoá archived (ngừng bán) cũng chỉ còn mở cho chủ khoá/admin/người đã ghi danh; chỉ published mở cho mọi người.
 //
 // Liệt kê TƯỜNG MINH các trạng thái riêng tư (denylist) thay vì allowlist: cột status có CHECK
 // constraint theo model.CourseStatuses nên dữ liệu thật chỉ có 5 giá trị, và
 // TestCanViewCourse_EveryStatusClassified đỏ ngay khi có trạng thái mới chưa được xếp loại.
 func canViewCourse(course *model.Course, viewerID uuid.UUID, isAdmin, enrolled bool) bool {
-	if !isPrivateCourseStatus(course.Status) {
+	if !isInsiderOnlyCourseStatus(course.Status) {
 		return true
 	}
 	return isAdmin || enrolled || (viewerID != uuid.Nil && course.InstructorID == viewerID)

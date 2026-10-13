@@ -19,9 +19,11 @@ import (
 func RespondServiceError(c *fiber.Ctx, err error, genericMessage string) error {
 	var known *apperr.KnownError
 	if errors.As(err, &known) {
-		return c.Status(known.Status).JSON(fiber.Map{
-			"message": known.Message,
-		})
+		body := fiber.Map{"message": known.Message}
+		if known.Code != "" {
+			body["code"] = known.Code
+		}
+		return c.Status(known.Status).JSON(body)
 	}
 
 	log.Printf("[ERROR] %s %s: %v", c.Method(), c.Path(), err)
