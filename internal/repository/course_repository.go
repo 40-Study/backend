@@ -107,7 +107,7 @@ func (r *CourseRepository) GetAll(ctx context.Context, params CourseFilterDBPara
 		query = query.Joins("JOIN course_tags ON course_tags.course_id = courses.id").
 			Where("course_tags.tag_id IN ?", params.TagIDs)
 	}
-	query = utils.ApplyKeywordSearch(query, params.Keyword, "courses.title", "courses.short_description")
+	query = utils.ApplyAccentInsensitiveKeywordSearch(query, params.Keyword, "courses.title", "courses.short_description")
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
