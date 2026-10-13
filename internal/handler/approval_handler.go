@@ -79,14 +79,14 @@ func courseReviewError(c *fiber.Ctx, err error, invalidStatusMsg string) error {
 			titles[i] = l.Title
 		}
 		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
-			"message": "Every lesson must have content before submitting for review. Lessons without content: " + strings.Join(titles, ", "),
+			"message": "Mỗi bài học phải có nội dung trước khi gửi duyệt. Bài chưa có nội dung: " + strings.Join(titles, ", "),
 			"code":    "COURSE_LESSON_NO_CONTENT",
 			"lessons": missing.Lessons,
 		})
 	case errors.Is(err, repository.ErrCourseEmptyContent):
 		// D2 (QA vòng 2): dữ liệu khoá chưa đủ để nộp — 422, không phải trạng thái sai.
 		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
-			"message": "Course must have at least one lesson before submitting for review", "code": "COURSE_EMPTY",
+			"message": "Khoá học cần có ít nhất một bài học trước khi gửi duyệt.", "code": "COURSE_EMPTY",
 		})
 	}
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"message": "Failed to process course review", "error": err.Error()})

@@ -53,3 +53,39 @@ func TestCourseReviewError_BaiRongNeuTenTungBai(t *testing.T) {
 		t.Errorf("lessons=%+v", body.Lessons)
 	}
 }
+
+// QA2 Q2-05: thông báo nộp duyệt bị chặn vì thiếu nội dung phải bằng tiếng Việt (web hiện nguyên văn khi
+// không dịch được theo code) và kèm mã máy đọc được — cả khi còn bài trống lẫn khi khoá chưa có bài nào.
+func TestCourseReviewError_ThongBaoTiengViet(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		wantCode string
+		wantMsg  []string
+	}{
+		{"bài trống", &repository.CourseLessonsWithoutContentError{Lessons: []repository.LessonWithoutContent{{ID: uuid.New(), Title: "Bài 2"}}},
+			"COURSE_LESSON_NO_CONTENT", []string{"Mỗi bài học phải có nội dung", "Bài 2"}},
+		{"khoá rỗng", repository.ErrCourseEmptyContent, "COURSE_EMPTY", []string{"ít nhất một bài học"}},
+	}
+	for _, tc := range cases {
+		app := fiber.New()
+		app.Get("/x", func(c *fiber.Ctx) error { return courseReviewError(c, tc.err, "unused") })
+		resp, err := app.Test(httptest.NewRequest("GET", "/x", nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		var body struct{ Message, Code string }
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatalf("%s: body không phải JSON: %s", tc.name, raw)
+		}
+		if resp.StatusCode != 422 || body.Code != tc.wantCode {
+			t.Errorf("%s: status=%d code=%q, muốn 422 %s", tc.name, resp.StatusCode, body.Code, tc.wantCode)
+		}
+		for _, want := range tc.wantMsg {
+			if !strings.Contains(body.Message, want) {
+				t.Errorf("%s: message %q thiếu %q", tc.name, body.Message, want)
+			}
+		}
+	}
+}
