@@ -319,11 +319,9 @@ func (s *CourseService) GetCourseBySlug(ctx context.Context, slug string) (*dto.
 	if err != nil {
 		return nil, err
 	}
-	if course == nil {
-		return nil, errors.New("course not found")
-	}
-	if course.Status != "published" {
-		return nil, errors.New("course not found")
+	// ErrCourseHidden (không phải errors.New trần): handler chỉ map sentinel này sang 404, lỗi khác là 500.
+	if course == nil || course.Status != model.CourseStatusPublished {
+		return nil, ErrCourseHidden
 	}
 
 	detail := &dto.CourseDetailDTO{

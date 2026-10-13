@@ -47,3 +47,19 @@ func TestCheckQuizOwner_QuizKhongTonTai_TraErrQuizNotFound(t *testing.T) {
 func (r repoQuizAbsent) CountQuestionsByQuizIDs(context.Context, []uuid.UUID) (map[uuid.UUID]int, error) {
 	return map[uuid.UUID]int{}, nil
 }
+
+// Review web #1: GetQuizByID với quiz không có dòng phải trả sentinel ErrQuizNotFound (không phải errors.New trần), để
+// handler chỉ trả 404 cho "không có" và 500 cho lỗi khác.
+func TestGetQuizByID_QuizKhongTonTai_TraErrQuizNotFound(t *testing.T) {
+	s := NewQuizService(repoQuizGetWithQuestionsAbsent{}, nil, nil, nil, nil, nil, nil)
+	_, err := s.GetQuizByID(context.Background(), uuid.New(), uuid.New(), true)
+	if !errors.Is(err, ErrQuizNotFound) {
+		t.Fatalf("GetQuizByID(quiz không tồn tại): muốn ErrQuizNotFound, nhận %v", err)
+	}
+}
+
+type repoQuizGetWithQuestionsAbsent struct{ repoQuizAbsent }
+
+func (repoQuizGetWithQuestionsAbsent) GetQuizWithQuestions(context.Context, uuid.UUID) (*model.Quiz, error) {
+	return nil, nil
+}

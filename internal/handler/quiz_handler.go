@@ -259,10 +259,8 @@ func (h *QuizHandler) GetQuizByID(c *fiber.Ctx) error {
 		if resp, handled := respondQuizGateError(c, err); handled {
 			return resp
 		}
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Quiz not found",
-			"error":   err.Error(),
-		})
+		// Review web #1: 404 (ErrQuizNotFound/ErrCourseHidden) đã xử lý ở respondQuizGateError; lỗi còn lại là 500.
+		return RespondServiceError(c, err, "Failed to get quiz")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

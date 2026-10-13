@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"study.com/v1/internal/model"
@@ -44,5 +45,15 @@ func TestGetCourseBySlugDoesNotExposeLessonContents(t *testing.T) {
 	}
 	if len(got.Sections[0].Lessons[0].Contents) != 0 {
 		t.Fatal("public course detail khong duoc lo lesson contents")
+	}
+}
+
+// Review web #1: không có / chưa xuất bản phải là sentinel ErrCourseHidden để handler trả 404 và coi mọi lỗi khác là 500.
+func TestGetCourseBySlug_KhongCoVaChuaXuatBan_TraErrCourseHidden(t *testing.T) {
+	for name, course := range map[string]*model.Course{"khong co": nil, "draft": {Status: "draft"}, "archived": {Status: "archived"}} {
+		svc := NewCourseService(&publicCourseRepoStub{course: course}, nil, nil, nil)
+		if _, err := svc.GetCourseBySlug(context.Background(), "x"); !errors.Is(err, ErrCourseHidden) {
+			t.Errorf("%s: err = %v, muon ErrCourseHidden", name, err)
+		}
 	}
 }
