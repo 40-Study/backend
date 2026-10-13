@@ -1,6 +1,6 @@
 package service
 
-// QA2 Q2-01 — xoá khoá học phải dọn cả cây con trong MỘT transaction: sections và quizzes (kể cả quiz
+// QA2 Q2-01 — xoá khoá học (khoá không có ghi danh hoạt động) phải dọn cả cây con trong MỘT transaction: sections và quizzes (kể cả quiz
 // gắn vào bài) bị xoá mềm theo, dòng nội dung loại quiz trỏ vào chúng bị gỡ, và các danh sách của học
 // viên / giảng viên không còn hiện chúng. lessons và lesson_contents KHÔNG có cột deleted_at (xoá bài
 // là xoá thật, xem LessonRepository.Delete) nên được ẩn bằng cách xoá mềm chương chứa chúng — đúng quy
@@ -8,6 +8,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -75,8 +76,14 @@ func TestDeleteCourse_CascadesSoftDeleteToSectionsAndQuizzes(t *testing.T) {
 	c := newCourseCascadeFixture(t)
 	doomed, kept := c.tree("Khoá bị xoá"), c.tree("Khoá giữ lại")
 	student := c.f.user("student")
-	enr := model.Enrollment{UserID: student, CourseID: doomed.course}
-	if err := c.f.db.Create(&enr).Error; err != nil {
+	// Khoá đã xoá từ trước khi có luật chặn xoá-khi-có-ghi-danh (dữ liệu cũ): ghi danh còn nhưng khoá đã bị
+	// xoá mềm — danh sách của học viên vẫn không được hiện dòng trống.
+	legacyDeleted := c.tree("Khoá xoá từ trước")
+	legacyEnr := model.Enrollment{UserID: student, CourseID: legacyDeleted.course}
+	if err := c.f.db.Create(&legacyEnr).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := c.f.db.Delete(&model.Course{}, "id = ?", legacyDeleted.course).Error; err != nil {
 		t.Fatal(err)
 	}
 	keptEnr := model.Enrollment{UserID: student, CourseID: kept.course}
@@ -122,8 +129,9 @@ func TestDeleteCourse_CascadesSoftDeleteToSectionsAndQuizzes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if total != 2 || len(quizzes) != 2 {
-		t.Errorf("danh sách quiz của giảng viên: total=%d len=%d, muốn 2 (chỉ khoá còn lại)", total, len(quizzes))
+	// 4 = quiz khoá giữ lại (2) + quiz của khoá "xoá từ trước" (2, xoá mềm tay nên không cascade).
+	if total != 4 || len(quizzes) != 4 {
+		t.Errorf("danh sách quiz của giảng viên: total=%d len=%d, muốn 4 (không gồm khoá vừa xoá)", total, len(quizzes))
 	}
 	for _, q := range quizzes {
 		if q.ID == doomed.quiz || q.ID == doomed.courseQuiz {
@@ -165,5 +173,39 @@ func TestDeleteCourse_CascadeIsAtomic(t *testing.T) {
 	}
 	if !c.live(&model.Course{}, tree.course) || !c.live(&model.Section{}, tree.section) || !c.live(&model.Quiz{}, tree.quiz) {
 		t.Fatal("cascade không atomic: khoá/chương/quiz đã bị xoá dù giao dịch lỗi")
+	}
+}
+
+// Review M2 (quyết định chủ dự án): khoá còn ghi danh hoạt động thì KHÔNG xoá được — 409, không ghi gì; giảng viên
+// "Lưu trữ" thay vì xoá. Ghi danh đã gỡ (xoá mềm) không tính; khoá hết ghi danh xoá được và cascade như thường.
+func TestDeleteCourse_BlockedWhileActiveEnrollments(t *testing.T) {
+	c := newCourseCascadeFixture(t)
+	tree := c.tree("Khoá có học viên")
+	student := c.f.user("student")
+	enr := model.Enrollment{UserID: student, CourseID: tree.course}
+	if err := c.f.db.Create(&enr).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	err := c.svc.DeleteCourse(context.Background(), tree.course, c.teacher, false)
+	if !errors.Is(err, ErrCourseHasEnrollments) {
+		t.Fatalf("DeleteCourse khoá có ghi danh: err=%v, muốn ErrCourseHasEnrollments", err)
+	}
+	if !c.live(&model.Course{}, tree.course) || !c.live(&model.Section{}, tree.section) || !c.live(&model.Quiz{}, tree.quiz) ||
+		!c.live(&model.LessonContent{}, tree.quizContent) {
+		t.Fatal("xoá bị từ chối nhưng cây khoá học đã bị ghi")
+	}
+	if err := c.svc.DeleteCourse(context.Background(), tree.course, c.teacher, true); !errors.Is(err, ErrCourseHasEnrollments) {
+		t.Fatalf("admin cũng bị chặn khi có ghi danh: err=%v", err)
+	}
+
+	if err := c.f.db.Delete(&enr).Error; err != nil { // học viên huỷ ghi danh (xoá mềm)
+		t.Fatal(err)
+	}
+	if err := c.svc.DeleteCourse(context.Background(), tree.course, c.teacher, false); err != nil {
+		t.Fatalf("hết ghi danh hoạt động thì phải xoá được: %v", err)
+	}
+	if c.live(&model.Course{}, tree.course) || c.live(&model.Section{}, tree.section) {
+		t.Fatal("xoá thành công nhưng khoá/chương còn sống")
 	}
 }

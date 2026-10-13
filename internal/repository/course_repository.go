@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/utils"
 )
@@ -50,6 +51,9 @@ type CourseFilterDBParams struct {
 	Page         int
 	PageSize     int
 }
+
+// ErrCourseHasEnrollments — xem service.ErrCourseHasEnrollments.
+var ErrCourseHasEnrollments = errors.New("Khoá học đã có học viên ghi danh nên không thể xoá. Hãy chọn \"Lưu trữ\" để ngừng bán khoá này.")
 
 type CourseRepository struct {
 	db *gorm.DB
@@ -203,8 +207,22 @@ func (r *CourseRepository) Update(ctx context.Context, course *model.Course) err
 //   - quizzes: xoá mềm quiz cấp khoá (course_id) và quiz gắn vào bài của khoá (lesson_id).
 //   - lesson_contents loại quiz trỏ vào các quiz đó bị gỡ, giống QuizRepository.DeleteQuiz, để không còn
 //     dòng nội dung trỏ vào quiz đã xoá.
+//
+// Khoá còn ghi danh hoạt động (enrollments chưa xoá mềm) bị từ chối bằng ErrCourseHasEnrollments, không ghi gì.
 func (r *CourseRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Review M2 (quyết định chủ dự án): khoá còn ghi danh hoạt động không xoá được. Khoá dòng khoá học rồi đếm
+		// trong cùng transaction với phần cascade, để việc kiểm và việc xoá không tách rời nhau.
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&model.Course{}, "id = ?", id).Error; err != nil {
+			return err
+		}
+		var enrolled int64
+		if err := tx.Model(&model.Enrollment{}).Where("course_id = ?", id).Count(&enrolled).Error; err != nil {
+			return err
+		}
+		if enrolled > 0 {
+			return ErrCourseHasEnrollments
+		}
 		lessonIDs := tx.Table("lessons").Select("lessons.id").
 			Joins("JOIN sections ON sections.id = lessons.section_id").
 			Where("sections.course_id = ?", id)

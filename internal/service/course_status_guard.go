@@ -4,10 +4,15 @@ import (
 	"errors"
 
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/repository"
 )
 
 // ErrCourseStatusChangeNotAllowed — handler ánh xạ sang 400 code COURSE_STATUS_CHANGE_NOT_ALLOWED.
 var ErrCourseStatusChangeNotAllowed = errors.New("course status cannot be changed directly — use submit-review / admin approval")
+
+// ErrCourseHasEnrollments — khoá còn ghi danh hoạt động không xoá được (QA2 Q2-01, review M2); handler ánh xạ
+// sang 409 COURSE_HAS_ENROLLMENTS. Giảng viên dùng "Lưu trữ" (archived) để ngừng bán mà không ảnh hưởng học viên.
+var ErrCourseHasEnrollments = repository.ErrCourseHasEnrollments
 
 // ValidateManualCourseStatusChange (Phase 3 duyệt khoá học) chặn PUT /courses/:id đổi status tuỳ
 // ý. TRƯỚC phase 3 giáo viên gửi thẳng {"status":"published"} để tự xuất bản — không ai duyệt.

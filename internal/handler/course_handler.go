@@ -331,7 +331,7 @@ func (h *CourseHandler) DeleteCourse(c *fiber.Ctx) error {
 
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 	if err := h.service.DeleteCourse(c.Context(), id, userID, isAdmin); err != nil {
-		if writeCourseLocked(c, err) {
+		if writeCourseLocked(c, err) || writeCourseHasEnrollments(c, err) {
 			return nil
 		}
 		if err == service.ErrNotCourseOwner {
