@@ -12,7 +12,7 @@ import (
 // hoặc GHI DANH MỚI (giỏ hàng, tạo đơn cart/buy_now, mở phiên thanh toán của đơn cũ, tự ghi danh miễn phí) trả lỗi này.
 // Khoá chưa xuất bản (draft/pending_review/rejected) vẫn đi đường "không tồn tại" (ErrCourseHidden/404) như trước.
 var ErrCourseNotForSale = apperr.ConflictCode("COURSE_NOT_FOR_SALE",
-	"Khóa học này đã ngừng bán nên không thể thêm vào giỏ hàng, mua hoặc ghi danh mới.")
+	"Khoá học này đã ngừng bán nên không thể thêm vào giỏ hàng, mua hoặc ghi danh mới.")
 
 // isCourseNotForSale: khoá đã tồn tại và từng xuất bản nhưng hiện ngừng bán.
 func isCourseNotForSale(status string) bool {
