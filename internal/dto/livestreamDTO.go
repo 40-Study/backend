@@ -80,6 +80,10 @@ type LivestreamResponseDTO struct {
 	IsRecorded      bool       `json:"is_recorded"`
 	Settings        string     `json:"settings"`
 	CreatedAt       string     `json:"created_at"`
+	// IsOverdue (review L3): buổi còn "scheduled" ở DB nhưng đã qua giờ kết thúc dự kiến (chưa từng bắt đầu). Status
+	// theo người xem: học viên/người khác thấy "ended"; CHỦ buổi thấy "scheduled" (vẫn Start được) — cờ này cho UI
+	// đánh dấu "quá giờ" ở cả hai.
+	IsOverdue bool `json:"is_overdue"`
 }
 
 type LivestreamListDTO struct {

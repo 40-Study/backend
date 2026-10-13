@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -114,6 +115,9 @@ func parseAuditFilter(q dto.AuditLogFilterDTO) (repository.AuditLogFilter, error
 		TargetType: strings.TrimSpace(q.TargetType),
 		TargetID:   strings.TrimSpace(q.TargetID),
 	}
+	// Phân trang CLAMP, không 400 (cùng quy ước mọi danh sách khác: utils.ApplyPagination, ListPosts...): page < 1
+	// (kể cả page=0 hay thiếu) -> 1; page_size < 1 -> 20; page_size > 100 -> 100. Chỉ giá trị KHÔNG đọc được (vd
+	// page=abc) mới là 400, do QueryParser của handler.
 	if f.Page < 1 {
 		f.Page = 1
 	}
@@ -122,6 +126,11 @@ func parseAuditFilter(q dto.AuditLogFilterDTO) (repository.AuditLogFilter, error
 	}
 	if f.PageSize > auditMaxPageSize {
 		f.PageSize = auditMaxPageSize
+	}
+	// ADM-L7: mã hành động lạ là 400 như from/to/actor_id, không phải 200 với danh sách rỗng (che mất lỗi gõ sai).
+	// Hợp lệ = SSOT model.AuditActions, cùng danh sách GET /audit-logs/actions đưa cho ô lọc.
+	if f.Action != "" && !slices.Contains(model.AuditActions, f.Action) {
+		return f, &InvalidAuditFilterError{Field: "action"}
 	}
 	if raw := strings.TrimSpace(q.ActorID); raw != "" {
 		id, err := uuid.Parse(raw)

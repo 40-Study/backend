@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -207,6 +208,34 @@ func localsUUID(c *fiber.Ctx, key string) (uuid.UUID, bool) {
 // ĐỦ toàn bộ các permission yêu cầu — thiếu bất kỳ permission nào trả 403.
 // Route phải đứng SAU AuthMiddleware (không có "user_id" trong Locals -> 401).
 func (pc *PermissionChecker) RequirePermissions(permissions ...string) fiber.Handler {
+	return pc.gate(func(granted []string) (string, bool) {
+		for _, p := range permissions {
+			if !hasAllPermissions(granted, []string{p}) {
+				return "forbidden: missing permission " + p, false
+			}
+		}
+		return "", true
+	})
+}
+
+// RequireAnyPermission cho qua khi user có ÍT NHẤT MỘT trong các permission (RequirePermissions đòi đủ cả).
+// Dùng cho endpoint đọc dùng chung bởi nhiều màn quản trị mỗi màn do một quyền riêng gác (vd danh mục vai trò hệ
+// thống: trang vai trò, trang người dùng, trang thông báo). SYSTEM_ADMIN ("*") luôn qua. Không có permission nào
+// được truyền thì KHÔNG ai qua (thất bại đóng), không phải mọi người qua.
+func (pc *PermissionChecker) RequireAnyPermission(permissions ...string) fiber.Handler {
+	return pc.gate(func(granted []string) (string, bool) {
+		for _, p := range permissions {
+			if hasAllPermissions(granted, []string{p}) {
+				return "", true
+			}
+		}
+		return "forbidden: requires one of permissions " + strings.Join(permissions, ", "), false
+	})
+}
+
+// gate: phần chung của RequirePermissions/RequireAnyPermission — xác thực user_id, gộp permission (system role +
+// org role của tổ chức đang chọn) rồi để satisfied quyết định; satisfied trả (thông báo 403, có qua không).
+func (pc *PermissionChecker) gate(satisfied func(granted []string) (string, bool)) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userID, ok := localsUUID(c, "user_id")
 		if !ok || userID == uuid.Nil {
@@ -229,13 +258,11 @@ func (pc *PermissionChecker) RequirePermissions(permissions ...string) fiber.Han
 			})
 		}
 
-		for _, p := range permissions {
-			if !hasAllPermissions(granted, []string{p}) {
-				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-					"success": false,
-					"message": "forbidden: missing permission " + p,
-				})
-			}
+		if msg, pass := satisfied(granted); !pass {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"success": false,
+				"message": msg,
+			})
 		}
 
 		return c.Next()

@@ -122,14 +122,16 @@ func (s *Seeder) seedDiscussionVotes(discussionID uuid.UUID, votes map[string]st
 	return nil
 }
 
-// syncDiscussionCounters ghi lại reply_count (số trả lời chưa xoá) và upvote_count (upvote -
-// downvote) từ dữ liệu thật, để số trên danh sách khớp khi mở chi tiết bài.
+// syncDiscussionCounters ghi lại reply_count (số trả lời chưa xoá, đúng biểu thức model.DiscussionLiveReplyCountSQL
+// mà đường xoá trả lời và bước sửa dữ liệu một lần dùng, không tự định nghĩa lại: QA2 F-05) và upvote_count
+// (upvote - downvote) từ dữ liệu thật, để số trên danh sách khớp khi mở chi tiết bài. Chỉ chạm id vừa seed: bài
+// không do seed tạo được sửa bởi bước sửa dữ liệu một lần (database.runForumReplyCountBackfill).
 func (s *Seeder) syncDiscussionCounters(ids []uuid.UUID) error {
 	if len(ids) == 0 {
 		return nil
 	}
 	err := s.db.Exec(`UPDATE discussions d SET
-		reply_count = (SELECT COUNT(*) FROM discussions r WHERE r.parent_id = d.id AND r.deleted_at IS NULL),
+		reply_count = `+model.DiscussionLiveReplyCountSQL+`,
 		upvote_count = (SELECT COALESCE(SUM(CASE WHEN v.vote_type = 'upvote' THEN 1 ELSE -1 END), 0)
 		                FROM discussion_votes v WHERE v.discussion_id = d.id)
 		WHERE d.id IN ?`, ids).Error

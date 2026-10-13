@@ -267,12 +267,8 @@ func (s *DiscussionService) AddComment(ctx context.Context, postSlug string, use
 		comment.ParentID = &parentID
 	}
 
-	if err := s.repo.CreatePost(ctx, comment); err != nil {
-		return nil, err
-	}
-
-	// Increment reply count on root post
-	if err := s.repo.IncrementReplyCount(ctx, post.ID, 1); err != nil {
+	// Chèn + đếm lại reply_count của bài gốc trong một giao dịch (review L2).
+	if err := s.repo.CreateReply(ctx, comment); err != nil {
 		return nil, err
 	}
 

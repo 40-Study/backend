@@ -45,8 +45,9 @@ func NewAuditLogListDTO(items []AuditLogItemDTO, total int64, page, pageSize int
 	return AuditLogListDTO{Items: items, Total: total, Page: page, PageSize: pageSize}
 }
 
-// AuditLogFilterDTO — query string của GET /api/admin/audit-logs. page_size tối đa 100; from/to là
-// RFC3339 hoặc YYYY-MM-DD (parse + lỗi 400 INVALID_FILTER thuộc service, không phải DTO).
+// AuditLogFilterDTO — query string của GET /api/admin/audit-logs. page < 1 được đưa về 1, page_size < 1 về 20 và
+// page_size > 100 về 100 (clamp, không 400, như mọi danh sách khác); from/to là RFC3339 hoặc YYYY-MM-DD; action
+// phải là một mã trong model.AuditActions (parse + lỗi 400 INVALID_FILTER thuộc service, không phải DTO).
 type AuditLogFilterDTO struct {
 	Page       int    `query:"page"`
 	PageSize   int    `query:"page_size"`

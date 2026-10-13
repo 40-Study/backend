@@ -34,6 +34,16 @@ func (Discussion) TableName() string {
 	return "discussions"
 }
 
+// DiscussionLiveReplyCountSQL: biểu thức vô hướng đếm số trả lời CÒN SỐNG (chưa xoá mềm) của dòng `d` ở câu
+// lệnh bao ngoài, ở mọi độ sâu (AddComment cộng vào BÀI GỐC kể cả với trả lời lồng). Đi xuống từng nhánh nên trả
+// lời nằm dưới một trả lời đã xoá không được tính. SSOT cho mọi nơi tính lại discussions.reply_count (xoá trả
+// lời, bước sửa dữ liệu một lần, seed) — đừng chép lại truy vấn này.
+const DiscussionLiveReplyCountSQL = `(WITH RECURSIVE live_replies AS (
+		SELECT c.id FROM discussions c WHERE c.parent_id = d.id AND c.deleted_at IS NULL
+		UNION
+		SELECT c.id FROM discussions c JOIN live_replies lr ON c.parent_id = lr.id WHERE c.deleted_at IS NULL
+	) SELECT COUNT(*) FROM live_replies)`
+
 type DiscussionVote struct {
 	ID           uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	CreatedAt    time.Time `json:"created_at"`
