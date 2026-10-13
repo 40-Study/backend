@@ -303,6 +303,11 @@ func (s *PaymentService) CreatePaymentIntent(ctx context.Context, userID, orderI
 	// vào MỘT transaction: lỗi ở bước nào rollback CẢ HAI, không để order "processing" mồ côi
 	// history.
 	err = s.orderRepo.WithTransaction(func(txRepo *repository.OrderRepository) error {
+		// QA2 F-02 (review M1): voucher "đơn hàng đầu tiên" được kiểm lại TRƯỚC khi cấp mã thanh toán — chưa
+		// có tiền nào được thu thì từ chối còn rẻ; đơn giữ nguyên pending để user huỷ rồi đặt lại không voucher.
+		if err := recheckFirstOrderForPayment(ctx, txRepo.TxDB(), order); err != nil {
+			return err
+		}
 		orderHistoryRepoTx := repository.NewOrderStatusHistoryRepository(txRepo.TxDB())
 		return updatePaymentCodeAndHistoryTx(txRepo, orderHistoryRepoTx, orderID, paymentCode, expiresAt, oldStatus)
 	})

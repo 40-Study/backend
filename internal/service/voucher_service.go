@@ -300,12 +300,13 @@ func (vs *VoucherService) voucherUsableBy(ctx context.Context, v *model.Voucher,
 
 // ensureFirstOrderEligible — luật voucher first_order_only (QA2 F-02): user đã có đơn thành công thì
 // trả ErrVoucherFirstOrderOnly. Voucher không bật cờ, hoặc userID == uuid.Nil (khách chưa đăng nhập,
-// chưa biết lịch sử mua), thì luôn qua. repo là tham số để đường đặt đơn gọi lại TRÊN transaction.
-func ensureFirstOrderEligible(ctx context.Context, repo *repository.VoucherRepository, v *model.Voucher, userID uuid.UUID) error {
+// chưa biết lịch sử mua), thì luôn qua. repo là tham số để đường đặt đơn gọi lại TRÊN transaction;
+// excludeOrderID loại đơn đang được kiểm (xem VoucherRepository.CountUserPriorOrders).
+func ensureFirstOrderEligible(ctx context.Context, repo *repository.VoucherRepository, v *model.Voucher, userID, excludeOrderID uuid.UUID) error {
 	if !v.FirstOrderOnly || userID == uuid.Nil {
 		return nil
 	}
-	prior, err := repo.CountUserPriorOrders(ctx, userID, v.ID)
+	prior, err := repo.CountUserPriorOrders(ctx, userID, excludeOrderID)
 	if err != nil {
 		return err
 	}
@@ -313,6 +314,32 @@ func ensureFirstOrderEligible(ctx context.Context, repo *repository.VoucherRepos
 		return ErrVoucherFirstOrderOnly
 	}
 	return nil
+}
+
+// recheckFirstOrderForPayment — kiểm lại luật first_order_only LÚC LẤY TIỀN (QA2 F-02, review M1): đơn đã giữ
+// voucher từ lúc tạo, nhưng giữa chừng user có thể thanh toán đơn khác trước. Gọi TRONG transaction chuyển đơn
+// sang processing: khoá advisory theo user (cùng khoá với CreateOrder) tuần tự hoá hai lần xin mã song song,
+// nên đơn xin mã sau luôn thấy đơn xin mã trước. Đơn không có voucher, voucher không bật cờ, hoặc voucher đã bị
+// xoá (đơn vẫn giữ nó từ trước) thì bỏ qua.
+func recheckFirstOrderForPayment(ctx context.Context, tx *gorm.DB, order *model.Order) error {
+	if order.VoucherID == nil {
+		return nil
+	}
+	repo := repository.NewVoucherRepository(tx)
+	v, err := repo.GetVoucherByID(ctx, *order.VoucherID)
+	if errors.Is(err, repository.ErrVoucherNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !v.FirstOrderOnly {
+		return nil
+	}
+	if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "create_order:"+order.UserID.String()).Error; err != nil {
+		return err
+	}
+	return ensureFirstOrderEligible(ctx, repo, v, order.UserID, order.ID)
 }
 
 // GetVoucherByCodeForViewer — tra cứu công khai theo mã (GET /vouchers/code/:code, khách hoặc user
@@ -332,7 +359,7 @@ func (vs *VoucherService) GetVoucherByCodeForViewer(ctx context.Context, code st
 	}
 	// Web tự tính giảm giá từ kết quả tra mã, nên người đã đăng nhập mà không còn đủ điều kiện "đơn đầu
 	// tiên" phải nhận lỗi ngay ở đây thay vì thấy một mức giảm mà lúc đặt đơn sẽ bị từ chối.
-	if err := ensureFirstOrderEligible(ctx, vs.vr, voucher, viewerID); err != nil {
+	if err := ensureFirstOrderEligible(ctx, vs.vr, voucher, viewerID, uuid.Nil); err != nil {
 		return nil, err
 	}
 	return voucher, nil
@@ -622,7 +649,7 @@ func (vs *VoucherService) ValidateAndApplyVoucher(ctx context.Context, code stri
 		return nil, decimal.Zero, ErrVoucherInactive
 	}
 
-	if err := ensureFirstOrderEligible(ctx, vs.vr, voucher, userID); err != nil {
+	if err := ensureFirstOrderEligible(ctx, vs.vr, voucher, userID, uuid.Nil); err != nil {
 		return nil, decimal.Zero, err
 	}
 
@@ -736,7 +763,7 @@ func (vs *VoucherService) LockAndCheckUsagePerUser(ctx context.Context, tx *gorm
 	// QA2 F-02: luật first_order_only kiểm lại TRONG transaction (CreateOrder đang giữ advisory lock theo
 	// user nên đơn thứ hai của cùng user không chạy song song) — độc lập với usage_per_user nên phải đứng
 	// trước nhánh "không giới hạn per-user" bên dưới.
-	if err := ensureFirstOrderEligible(ctx, repository.NewVoucherRepository(tx), voucher, userID); err != nil {
+	if err := ensureFirstOrderEligible(ctx, repository.NewVoucherRepository(tx), voucher, userID, uuid.Nil); err != nil {
 		return err
 	}
 	if !voucher.HasPerUserLimit() {

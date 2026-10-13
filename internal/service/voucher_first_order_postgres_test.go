@@ -79,32 +79,28 @@ func TestFirstOrderVoucher_ValidateRejectsUserWithSuccessfulOrder(t *testing.T) 
 	}
 }
 
-// Đơn processing của CHÍNH voucher này không làm user mất tư cách "đơn đầu tiên": đó là đơn đang giữ mã, đặt lại
-// cùng giỏ phải đi tiếp tới nhánh dùng lại đơn đang mở. Đơn completed của voucher này thì có (đã dùng xong).
-func TestFirstOrderVoucher_OwnProcessingOrderDoesNotDisqualify(t *testing.T) {
+// Mọi đơn processing/completed/refunded đều tính — kể cả đơn đang giữ chính voucher này (M1 review: loại trừ
+// chúng để lọt lần dùng thứ hai trên voucher không giới hạn mỗi user). Đặt lại đúng giỏ đang mở vẫn về
+// ErrOrderInProgress (xem TestFirstOrderVoucher_RetryCheckoutKeepsOpenOrderError), không phải lỗi "đơn đầu tiên".
+func TestFirstOrderVoucher_AnyProcessingOrderCounts(t *testing.T) {
 	f := newOrderFixture(t)
 	vs, _ := newFirstOrderServices(f)
 	ctx := context.Background()
 	subtotal := decimal.NewFromInt(499000)
 	v := firstOrderVoucher(f, true)
+	other := firstOrderVoucher(f, false)
 
-	holder := f.user()
-	f.priorOrderWithVoucher(holder, "processing", &v.ID)
-	if _, _, err := vs.ValidateAndApplyVoucher(ctx, v.Code, holder, subtotal, ""); err != nil {
-		t.Errorf("processing của chính voucher này: err=%v, muốn vẫn qua", err)
+	for name, voucherID := range map[string]*uuid.UUID{"chính voucher này": &v.ID, "voucher khác": &other.ID, "không voucher": nil} {
+		u := f.user()
+		f.priorOrderWithVoucher(u, "processing", voucherID)
+		if _, _, err := vs.ValidateAndApplyVoucher(ctx, v.Code, u, subtotal, ""); !errors.Is(err, ErrVoucherFirstOrderOnly) {
+			t.Errorf("processing (%s): err=%v, muốn ErrVoucherFirstOrderOnly", name, err)
+		}
 	}
-
 	used := f.user()
 	f.priorOrderWithVoucher(used, "completed", &v.ID)
 	if _, _, err := vs.ValidateAndApplyVoucher(ctx, v.Code, used, subtotal, ""); !errors.Is(err, ErrVoucherFirstOrderOnly) {
 		t.Errorf("completed của chính voucher này: err=%v, muốn ErrVoucherFirstOrderOnly", err)
-	}
-
-	other := firstOrderVoucher(f, false)
-	elsewhere := f.user()
-	f.priorOrderWithVoucher(elsewhere, "processing", &other.ID)
-	if _, _, err := vs.ValidateAndApplyVoucher(ctx, v.Code, elsewhere, subtotal, ""); !errors.Is(err, ErrVoucherFirstOrderOnly) {
-		t.Errorf("processing dùng voucher khác: err=%v, muốn ErrVoucherFirstOrderOnly", err)
 	}
 }
 

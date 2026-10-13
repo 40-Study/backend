@@ -113,14 +113,13 @@ func (r *VoucherRepository) CountUserHeldOrders(ctx context.Context, userID, vou
 
 // CountUserPriorOrders đếm đơn khiến user KHÔNG còn là khách mới đối với voucher first_order_only (QA2 F-02):
 // completed = đã mua; refunded = đã mua rồi được hoàn; processing = đã có mã thanh toán đang đối chiếu (có thể
-// vừa trả tiền) — trừ processing của CHÍNH voucher này: đó là đơn đang giữ mã (chống dùng lại đã có
-// usage_per_user), và đặt lại cùng giỏ phải đi tiếp tới nhánh dùng lại đơn đang mở thay vì bị báo "đơn đầu tiên".
-// pending/cancelled/expired/failed không tính — user chưa mua được gì thì vẫn là khách mới.
-func (r *VoucherRepository) CountUserPriorOrders(ctx context.Context, userID, voucherID uuid.UUID) (int64, error) {
+// vừa trả tiền) — mọi processing đều tính, kể cả đơn đang giữ chính voucher này. pending/cancelled/expired/failed
+// không tính: user chưa mua được gì thì vẫn là khách mới. excludeOrderID loại một đơn khỏi phép đếm (kiểm lại
+// lúc đơn đó xin mã thanh toán thì không tự tính chính nó); uuid.Nil = không loại đơn nào.
+func (r *VoucherRepository) CountUserPriorOrders(ctx context.Context, userID, excludeOrderID uuid.UUID) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.Order{}).
-		Where("user_id = ?", userID).
-		Where("status IN ('completed','refunded') OR (status = 'processing' AND (voucher_id IS NULL OR voucher_id <> ?))", voucherID).
+		Where("user_id = ? AND id <> ? AND status IN ('completed','refunded','processing')", userID, excludeOrderID).
 		Count(&count).Error
 	return count, err
 }

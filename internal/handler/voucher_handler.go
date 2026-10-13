@@ -75,6 +75,19 @@ func (h *VoucherHandler) GetVoucher(c *fiber.Ctx) error {
 	return c.JSON(voucher)
 }
 
+// VoucherFirstOrderOnlyCode — mã lỗi 409 khi voucher "đơn hàng đầu tiên" không còn dùng được cho user (QA2 F-02).
+// Dùng chung cho tra mã, tạo đơn và xin mã thanh toán để web đọc một mã duy nhất.
+const VoucherFirstOrderOnlyCode = "VOUCHER_FIRST_ORDER_ONLY"
+
+// writeVoucherFirstOrderOnly ghi 409 nếu err là service.ErrVoucherFirstOrderOnly; trả false để handler đi tiếp.
+func writeVoucherFirstOrderOnly(c *fiber.Ctx, err error) bool {
+	if !errors.Is(err, service.ErrVoucherFirstOrderOnly) {
+		return false
+	}
+	_ = c.Status(fiber.StatusConflict).JSON(fiber.Map{"code": VoucherFirstOrderOnlyCode, "message": err.Error()})
+	return true
+}
+
 func (h *VoucherHandler) GetVoucherByCode(c *fiber.Ctx) error {
 	code := c.Params("code")
 	if code == "" {
@@ -90,11 +103,8 @@ func (h *VoucherHandler) GetVoucherByCode(c *fiber.Ctx) error {
 	voucher, err := h.voucherService.GetVoucherByCodeForViewer(c.Context(), code, viewerID)
 	if err != nil {
 		// QA2 F-02: mã "đơn hàng đầu tiên" mà người xem đã mua rồi — 409 với mã riêng để web báo đúng lý do.
-		if errors.Is(err, service.ErrVoucherFirstOrderOnly) {
-			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-				"code":    "VOUCHER_FIRST_ORDER_ONLY",
-				"message": err.Error(),
-			})
+		if writeVoucherFirstOrderOnly(c, err) {
+			return nil
 		}
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"code":    "ERR_NOT_FOUND",
