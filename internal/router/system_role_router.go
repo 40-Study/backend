@@ -22,8 +22,11 @@ func SetupSystemRoleRoutes(
 	// nhập (/login/role) gọi GET /auth/system-roles (auth_router.go, vẫn public — route KHÁC),
 	// còn GET /system-roles (route này) chỉ được /admin/page.tsx và /admin/roles/page.tsx gọi —
 	// hai trang admin luôn có token sẵn — nên gate `auth` không phá luồng nào.
-	systemRolesPublic := api.Group("/system-roles", middleware.AuthMiddleware(cfg, redis))
-	systemRolesPublic.Get("/", systemRoleHandler.GetAllSystemRoles)
+	//
+	// QA2 ADM-L10: GET / từng chỉ cần đăng nhập nên giảng viên đọc được toàn bộ danh mục vai trò (kể cả ORG_OWNER).
+	// Mọi nơi gọi trong web đều là trang quản trị — nay cần một trong CatalogueReadPermissions (xem permission_router.go).
+	systemRolesCatalogue := api.Group("/system-roles", middleware.AuthMiddleware(cfg, redis))
+	systemRolesCatalogue.Get("/", permChecker.RequireAnyPermission(CatalogueReadPermissions...), systemRoleHandler.GetAllSystemRoles)
 
 	// Protected routes: require auth + quyền quản trị RBAC hệ thống cho mọi thao tác ghi.
 	systemRoles := api.Group("/system-roles", middleware.AuthMiddleware(cfg, redis), permChecker.RequirePermissions("ROLES_MANAGE_SYSTEM"))
