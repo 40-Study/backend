@@ -77,6 +77,13 @@ type Config struct {
 	RabbitMQPassword string `mapstructure:"RABBITMQ_PASSWORD"`
 	RabbitMQVHost    string `mapstructure:"RABBITMQ_VHOST"`
 
+	// Judge0 (contract sec. 8): máy chấm code. Judge0URL rỗng = mặc định theo môi trường (xem ResolveJudge0URL,
+	// LoadConfig gán giá trị đã giải); Judge0AuthToken rỗng = không gửi header X-Auth-Token; Judge0TimeoutSeconds
+	// là timeout của MỘT request (wait=true chờ chấm xong), hợp lệ 1-300.
+	Judge0URL            string `mapstructure:"JUDGE0_URL"`
+	Judge0AuthToken      string `mapstructure:"JUDGE0_AUTH_TOKEN"`
+	Judge0TimeoutSeconds int    `mapstructure:"JUDGE0_TIMEOUT_SECONDS"`
+
 	// LiveKit Configuration
 	LivekitNodeIP    string `mapstructure:"LIVEKIT_NODE_IP"`
 	LivekitNodePort  string `mapstructure:"LIVEKIT_NODE_PORT"`
@@ -135,6 +142,40 @@ type Config struct {
 
 // DefaultWithdrawalMinAmount — mặc định của WITHDRAWAL_MIN_AMOUNT (VND).
 const DefaultWithdrawalMinAmount = "100000"
+
+// DefaultJudge0TimeoutSeconds — mặc định của JUDGE0_TIMEOUT_SECONDS (bằng timeout cứng trước Phase 0).
+const DefaultJudge0TimeoutSeconds = 30
+
+// ResolveJudge0URL là hàm thuần để unit test: JUDGE0_URL rỗng giữ đúng hành vi trước Phase 0 (localhost khi chạy
+// dev ngoài docker, host "judge0" của docker-compose cho mọi môi trường khác); có giá trị thì dùng nguyên, bỏ "/"
+// cuối. Gọi lại trên giá trị đã giải không đổi gì.
+func ResolveJudge0URL(raw, environment string) string {
+	if url := strings.TrimRight(strings.TrimSpace(raw), "/"); url != "" {
+		return url
+	}
+	if environment == "dev" {
+		return "http://localhost:2358"
+	}
+	return "http://judge0:2358"
+}
+
+// validateJudge0Timeout là hàm thuần để unit test: 1-300 giây; ngoài khoảng thì LoadConfig dừng khởi động thay vì
+// lặng lẽ đổi giá trị (0 trên http.Client nghĩa là KHÔNG timeout).
+func validateJudge0Timeout(seconds int) (int, error) {
+	if seconds < 1 || seconds > 300 {
+		return 0, fmt.Errorf("JUDGE0_TIMEOUT_SECONDS=%d không hợp lệ: phải trong khoảng 1-300 giây", seconds)
+	}
+	return seconds, nil
+}
+
+// Judge0Timeout — timeout một request tới Judge0. Config dựng tay (test) có 0 thì dùng mặc định thay vì
+// "không timeout"; Config từ LoadConfig luôn đã được validateJudge0Timeout.
+func (c *Config) Judge0Timeout() time.Duration {
+	if c.Judge0TimeoutSeconds <= 0 {
+		return DefaultJudge0TimeoutSeconds * time.Second
+	}
+	return time.Duration(c.Judge0TimeoutSeconds) * time.Second
+}
 
 // DefaultPaymentReconcileIntervalMinutes — mặc định của PAYMENT_RECONCILE_INTERVAL_MINUTES.
 const DefaultPaymentReconcileIntervalMinutes = 10
@@ -221,6 +262,10 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("GITHUB_SCOPES", []string{"user:email"})
 	viper.SetDefault("FRONTEND_URL", "http://localhost:3000")
 	viper.SetDefault("WITHDRAWAL_MIN_AMOUNT", DefaultWithdrawalMinAmount)
+	// Judge0 (contract sec. 8): viper chỉ Unmarshal key có trong .env hoặc đã SetDefault, nên phải đăng ký cả ba.
+	viper.SetDefault("JUDGE0_URL", "")
+	viper.SetDefault("JUDGE0_AUTH_TOKEN", "")
+	viper.SetDefault("JUDGE0_TIMEOUT_SECONDS", DefaultJudge0TimeoutSeconds)
 
 	viper.AutomaticEnv()
 
@@ -314,6 +359,13 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 	config.MigrateLockTimeoutMinutes = lockMinutes
+
+	judge0Timeout, err := validateJudge0Timeout(config.Judge0TimeoutSeconds)
+	if err != nil {
+		return nil, err
+	}
+	config.Judge0TimeoutSeconds = judge0Timeout
+	config.Judge0URL = ResolveJudge0URL(config.Judge0URL, config.Environment)
 
 	// Set JWT expiration durations
 	accessMinutes := viper.GetInt("JWT_ACCESS_EXPIRATION_MINUTES")

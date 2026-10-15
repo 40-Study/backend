@@ -333,20 +333,38 @@ func (s *ExerciseService) DeleteTestCase(ctx context.Context, exerciseID uuid.UU
 // SUBMISSION (via RabbitMQ)
 // ============================================================================
 
+// RabbitMQ và giới hạn của code editor (contract sec. 4, 6, 7).
+const (
+	ExerciseExchange    = "exercise"
+	ExerciseSubmitQueue = "exercise.submit" // routing key và tên queue; một consumer trong tiến trình (BE-B)
+	ExerciseResultQueue = "exercise.result" // vẫn khai báo, chưa dùng
+
+	MaxSourceCodeBytes   = 65536 // code nộp/chạy/nháp tối đa -> ErrCodeTooLarge
+	MaxStoredOutputBytes = 8192  // stdout/stderr lưu vào exercise_submission_results bị cắt ở đây
+	MaxDraftsPerUser     = 200   // số bản nháp tối đa mỗi người dùng -> ErrDraftLimitReached
+)
+
+// ExerciseSubmissionTestCase: một test case trong message chấm. TestCaseID/DisplayOrder/IsHidden được chụp lại để
+// grader ghi exercise_submission_results mà không phải đọc lại test case (có thể đã bị sửa/xoá).
+type ExerciseSubmissionTestCase struct {
+	TestCaseID     uuid.UUID `json:"test_case_id"`
+	DisplayOrder   int       `json:"display_order"`
+	IsHidden       bool      `json:"is_hidden"`
+	Input          string    `json:"input"`
+	ExpectedOutput string    `json:"expected_output"`
+}
+
 // ExerciseSubmissionMessage is the RabbitMQ message for exercise code execution
 type ExerciseSubmissionMessage struct {
-	SubmissionID uuid.UUID `json:"submission_id"`
-	ExerciseID   uuid.UUID `json:"exercise_id"`
-	UserID       uuid.UUID `json:"user_id"`
-	Language     string    `json:"language"`
-	Code         string    `json:"code"`
-	TimeLimit    int       `json:"time_limit"`
-	MemoryLimit  int       `json:"memory_limit"`
-	TestCases    []struct {
-		Input          string `json:"input"`
-		ExpectedOutput string `json:"expected_output"`
-	} `json:"test_cases"`
-	PassPercentage int `json:"pass_percentage"`
+	SubmissionID   uuid.UUID                    `json:"submission_id"`
+	ExerciseID     uuid.UUID                    `json:"exercise_id"`
+	UserID         uuid.UUID                    `json:"user_id"`
+	Language       string                       `json:"language"`
+	Code           string                       `json:"code"`
+	TimeLimit      int                          `json:"time_limit"`
+	MemoryLimit    int                          `json:"memory_limit"`
+	TestCases      []ExerciseSubmissionTestCase `json:"test_cases"`
+	PassPercentage int                          `json:"pass_percentage"`
 }
 
 func (s *ExerciseService) SubmitExercise(ctx context.Context, exerciseID, userID uuid.UUID, req dto.SubmitExerciseDTO) (*dto.ExerciseSubmissionResponseDTO, error) {
@@ -382,17 +400,17 @@ func (s *ExerciseService) SubmitExercise(ctx context.Context, exerciseID, userID
 			PassPercentage: exercise.PassPercentage,
 		}
 		for _, tc := range exercise.TestCases {
-			msg.TestCases = append(msg.TestCases, struct {
-				Input          string `json:"input"`
-				ExpectedOutput string `json:"expected_output"`
-			}{
+			msg.TestCases = append(msg.TestCases, ExerciseSubmissionTestCase{
+				TestCaseID:     tc.ID,
+				DisplayOrder:   tc.DisplayOrder,
+				IsHidden:       tc.IsHidden,
 				Input:          tc.Input,
 				ExpectedOutput: tc.ExpectedOutput,
 			})
 		}
 
 		data, _ := json.Marshal(msg)
-		if err := s.rabbitMQ.PublishMessage(ctx, "exercise", "exercise.submit", data); err != nil {
+		if err := s.rabbitMQ.PublishMessage(ctx, ExerciseExchange, ExerciseSubmitQueue, data); err != nil {
 			log.Printf("[exercise] Failed to publish to RabbitMQ, falling back to sync: %v", err)
 			// Fallback: mark as error if queue unavailable
 			sub.Verdict = "system_error"
@@ -523,10 +541,10 @@ func (s *ExerciseService) SetupExerciseQueues() error {
 		return fmt.Errorf("RabbitMQ not available")
 	}
 
-	if err := s.rabbitMQ.SetupQueue("exercise", "exercise.submit", "exercise.submit"); err != nil {
+	if err := s.rabbitMQ.SetupQueue(ExerciseExchange, ExerciseSubmitQueue, ExerciseSubmitQueue); err != nil {
 		return fmt.Errorf("setup exercise queue: %w", err)
 	}
-	if err := s.rabbitMQ.SetupQueue("exercise", "exercise.result", "exercise.result"); err != nil {
+	if err := s.rabbitMQ.SetupQueue(ExerciseExchange, ExerciseResultQueue, ExerciseResultQueue); err != nil {
 		return fmt.Errorf("setup exercise result queue: %w", err)
 	}
 

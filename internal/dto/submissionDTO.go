@@ -96,8 +96,12 @@ type ExecuteCodeDTO struct {
 type ExecuteCodeResponseDTO struct {
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
-	Error    string `json:"error,omitempty"`
+	Error    string `json:"error,omitempty"` // giữ compile output cho client cũ (E1)
 	ExitCode int    `json:"exit_code"`
 	Time     string `json:"time"`
 	Memory   int    `json:"memory"`
+	// E1 (contract sec. 4), BE-A điền: CompileOutput tách riêng; Status là SubmissionVerdict; StatusID là id Judge0.
+	CompileOutput string `json:"compile_output"`
+	Status        string `json:"status"`
+	StatusID      int    `json:"status_id"`
 }
