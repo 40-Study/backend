@@ -58,7 +58,7 @@ type ExerciseSubmission struct {
 	UserID          uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
 	Language        string    `gorm:"type:varchar(20);not null" json:"language"`
 	Code            string    `gorm:"type:text;not null" json:"code"`
-	Verdict         string    `gorm:"type:varchar(20);default:'pending'" json:"verdict"` // pending, accepted, wrong_answer, time_limit, etc.
+	Verdict         string    `gorm:"type:varchar(32);default:'pending'" json:"verdict"` // SubmissionVerdict (contract sec. 2); 32 vì memory_limit_exceeded (21) không vừa 20
 	TestCasesPassed int       `gorm:"default:0" json:"test_cases_passed"`
 	TotalTestCases  int       `gorm:"default:0" json:"total_test_cases"`
 	ExecutionTimeMs *int      `gorm:"column:execution_time_ms" json:"execution_time_ms,omitempty"`

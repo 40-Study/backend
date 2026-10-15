@@ -106,6 +106,8 @@ func Migrate(db *gorm.DB) error {
 		&model.CourseExercise{},
 		&model.ExerciseTestCase{},
 		&model.ExerciseSubmission{},
+		&model.ExerciseSubmissionResult{}, // phụ thuộc ExerciseSubmission (FK cascade); test_case_id không FK
+		&model.CodeDraft{},
 		&model.ContentProgress{},
 
 		// ===== 6. Enrollment & Progress (phụ thuộc User, Course) =====
@@ -250,6 +252,11 @@ func Migrate(db *gorm.DB) error {
 		&model.Friendship{},
 		&model.UserBlock{},
 	); err != nil {
+		return err
+	}
+
+	// Code editor (contract sec. 2): AutoMigrate không nới varchar(20) -> varchar(32) trên DB cũ.
+	if err := widenExerciseSubmissionVerdict(db); err != nil {
 		return err
 	}
 

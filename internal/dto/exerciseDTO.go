@@ -106,6 +106,8 @@ type ExerciseSubmissionResponseDTO struct {
 	MemoryUsedKB    *int      `json:"memory_used_kb,omitempty"`
 	ErrorMessage    *string   `json:"error_message,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
+	// User: chỉ điền ở danh sách bài nộp cho người quản lý (E7, contract sec. 5); không bao giờ có email.
+	User *SubmissionUserSummaryDTO `json:"user,omitempty"`
 }
 
 type ExerciseSubmissionListDTO struct {

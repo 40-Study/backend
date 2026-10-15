@@ -86,10 +86,26 @@ const (
 	VerdictRuntimeError      SubmissionVerdict = "runtime_error"
 	VerdictTimeLimitExceed   SubmissionVerdict = "time_limit_exceeded"
 	VerdictMemoryLimitExceed SubmissionVerdict = "memory_limit_exceeded"
+	// Code editor (contract sec. 2): running = máy chấm đang chạy; system_error = lỗi phía ta (request dựng sai,
+	// hàng đợi không có); judge_unavailable = Judge0 không trả lời sau khi đã thử lại. Hai giá trị cuối cho nộp lại.
+	VerdictRunning          SubmissionVerdict = "running"
+	VerdictSystemError      SubmissionVerdict = "system_error"
+	VerdictJudgeUnavailable SubmissionVerdict = "judge_unavailable"
 )
 
 func (v SubmissionVerdict) String() string {
 	return string(v)
+}
+
+// IsTerminal: false cho pending/running (web còn poll) và cho mọi giá trị lạ, true cho mọi kết quả cuối.
+func (v SubmissionVerdict) IsTerminal() bool {
+	switch v {
+	case VerdictAccepted, VerdictWrongAnswer, VerdictCompilationError, VerdictRuntimeError, VerdictTimeLimitExceed,
+		VerdictMemoryLimitExceed, VerdictSystemError, VerdictJudgeUnavailable:
+		return true
+	default:
+		return false
+	}
 }
 
 type Submission struct {

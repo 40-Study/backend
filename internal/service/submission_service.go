@@ -1,13 +1,10 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,103 +29,6 @@ type SubmissionServiceInterface interface {
 	ProcessSubmission(ctx context.Context, submissionID uuid.UUID) error
 }
 
-type Judge0Client interface {
-	Submit(ctx context.Context, req dto.Judge0SubmissionDTO) (*dto.Judge0ResponseDTO, error)
-	GetResult(ctx context.Context, token string) (*dto.Judge0ResponseDTO, error)
-}
-
-type HTTPJudge0Client struct {
-	baseURL    string
-	httpClient *http.Client
-}
-
-func NewHTTPJudge0Client(baseURL string) *HTTPJudge0Client {
-	return &HTTPJudge0Client{
-		baseURL: baseURL,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-	}
-}
-
-// createJudge0Request creates a Judge0 submission request
-// cpuTimeLimit is per test case (not total assignment time), default 5 seconds, max 20 seconds
-func createJudge0Request(sourceCode string, languageID int, stdin string, expectedOutput string, cpuTimeLimit int, memoryLimit int) dto.Judge0SubmissionDTO {
-	// Default 5 seconds per test case if not specified or too high
-	cpuLimit := 5.0
-	if cpuTimeLimit > 0 && cpuTimeLimit <= 20 {
-		cpuLimit = float64(cpuTimeLimit)
-	}
-	return dto.Judge0SubmissionDTO{
-		SourceCode:     sourceCode,
-		LanguageID:     languageID,
-		Stdin:          stdin,
-		ExpectedOutput: expectedOutput,
-		CPUTimeLimit:   cpuLimit,
-		MemoryLimit:    memoryLimit,
-	}
-}
-
-func (c *HTTPJudge0Client) Submit(ctx context.Context, req dto.Judge0SubmissionDTO) (*dto.Judge0ResponseDTO, error) {
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/submissions?wait=true", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("judge0 error: %s", string(respBody))
-	}
-
-	var result dto.Judge0ResponseDTO
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-func (c *HTTPJudge0Client) GetResult(ctx context.Context, token string) (*dto.Judge0ResponseDTO, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/submissions/"+token, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var result dto.Judge0ResponseDTO
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
 // ErrSubmissionForbidden: C-10 (audit 260909) — trước đây GetByID/GetByUser/GetMySubmissions
 // không kiểm tra quyền, cho phép đọc/liệt kê bài nộp (và điểm) của bất kỳ ai.
 var ErrSubmissionForbidden = errors.New("forbidden: not the owner")
@@ -150,16 +50,11 @@ func NewSubmissionService(
 	redis *redis.Client,
 	cfg *config.Config,
 ) *SubmissionService {
-	judge0URL := "http://judge0:2358"
-	if cfg.Environment == "dev" {
-		judge0URL = "http://localhost:2358"
-	}
-
 	return &SubmissionService{
 		repo:          repo,
 		assignmentSvc: assignmentSvc,
 		testCaseRepo:  testCaseRepo,
-		judge0Client:  NewHTTPJudge0Client(judge0URL),
+		judge0Client:  NewJudge0ClientFromConfig(cfg),
 		redis:         redis,
 		cfg:           cfg,
 	}

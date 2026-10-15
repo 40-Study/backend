@@ -131,7 +131,8 @@ type Repositories struct {
 	Grade *repository.GradeRepository
 
 	// ===== Exercise =====
-	Exercise *repository.ExerciseRepository
+	Exercise                 *repository.ExerciseRepository
+	ExerciseSubmissionResult *repository.ExerciseSubmissionResultRepository
 
 	// ===== Review =====
 	Review *repository.ReviewRepository
@@ -268,7 +269,8 @@ func InitRepositories(db *gorm.DB) *Repositories {
 		Grade: repository.NewGradeRepository(db),
 
 		// ===== Exercise =====
-		Exercise: repository.NewExerciseRepository(db),
+		Exercise:                 repository.NewExerciseRepository(db),
+		ExerciseSubmissionResult: repository.NewExerciseSubmissionResultRepository(db),
 
 		// ===== Review =====
 		Review: repository.NewReviewRepository(db),
