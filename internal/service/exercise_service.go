@@ -46,9 +46,11 @@ type ExerciseServiceInterface interface {
 }
 
 type ExerciseService struct {
-	repo     repository.ExerciseRepositoryInterface
-	redis    *redis.Client
-	rabbitMQ *rabbitmq_queue.RabbitMQService
+	judge        Judge0Client
+	lessonAccess LessonContentServiceInterface
+	repo         repository.ExerciseRepositoryInterface
+	redis        *redis.Client
+	rabbitMQ     *rabbitmq_queue.RabbitMQService
 }
 
 func NewExerciseService(

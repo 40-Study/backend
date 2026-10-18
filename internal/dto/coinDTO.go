@@ -48,17 +48,17 @@ type CoinTransactionListResponse struct {
 // ============================================================================
 
 type CoinPackageResponse struct {
-	ID              uuid.UUID `json:"id"`
-	Name            string    `json:"name"`
-	Description     *string   `json:"description,omitempty"`
-	CoinAmount      int64     `json:"coin_amount"`
-	BonusAmount     int64     `json:"bonus_amount"`
+	ID              uuid.UUID       `json:"id"`
+	Name            string          `json:"name"`
+	Description     *string         `json:"description,omitempty"`
+	CoinAmount      int64           `json:"coin_amount"`
+	BonusAmount     int64           `json:"bonus_amount"`
 	TotalCoins      int64           `json:"total_coins"`
 	Price           decimal.Decimal `json:"price"`
 	Currency        string          `json:"currency"`
-	DiscountPercent int       `json:"discount_percent"`
-	IsFeatured      bool      `json:"is_featured"`
-	SortOrder       int       `json:"sort_order"`
+	DiscountPercent int             `json:"discount_percent"`
+	IsFeatured      bool            `json:"is_featured"`
+	SortOrder       int             `json:"sort_order"`
 }
 
 type CreateCoinPackageRequest struct {
@@ -95,18 +95,19 @@ type CreateCoinPurchaseRequest struct {
 }
 
 type CoinPurchaseResponse struct {
-	ID               uuid.UUID  `json:"id"`
-	UserID           uuid.UUID  `json:"user_id"`
-	PackageID        *uuid.UUID `json:"package_id,omitempty"`
-	CoinAmount       int64      `json:"coin_amount"`
-	BonusAmount      int64      `json:"bonus_amount"`
-	Price            decimal.Decimal `json:"price"`
-	Currency         string     `json:"currency"`
-	Status           string     `json:"status"`
-	PaymentMethod    *string    `json:"payment_method,omitempty"`
-	PaymentReference *string    `json:"payment_reference,omitempty"`
-	CompletedAt      *time.Time `json:"completed_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
+	BankTransferInfo *BankTransferInfo `json:"bank_transfer_info,omitempty"`
+	ID               uuid.UUID         `json:"id"`
+	UserID           uuid.UUID         `json:"user_id"`
+	PackageID        *uuid.UUID        `json:"package_id,omitempty"`
+	CoinAmount       int64             `json:"coin_amount"`
+	BonusAmount      int64             `json:"bonus_amount"`
+	Price            decimal.Decimal   `json:"price"`
+	Currency         string            `json:"currency"`
+	Status           string            `json:"status"`
+	PaymentMethod    *string           `json:"payment_method,omitempty"`
+	PaymentReference *string           `json:"payment_reference,omitempty"`
+	CompletedAt      *time.Time        `json:"completed_at,omitempty"`
+	CreatedAt        time.Time         `json:"created_at"`
 }
 
 type CoinPurchaseListResponse struct {
@@ -127,12 +128,12 @@ type SendCoinGiftRequest struct {
 }
 
 type CoinGiftResponse struct {
-	SenderID     uuid.UUID `json:"sender_id"`
-	ReceiverID   uuid.UUID `json:"receiver_id"`
-	Amount       int64     `json:"amount"`
-	Message      *string   `json:"message,omitempty"`
-	SenderBalance   int64  `json:"sender_balance"`
-	ReceiverBalance int64  `json:"receiver_balance"`
+	SenderID        uuid.UUID `json:"sender_id"`
+	ReceiverID      uuid.UUID `json:"receiver_id"`
+	Amount          int64     `json:"amount"`
+	Message         *string   `json:"message,omitempty"`
+	SenderBalance   int64     `json:"sender_balance"`
+	ReceiverBalance int64     `json:"receiver_balance"`
 }
 
 // ============================================================================

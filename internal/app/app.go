@@ -66,6 +66,12 @@ func New() (*App, error) {
 		return err
 	}
 	asynq_queue.RegisterTasks(resources.Queue, notifier, repos.Class, repos.Enrollment, resources.Redis, livestreamStarter)
+	reminderService := service.NewLessonReminderService(resources.DB, notifier)
+	if err := resources.Queue.Schedule("lesson_reminder_sweep", asynq_queue.EveryInterval(30*time.Second), func(ctx context.Context, _ []byte) error {
+		return reminderService.Sweep(ctx, time.Now())
+	}, "notifications"); err != nil {
+		return nil, fmt.Errorf("register lesson reminder sweep: %w", err)
+	}
 	// L6 mục 5: job nền đối chiếu ngân hàng (đơn chờ + đơn vừa hoàn tất), chu kỳ lấy từ config.
 	if services.Payment != nil {
 		if resources.Redis != nil {

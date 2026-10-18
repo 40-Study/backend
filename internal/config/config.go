@@ -35,9 +35,13 @@ type FacebookOAuthConfig struct {
 	RedirectURL  string `mapstructure:"FACEBOOK_REDIRECT_URL"`
 }
 type Config struct {
-	Environment string `mapstructure:"ENVIRONMENT"`
-	Port        string `mapstructure:"PORT"`
-	Host        string `mapstructure:"HOST"`
+	Judge0URL        string `mapstructure:"JUDGE0_URL"`
+	ViettelAIAPIKey  string `mapstructure:"VIETTEL_AI_API_KEY"`
+	ViettelAIBaseURL string `mapstructure:"VIETTEL_AI_BASE_URL"`
+	ViettelAIModel   string `mapstructure:"VIETTEL_AI_MODEL"`
+	Environment      string `mapstructure:"ENVIRONMENT"`
+	Port             string `mapstructure:"PORT"`
+	Host             string `mapstructure:"HOST"`
 
 	DBHost     string `mapstructure:"DB_HOST"`
 	DBPort     string `mapstructure:"DB_PORT"`
@@ -199,6 +203,10 @@ func LoadConfig() (*Config, error) {
 	// Set default values
 	viper.SetDefault("PORT", "5000")
 	viper.SetDefault("HOST", "localhost")
+	viper.SetDefault("JUDGE0_URL", "")
+	viper.SetDefault("VIETTEL_AI_API_KEY", "")
+	viper.SetDefault("VIETTEL_AI_BASE_URL", "")
+	viper.SetDefault("VIETTEL_AI_MODEL", "")
 	viper.SetDefault("REDIS_DB", 0)
 	viper.SetDefault("MINIO_USE_SSL", false)
 	viper.SetDefault("MINIO_BUCKET_IMAGES", "images")

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"time"
 
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -332,9 +333,13 @@ func (s *ParentDashboardService) GetChildSchedule(ctx context.Context, parentID,
 }
 
 func (s *ParentDashboardService) GetChildTimetable(ctx context.Context, parentID, childID uuid.UUID) (*dto.TimetableResponseDTO, error) {
-	_, err := s.verifyParentChildRelation(ctx, parentID, childID)
+	relation, err := s.verifyParentChildRelation(ctx, parentID, childID)
 	if err != nil {
 		return nil, err
+	}
+
+	if !relation.CanViewAttendance {
+		return nil, errors.New("không có quyền xem lịch học của học sinh này")
 	}
 
 	classIDs, err := s.scheduleRepo.GetStudentClassIDs(ctx, childID)
@@ -365,6 +370,12 @@ func (s *ParentDashboardService) GetChildTimetable(ctx context.Context, parentID
 			Room:       sch.Room,
 			Status:     "active",
 		}
+		from := sch.EffectiveFrom.Format("2006-01-02")
+		entry.EffectiveFrom = &from
+		if sch.EffectiveUntil != nil {
+			until := sch.EffectiveUntil.Format("2006-01-02")
+			entry.EffectiveUntil = &until
+		}
 		if sch.Class.Name != "" {
 			entry.ClassName = sch.Class.Name
 		}
@@ -378,6 +389,34 @@ func (s *ParentDashboardService) GetChildTimetable(ctx context.Context, parentID
 		return entries[i].StartTime < entries[j].StartTime
 	})
 
+	liveSessions, err := s.scheduleRepo.GetCalendarLivestreamsByClassIDs(ctx, classIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get class livestreams: %w", err)
+	}
+	for _, live := range liveSessions {
+		if live.ScheduledAt == nil {
+			continue
+		}
+		loc := time.FixedZone("ICT", 7*60*60)
+		start := live.ScheduledAt.In(loc)
+		end := start.Add(time.Hour)
+		if live.ScheduledEndAt != nil {
+			end = live.ScheduledEndAt.In(loc)
+		}
+		day := start.Format("2006-01-02")
+		status := "scheduled"
+		if live.EffectiveStatus(time.Now()) == model.LivestreamStatusLive {
+			status = "in_progress"
+		}
+		if live.EffectiveStatus(time.Now()) == model.LivestreamStatusEnded {
+			status = "completed"
+		}
+		entry := dto.TimetableEntryDTO{SessionID: &live.ID, ClassID: live.ClassID, DayOfWeek: int(start.Weekday()), Date: &day, StartTime: start.Format("15:04"), EndTime: end.Format("15:04"), Topic: &live.Title, Room: live.Location, Status: status}
+		if live.Class != nil {
+			entry.ClassName = live.Class.Name
+		}
+		entries = append(entries, entry)
+	}
 	return &dto.TimetableResponseDTO{Entries: entries}, nil
 }
 

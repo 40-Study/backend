@@ -43,9 +43,9 @@ type CoinServiceInterface interface {
 }
 
 type CoinService struct {
-	walletRepo  *repository.CoinWalletRepository
-	txRepo      *repository.CoinTransactionRepository
-	packageRepo *repository.CoinPackageRepository
+	walletRepo   *repository.CoinWalletRepository
+	txRepo       *repository.CoinTransactionRepository
+	packageRepo  *repository.CoinPackageRepository
 	purchaseRepo *repository.CoinPurchaseRepository
 	// transactionService xác minh giao dịch chuyển khoản thật qua gRPC (dùng chung
 	// cơ chế với đơn hàng khoá học, xem payment_service.go CheckAndProcessPayment).
@@ -62,11 +62,11 @@ func NewCoinService(
 	transactionService TransactionServiceInterface,
 ) *CoinService {
 	return &CoinService{
-		walletRepo:   walletRepo,
-		txRepo:       txRepo,
+		walletRepo:         walletRepo,
+		txRepo:             txRepo,
 		transactionService: transactionService,
-		packageRepo:  packageRepo,
-		purchaseRepo: purchaseRepo,
+		packageRepo:        packageRepo,
+		purchaseRepo:       purchaseRepo,
 	}
 }
 
@@ -165,6 +165,12 @@ func (s *CoinService) CreatePurchase(ctx context.Context, userID uuid.UUID, req 
 		return nil, errors.New("package is not available")
 	}
 
+	if req.PaymentMethod != "bank_transfer" {
+		return nil, errors.New("Chỉ hỗ trợ chuyển khoản ngân hàng khi mua xu")
+	}
+	if pkg.Currency != "VND" || !pkg.Price.GreaterThan(decimal.Zero) || pkg.CoinAmount <= 0 || pkg.BonusAmount < 0 {
+		return nil, errors.New("Gói xu chưa có thông tin thanh toán hợp lệ")
+	}
 	paymentMethod := req.PaymentMethod
 	// C4: sinh mã thanh toán để user ghi vào nội dung chuyển khoản; VerifyPurchase
 	// sẽ đối chiếu mã này với giao dịch ngân hàng thật (không tự cộng xu vô điều kiện).
@@ -181,7 +187,7 @@ func (s *CoinService) CreatePurchase(ctx context.Context, userID uuid.UUID, req 
 		PaymentReference: &paymentCode,
 	}
 
-	if err := s.purchaseRepo.Create(ctx, purchase); err != nil {
+	if err := s.purchaseRepo.CreateOrResume(ctx, purchase); err != nil {
 		return nil, err
 	}
 
@@ -220,7 +226,7 @@ func (s *CoinService) VerifyPurchase(ctx context.Context, userID, purchaseID uui
 	}
 
 	toTime := time.Now()
-	fromTime := toTime.Add(-24 * time.Hour)
+	fromTime := purchase.CreatedAt.Add(-time.Minute)
 	result, err := s.transactionService.CheckTransaction(ctx, *purchase.PaymentReference, fromTime, toTime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check transaction: %w", err)
@@ -239,6 +245,9 @@ func (s *CoinService) VerifyPurchase(ctx context.Context, userID, purchaseID uui
 		return nil, errors.New("payment amount mismatch")
 	}
 
+	if result.TransactionID == "" || (result.Currency != "" && result.Currency != purchase.Currency) {
+		return nil, errors.New("Thông tin giao dịch ngân hàng chưa hợp lệ")
+	}
 	totalCoins := purchase.CoinAmount + purchase.BonusAmount
 
 	// C3/C4: cộng xu + ghi ledger + đánh dấu purchase completed atomic trong 1
@@ -705,7 +714,13 @@ func toCoinPackageResponse(p model.CoinPackage) dto.CoinPackageResponse {
 }
 
 func toCoinPurchaseResponse(p *model.CoinPurchase) *dto.CoinPurchaseResponse {
+	bankName, accountNumber, accountName := getBankTransferInfoFromEnv()
+	content := ""
+	if p.PaymentReference != nil {
+		content = "40STUDY " + *p.PaymentReference
+	}
 	return &dto.CoinPurchaseResponse{
+		BankTransferInfo: &dto.BankTransferInfo{BankName: bankName, AccountNumber: accountNumber, AccountName: accountName, Content: content},
 		ID:               p.ID,
 		UserID:           p.UserID,
 		PackageID:        p.PackageID,

@@ -79,6 +79,7 @@ func SetupAllRoutes(
 	auditRec middleware.AuditRecorder,
 ) {
 	api := app.Group("/api")
+	SetupOpenDesignRoutes(api, cfg, redis)
 
 	// Health check
 	api.Get("/health", func(c *fiber.Ctx) error {

@@ -521,6 +521,11 @@ func (s *LivestreamService) Update(ctx context.Context, userID uuid.UUID, isAdmi
 		return nil, err
 	}
 
+	if req.ScheduledAt != nil && session.ScheduledAt != nil && s.q != nil {
+		if err := s.q.Enqueue(asynq_queue.TaskScheduleLivestreamRemind, asynq_queue.ScheduleLivestreamRemindPayload{SessionID: session.ID, ClassID: &session.ClassID, Title: session.Title, ScheduledAt: *session.ScheduledAt}, "notifications"); err != nil {
+			log.Printf("reschedule room auto-start: %v", err)
+		}
+	}
 	return session, nil
 }
 
@@ -562,6 +567,10 @@ func (s *LivestreamService) StartAsSystem(ctx context.Context, id uuid.UUID) (*m
 	}
 	if session == nil {
 		return nil, errors.New("session not found")
+	}
+	// A delayed task created before rescheduling must not open the room at the old time.
+	if session.ScheduledAt != nil && time.Now().Before(session.ScheduledAt.Add(-5*time.Minute)) {
+		return session, nil
 	}
 	return s.startSession(ctx, session)
 }

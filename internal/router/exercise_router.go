@@ -15,6 +15,9 @@ func SetupExerciseRoutes(
 	redis *redis.Client,
 ) {
 	auth := middleware.AuthMiddleware(cfg, redis)
+	api.Get("/lessons/:lessonId/exercises/:id", auth, exerciseHandler.LessonCode)
+	api.Post("/lessons/:lessonId/exercises/:id/run", auth, middleware.SameOriginRequired(cfg.ResolvedAllowedOrigins()), contestUserRateLimit(redis, "rl:lesson:code", 20), exerciseHandler.RunLessonCode)
+	api.Post("/lessons/:lessonId/exercises/:id/submit", auth, middleware.SameOriginRequired(cfg.ResolvedAllowedOrigins()), contestUserRateLimit(redis, "rl:lesson:submit", 10), exerciseHandler.SubmitLessonCode)
 
 	// ============================================================================
 	// EXERCISE CRUD

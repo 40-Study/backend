@@ -17,6 +17,7 @@ import (
 // (contest_ports.go) — service này chỉ điều phối, không tự chấm điểm.
 type ContestService struct {
 	repo        *repository.ContestRepository
+	judge       Judge0Client
 	engine      ContestQuizEngine
 	issuer      ContestRewardIssuer
 	enrollments ContestEnrollmentReader
@@ -49,8 +50,10 @@ type ContestActor struct {
 }
 
 func (a *ContestActor) isOwnerOf(c *model.Contest) bool { return a != nil && a.UserID == c.CreatedBy }
-func (a *ContestActor) canManage(c *model.Contest) bool { return a != nil && (a.IsAdmin || a.UserID == c.CreatedBy) }
-func (a *ContestActor) isStudent() bool                 { return a != nil && a.ActiveRole == "STUDENT" }
+func (a *ContestActor) canManage(c *model.Contest) bool {
+	return a != nil && (a.IsAdmin || a.UserID == c.CreatedBy)
+}
+func (a *ContestActor) isStudent() bool { return a != nil && a.ActiveRole == "STUDENT" }
 
 // ── Lỗi nghiệp vụ: (HTTP, code) đúng bảng contract §2.4 ────────────────────
 
@@ -182,3 +185,5 @@ func normalizeContestReason(raw string) (string, error) {
 	}
 	return r, err
 }
+
+func (s *ContestService) SetJudge(client Judge0Client) { s.judge = client }

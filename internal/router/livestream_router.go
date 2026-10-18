@@ -82,7 +82,7 @@ func SetupSubmissionRoutes(api fiber.Router, cfg *config.Config, h *handler.Subm
 	submissions.Post("/", h.Submit)
 	submissions.Post("/run", h.RunCode)
 	submissions.Post("/run-custom", h.RunCustomCode)
-	submissions.Post("/execute", h.ExecuteCode) // Free sandbox - no assignment required
+	submissions.Post("/execute", middleware.SameOriginRequired(cfg.ResolvedAllowedOrigins()), contestUserRateLimit(redis, "rl:code:execute", 20), h.ExecuteCode) // Free sandbox - no assignment required
 	submissions.Get("/:id", h.GetByID)
 	submissions.Get("/assignment/:assignmentId", h.GetByAssignment)
 	submissions.Get("/my/:assignmentId", h.GetMySubmissions)

@@ -258,3 +258,17 @@ SELECT EXISTS (
 )`, sql.Named("eid", exerciseID), sql.Named("uid", userID)).Scan(&ok).Error
 	return ok, err
 }
+
+// JudgeTransaction serializes grading per student/exercise across server processes.
+func (r *ExerciseRepository) JudgeTransaction(ctx context.Context, exerciseID, userID uuid.UUID, fn func(*gorm.DB) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var locked bool
+		if err := tx.Raw("SELECT pg_try_advisory_xact_lock(hashtextextended(?, 0))", exerciseID.String()+":"+userID.String()).Scan(&locked).Error; err != nil {
+			return err
+		}
+		if !locked {
+			return errors.New("exercise judge busy")
+		}
+		return fn(tx)
+	})
+}

@@ -32,9 +32,15 @@ type ParticipationRow struct {
 
 const participationSelect = `
 	SELECT cp.id AS participant_id, cp.contest_id, cp.user_id, cp.created_at AS joined_at, cp.attempt_id, cp.rank,
-	       qa.started_at, qa.completed_at, qa.score, qa.total_points, qa.percentage, qa.time_spent_seconds,
+	       CASE WHEN ct.type = 'CODING' THEN cp.started_at ELSE qa.started_at END AS started_at,
+ CASE WHEN ct.type = 'CODING' THEN COALESCE(cp.finished_at, CASE WHEN cp.started_at IS NOT NULL AND CURRENT_TIMESTAMP >= LEAST(cp.started_at + ct.duration_minutes * INTERVAL '1 minute',ct.end_time) THEN LEAST(cp.started_at + ct.duration_minutes * INTERVAL '1 minute',ct.end_time) END) ELSE qa.completed_at END AS completed_at,
+ CASE WHEN ct.type = 'CODING' THEN cp.total_score ELSE qa.score END AS score,
+ CASE WHEN ct.type = 'CODING' THEN (SELECT SUM(points) FROM contest_problems WHERE contest_id = cp.contest_id) ELSE qa.total_points END AS total_points,
+ CASE WHEN ct.type = 'CODING' THEN cp.total_score * 100.0 / NULLIF((SELECT SUM(points) FROM contest_problems WHERE contest_id = cp.contest_id),0) ELSE qa.percentage END AS percentage,
+ CASE WHEN ct.type = 'CODING' THEN EXTRACT(EPOCH FROM (COALESCE(cp.finished_at, CASE WHEN cp.started_at IS NOT NULL AND CURRENT_TIMESTAMP >= LEAST(cp.started_at + ct.duration_minutes * INTERVAL '1 minute',ct.end_time) THEN LEAST(cp.started_at + ct.duration_minutes * INTERVAL '1 minute',ct.end_time) END) - cp.started_at))::integer ELSE qa.time_spent_seconds END AS time_spent_seconds,
 	       COALESCE(u.full_name, u.user_name) AS user_name, u.avatar_url
 	FROM contest_participants cp
+ JOIN contests ct ON ct.id = cp.contest_id
 	LEFT JOIN quiz_attempts qa ON qa.id = cp.attempt_id
 	JOIN users u ON u.id = cp.user_id`
 
@@ -173,31 +179,27 @@ type RankedRow struct {
 // liveRankSQL: chỉ attempt đã nộp; điểm cao trước, hoà thì ai NỘP TRƯỚC xếp trên, rồi thời gian
 // làm ít hơn, cuối cùng user_id cho tất định. ROW_NUMBER — không đồng hạng.
 const liveRankSQL = `
-	WITH ranked AS (
-		SELECT cp.user_id, COALESCE(qa.score, 0) AS score, COALESCE(qa.total_points, 0) AS total_points,
-		       COALESCE(qa.percentage, 0) AS percentage, COALESCE(qa.time_spent_seconds, 0) AS time_spent_seconds,
-		       qa.completed_at,
-		       ROW_NUMBER() OVER (ORDER BY COALESCE(qa.score, 0) DESC, qa.completed_at ASC,
-		                          COALESCE(qa.time_spent_seconds, 0) ASC, cp.user_id ASC) AS rank
-		FROM contest_participants cp JOIN quiz_attempts qa ON qa.id = cp.attempt_id
-		WHERE cp.contest_id = ? AND qa.completed_at IS NOT NULL
-	)
-	SELECT r.*, COALESCE(u.full_name, u.user_name) AS user_name, u.avatar_url,
-	       u.full_name AS full_name, u.user_name AS login_name,
-	       COALESCE(upr.leaderboard_display, 'name') AS leaderboard_display
-	FROM ranked r JOIN users u ON u.id = r.user_id
-	LEFT JOIN user_preferences upr ON upr.user_id = u.id ORDER BY r.rank`
+ WITH entries AS (` + participationSelect + `), ranked AS (
+ SELECT user_id, COALESCE(score,0) AS score, COALESCE(total_points,0) AS total_points,
+ COALESCE(percentage,0) AS percentage, COALESCE(time_spent_seconds, EXTRACT(EPOCH FROM ((SELECT MAX(cs.created_at) FROM contest_submissions cs WHERE cs.contest_id = entries.contest_id AND cs.user_id = entries.user_id) - started_at))::integer, 0) AS time_spent_seconds,
+ COALESCE(completed_at, (SELECT MAX(cs.created_at) FROM contest_submissions cs WHERE cs.contest_id = entries.contest_id AND cs.user_id = entries.user_id)) AS completed_at,
+ ROW_NUMBER() OVER (ORDER BY COALESCE(score,0) DESC, COALESCE(completed_at, (SELECT MAX(cs.created_at) FROM contest_submissions cs WHERE cs.contest_id = entries.contest_id AND cs.user_id = entries.user_id)) ASC, COALESCE(time_spent_seconds,0) ASC,user_id ASC) AS rank
+ FROM entries WHERE contest_id = ? AND (completed_at IS NOT NULL OR
+ EXISTS (SELECT 1 FROM contests ct WHERE ct.id = entries.contest_id AND ct.type = 'CODING') AND
+ EXISTS (SELECT 1 FROM contest_submissions cs WHERE cs.contest_id = entries.contest_id AND cs.user_id = entries.user_id))
+ )
+ SELECT r.*,COALESCE(u.full_name,u.user_name) AS user_name,u.avatar_url,u.full_name AS full_name,u.user_name AS login_name,
+ COALESCE(upr.leaderboard_display,'name') AS leaderboard_display
+ FROM ranked r JOIN users u ON u.id=r.user_id LEFT JOIN user_preferences upr ON upr.user_id=u.id ORDER BY r.rank`
 
-// finalRankSQL: sau khi chốt, BXH đọc contest_participants.rank đã ghi.
 const finalRankSQL = `
-	SELECT cp.user_id, cp.rank, COALESCE(qa.score, 0) AS score, COALESCE(qa.total_points, 0) AS total_points,
-	       COALESCE(qa.percentage, 0) AS percentage, COALESCE(qa.time_spent_seconds, 0) AS time_spent_seconds,
-	       qa.completed_at, COALESCE(u.full_name, u.user_name) AS user_name, u.avatar_url,
-	       u.full_name AS full_name, u.user_name AS login_name,
-	       COALESCE(upr.leaderboard_display, 'name') AS leaderboard_display
-	FROM contest_participants cp JOIN quiz_attempts qa ON qa.id = cp.attempt_id JOIN users u ON u.id = cp.user_id
-	LEFT JOIN user_preferences upr ON upr.user_id = u.id
-	WHERE cp.contest_id = ? AND cp.rank IS NOT NULL ORDER BY cp.rank`
+ WITH entries AS (` + participationSelect + `)
+ SELECT e.user_id,e.rank,COALESCE(e.score,0) AS score,COALESCE(e.total_points,0) AS total_points,
+ COALESCE(e.percentage,0) AS percentage,COALESCE(e.time_spent_seconds,0) AS time_spent_seconds,e.completed_at,
+ COALESCE(u.full_name,u.user_name) AS user_name,u.avatar_url,u.full_name AS full_name,u.user_name AS login_name,
+ COALESCE(upr.leaderboard_display,'name') AS leaderboard_display
+ FROM entries e JOIN users u ON u.id=e.user_id LEFT JOIN user_preferences upr ON upr.user_id=u.id
+ WHERE e.contest_id = ? AND e.rank IS NOT NULL ORDER BY e.rank`
 
 // RankedRows — limit <= 0 lấy hết (dùng khi chốt, trong tx).
 func (r *ContestRepository) RankedRows(db *gorm.DB, contestID uuid.UUID, finalized bool, page, limit int) ([]RankedRow, int64, error) {

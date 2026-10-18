@@ -30,7 +30,7 @@ func (r *ContestRepository) Transaction(ctx context.Context, fn func(tx *gorm.DB
 }
 
 func (r *ContestRepository) withDetails(q *gorm.DB) *gorm.DB {
-	return q.Preload("Creator").Preload("Course").Preload("Quiz").
+	return q.Preload("Creator").Preload("Course").Preload("Quiz").Preload("Problems").
 		Preload("Prizes", func(db *gorm.DB) *gorm.DB { return db.Order("rank_from ASC") }).
 		Preload("Prizes.Voucher", func(db *gorm.DB) *gorm.DB { return db.Unscoped() })
 }

@@ -12,8 +12,8 @@ services:
       dockerfile: transaction/dockerfile
     container_name: mbbank-transaction-api
     ports:
-      - "8000:8000"   # REST API
-      - "127.0.0.1:50051:50051" # gRPC: chỉ loopback (backend Go cùng máy gọi localhost:50051; trong mạng docker dùng mbbank-api:50051, không cần publish)
+      - "${MBBANK_REST_HOST_PORT:?set MBBANK_REST_HOST_PORT in .env}:8000"   # REST API
+      - "127.0.0.1:${MBBANK_GRPC_HOST_PORT:?set MBBANK_GRPC_HOST_PORT in .env}:50051" # gRPC
     environment:
       - MB_USERNAME=${MB_USERNAME}
       - MB_PASSWORD=${MB_PASSWORD}
@@ -58,12 +58,20 @@ services:
     volumes:
       - ./judge/judge0.conf:/judge0.conf:ro
       - ./judge/init-cgroups.sh:/init-cgroups.sh:ro
-    entrypoint: ["/bin/bash", "-c", "/init-cgroups.sh ./scripts/server"]
+    # Execute with Bash instead of using the bind-mounted file's shebang. On
+    # macOS Docker mounts this file is not directly executable inside Linux.
+    entrypoint: ["/bin/bash", "-c", "bash /init-cgroups.sh ./scripts/server"]
     environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: judge0_db
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     ports:
-      - "2358:2358"
+      - "${JUDGE0_HOST_PORT:?set JUDGE0_HOST_PORT in .env}:2358"
     privileged: true
 
     restart: always
@@ -80,9 +88,15 @@ services:
     volumes:
       - ./judge/judge0.conf:/judge0.conf:ro
       - ./judge/init-cgroups.sh:/init-cgroups.sh:ro
-    entrypoint: ["/bin/bash", "-c", "/init-cgroups.sh ./scripts/workers"]
+    entrypoint: ["/bin/bash", "-c", "bash /init-cgroups.sh ./scripts/workers"]
     environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: judge0_db
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     privileged: true
 
@@ -100,8 +114,8 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     ports:
-      - "5672:5672" # RabbitMQ main port
-      - "15672:15672" # Management UI
+      - "${RABBITMQ_HOST_PORT:?set RABBITMQ_HOST_PORT in .env}:5672" # RabbitMQ main port
+      - "${RABBITMQ_MANAGEMENT_HOST_PORT:?set RABBITMQ_MANAGEMENT_HOST_PORT in .env}:15672" # Management UI
     networks:
       - study_network
     healthcheck:
@@ -125,7 +139,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "5432:5432"
+      - "${POSTGRES_HOST_PORT:?set POSTGRES_HOST_PORT in .env}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -153,7 +167,7 @@ services:
     restart: unless-stopped
     command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
-      - "6379:6379"
+      - "${REDIS_HOST_PORT:?set REDIS_HOST_PORT in .env}:6379"
     volumes:
       - redis_data:/data
     networks:
@@ -170,7 +184,10 @@ services:
         max-file: "3"
 
   minio:
-    image: minio/minio:latest
+    image: study-minio-community:2025-09-07
+    build:
+      context: ./.gotmp
+      dockerfile: Minio.Dockerfile
     container_name: study_minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -179,14 +196,14 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_API_CORS_ALLOW_ORIGIN: "*"
     ports:
-      - "9000:9000" # API Port
-      - "9090:9001"
+      - "${MINIO_API_HOST_PORT:?set MINIO_API_HOST_PORT in .env}:9000" # API Port
+      - "${MINIO_CONSOLE_HOST_PORT:?set MINIO_CONSOLE_HOST_PORT in .env}:9001"
     volumes:
       - minio_data:/data
     networks:
       - study_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 20s
       retries: 3
@@ -197,7 +214,7 @@ services:
         max-file: "3"
 
   minio_createbuckets:
-    image: minio/mc:latest
+    image: quay.io/minio/aistor/mc:RELEASE.2025-08-21T03-14-05Z
     container_name: study_minio_setup
     depends_on:
       minio:
@@ -242,9 +259,9 @@ services:
         logging:
           level: info
     ports:
-      - "7880:7880"
-      - "7881:7881"
-      - "7882:7882/udp"
+      - "${LIVEKIT_HTTP_HOST_PORT:?set LIVEKIT_HTTP_HOST_PORT in .env}:7880"
+      - "${LIVEKIT_RTC_TCP_HOST_PORT:?set LIVEKIT_RTC_TCP_HOST_PORT in .env}:7881"
+      - "${LIVEKIT_RTC_UDP_HOST_PORT:?set LIVEKIT_RTC_UDP_HOST_PORT in .env}:7882/udp"
     depends_on:
       - redis
     restart: unless-stopped
@@ -283,9 +300,17 @@ services:
     container_name: study_nginx
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "${STUDY_NGINX_HOST_PORT:?set STUDY_NGINX_HOST_PORT in .env}:80"
+    environment:
+      API_BACKEND_PORT: ${PORT}
+      LIVEKIT_HTTP_HOST_PORT: ${LIVEKIT_HTTP_HOST_PORT}
+      MINIO_API_HOST_PORT: ${MINIO_API_HOST_PORT}
+      MINIO_CONSOLE_HOST_PORT: ${MINIO_CONSOLE_HOST_PORT}
+      RABBITMQ_MANAGEMENT_HOST_PORT: ${RABBITMQ_MANAGEMENT_HOST_PORT}
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
+      NGINX_ENVSUBST_FILTER: '^(API_BACKEND_PORT|LIVEKIT_HTTP_HOST_PORT|MINIO_API_HOST_PORT|MINIO_CONSOLE_HOST_PORT|RABBITMQ_MANAGEMENT_HOST_PORT)$'
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx.conf:/etc/nginx/templates/nginx.conf.template:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -339,4 +364,4 @@ volumes:
   redis_data:
     name: study_redis_data
   minio_data:
-    name: study_minio_data
+    name: study_minio_community_data

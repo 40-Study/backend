@@ -146,6 +146,15 @@ func (s *ContestService) validateUpsert(ctx context.Context, actor *ContestActor
 		}
 	}
 	anyOwner := actor.IsAdmin && actor.UserID == ownerID
+	if req.Type == "CODING" {
+		if len(req.Prizes) > 0 || req.CertificateMinPercentage != nil {
+			return invalidField("prizes", "Cuộc thi code chưa hỗ trợ phát chứng nhận hoặc voucher.")
+		}
+		return validateCodeProblems(req.Problems)
+	}
+	if req.QuizID == uuid.Nil {
+		return ErrContestQuizInvalid
+	}
 	if err := s.checkQuiz(ctx, req.QuizID, ownerID, anyOwner, selfID); err != nil {
 		return err
 	}

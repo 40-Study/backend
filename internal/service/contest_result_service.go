@@ -50,7 +50,7 @@ func (s *ContestService) Leaderboard(ctx context.Context, id uuid.UUID, actor *C
 	if c, err = s.loadPublished(c, err, actor); err != nil {
 		return nil, err
 	}
-	if !answersOpen(c, s.now()) && !actor.canManage(c) {
+	if !(c.Type == "CODING" && !s.now().Before(c.StartTime)) && !answersOpen(c, s.now()) && !actor.canManage(c) {
 		return nil, ErrContestLeaderboardHidden
 	}
 	page, limit = normalizePage(page, limit)

@@ -253,3 +253,23 @@ func (r *CoinPurchaseRepository) ListByUserID(ctx context.Context, userID uuid.U
 	err := query.Order("created_at DESC").Find(&purchases).Error
 	return purchases, total, err
 }
+
+// CreateOrResume serializes purchases for one user and resumes an unchanged pending package.
+// Closing a payment dialog or retrying a request must not issue another transfer reference.
+func (r *CoinPurchaseRepository) CreateOrResume(ctx context.Context, purchase *model.CoinPurchase) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "coin_purchase:"+purchase.UserID.String()).Error; err != nil {
+			return err
+		}
+		var pending model.CoinPurchase
+		err := tx.Where("user_id = ? AND package_id = ? AND status = ? AND price = ? AND coin_amount = ? AND bonus_amount = ? AND currency = ? AND payment_method = ?", purchase.UserID, purchase.PackageID, model.CoinPurchasePending, purchase.Price, purchase.CoinAmount, purchase.BonusAmount, purchase.Currency, purchase.PaymentMethod).Order("created_at DESC").First(&pending).Error
+		if err == nil {
+			*purchase = pending
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		return tx.Create(purchase).Error
+	})
+}

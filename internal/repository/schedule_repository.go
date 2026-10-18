@@ -54,6 +54,7 @@ type ScheduleRepositoryInterface interface {
 	GetStudentClassIDs(ctx context.Context, studentID uuid.UUID) ([]uuid.UUID, error)
 	GetTeacherClassIDs(ctx context.Context, teacherID uuid.UUID) ([]uuid.UUID, error)
 	GetSchedulesByClassIDs(ctx context.Context, classIDs []uuid.UUID) ([]model.ClassSchedule, error)
+	GetCalendarLivestreamsByClassIDs(ctx context.Context, classIDs []uuid.UUID) ([]model.LivestreamSession, error)
 }
 
 type ScheduleRepository struct {
@@ -355,7 +356,7 @@ func (r *ScheduleRepository) GetStudentClassIDs(ctx context.Context, studentID u
 	var ids []uuid.UUID
 	err := r.db.WithContext(ctx).
 		Table("student_classes").
-		Where("student_id = ?", studentID).
+		Where("student_id = ? AND status = ?", studentID, "active").
 		Pluck("class_id", &ids).Error
 	return ids, err
 }
@@ -377,4 +378,14 @@ func (r *ScheduleRepository) GetSchedulesByClassIDs(ctx context.Context, classID
 		Order("day_of_week ASC, start_time ASC").
 		Find(&schedules).Error
 	return schedules, err
+}
+
+// Parent calendar reads schedule fields only; no room token or meeting permissions are issued.
+func (r *ScheduleRepository) GetCalendarLivestreamsByClassIDs(ctx context.Context, classIDs []uuid.UUID) ([]model.LivestreamSession, error) {
+	var sessions []model.LivestreamSession
+	err := r.db.WithContext(ctx).Model(&model.LivestreamSession{}).Preload("Class").
+		Where("class_id IN ? AND scheduled_at IS NOT NULL AND status != ?", classIDs, "cancelled").
+		Where("EXISTS (SELECT 1 FROM classes c WHERE c.id = livestream_sessions.class_id AND c.deleted_at IS NULL AND c.status = 'active')").
+		Order("scheduled_at").Find(&sessions).Error
+	return sessions, err
 }

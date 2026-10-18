@@ -1,0 +1,8 @@
+# Local browser QA on the same machine as Docker Desktop.
+# Keep the advertised ICE ports reachable without changing the shared deployment config.
+services:
+  livekit:
+    command: ["--node-ip", "127.0.0.1"]
+    ports:
+      - "127.0.0.1:7881:7881/tcp"
+      - "127.0.0.1:7882:7882/udp"

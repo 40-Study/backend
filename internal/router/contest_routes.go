@@ -65,6 +65,13 @@ func SetupContestRoutes(api fiber.Router, cfg *config.Config, h *handler.Contest
 	api.Get("/contests/:id/leaderboard", optional, h.Leaderboard)
 	api.Get("/contests/:id/certificate", auth, h.Certificate)
 
+	// Judge routes are authenticated and do not expose hidden test inputs/outputs.
+	api.Get("/contests/:id/code", auth, h.CodeSession)
+	api.Post("/contests/:id/code/start", auth, middleware.SameOriginRequired(cfg.ResolvedAllowedOrigins()), h.StartCode)
+	api.Post("/contests/:id/code/run", auth, middleware.SameOriginRequired(cfg.ResolvedAllowedOrigins()), contestUserRateLimit(rdb, "rl:contest:code", 20), h.RunContestCode)
+	api.Post("/contests/:id/code/submit", auth, middleware.SameOriginRequired(cfg.ResolvedAllowedOrigins()), contestUserRateLimit(rdb, "rl:contest:code-submit", 10), h.SubmitContestCode)
+	api.Post("/contests/:id/code/finish", auth, middleware.SameOriginRequired(cfg.ResolvedAllowedOrigins()), h.FinishCode)
+
 	// ── Admin ──
 	api.Get("/admin/contests", auth, approve, h.AdminListContests)
 	api.Post("/admin/contests/:id/approve", auth, approve, h.ApproveContest)

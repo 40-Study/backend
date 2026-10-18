@@ -580,6 +580,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 	s.Group.SetChannelEvictor(notifier)
 	// Phụ huynh có liên kết active được xem chứng chỉ của con (GET /certificates/:id).
 	s.Certificate.SetParentLinkChecker(repos.ParentStudent)
+	s.Exercise.SetLessonJudge(s.Submission.JudgeClient(), s.LessonContent)
 	wireContest(s, repos)
 	wireQuizLessonCompletion(s)
 	// Notification nằm trong literal &Services{...} nên field anh em không tham chiếu được: gán ở đây.
@@ -599,6 +600,9 @@ func wireContest(s *Services, repos *Repositories) {
 		service.NewContestRewardService(s.Voucher, s.Notification),
 		repos.Enrollment,
 	)
+	if s.Submission != nil {
+		s.Contest.SetJudge(s.Submission.JudgeClient())
+	}
 	s.Quiz.SetContestGate(s.Contest)
 	s.Quiz.SetParentLinkChecker(repos.ParentStudent)
 }

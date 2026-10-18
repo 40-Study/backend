@@ -1,0 +1,117 @@
+/* Generated from web/src/app/globals.css. Run npm run design:sync. */
+:root {
+  --radius: 0.625rem;
+  --background: 210 40% 98%;
+  --background-secondary: 214 32% 91%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --primary: 221 83% 53%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 214 95% 93%;
+  --secondary-foreground: 221 83% 53%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+  --accent: 199 89% 48%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 214 32% 91%;
+  --input: 213 27% 84%;
+  --ring: 221 83% 53%;
+  --edu-blue: 217 91% 60%;
+  --edu-sky: 199 89% 48%;
+  --edu-slate: 215 16% 47%;
+  --xp-green: 142 72% 29%;
+  --streak-orange: 17 88% 40%;
+  --achievement-gold: 45 93% 47%;
+  --success: 142 71% 45%;
+  --warning: 38 92% 50%;
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+  --shadow-xs: 0 1px 2px rgb(15 23 42 / 0.05);
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 2px 8px rgb(15 23 42 / 0.04);
+  --shadow-raised: 0 4px 12px rgb(15 23 42 / 0.06), 0 12px 32px rgb(15 23 42 / 0.08);
+  --shadow-overlay: 0 16px 48px rgb(15 23 42 / 0.16);
+  --duration-fast: 150ms;
+  --duration-normal: 300ms;
+  --duration-slow: 500ms;
+}
+.dark {
+  --background: 229 84% 5%;
+  --background-secondary: 222 47% 11%;
+  --foreground: 210 40% 98%;
+  --card: 222 47% 11%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222 47% 11%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 213 94% 68%;
+  --primary-foreground: 222 47% 11%;
+  --secondary: 217 33% 17%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 65%;
+  --accent: 199 89% 48%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 63% 50%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217 33% 17%;
+  --input: 215 19% 35%;
+  --ring: 213 94% 68%;
+  --xp-green: 142 71% 55%;
+  --streak-orange: 25 95% 63%;
+  --achievement-gold: 45 93% 57%;
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-raised: 0 8px 24px rgb(0 0 0 / 0.4);
+  --shadow-overlay: 0 16px 48px rgb(0 0 0 / 0.6);
+}
+body { margin: 0; font-family: Inter, system-ui, sans-serif; background: hsl(var(--background)); color: hsl(var(--foreground)); line-height: 1.5; }
+h1,h2,h3 { font-family: 'Plus Jakarta Sans', Inter, system-ui, sans-serif; line-height: 1.25; }
+* { box-sizing: border-box; }
+/* Teaching tools: presentation surfaces inherit ForteX semantic tokens. */
+.teaching-tools {
+  --tool-accent: var(--primary);
+  --tool-accent-foreground: var(--primary-foreground);
+  --tool-canvas: var(--muted);
+  --slide-surface: var(--card);
+  --slide-ink: var(--foreground);
+  --slide-subtle: var(--muted-foreground);
+  --slide-radius: 1rem;
+}
+.teaching-tools [data-slide-theme="ink"] {
+  --tool-accent: 222 47% 16%;
+  --tool-accent-foreground: 0 0% 100%;
+}
+.teaching-tools [data-slide-theme="forest"] {
+  --tool-accent: 158 64% 25%;
+  --tool-accent-foreground: 0 0% 100%;
+}
+.slide-sheet {
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  container-type: inline-size;
+  background: hsl(var(--slide-surface));
+  color: hsl(var(--slide-ink));
+  border-radius: var(--slide-radius);
+}
+.slide-sheet .slide-inner { padding: 5cqw 6cqw; height: 100%; display: flex; flex-direction: column; }
+.slide-sheet .slide-title { font-size: clamp(16px, 4cqw, 44px); line-height: 1.2; overflow-wrap: anywhere; }
+.slide-sheet .slide-subtitle { font-size: clamp(10px, 1.8cqw, 20px); line-height: 1.5; }
+.slide-sheet .slide-bullet { font-size: clamp(10px, 2cqw, 22px); line-height: 1.45; }
+.slide-sheet[data-layout="cover"] { background: hsl(var(--tool-accent)); color: hsl(var(--tool-accent-foreground)); }
+.slide-sheet[data-layout="cover"] .slide-inner { justify-content: center; }
+.slide-sheet[data-layout="split"] .slide-bullets { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2cqw 3cqw; }

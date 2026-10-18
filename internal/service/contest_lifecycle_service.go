@@ -63,7 +63,20 @@ func (s *ContestService) Create(ctx context.Context, actor *ContestActor, req *d
 		IsPublic: req.IsPublic, CreatedBy: actor.UserID, QuizID: &req.QuizID, CourseID: req.CourseID,
 		CertificateMinPercentage: req.CertificateMinPercentage,
 	}
-	err := s.repo.Transaction(ctx, func(tx *gorm.DB) error { return s.repo.CreateTx(tx, &c, prizeModels(req.Prizes)) })
+	if req.Type == "CODING" {
+		c.Type = model.ContestTypeCoding
+		c.QuizID = nil
+	}
+	err := s.repo.Transaction(ctx, func(tx *gorm.DB) error {
+		if err := s.repo.CreateTx(tx, &c, prizeModels(req.Prizes)); err != nil {
+			return err
+		}
+		if c.Type == model.ContestTypeCoding {
+			problems := codeProblemModels(c.ID, req.Problems)
+			return tx.Create(&problems).Error
+		}
+		return nil
+	})
 	if isDuplicateKey(err) {
 		return nil, ErrContestQuizInUse
 	}
@@ -82,16 +95,37 @@ func (s *ContestService) Update(ctx context.Context, id uuid.UUID, actor *Contes
 	if !isOneOf(c.Status, editableStatuses) {
 		return nil, ErrContestInvalidStatus
 	}
+	if c.Type == model.ContestTypeCoding {
+		req.Type = "CODING"
+	} else if req.Type == "CODING" {
+		return nil, invalidField("type", "Không đổi loại cuộc thi sau khi tạo.")
+	}
 	if err := s.validateUpsert(ctx, actor, req, c.CreatedBy, &c.ID); err != nil {
 		return nil, err
 	}
 	err = s.repo.Transaction(ctx, func(tx *gorm.DB) error {
-		n, err := s.repo.UpdateStatusTx(tx, id, editableStatuses, "", upsertValues(req))
+		values := upsertValues(req)
+		if c.Type == model.ContestTypeCoding {
+			values["quiz_id"] = nil
+		}
+		n, err := s.repo.UpdateStatusTx(tx, id, editableStatuses, "", values)
 		if err != nil {
 			return err
 		}
 		if n == 0 {
 			return ErrContestInvalidStatus
+		}
+		if c.Type == model.ContestTypeCoding {
+			if err := tx.Model(&model.Contest{}).Where("id = ?", id).Update("quiz_id", nil).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("contest_id = ?", id).Delete(&model.ContestProblem{}).Error; err != nil {
+				return err
+			}
+			problems := codeProblemModels(id, req.Problems)
+			if err := tx.Create(&problems).Error; err != nil {
+				return err
+			}
 		}
 		return s.repo.ReplacePrizesTx(tx, id, prizeModels(req.Prizes))
 	})
@@ -143,6 +177,18 @@ func (s *ContestService) SubmitReview(ctx context.Context, id uuid.UUID, actor *
 func (s *ContestService) checkReadyForReview(ctx context.Context, c *model.Contest, anyOwner bool) error {
 	if !c.StartTime.After(s.now()) {
 		return ErrContestStartPassed
+	}
+	if c.Type == model.ContestTypeCoding {
+		problems, err := s.repo.CodeProblems(ctx, c.ID)
+		if err != nil {
+			return err
+		}
+		inputs := []dto.ContestCodeProblemInput{}
+		for _, p := range problems {
+			d := codeProblemDTO(p, true)
+			inputs = append(inputs, dto.ContestCodeProblemInput{Title: d.Title, Description: d.Description, Difficulty: d.Difficulty, Points: d.Points, TimeLimit: d.TimeLimit, MemoryLimit: d.MemoryLimit, Tests: d.Tests})
+		}
+		return validateCodeProblems(inputs)
 	}
 	if c.QuizID == nil {
 		return ErrContestQuizInvalid

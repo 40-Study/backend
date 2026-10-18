@@ -216,7 +216,7 @@ func (h *SubmissionHandler) ExecuteCode(c *fiber.Ctx) error {
 
 	result, err := h.svc.ExecuteCode(c.Context(), req)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return respondContestError(c, err)
 	}
 
 	return c.JSON(result)

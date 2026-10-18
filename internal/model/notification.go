@@ -27,7 +27,7 @@ const ResolvedFriendRequestNoticeSQL = `notification_type = 'friend_request' AND
 var NotificationTypes = []string{
 	"course_update", "new_lesson", "quiz_reminder", "certificate_earned", "payment_success",
 	"payment_failed", "promotion", "system", "achievement", "streak", "point_earned",
-	NotificationTypeFriendRequest, NotificationTypeFriendAccepted, NotificationTypeGroupAdded,
+	NotificationTypeFriendRequest, NotificationTypeFriendAccepted, NotificationTypeGroupAdded, "lesson_reminder",
 }
 
 type Notification struct {
@@ -36,7 +36,7 @@ type Notification struct {
 	UserID           uuid.UUID  `gorm:"type:uuid;not null;index" json:"user_id"`
 	Title            string     `gorm:"type:varchar(255);not null" json:"title"`
 	Content          string     `gorm:"type:text;not null" json:"content"`
-	NotificationType string     `gorm:"type:varchar(30);not null;check:notification_type IN ('course_update', 'new_lesson', 'quiz_reminder', 'certificate_earned', 'payment_success', 'payment_failed', 'promotion', 'system', 'achievement', 'streak', 'point_earned', 'friend_request', 'friend_accepted', 'group_added')" json:"notification_type"`
+	NotificationType string     `gorm:"type:varchar(30);not null;check:notification_type IN ('course_update', 'new_lesson', 'quiz_reminder', 'certificate_earned', 'payment_success', 'payment_failed', 'promotion', 'system', 'achievement', 'streak', 'point_earned', 'friend_request', 'friend_accepted', 'group_added', 'lesson_reminder')" json:"notification_type"`
 	ReferenceType    *string    `gorm:"type:varchar(30)" json:"reference_type,omitempty"`
 	ReferenceID      *uuid.UUID `gorm:"type:uuid;index" json:"reference_id,omitempty"`
 	IsRead           bool       `gorm:"default:false;index" json:"is_read"`

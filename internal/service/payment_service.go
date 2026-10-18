@@ -739,20 +739,5 @@ func (s *PaymentService) generateQRContent(order *model.Order, paymentCode strin
 }
 
 func getBankTransferInfoFromEnv() (bankName, accountNumber, accountName string) {
-	bankName = os.Getenv("MB_BANK_NAME")
-	if bankName == "" {
-		bankName = "MB"
-	}
-
-	accountNumber = os.Getenv("MB_ACCOUNT_NO")
-	if accountNumber == "" {
-		accountNumber = "1234567890"
-	}
-
-	accountName = os.Getenv("BANK_ACCOUNT_NAME")
-	if accountName == "" {
-		accountName = "40Study"
-	}
-
-	return bankName, accountNumber, accountName
+	return strings.TrimSpace(os.Getenv("MB_BANK_NAME")), strings.TrimSpace(os.Getenv("MB_ACCOUNT_NO")), strings.TrimSpace(os.Getenv("BANK_ACCOUNT_NAME"))
 }

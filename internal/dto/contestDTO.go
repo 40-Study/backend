@@ -21,18 +21,20 @@ type ContestPrizeInput struct {
 }
 
 type ContestUpsertRequest struct {
-	Title                    string              `json:"title" validate:"required,min=2,max=255"`
-	Description              *string             `json:"description"`
-	BannerURL                *string             `json:"banner_url" validate:"omitempty,url,safe_url,max=500"`
-	QuizID                   uuid.UUID           `json:"quiz_id" validate:"required"`
-	CourseID                 *uuid.UUID          `json:"course_id"`
-	StartTime                time.Time           `json:"start_time" validate:"required"`
-	EndTime                  time.Time           `json:"end_time" validate:"required"`
-	DurationMinutes          int                 `json:"duration_minutes" validate:"min=1,max=600"`
-	MaxParticipants          int                 `json:"max_participants" validate:"min=0,max=100000"`
-	IsPublic                 bool                `json:"is_public"`
-	CertificateMinPercentage *decimal.Decimal    `json:"certificate_min_percentage"`
-	Prizes                   []ContestPrizeInput `json:"prizes" validate:"max=10,dive"`
+	Title                    string                    `json:"title" validate:"required,min=2,max=255"`
+	Description              *string                   `json:"description"`
+	BannerURL                *string                   `json:"banner_url" validate:"omitempty,url,safe_url,max=500"`
+	QuizID                   uuid.UUID                 `json:"quiz_id"`
+	Type                     string                    `json:"type" validate:"omitempty,oneof=QUIZ CODING"`
+	Problems                 []ContestCodeProblemInput `json:"problems"`
+	CourseID                 *uuid.UUID                `json:"course_id"`
+	StartTime                time.Time                 `json:"start_time" validate:"required"`
+	EndTime                  time.Time                 `json:"end_time" validate:"required"`
+	DurationMinutes          int                       `json:"duration_minutes" validate:"min=1,max=600"`
+	MaxParticipants          int                       `json:"max_participants" validate:"min=0,max=100000"`
+	IsPublic                 bool                      `json:"is_public"`
+	CertificateMinPercentage *decimal.Decimal          `json:"certificate_min_percentage"`
+	Prizes                   []ContestPrizeInput       `json:"prizes" validate:"max=10,dive"`
 }
 
 type ContestReasonRequest struct {
@@ -160,16 +162,17 @@ type ContestQuizBriefDTO struct {
 
 type ContestManageDTO struct {
 	ContestBaseDTO
-	Prizes                   []ContestPrizeAdminDTO `json:"prizes"`
-	Quiz                     *ContestQuizBriefDTO   `json:"quiz"`
-	CourseID                 *uuid.UUID             `json:"course_id"`
-	CertificateMinPercentage *decimal.Decimal       `json:"certificate_min_percentage"`
-	SubmittedAt              *time.Time             `json:"submitted_at"`
-	ReviewedAt               *time.Time             `json:"reviewed_at"`
-	RejectReason             *string                `json:"reject_reason"`
-	CancelReason             *string                `json:"cancel_reason"`
-	CreatedBy                uuid.UUID              `json:"created_by"`
-	CreatorEmail             string                 `json:"creator_email"`
+	Prizes                   []ContestPrizeAdminDTO  `json:"prizes"`
+	Problems                 []ContestCodeProblemDTO `json:"problems,omitempty"`
+	Quiz                     *ContestQuizBriefDTO    `json:"quiz"`
+	CourseID                 *uuid.UUID              `json:"course_id"`
+	CertificateMinPercentage *decimal.Decimal        `json:"certificate_min_percentage"`
+	SubmittedAt              *time.Time              `json:"submitted_at"`
+	ReviewedAt               *time.Time              `json:"reviewed_at"`
+	RejectReason             *string                 `json:"reject_reason"`
+	CancelReason             *string                 `json:"cancel_reason"`
+	CreatedBy                uuid.UUID               `json:"created_by"`
+	CreatorEmail             string                  `json:"creator_email"`
 }
 
 type ContestQuizOptionDTO struct {

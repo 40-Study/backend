@@ -34,6 +34,12 @@ func contestBase(c *model.Contest, stats map[uuid.UUID]repository.QuizStat, now 
 			b.QuestionCount, b.TotalPoints = st.QuestionCount, st.TotalPoints
 		}
 	}
+	if c.Type == model.ContestTypeCoding {
+		for _, p := range c.Problems {
+			b.QuestionCount++
+			b.TotalPoints = b.TotalPoints.Add(decimal.NewFromInt(int64(p.Points)))
+		}
+	}
 	for _, p := range c.Prizes {
 		if p.VoucherID != nil {
 			b.HasVoucherPrize = true
@@ -70,6 +76,12 @@ func toManage(c *model.Contest, stats map[uuid.UUID]repository.QuizStat, now tim
 		}
 		out.Prizes = append(out.Prizes, item)
 	}
+	if c.Type == model.ContestTypeCoding {
+		out.Problems = []dto.ContestCodeProblemDTO{}
+		for _, p := range c.Problems {
+			out.Problems = append(out.Problems, codeProblemDTO(p, true))
+		}
+	}
 	if c.Quiz != nil {
 		out.Quiz = &dto.ContestQuizBriefDTO{ID: c.Quiz.ID, Title: c.Quiz.Title, QuestionCount: out.QuestionCount}
 	}
@@ -104,6 +116,9 @@ func attemptStatus(c *model.Contest, attemptID *uuid.UUID, startedAt, completedA
 }
 
 func toParticipation(c *model.Contest, p repository.ParticipationRow, award *repository.AwardRow, now time.Time) *dto.MyParticipationDTO {
+	if c.Type == model.ContestTypeCoding && p.StartedAt != nil {
+		p.AttemptID = &p.ParticipantID
+	}
 	out := &dto.MyParticipationDTO{
 		JoinedAt: p.JoinedAt, AttemptID: p.AttemptID, StartedAt: p.StartedAt, SubmittedAt: p.CompletedAt,
 		AttemptStatus: attemptStatus(c, p.AttemptID, p.StartedAt, p.CompletedAt, now), Rank: p.Rank,

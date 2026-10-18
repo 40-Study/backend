@@ -3,11 +3,13 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,7 +46,7 @@ type HTTPJudge0Client struct {
 
 func NewHTTPJudge0Client(baseURL string) *HTTPJudge0Client {
 	return &HTTPJudge0Client{
-		baseURL: baseURL,
+		baseURL: strings.TrimRight(baseURL, "/"),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -70,12 +72,20 @@ func createJudge0Request(sourceCode string, languageID int, stdin string, expect
 }
 
 func (c *HTTPJudge0Client) Submit(ctx context.Context, req dto.Judge0SubmissionDTO) (*dto.Judge0ResponseDTO, error) {
-	body, err := json.Marshal(req)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	wire := req
+	wire.SourceCode = base64.StdEncoding.EncodeToString([]byte(req.SourceCode))
+	wire.Stdin = base64.StdEncoding.EncodeToString([]byte(req.Stdin))
+	if req.ExpectedOutput != "" {
+		wire.ExpectedOutput = base64.StdEncoding.EncodeToString([]byte(req.ExpectedOutput))
+	}
+	body, err := json.Marshal(wire)
 	if err != nil {
 		return nil, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/submissions?wait=true", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/submissions?base64_encoded=true&wait=true", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -87,25 +97,43 @@ func (c *HTTPJudge0Client) Submit(ctx context.Context, req dto.Judge0SubmissionD
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if err != nil {
 		return nil, err
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("judge0 error: %s", string(respBody))
+		return nil, fmt.Errorf("judge0 status %d", resp.StatusCode)
 	}
-
 	var result dto.Judge0ResponseDTO
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, err
 	}
 
+	if err := decodeJudgeResult(&result); err != nil {
+		return nil, err
+	}
+	// Some installations enqueue even with wait=true. Poll that token, never create another job.
+	for result.Status.ID <= 2 && result.Token != "" {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+		next, err := c.GetResult(ctx, result.Token)
+		if err != nil {
+			return nil, err
+		}
+		result = *next
+	}
+	if result.Status.ID < 3 {
+		return nil, fmt.Errorf("invalid Judge0 status")
+	}
 	return &result, nil
 }
 
 func (c *HTTPJudge0Client) GetResult(ctx context.Context, token string) (*dto.Judge0ResponseDTO, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/submissions/"+token, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/submissions/"+token+"?base64_encoded=true", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -116,16 +144,22 @@ func (c *HTTPJudge0Client) GetResult(ctx context.Context, token string) (*dto.Ju
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if err != nil {
 		return nil, err
 	}
 
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("judge0 status %d", resp.StatusCode)
+	}
 	var result dto.Judge0ResponseDTO
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, err
 	}
 
+	if err := decodeJudgeResult(&result); err != nil {
+		return nil, err
+	}
 	return &result, nil
 }
 
@@ -150,11 +184,14 @@ func NewSubmissionService(
 	redis *redis.Client,
 	cfg *config.Config,
 ) *SubmissionService {
-	judge0URL := "http://judge0:2358"
+	judge0URL := "http://judge_server:2358"
 	if cfg.Environment == "dev" {
 		judge0URL = "http://localhost:2358"
 	}
 
+	if strings.TrimSpace(cfg.Judge0URL) != "" {
+		judge0URL = cfg.Judge0URL
+	}
 	return &SubmissionService{
 		repo:          repo,
 		assignmentSvc: assignmentSvc,
@@ -744,22 +781,25 @@ func (s *SubmissionService) RunCustomCode(ctx context.Context, requesterID uuid.
 
 // ExecuteCode - Free sandbox execution without assignment (default limits: 5s CPU, 128MB memory)
 func (s *SubmissionService) ExecuteCode(ctx context.Context, req dto.ExecuteCodeDTO) (*dto.ExecuteCodeResponseDTO, error) {
-	languageID := s.getLanguageID(req.Language)
+	languageID, ok := CodeLanguageID(req.Language)
+	if !ok || strings.TrimSpace(req.Code) == "" || len(req.Code) > 60000 || len(req.Stdin) > 16000 {
+		return nil, invalidField("code", "Mã nguồn, ngôn ngữ hoặc đầu vào không hợp lệ.")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
 	judgeReq := createJudge0Request(
 		req.Code,
 		languageID,
 		req.Stdin,
 		"",
-		5,         // 5 seconds default
-		128*1024,  // 128MB default
+		5,        // 5 seconds default
+		128*1024, // 128MB default
 	)
 
 	result, err := s.judge0Client.Submit(ctx, judgeReq)
-	if err != nil {
-		return &dto.ExecuteCodeResponseDTO{
-			Error: err.Error(),
-		}, nil
+	if err != nil || result == nil || result.Status.ID < 3 || result.Status.ID == 13 {
+		return nil, ErrJudgeUnavailable
 	}
 
 	response := &dto.ExecuteCodeResponseDTO{
@@ -782,4 +822,20 @@ func (s *SubmissionService) ExecuteCode(ctx context.Context, req dto.ExecuteCode
 	response.Memory = result.Memory
 
 	return response, nil
+}
+
+func (s *SubmissionService) JudgeClient() Judge0Client { return s.judge0Client }
+
+func decodeJudgeResult(result *dto.Judge0ResponseDTO) error {
+	for _, field := range []*string{&result.Stdout, &result.Stderr, &result.CompileOutput, &result.Message} {
+		if *field == "" {
+			continue
+		}
+		decoded, err := base64.StdEncoding.DecodeString(*field)
+		if err != nil {
+			return fmt.Errorf("invalid Judge0 encoded result")
+		}
+		*field = string(decoded)
+	}
+	return nil
 }

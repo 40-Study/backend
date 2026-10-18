@@ -23,8 +23,8 @@ const (
 	TaskPaymentPending           string = "payment_pending"
 	TaskDailyCheckin             string = "daily_checkin"
 	TaskStreakWarning            string = "streak_warning"
-	TaskClassSessionReminder    string = "class_session_reminder"
-	TaskEventReminder           string = "task:event_reminder"
+	TaskClassSessionReminder     string = "class_session_reminder"
+	TaskEventReminder            string = "task:event_reminder"
 )
 
 // ===================== Payloads =====================
@@ -98,38 +98,8 @@ func RegisterTasks(q *Queue, notifier *socket.Notifier, classRepo repository.Cla
 			return nil
 		}
 
-		reminderPayload := ClassReminderPayload{
-			SessionID: p.SessionID,
-			CourseID:  p.CourseID,
-			ClassName: reminderName,
-			Room:      p.Title,
-			StartTime: p.ScheduledAt.Format("15:04"),
-		}
-		if p.ClassID != nil {
-			reminderPayload.ClassID = *p.ClassID
-		}
-
-		reminders := []struct {
-			mins int
-			at   time.Time
-		}{
-			{30, p.ScheduledAt.Add(-30 * time.Minute)},
-			{15, p.ScheduledAt.Add(-15 * time.Minute)},
-			{5, p.ScheduledAt.Add(-5 * time.Minute)},
-			{1, p.ScheduledAt.Add(-1 * time.Minute)},
-		}
-
-		log.Printf("[task] Processing schedule_livestream_remind: class=%s scheduledAt=%v now=%v", reminderName, p.ScheduledAt, time.Now())
-
-		for _, r := range reminders {
-			reminderPayload.MinsBefore = r.mins
-			if r.at.Before(time.Now()) {
-				log.Printf("[task]   SKIP reminder -%d min (at=%v) — already past", r.mins, r.at)
-			} else {
-				log.Printf("[task]   OK reminder -%d min (at=%v)", r.mins, r.at)
-			}
-			q.ScheduleAt(TaskLessonReminder, reminderPayload, r.at, "notifications")
-		}
+		// In-app reminders are reconciled from the current DB schedule by lesson_reminder_sweep.
+		// This legacy task only schedules automatic room opening.
 
 		autoStartPayload := AutoStartLivestreamPayload{SessionID: p.SessionID}
 		autoStartAt := p.ScheduledAt.Add(-5 * time.Minute)
@@ -181,69 +151,8 @@ func RegisterTasks(q *Queue, notifier *socket.Notifier, classRepo repository.Cla
 		return nil
 	})
 
-	q.Handle(TaskLessonReminder, func(ctx context.Context, payload []byte) error {
-		var p ClassReminderPayload
-		if err := json.Unmarshal(payload, &p); err != nil {
-			return fmt.Errorf("unmarshal class reminder: %w", err)
-		}
-
-		var userIDs []uuid.UUID
-
-		if p.CourseID != nil {
-			// Course-based: lấy enrolled students
-			enrolledIDs, err := enrollmentRepo.GetEnrolledUserIDsByCourseID(ctx, *p.CourseID)
-			if err != nil {
-				log.Printf("[task] Course reminder: failed to get enrolled users: %v", err)
-				return nil
-			}
-			userIDs = enrolledIDs
-		} else {
-			// Class-based: flow cũ
-			studentCount, _ := classRepo.GetStudentCount(ctx, p.ClassID)
-			if studentCount == 0 {
-				return nil
-			}
-			students, _, _ := classRepo.GetStudents(ctx, p.ClassID, 1, int(studentCount))
-			for _, sc := range students {
-				userIDs = append(userIDs, sc.StudentID)
-			}
-		}
-
-		// Filter out already-joined users
-		redisKey := fmt.Sprintf("livestream:%s:joined", p.SessionID.String())
-		joinedUsers, _ := redisClient.SMembers(ctx, redisKey).Result()
-		joinedSet := make(map[string]bool)
-		for _, uid := range joinedUsers {
-			joinedSet[uid] = true
-		}
-
-		var filteredIDs []uuid.UUID
-		for _, uid := range userIDs {
-			if !joinedSet[uid.String()] {
-				filteredIDs = append(filteredIDs, uid)
-			}
-		}
-
-		if len(filteredIDs) == 0 {
-			return nil
-		}
-
-		room := p.Room
-		if room == "" {
-			room = "Online"
-		}
-
-		noti := socket.NotificationPayload{
-			ID:               uuid.New(),
-			Title:            fmt.Sprintf("Livestream sắp bắt đầu: %s", p.ClassName),
-			Content:          fmt.Sprintf("%s sẽ bắt đầu sau %d phút tại %s (lúc %s)", p.ClassName, p.MinsBefore, room, p.StartTime),
-			NotificationType: "livestream_reminder",
-			CreatedAt:        time.Now().UTC().Format(time.RFC3339),
-		}
-
-		log.Printf("[task] Reminder sent: class=%s, -%d min, start=%s, notify=%d users", p.ClassName, p.MinsBefore, p.StartTime, len(filteredIDs))
-		notifier.SendNotificationToMany(filteredIDs, noti)
-		return nil
-	})
+	// Drain legacy delayed tasks without emitting a second, stale socket-only reminder.
+	// The persistent sweep covers livestreams, concrete class sessions and weekly timetables.
+	q.Handle(TaskLessonReminder, func(ctx context.Context, payload []byte) error { return nil })
 
 }

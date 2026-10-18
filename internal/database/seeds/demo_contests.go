@@ -80,6 +80,9 @@ func (s *Seeder) SeedDemoContests(users map[string]model.User) error {
 	if err := s.seedDemoContestJoins(bySlug, users); err != nil {
 		return err
 	}
+	if err := s.SeedDemoCodingContest(users); err != nil {
+		return err
+	}
 	log.Printf("Seeded %d demo contests\n", len(bySlug))
 	return nil
 }
