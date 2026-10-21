@@ -179,6 +179,24 @@ func (r *RabbitMQService) getChannel() *amqp.Channel {
 	return r.channel
 }
 
+// openChannel mở một channel RIÊNG trên connection hiện tại.
+//
+// Vì sao không dùng channel chung cho lệnh đồng bộ (declare, bind, qos, consume)? amqp091-go không khoá cặp
+// "gửi yêu cầu, chờ trả lời" của một channel (Channel.call): hai goroutine cùng gọi lệnh đồng bộ trên CÙNG
+// channel có thể nhận nhầm trả lời của nhau và nhận ErrCommandInvalid — Exception (503) "unexpected command
+// received". Lúc khởi động app.go chạy SetupQueue trên goroutine chính trong khi worker gọi ConsumeMessages
+// trên goroutine khác, nên mỗi lệnh đồng bộ phải có channel của riêng nó. Publish vẫn dùng channel chung
+// (Publish tự khoá channel và không chờ trả lời).
+func (r *RabbitMQService) openChannel() (*amqp.Channel, error) {
+	r.mu.RLock()
+	conn := r.conn
+	r.mu.RUnlock()
+	if conn == nil || conn.IsClosed() {
+		return nil, fmt.Errorf("connection not ready")
+	}
+	return conn.Channel()
+}
+
 //
 // =======================
 // SetupQueue()
@@ -197,10 +215,12 @@ func (r *RabbitMQService) SetupQueue(
 	routingKey string,
 ) error {
 
-	ch := r.getChannel()
-	if ch == nil {
-		return fmt.Errorf("channel not ready")
+	// Channel riêng, đóng khi xong: xem openChannel.
+	ch, err := r.openChannel()
+	if err != nil {
+		return fmt.Errorf("open setup channel: %w", err)
 	}
+	defer ch.Close()
 
 	// Declare exchange
 	if err := ch.ExchangeDeclare(
@@ -216,7 +236,7 @@ func (r *RabbitMQService) SetupQueue(
 	}
 
 	// Declare queue
-	_, err := ch.QueueDeclare(
+	_, err = ch.QueueDeclare(
 		queue,
 		true,
 		false,
@@ -295,13 +315,15 @@ func (r *RabbitMQService) ConsumeMessages(
 	handler func(context.Context, []byte) error,
 ) error {
 
-	ch := r.getChannel()
-	if ch == nil {
-		return fmt.Errorf("channel not ready")
+	// Mỗi consumer một channel riêng (xem openChannel); Qos cũng vì thế áp dụng đúng cho riêng consumer này.
+	ch, err := r.openChannel()
+	if err != nil {
+		return fmt.Errorf("open consumer channel: %w", err)
 	}
 
 	// Giới hạn xử lý 1 message mỗi lần
 	if err := ch.Qos(1, 0, false); err != nil {
+		ch.Close()
 		return err
 	}
 
@@ -315,6 +337,7 @@ func (r *RabbitMQService) ConsumeMessages(
 		nil,
 	)
 	if err != nil {
+		ch.Close()
 		return err
 	}
 
@@ -322,6 +345,7 @@ func (r *RabbitMQService) ConsumeMessages(
 	// (business logic tuỳ consumer) trước đây sập cả process, kéo theo mọi queue/worker khác
 	// đang chạy chung. Sau recover, riêng consumer loop này dừng — vẫn tốt hơn sập cả server.
 	utils.SafeGo(func() {
+		defer ch.Close()
 		for {
 			select {
 			case <-ctx.Done():
