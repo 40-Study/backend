@@ -67,6 +67,15 @@ func TestContestCodeGradingPersistenceAndAccess(t *testing.T) {
 			w.WriteHeader(503)
 			return
 		}
+		if req.SourceCode == "slow" {
+			// A job that outlives its per-test budget: the client gives up first.
+			select {
+			case <-r.Context().Done():
+			case <-time.After(3 * time.Second):
+				w.WriteHeader(504)
+			}
+			return
+		}
 		_ = json.NewEncoder(w).Encode(dto.Judge0ResponseDTO{Status: dto.Judge0StatusDTO{ID: status}, Stdout: req.ExpectedOutput, Time: "0.01", Memory: 32})
 	}))
 	defer server.Close()
@@ -143,12 +152,19 @@ func TestContestCodeGradingPersistenceAndAccess(t *testing.T) {
 		t.Fatalf("compile requests: result=%+v err=%v calls=%d", compiled, err, calls.Load()-before)
 	}
 	req.RequestID = uuid.New()
+	req.Code = "slow"
+	useShortJudgeTestBudget(t, 500*time.Millisecond)
+	slow, err := s.JudgeCode(ctx, created.ID, pupil, req, true)
+	if err != nil || slow.Status != "TIME_LIMIT" || slow.Score != 0 || len(slow.Tests) != 2 {
+		t.Fatalf("slow program: result=%+v err=%v, want TIME_LIMIT (not JUDGE_UNAVAILABLE)", slow, err)
+	}
+	req.RequestID = uuid.New()
 	req.Code = "unavailable"
 	if _, err := s.JudgeCode(ctx, created.ID, pupil, req, true); !errors.Is(err, ErrJudgeUnavailable) {
 		t.Fatalf("infra failure: %v", err)
 	}
 	saved, err := s.CodeSession(ctx, created.ID, pupil)
-	if err != nil || saved.Score != 100 || len(saved.Submissions) != 3 {
+	if err != nil || saved.Score != 100 || len(saved.Submissions) != 4 {
 		t.Fatalf("best score/state: %+v %v", saved, err)
 	}
 	board, boardErr := s.Leaderboard(ctx, created.ID, pupil, 1, 20)

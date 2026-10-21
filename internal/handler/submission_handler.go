@@ -31,6 +31,15 @@ func NewSubmissionHandler(svc service.SubmissionServiceInterface, permChecker *m
 	return &SubmissionHandler{svc: svc, permChecker: permChecker}
 }
 
+// respondJudgeUnavailable: Judge0 không phản hồi -> 503 JUDGE_UNAVAILABLE giống các route bài học/cuộc thi,
+// không bao giờ trả err.Error() (chứa địa chỉ máy chấm). Trả false khi err không phải lỗi máy chấm.
+func respondJudgeUnavailable(c *fiber.Ctx, err error) (bool, error) {
+	if !errors.Is(err, service.ErrJudgeUnavailable) {
+		return false, nil
+	}
+	return true, respondContestError(c, err)
+}
+
 // submissionErrorStatus ánh xạ ErrSubmissionForbidden (C-10) sang 403; trả 0 khi không nhận
 // diện được để caller giữ nguyên nhánh xử lý lỗi hiện có.
 func submissionErrorStatus(err error) int {
@@ -60,6 +69,9 @@ func (h *SubmissionHandler) Submit(c *fiber.Ctx) error {
 
 	submission, err := h.svc.Submit(c.Context(), isAdminActor(c, h.permChecker, userID), req)
 	if err != nil {
+		if handled, resp := respondJudgeUnavailable(c, err); handled {
+			return resp
+		}
 		if errors.Is(err, service.ErrClassArchived) {
 			return assignmentWriteFail(c, err)
 		}
@@ -176,6 +188,9 @@ func (h *SubmissionHandler) RunCode(c *fiber.Ctx) error {
 
 	result, err := h.svc.RunCode(c.Context(), requesterID, isAdminActor(c, h.permChecker, requesterID), req)
 	if err != nil {
+		if handled, resp := respondJudgeUnavailable(c, err); handled {
+			return resp
+		}
 		if errors.Is(err, service.ErrAssignmentNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assignment not found"})
 		}
@@ -198,6 +213,9 @@ func (h *SubmissionHandler) RunCustomCode(c *fiber.Ctx) error {
 
 	result, err := h.svc.RunCustomCode(c.Context(), requesterID, isAdminActor(c, h.permChecker, requesterID), req)
 	if err != nil {
+		if handled, resp := respondJudgeUnavailable(c, err); handled {
+			return resp
+		}
 		if errors.Is(err, service.ErrAssignmentNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assignment not found"})
 		}

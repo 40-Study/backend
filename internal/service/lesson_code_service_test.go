@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -105,5 +106,38 @@ func TestLessonCodeScopedGradingAndIdempotence(t *testing.T) {
 	}
 	if calls.Load() != before {
 		t.Fatal("unauthorized request reached Judge")
+	}
+}
+
+// Gap #3: four tests of an infinite loop used to overrun the fixed 60 s grading context and come
+// back as JUDGE_UNAVAILABLE with nothing stored. Each test now has its own budget; a job that
+// outlives it is a TIME_LIMIT verdict and the submission is stored.
+func TestLessonCodeSubmit_SlowProgramIsTimeLimitAndStored(t *testing.T) {
+	f := newContestFixture(t)
+	ctx := context.Background()
+	user := f.user("lesson-slow")
+	exercise := model.CourseExercise{Title: "Loop", Description: "Never ends", Language: pq.StringArray{"python"}, TimeLimit: 2, MemoryLimit: 128, PassPercentage: 100}
+	if err := f.db.Create(&exercise).Error; err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4; i++ {
+		tc := model.ExerciseTestCase{ExerciseID: exercise.ID, Input: "x", ExpectedOutput: "x", IsHidden: i > 1, DisplayOrder: i}
+		if err := f.db.Create(&tc).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	useShortJudgeTestBudget(t, 100*time.Millisecond)
+	judge := &stallingJudge{stall: 2 * time.Second}
+	s := NewExerciseService(repository.NewExerciseRepository(f.db), nil, nil)
+	s.SetLessonJudge(judge, lessonCodeAccessStub{exerciseID: exercise.ID})
+	lesson := uuid.New()
+	req := dto.ContestCodeRequest{RequestID: uuid.New(), Language: "python", Code: "while True: pass"}
+	result, err := s.JudgeLessonCode(ctx, lesson, exercise.ID, user, false, req, true)
+	if err != nil || result.Status != "TIME_LIMIT" || result.Passed != 0 || result.Total != 4 || judge.calls != 4 {
+		t.Fatalf("result=%+v err=%v calls=%d, want TIME_LIMIT on all 4 tests", result, err, judge.calls)
+	}
+	var stored model.ExerciseSubmission
+	if err := f.db.First(&stored, "id = ?", req.RequestID).Error; err != nil || stored.Verdict != "time_limit" {
+		t.Fatalf("stored=%+v err=%v, want verdict time_limit", stored, err)
 	}
 }

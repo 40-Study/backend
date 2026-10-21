@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -112,8 +111,8 @@ func (s *ExerciseService) JudgeLessonCode(ctx context.Context, lessonID, exercis
 	if !ok {
 		return nil, ErrJudgeUnavailable
 	}
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
+	// No fixed deadline here: judgeCodeTests budgets each test and the whole run by test count.
+	// A fixed 60 s turned 4 slow tests into JUDGE_UNAVAILABLE (QA 261021 C1e).
 	var result *dto.ContestCodeResult
 	err = store.JudgeTransaction(ctx, exerciseID, userID, func(tx *gorm.DB) error {
 		if submit {
