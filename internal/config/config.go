@@ -181,6 +181,11 @@ func parseWithdrawalMinAmount(raw string) (decimal.Decimal, error) {
 	return v, nil
 }
 
+// DefaultPort — cổng Fiber khi không đặt PORT: cổng dev local (macOS AirPlay chiếm 5000), trùng PORT trong
+// .env.example và URL backend mặc định của web. Production luôn tự đặt PORT trong .env prod (nginx đọc cùng biến đó
+// qua API_BACKEND_PORT trong docker-compose.yaml), nên giá trị này không đổi cổng prod.
+const DefaultPort = "5001"
+
 func LoadConfig() (*Config, error) {
 	var env string
 	defaultEnv := strings.ToLower(strings.TrimSpace(os.Getenv("ENVIRONMENT")))
@@ -201,7 +206,7 @@ func LoadConfig() (*Config, error) {
 	viper.Set("ENVIRONMENT", env)
 
 	// Set default values
-	viper.SetDefault("PORT", "5000")
+	viper.SetDefault("PORT", DefaultPort)
 	viper.SetDefault("HOST", "localhost")
 	viper.SetDefault("JUDGE0_URL", "")
 	viper.SetDefault("VIETTEL_AI_API_KEY", "")
