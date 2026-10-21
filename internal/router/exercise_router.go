@@ -37,12 +37,15 @@ func SetupExerciseRoutes(
 	exercises.Get("/:id/testcases", exerciseHandler.GetTestCases)
 	exercises.Post("/:id/testcases", exerciseHandler.CreateTestCase)
 	exercises.Post("/:id/testcases/import", exerciseHandler.ImportTestCases)
+	exercises.Put("/:id/testcases/:testCaseId", exerciseHandler.UpdateTestCase)
 	exercises.Delete("/:id/testcases/:testCaseId", exerciseHandler.DeleteTestCase)
 
 	// ============================================================================
 	// SUBMISSIONS
 	// ============================================================================
-	exercises.Post("/:id/submit", exerciseHandler.SubmitExercise)
+	// Nộp bài chấm đồng bộ ở POST /lessons/:lessonId/exercises/:id/submit (bên trên). Route cũ
+	// POST /exercises/:id/submit (đẩy vào hàng RabbitMQ exercise.submit không có consumer, bài nộp
+	// kẹt 'pending' mãi) đã gỡ — đừng thêm lại.
 	exercises.Get("/:id/submissions", exerciseHandler.GetSubmissions)
 	exercises.Get("/:id/my-submissions", exerciseHandler.GetMySubmissions)
 

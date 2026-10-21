@@ -16,10 +16,17 @@ type CreateExerciseDTO struct {
 	Difficulty     string   `json:"difficulty" validate:"omitempty,oneof=easy medium hard"`
 	Language       []string `json:"language" validate:"required,min=1"`
 	StarterCode    string   `json:"starter_code,omitempty"`
-	TimeLimit      int      `json:"time_limit,omitempty"`
-	MemoryLimit    int      `json:"memory_limit,omitempty"`
-	PassPercentage int      `json:"pass_percentage,omitempty"`
+	TimeLimit      int      `json:"time_limit,omitempty" validate:"omitempty,min=1,max=20"`
+	MemoryLimit    int      `json:"memory_limit,omitempty" validate:"omitempty,min=16,max=1500"`
+	PassPercentage int      `json:"pass_percentage,omitempty" validate:"omitempty,min=1,max=100"`
 }
+
+// Giới hạn chấm của bài tập (dùng chung cho tạo và sửa):
+//   - time_limit: giây CPU mỗi test, 1..20 — Judge0 MAX_CPU_TIME_LIMIT=20 (judge/judge0.conf) và
+//     createJudge0Request cũng bỏ qua giá trị > 20.
+//   - memory_limit: MB, 16..1500 — Judge0 MAX_MEMORY_LIMIT=1536000 KB.
+//   - pass_percentage: % test cần đạt, 1..100.
+// Giá trị ngoài khoảng trả 400 thay vì lưu một giới hạn máy chấm sẽ từ chối hoặc lặng lẽ bỏ qua.
 
 type UpdateExerciseDTO struct {
 	Title          *string   `json:"title" validate:"omitempty,min=3,max=255"`
@@ -27,9 +34,9 @@ type UpdateExerciseDTO struct {
 	Difficulty     *string   `json:"difficulty" validate:"omitempty,oneof=easy medium hard"`
 	Language       *[]string `json:"language"`
 	StarterCode    *string   `json:"starter_code"`
-	TimeLimit      *int      `json:"time_limit"`
-	MemoryLimit    *int      `json:"memory_limit"`
-	PassPercentage *int      `json:"pass_percentage"`
+	TimeLimit      *int      `json:"time_limit" validate:"omitnil,min=1,max=20"`
+	MemoryLimit    *int      `json:"memory_limit" validate:"omitnil,min=16,max=1500"`
+	PassPercentage *int      `json:"pass_percentage" validate:"omitnil,min=1,max=100"`
 }
 
 type ExerciseResponseDTO struct {
@@ -71,6 +78,15 @@ type CreateExerciseTestCaseDTO struct {
 	DisplayOrder   int    `json:"display_order"`
 }
 
+// UpdateExerciseTestCaseDTO: cùng tên trường với CreateExerciseTestCaseDTO; trường bỏ trống (null /
+// không gửi) giữ nguyên giá trị cũ. input / expected_output nếu gửi thì không được rỗng, như lúc tạo.
+type UpdateExerciseTestCaseDTO struct {
+	Input          *string `json:"input" validate:"omitnil,min=1"`
+	ExpectedOutput *string `json:"expected_output" validate:"omitnil,min=1"`
+	IsHidden       *bool   `json:"is_hidden"`
+	DisplayOrder   *int    `json:"display_order"`
+}
+
 type ImportExerciseTestCasesDTO struct {
 	TestCases []CreateExerciseTestCaseDTO `json:"test_cases" validate:"required,min=1,dive"`
 }
@@ -88,11 +104,6 @@ type ExerciseTestCaseResponseDTO struct {
 // EXERCISE SUBMISSION
 // ============================================================================
 
-type SubmitExerciseDTO struct {
-	Language string `json:"language" validate:"required"`
-	Code     string `json:"code" validate:"required"`
-}
-
 type ExerciseSubmissionResponseDTO struct {
 	ID              uuid.UUID `json:"id"`
 	ExerciseID      uuid.UUID `json:"exercise_id"`
@@ -106,6 +117,15 @@ type ExerciseSubmissionResponseDTO struct {
 	MemoryUsedKB    *int      `json:"memory_used_kb,omitempty"`
 	ErrorMessage    *string   `json:"error_message,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
+	// Student chỉ có ở danh sách bài nộp cho người quản lý bài tập (GET /exercises/:id/submissions).
+	Student *ExerciseSubmissionStudentDTO `json:"student,omitempty"`
+}
+
+// ExerciseSubmissionStudentDTO: danh tính học viên nộp bài, cho giảng viên xem danh sách bài nộp.
+type ExerciseSubmissionStudentDTO struct {
+	ID       uuid.UUID `json:"id"`
+	FullName string    `json:"full_name"`
+	Email    string    `json:"email"`
 }
 
 type ExerciseSubmissionListDTO struct {

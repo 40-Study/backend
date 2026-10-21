@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
@@ -357,11 +359,10 @@ func (h *ExerciseHandler) DeleteTestCase(c *fiber.Ctx) error {
 	})
 }
 
-// ============================================================================
-// SUBMISSIONS
-// ============================================================================
-
-func (h *ExerciseHandler) SubmitExercise(c *fiber.Ctx) error {
+// UpdateTestCase: PUT /exercises/:id/testcases/:testCaseId — cùng quyền và cùng tên trường JSON với
+// CreateTestCase; trường không gửi giữ nguyên. 200 trả test case đã sửa (cùng dạng response tạo),
+// 404 khi test case không thuộc bài tập này.
+func (h *ExerciseHandler) UpdateTestCase(c *fiber.Ctx) error {
 	exerciseID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -370,14 +371,19 @@ func (h *ExerciseHandler) SubmitExercise(c *fiber.Ctx) error {
 		})
 	}
 
-	userID, ok := c.Locals("user_id").(uuid.UUID)
-	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"message": "Unauthorized",
+	if ok, err := h.requireExerciseManager(c, exerciseID); !ok {
+		return err
+	}
+
+	testCaseID, err := uuid.Parse(c.Params("testCaseId"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Invalid test case ID",
+			"error":   err.Error(),
 		})
 	}
 
-	var req dto.SubmitExerciseDTO
+	var req dto.UpdateExerciseTestCaseDTO
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid request body",
@@ -392,19 +398,29 @@ func (h *ExerciseHandler) SubmitExercise(c *fiber.Ctx) error {
 		})
 	}
 
-	submission, err := h.service.SubmitExercise(c.Context(), exerciseID, userID, req)
+	testCase, err := h.service.UpdateTestCase(c.Context(), exerciseID, testCaseID, req)
+	if errors.Is(err, service.ErrExerciseTestCaseNotFound) {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"message": "Test case not found",
+			"error":   err.Error(),
+		})
+	}
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to submit exercise",
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Failed to update test case",
 			"error":   err.Error(),
 		})
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message": "Exercise submitted successfully",
-		"data":    submission,
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Test case updated successfully",
+		"data":    testCase,
 	})
 }
+
+// ============================================================================
+// SUBMISSIONS
+// ============================================================================
 
 func (h *ExerciseHandler) GetSubmissions(c *fiber.Ctx) error {
 	exerciseID, err := uuid.Parse(c.Params("id"))

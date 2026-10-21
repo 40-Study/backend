@@ -110,6 +110,19 @@
           }
         },
         {
+          "name": "Update Test Case",
+          "description": "Sửa từng phần: trường không gửi giữ nguyên. 404 nếu test case không thuộc bài tập.",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/exercises/{{exercise_id}}/testcases/{{testcase_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"input\": \"5\",\n  \"expected_output\": \"5\",\n  \"is_hidden\": true,\n  \"display_order\": 2\n}"
+            }
+          }
+        },
+        {
           "name": "Delete Test Case",
           "request": {
             "method": "DELETE",
@@ -119,21 +132,9 @@
       ]
     },
     {
-      "name": "Submissions (RabbitMQ)",
+      "name": "Submissions",
+      "description": "Nộp bài chấm đồng bộ qua POST /lessons/{lesson_id}/exercises/{exercise_id}/submit. Route cũ POST /exercises/{exercise_id}/submit (hàng RabbitMQ exercise.submit không có consumer) đã gỡ. Danh sách của giảng viên kèm student {id, full_name, email}.",
       "item": [
-        {
-          "name": "Submit Solution",
-          "description": "Code sẽ được đẩy vào RabbitMQ queue 'exercise.submit' để chấm async. Verdict ban đầu là 'pending'.",
-          "request": {
-            "method": "POST",
-            "url": "{{base_url}}/exercises/{{exercise_id}}/submit",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"language\": \"python\",\n  \"code\": \"def fibonacci(n):\\n    if n <= 1:\\n        return n\\n    return fibonacci(n-1) + fibonacci(n-2)\"\n}"
-            }
-          }
-        },
         {
           "name": "Get All Submissions (Teacher)",
           "request": {

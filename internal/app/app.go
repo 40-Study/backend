@@ -101,13 +101,6 @@ func New() (*App, error) {
 		}
 	}
 
-	// Setup exercise submission queue (RabbitMQ)
-	if services.Exercise != nil {
-		if err := services.Exercise.SetupExerciseQueues(); err != nil {
-			log.Printf("Warning: Failed to setup exercise queues: %v", err)
-		}
-	}
-
 	// Setup certificate generation queue (RabbitMQ)
 	if services.Certificate != nil {
 		if err := services.Certificate.SetupCertificateQueues(); err != nil {
