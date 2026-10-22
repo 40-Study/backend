@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,9 +29,12 @@ type ExerciseServiceInterface interface {
 	GetTestCases(ctx context.Context, exerciseID uuid.UUID, includeHidden bool) ([]dto.ExerciseTestCaseResponseDTO, error)
 	ImportTestCases(ctx context.Context, exerciseID uuid.UUID, req dto.ImportExerciseTestCasesDTO) ([]dto.ExerciseTestCaseResponseDTO, error)
 	DeleteTestCase(ctx context.Context, exerciseID uuid.UUID, id uuid.UUID) error
+	// UpdateTestCase sửa từng phần một test case của đúng bài tập; ErrExerciseTestCaseNotFound khi
+	// test case không tồn tại hoặc thuộc bài tập khác.
+	UpdateTestCase(ctx context.Context, exerciseID, id uuid.UUID, req dto.UpdateExerciseTestCaseDTO) (*dto.ExerciseTestCaseResponseDTO, error)
 
-	// Submission (via RabbitMQ for code execution)
-	SubmitExercise(ctx context.Context, exerciseID, userID uuid.UUID, req dto.SubmitExerciseDTO) (*dto.ExerciseSubmissionResponseDTO, error)
+	// Submission — chấm đồng bộ qua POST /lessons/:lessonId/exercises/:id/submit (lesson_code_service.go).
+	// GetSubmissions kèm danh tính học viên (student) cho người quản lý bài tập.
 	GetSubmissions(ctx context.Context, exerciseID uuid.UUID, page, pageSize int) (*dto.ExerciseSubmissionListDTO, error)
 	GetMySubmissions(ctx context.Context, exerciseID, userID uuid.UUID, page, pageSize int) (*dto.ExerciseSubmissionListDTO, error)
 	// GetSubmissionByID trả ErrExerciseSubmissionNotFound cả khi bài nộp không thuộc người gọi và
@@ -50,15 +51,17 @@ type ExerciseService struct {
 	lessonAccess LessonContentServiceInterface
 	repo         repository.ExerciseRepositoryInterface
 	redis        *redis.Client
-	rabbitMQ     *rabbitmq_queue.RabbitMQService
 }
 
+// NewExerciseService: tham số RabbitMQ không còn dùng — đường nộp cũ POST /exercises/:id/submit
+// (đẩy vào hàng exercise.submit không có consumer nào) đã bị gỡ. Giữ chữ ký để các lane song song
+// đang gọi NewExerciseService(repo, nil, nil) vẫn biên dịch được; bỏ tham số ở một PR dọn sau.
 func NewExerciseService(
 	repo repository.ExerciseRepositoryInterface,
 	redis *redis.Client,
-	rabbitMQ *rabbitmq_queue.RabbitMQService,
+	_ *rabbitmq_queue.RabbitMQService,
 ) *ExerciseService {
-	return &ExerciseService{repo: repo, redis: redis, rabbitMQ: rabbitMQ}
+	return &ExerciseService{repo: repo, redis: redis}
 }
 
 const (
@@ -78,6 +81,9 @@ func (s *ExerciseService) invalidateExerciseCache(ctx context.Context, exerciseI
 
 // ErrExerciseSubmissionNotFound: bài nộp không tồn tại HOẶC người gọi không được xem (gộp một lỗi).
 var ErrExerciseSubmissionNotFound = errors.New("submission not found")
+
+// ErrExerciseTestCaseNotFound: test case không tồn tại hoặc không thuộc bài tập trong đường dẫn.
+var ErrExerciseTestCaseNotFound = errors.New("test case not found")
 
 func (s *ExerciseService) CreateExercise(ctx context.Context, creatorID uuid.UUID, req dto.CreateExerciseDTO) (*dto.ExerciseResponseDTO, error) {
 	exercise := &model.CourseExercise{
@@ -331,87 +337,36 @@ func (s *ExerciseService) DeleteTestCase(ctx context.Context, exerciseID uuid.UU
 	return nil
 }
 
-// ============================================================================
-// SUBMISSION (via RabbitMQ)
-// ============================================================================
-
-// ExerciseSubmissionMessage is the RabbitMQ message for exercise code execution
-type ExerciseSubmissionMessage struct {
-	SubmissionID uuid.UUID `json:"submission_id"`
-	ExerciseID   uuid.UUID `json:"exercise_id"`
-	UserID       uuid.UUID `json:"user_id"`
-	Language     string    `json:"language"`
-	Code         string    `json:"code"`
-	TimeLimit    int       `json:"time_limit"`
-	MemoryLimit  int       `json:"memory_limit"`
-	TestCases    []struct {
-		Input          string `json:"input"`
-		ExpectedOutput string `json:"expected_output"`
-	} `json:"test_cases"`
-	PassPercentage int `json:"pass_percentage"`
-}
-
-func (s *ExerciseService) SubmitExercise(ctx context.Context, exerciseID, userID uuid.UUID, req dto.SubmitExerciseDTO) (*dto.ExerciseSubmissionResponseDTO, error) {
-	exercise, err := s.repo.GetExerciseWithTestCases(ctx, exerciseID)
-	if err != nil || exercise == nil {
-		return nil, errors.New("exercise not found")
-	}
-
-	// Create submission in pending state
-	sub := &model.ExerciseSubmission{
-		ExerciseID:     exerciseID,
-		UserID:         userID,
-		Language:       req.Language,
-		Code:           req.Code,
-		Verdict:        "pending",
-		TotalTestCases: len(exercise.TestCases),
-	}
-
-	if err := s.repo.CreateSubmission(ctx, sub); err != nil {
+func (s *ExerciseService) UpdateTestCase(ctx context.Context, exerciseID, id uuid.UUID, req dto.UpdateExerciseTestCaseDTO) (*dto.ExerciseTestCaseResponseDTO, error) {
+	tc, err := s.repo.GetTestCase(ctx, exerciseID, id)
+	if err != nil {
 		return nil, err
 	}
-
-	// Push to RabbitMQ for async execution
-	if s.rabbitMQ != nil {
-		msg := ExerciseSubmissionMessage{
-			SubmissionID:   sub.ID,
-			ExerciseID:     exerciseID,
-			UserID:         userID,
-			Language:       req.Language,
-			Code:           req.Code,
-			TimeLimit:      exercise.TimeLimit,
-			MemoryLimit:    exercise.MemoryLimit,
-			PassPercentage: exercise.PassPercentage,
-		}
-		for _, tc := range exercise.TestCases {
-			msg.TestCases = append(msg.TestCases, struct {
-				Input          string `json:"input"`
-				ExpectedOutput string `json:"expected_output"`
-			}{
-				Input:          tc.Input,
-				ExpectedOutput: tc.ExpectedOutput,
-			})
-		}
-
-		data, _ := json.Marshal(msg)
-		if err := s.rabbitMQ.PublishMessage(ctx, "exercise", "exercise.submit", data); err != nil {
-			log.Printf("[exercise] Failed to publish to RabbitMQ, falling back to sync: %v", err)
-			// Fallback: mark as error if queue unavailable
-			sub.Verdict = "system_error"
-			errMsg := "code execution queue unavailable"
-			sub.ErrorMessage = &errMsg
-			s.repo.UpdateSubmission(ctx, sub)
-		}
-	} else {
-		// No RabbitMQ available — mark as error
-		sub.Verdict = "system_error"
-		errMsg := "code execution service not available"
-		sub.ErrorMessage = &errMsg
-		s.repo.UpdateSubmission(ctx, sub)
+	if tc == nil {
+		return nil, ErrExerciseTestCaseNotFound
 	}
-
-	return s.mapSubmissionToDTO(sub), nil
+	if req.Input != nil {
+		tc.Input = *req.Input
+	}
+	if req.ExpectedOutput != nil {
+		tc.ExpectedOutput = *req.ExpectedOutput
+	}
+	if req.IsHidden != nil {
+		tc.IsHidden = *req.IsHidden
+	}
+	if req.DisplayOrder != nil {
+		tc.DisplayOrder = *req.DisplayOrder
+	}
+	if err := s.repo.UpdateTestCase(ctx, tc); err != nil {
+		return nil, err
+	}
+	s.invalidateExerciseCache(ctx, exerciseID)
+	return s.mapTestCaseToDTO(tc), nil
 }
+
+// ============================================================================
+// SUBMISSION
+// ============================================================================
 
 func (s *ExerciseService) GetSubmissions(ctx context.Context, exerciseID uuid.UUID, page, pageSize int) (*dto.ExerciseSubmissionListDTO, error) {
 	if page < 1 {
@@ -429,9 +384,25 @@ func (s *ExerciseService) GetSubmissions(ctx context.Context, exerciseID uuid.UU
 	data := make([]dto.ExerciseSubmissionResponseDTO, len(subs))
 	for i, sub := range subs {
 		data[i] = *s.mapSubmissionToDTO(&sub)
+		data[i].Student = submissionStudent(&sub)
 	}
 
 	return &dto.ExerciseSubmissionListDTO{Data: data, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+// submissionStudent: danh tính người nộp từ quan hệ User đã preload. full_name rơi về user_name khi
+// tài khoản chưa đặt họ tên. Tài khoản đã xoá mềm (preload không nạp) vẫn trả id, tên/email rỗng.
+func submissionStudent(sub *model.ExerciseSubmission) *dto.ExerciseSubmissionStudentDTO {
+	st := &dto.ExerciseSubmissionStudentDTO{ID: sub.UserID}
+	if sub.User == nil {
+		return st
+	}
+	st.Email = sub.User.Email
+	st.FullName = sub.User.UserName
+	if sub.User.FullName != nil && *sub.User.FullName != "" {
+		st.FullName = *sub.User.FullName
+	}
+	return st
 }
 
 func (s *ExerciseService) GetMySubmissions(ctx context.Context, exerciseID, userID uuid.UUID, page, pageSize int) (*dto.ExerciseSubmissionListDTO, error) {
@@ -514,25 +485,6 @@ func (s *ExerciseService) GetContentProgress(ctx context.Context, userID, lesson
 		return nil, nil
 	}
 	return s.mapProgressToDTO(progress), nil
-}
-
-// ============================================================================
-// RabbitMQ Queue Setup for Exercise Submissions
-// ============================================================================
-
-func (s *ExerciseService) SetupExerciseQueues() error {
-	if s.rabbitMQ == nil {
-		return fmt.Errorf("RabbitMQ not available")
-	}
-
-	if err := s.rabbitMQ.SetupQueue("exercise", "exercise.submit", "exercise.submit"); err != nil {
-		return fmt.Errorf("setup exercise queue: %w", err)
-	}
-	if err := s.rabbitMQ.SetupQueue("exercise", "exercise.result", "exercise.result"); err != nil {
-		return fmt.Errorf("setup exercise result queue: %w", err)
-	}
-
-	return nil
 }
 
 // ============================================================================

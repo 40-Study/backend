@@ -484,6 +484,12 @@ func RunPostMigrations(db *gorm.DB) error {
 		return err
 	}
 
+	// Bài nộp bài tập kẹt 'pending' của route cũ POST /exercises/:id/submit -> system_error (một lần),
+	// xem exercise_submission_pending_cleanup.go.
+	if err := runExerciseSubmissionPendingCleanup(db); err != nil {
+		return err
+	}
+
 	logNotValidCheckConstraints(db)
 
 	log.Printf("Post-migrations applied: %d statement group(s)\n", len(statements))

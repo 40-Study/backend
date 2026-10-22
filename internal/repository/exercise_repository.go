@@ -25,6 +25,9 @@ type ExerciseRepositoryInterface interface {
 	BulkCreateTestCases(ctx context.Context, tcs []model.ExerciseTestCase) error
 	GetTestCasesByExerciseID(ctx context.Context, exerciseID uuid.UUID) ([]model.ExerciseTestCase, error)
 	DeleteTestCase(ctx context.Context, exerciseID, id uuid.UUID) error
+	// GetTestCase trả (nil, nil) khi test case không tồn tại hoặc thuộc bài tập khác.
+	GetTestCase(ctx context.Context, exerciseID, id uuid.UUID) (*model.ExerciseTestCase, error)
+	UpdateTestCase(ctx context.Context, tc *model.ExerciseTestCase) error
 	DeleteTestCasesByExerciseID(ctx context.Context, exerciseID uuid.UUID) error
 
 	// ExerciseSubmission
@@ -32,6 +35,7 @@ type ExerciseRepositoryInterface interface {
 	GetSubmissionByID(ctx context.Context, id uuid.UUID) (*model.ExerciseSubmission, error)
 	GetSubmissionsByExerciseAndUser(ctx context.Context, exerciseID, userID uuid.UUID, page, pageSize int) ([]model.ExerciseSubmission, int64, error)
 	GetSubmissionsByExercise(ctx context.Context, exerciseID uuid.UUID, page, pageSize int) ([]model.ExerciseSubmission, int64, error)
+	// GetLatestSubmission: bài nộp ĐÃ CHẤM mới nhất (bỏ qua unjudgedSubmissionVerdicts).
 	GetLatestSubmission(ctx context.Context, exerciseID, userID uuid.UUID) (*model.ExerciseSubmission, error)
 	UpdateSubmission(ctx context.Context, sub *model.ExerciseSubmission) error
 
@@ -136,6 +140,22 @@ func (r *ExerciseRepository) DeleteTestCase(ctx context.Context, exerciseID, id 
 	return r.db.WithContext(ctx).Delete(&model.ExerciseTestCase{}, "id = ? AND exercise_id = ?", id, exerciseID).Error
 }
 
+func (r *ExerciseRepository) GetTestCase(ctx context.Context, exerciseID, id uuid.UUID) (*model.ExerciseTestCase, error) {
+	var tc model.ExerciseTestCase
+	err := r.db.WithContext(ctx).First(&tc, "id = ? AND exercise_id = ?", id, exerciseID).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &tc, nil
+}
+
+func (r *ExerciseRepository) UpdateTestCase(ctx context.Context, tc *model.ExerciseTestCase) error {
+	return r.db.WithContext(ctx).Save(tc).Error
+}
+
 func (r *ExerciseRepository) DeleteTestCasesByExerciseID(ctx context.Context, exerciseID uuid.UUID) error {
 	return r.db.WithContext(ctx).Where("exercise_id = ?", exerciseID).Delete(&model.ExerciseTestCase{}).Error
 }
@@ -194,10 +214,18 @@ func (r *ExerciseRepository) GetSubmissionsByExercise(ctx context.Context, exerc
 	return subs, total, err
 }
 
+// unjudgedSubmissionVerdicts: verdict của bài nộp CHƯA từng được máy chấm chấm — chỉ đường nộp cũ
+// POST /exercises/:id/submit (đã gỡ) tạo ra: 'pending' (đẩy vào hàng exercise.submit không có
+// consumer) và 'system_error' (không có RabbitMQ, hoặc dòng pending đã được dọn bởi
+// database.runExerciseSubmissionPendingCleanup). Đường chấm đồng bộ hiện tại không lưu hai verdict
+// này (lỗi máy chấm trả 503, không ghi dòng), nên chúng không bao giờ là "bài nộp gần nhất".
+var unjudgedSubmissionVerdicts = []string{"pending", "system_error"}
+
 func (r *ExerciseRepository) GetLatestSubmission(ctx context.Context, exerciseID, userID uuid.UUID) (*model.ExerciseSubmission, error) {
 	var sub model.ExerciseSubmission
 	err := r.db.WithContext(ctx).
 		Where("exercise_id = ? AND user_id = ?", exerciseID, userID).
+		Where("verdict NOT IN ?", unjudgedSubmissionVerdicts).
 		Order("created_at DESC").
 		First(&sub).Error
 	if err != nil {
