@@ -4,7 +4,8 @@ package queue
 // invitation/video gọi ConsumeMessages (Qos + Consume) trên goroutine khác. amqp091-go KHÔNG khoá cặp
 // gửi-yêu-cầu/chờ-trả-lời của một channel (Channel.call), nên hai lệnh đồng bộ chạy song song trên CÙNG channel
 // có thể nhận nhầm trả lời của nhau và trả ErrCommandInvalid: Exception (503) "unexpected command received" —
-// đúng lỗi QA thấy ở boot. Test này dựng lại tình huống đó trên RabbitMQ thật (bỏ qua khi không kết nối được).
+// đúng lỗi QA thấy ở boot. Test này dựng lại tình huống đó trên RabbitMQ thật. Không kết nối được: Skip ở local,
+// FAIL khi CI=true (CI có service RabbitMQ, cùng quy ước pgtest.MissingDBAction).
 
 import (
 	"context"
@@ -17,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"study.com/v1/internal/config"
+	"study.com/v1/internal/testutil/pgtest"
 )
 
 func envOr(key, def string) string {
@@ -42,7 +44,11 @@ func TestRabbitMQService_ConcurrentSetupAndConsumeDoNotShareRPCs(t *testing.T) {
 	url := buildAMQPURL(cfg)
 	probe, err := amqp.Dial(url)
 	if err != nil {
-		t.Skipf("không kết nối được RabbitMQ %s:%s (%v): bỏ qua test tích hợp", cfg.RabbitMQHost, cfg.RabbitMQPort, err)
+		msg := fmt.Sprintf("không kết nối được RabbitMQ %s:%s (%v)", cfg.RabbitMQHost, cfg.RabbitMQPort, err)
+		if pgtest.MissingDBAction(os.Getenv("CI")) == "fail" {
+			t.Fatalf("CI=true nhưng %s", msg)
+		}
+		t.Skip(msg + ": bỏ qua test tích hợp")
 	}
 	cleanupCh, err := probe.Channel()
 	if err != nil {

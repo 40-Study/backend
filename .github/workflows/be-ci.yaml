@@ -27,6 +27,19 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # Test tích hợp RabbitMQ (internal/queue/rabbitmq): CI=true thì FAIL thay vì SKIP khi không kết nối được.
+      rabbitmq:
+        image: rabbitmq:3-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: study_ci
+          RABBITMQ_DEFAULT_PASS: study_ci_only
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 12
     env:
       CI: "true"
       ENVIRONMENT: test
@@ -36,6 +49,11 @@ jobs:
       DB_PASSWORD: study_ci_only
       DB_NAME: study_test
       JWT_SECRET: ci-only-jwt-secret-not-used-outside-tests
+      RABBITMQ_HOST: localhost
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: study_ci
+      RABBITMQ_PASSWORD: study_ci_only
+      RABBITMQ_VHOST: /
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
