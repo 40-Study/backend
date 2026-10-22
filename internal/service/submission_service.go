@@ -48,7 +48,7 @@ func NewHTTPJudge0Client(baseURL string) *HTTPJudge0Client {
 	return &HTTPJudge0Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: judgeHTTPBackstop,
 		},
 	}
 }
@@ -56,25 +56,27 @@ func NewHTTPJudge0Client(baseURL string) *HTTPJudge0Client {
 // createJudge0Request creates a Judge0 submission request
 // cpuTimeLimit is per test case (not total assignment time), default 5 seconds, max 20 seconds
 func createJudge0Request(sourceCode string, languageID int, stdin string, expectedOutput string, cpuTimeLimit int, memoryLimit int) dto.Judge0SubmissionDTO {
-	// Default 5 seconds per test case if not specified or too high
-	cpuLimit := 5.0
-	if cpuTimeLimit > 0 && cpuTimeLimit <= 20 {
-		cpuLimit = float64(cpuTimeLimit)
-	}
 	return dto.Judge0SubmissionDTO{
 		SourceCode:     sourceCode,
 		LanguageID:     languageID,
 		Stdin:          stdin,
 		ExpectedOutput: expectedOutput,
-		CPUTimeLimit:   cpuLimit,
+		CPUTimeLimit:   judgeCPUSeconds(cpuTimeLimit),
 		MemoryLimit:    memoryLimit,
 	}
 }
 
+// judge0WireRequest adds the wall-clock limit derived from the CPU limit. Without it Judge0 uses its
+// 20 s default, so a sleeping program costs 20 s per test and overruns the grading budget.
+type judge0WireRequest struct {
+	dto.Judge0SubmissionDTO
+	WallTimeLimit float64 `json:"wall_time_limit"`
+}
+
 func (c *HTTPJudge0Client) Submit(ctx context.Context, req dto.Judge0SubmissionDTO) (*dto.Judge0ResponseDTO, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, judgeHTTPBackstop)
 	defer cancel()
-	wire := req
+	wire := judge0WireRequest{Judge0SubmissionDTO: req, WallTimeLimit: judgeWallSeconds(req.CPUTimeLimit)}
 	wire.SourceCode = base64.StdEncoding.EncodeToString([]byte(req.SourceCode))
 	wire.Stdin = base64.StdEncoding.EncodeToString([]byte(req.Stdin))
 	if req.ExpectedOutput != "" {
@@ -339,39 +341,53 @@ func (s *SubmissionService) ProcessSubmission(ctx context.Context, submissionID 
 		return err
 	}
 
-	if len(testCases) == 0 {
-		return s.repo.UpdateVerdict(ctx, submissionID, model.VerdictAccepted, 0, 0, 0, 0)
+	grade, err := s.gradeAssignmentCode(ctx, submission.Code, submission.Language, assignment, testCases)
+	if errors.Is(err, ErrJudgeUnavailable) {
+		// Not a verdict on the student's code (it used to be stored as runtime_error): mark the row
+		// so the UI can say "judge unavailable, submit again".
+		return s.repo.UpdateVerdict(ctx, submissionID, VerdictJudgeUnavailable, 0, 0, 0, 0)
 	}
+	if err != nil {
+		return err
+	}
+	return s.repo.UpdateVerdict(ctx, submissionID, grade.verdict, grade.avgTime, grade.avgMemory, grade.passed, grade.total)
+}
 
-	languageID := s.getLanguageID(submission.Language)
-	totalPassed := 0
-	totalTime := 0
-	totalMemory := 0
-	finalVerdict := model.VerdictAccepted
+// VerdictJudgeUnavailable marks a live-assignment submission Judge0 could not grade (outage,
+// overload). It is not a verdict on the code: the student submits again. Same value the course
+// exercise flow already stores ("system_error").
+const VerdictJudgeUnavailable model.SubmissionVerdict = "system_error"
 
+type assignmentGrade struct {
+	verdict                           model.SubmissionVerdict
+	avgTime, avgMemory, passed, total int
+}
+
+// gradeAssignmentCode judges every test case of a live/homework assignment. Any judge failure,
+// including the budget running out before Judge0 answers, aborts with ErrJudgeUnavailable and no
+// verdict. Grading runs in the background, so the budget is not capped like request grading.
+func (s *SubmissionService) gradeAssignmentCode(ctx context.Context, code, language string, assignment *model.Assignment, testCases []model.TestCase) (*assignmentGrade, error) {
+	grade := &assignmentGrade{verdict: model.VerdictAccepted, total: len(testCases)}
+	if len(testCases) == 0 {
+		return grade, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, judgeBudget(len(testCases), assignment.TimeLimit))
+	defer cancel()
+	languageID := s.getLanguageID(language)
+	totalTime, totalMemory := 0, 0
 	for _, tc := range testCases {
-		judgeReq := createJudge0Request(
-			submission.Code,
-			languageID,
-			tc.Input,
-			tc.ExpectedOutput,
-			assignment.TimeLimit,
-			assignment.MemoryLimit*1024,
-		)
-
-		result, err := s.judge0Client.Submit(ctx, judgeReq)
+		result, err := judgeOneTest(ctx, s.judge0Client, createJudge0Request(code, languageID, tc.Input, tc.ExpectedOutput, assignment.TimeLimit, assignment.MemoryLimit*1024))
 		if err != nil {
-			finalVerdict = model.VerdictRuntimeError
-			continue
+			return nil, err
 		}
 
 		verdict := s.mapJudge0Status(result.Status.ID)
 		if verdict != model.VerdictAccepted {
-			if finalVerdict == model.VerdictAccepted || finalVerdict == model.VerdictWrongAnswer {
-				finalVerdict = verdict
+			if grade.verdict == model.VerdictAccepted || grade.verdict == model.VerdictWrongAnswer {
+				grade.verdict = verdict
 			}
 		} else {
-			totalPassed++
+			grade.passed++
 		}
 
 		if result.Time != "" {
@@ -382,20 +398,14 @@ func (s *SubmissionService) ProcessSubmission(ctx context.Context, submissionID 
 		totalMemory += result.Memory
 	}
 
-	if totalPassed == len(testCases) {
-		finalVerdict = model.VerdictAccepted
-	} else if finalVerdict == model.VerdictAccepted && totalPassed < len(testCases) {
-		finalVerdict = model.VerdictWrongAnswer
+	if grade.passed == len(testCases) {
+		grade.verdict = model.VerdictAccepted
+	} else if grade.verdict == model.VerdictAccepted {
+		grade.verdict = model.VerdictWrongAnswer
 	}
-
-	avgTime := 0
-	avgMemory := 0
-	if len(testCases) > 0 {
-		avgTime = totalTime / len(testCases)
-		avgMemory = totalMemory / len(testCases)
-	}
-
-	return s.repo.UpdateVerdict(ctx, submissionID, finalVerdict, avgTime, avgMemory, totalPassed, len(testCases))
+	grade.avgTime = totalTime / len(testCases)
+	grade.avgMemory = totalMemory / len(testCases)
+	return grade, nil
 }
 
 // processMultipleChoiceSubmission handles scoring for multiple choice assignments
@@ -608,12 +618,12 @@ func (s *SubmissionService) RunCode(ctx context.Context, requesterID uuid.UUID, 
 		assignment.MemoryLimit*1024,
 	)
 
-	result, err := s.judge0Client.Submit(ctx, judgeReq)
+	// Never echo err.Error(): it carries the Judge0 URL (QA 261021 F5).
+	ctx, cancel := context.WithTimeout(ctx, judgeRequestBudget(1, assignment.TimeLimit))
+	defer cancel()
+	result, err := judgeOneTest(ctx, s.judge0Client, judgeReq)
 	if err != nil {
-		return &dto.RunCodeResponseDTO{
-			Error:   err.Error(),
-			Verdict: "error",
-		}, nil
+		return nil, err
 	}
 
 	response := &dto.RunCodeResponseDTO{
@@ -749,12 +759,12 @@ func (s *SubmissionService) RunCustomCode(ctx context.Context, requesterID uuid.
 		assignment.MemoryLimit*1024,
 	)
 
-	result, err := s.judge0Client.Submit(ctx, judgeReq)
+	// Never echo err.Error(): it carries the Judge0 URL (QA 261021 F5).
+	ctx, cancel := context.WithTimeout(ctx, judgeRequestBudget(1, assignment.TimeLimit))
+	defer cancel()
+	result, err := judgeOneTest(ctx, s.judge0Client, judgeReq)
 	if err != nil {
-		return &dto.RunCodeResponseDTO{
-			Error:   err.Error(),
-			Verdict: "error",
-		}, nil
+		return nil, err
 	}
 
 	response := &dto.RunCodeResponseDTO{
