@@ -5,6 +5,8 @@ package seeds
 
 import (
 	"context"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -41,9 +43,42 @@ func listContests(t *testing.T, repo *repository.ContestRepository, f repository
 	return out
 }
 
+// demoContestSlugsByPhase: danh tính (slug) các cuộc thi demo CÔNG KHAI theo phase. Kiểm theo danh tính, không theo
+// số lượng: thêm một cuộc thi demo mới (vd demo-code-judge0) phải sửa đúng chỗ này, và một cuộc thi bị mất hay đổi
+// phase hiện ra bằng tên thay vì một con số lệch.
+var demoContestSlugsByPhase = map[string][]string{
+	model.ContestPhaseUpcoming:  {"demo-thi-javascript-sap-dien-ra", "demo-thi-react-hooks-sap-dien-ra"},
+	model.ContestPhaseActive:    {"demo-code-judge0", "demo-thi-git-dang-dien-ra"},
+	model.ContestPhaseEnded:     {"demo-thi-sql-da-ket-thuc"},
+	model.ContestPhaseFinalized: {"demo-thi-git-da-chot"},
+}
+
+// demoContestSlugsHidden: cuộc thi demo không công khai (chờ duyệt, bản nháp).
+var demoContestSlugsHidden = []string{"demo-thi-cau-truc-du-lieu-ban-nhap", "demo-thi-python-cho-duyet"}
+
+// allDemoContestSlugs: mọi slug cuộc thi demo mà SeedDemoContests phải tạo, đã sắp xếp.
+func allDemoContestSlugs() []string {
+	out := append([]string(nil), demoContestSlugsHidden...)
+	for _, slugs := range demoContestSlugsByPhase {
+		out = append(out, slugs...)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedSlugs(contests []model.Contest) []string {
+	out := make([]string, 0, len(contests))
+	for _, c := range contests {
+		out = append(out, c.Slug)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // TestSeedDemoContests_Postgres_DuTabVaIdempotent:
-//   - Danh sách công khai có đủ phase UPCOMING(2)/ACTIVE(1)/ENDED(1)/FINALIZED(1) qua đúng
-//     ContestRepository.List mà API dùng; có 1 PENDING_REVIEW và 1 DRAFT của teacher2.
+//   - Danh sách công khai mỗi phase UPCOMING/ACTIVE/ENDED/FINALIZED có ĐÚNG các slug trong demoContestSlugsByPhase
+//     (ACTIVE gồm cả cuộc thi code demo-code-judge0) qua đúng ContestRepository.List mà API dùng; có 1
+//     PENDING_REVIEW và 1 DRAFT của teacher2.
 //   - student1 có mặt ở 4 cuộc thi với 4 phase khác nhau (/contests/me).
 //   - participant_count khớp contest_participants; bài làm ENDED nằm trong cửa sổ thi, điểm khớp đáp án.
 //   - Chạy lại không nhân bản; UPCOMING bị "trôi" về quá khứ được đưa lại tương lai.
@@ -70,17 +105,24 @@ func TestSeedDemoContests_Postgres_DuTabVaIdempotent(t *testing.T) {
 		got := snapshot()
 		if run == 1 {
 			first = got
-			if got.contests != 7 || got.participants != 7 || got.attempts != 4 || got.attemptAnswers != 8 {
-				t.Fatalf("lần 1: %+v, muốn 7 contest / 7 participant / 4 attempt / 8 attempt answer", got)
+			var all []model.Contest
+			if err := db.Find(&all).Error; err != nil {
+				t.Fatalf("đọc contests: %v", err)
+			}
+			if gotSlugs, want := sortedSlugs(all), allDemoContestSlugs(); !reflect.DeepEqual(gotSlugs, want) {
+				t.Fatalf("lần 1: cuộc thi demo = %v, muốn đúng %v", gotSlugs, want)
+			}
+			if got.participants != 7 || got.attempts != 4 || got.attemptAnswers != 8 {
+				t.Fatalf("lần 1: %+v, muốn 7 participant / 4 attempt / 8 attempt answer", got)
 			}
 		} else if got != first {
 			t.Errorf("lần 2: %+v, muốn giữ nguyên %+v — seed lại không được nhân bản", got, first)
 		}
 
-		for phase, want := range map[string]int{model.ContestPhaseUpcoming: 2, model.ContestPhaseActive: 1,
-			model.ContestPhaseEnded: 1, model.ContestPhaseFinalized: 1} {
-			if n := len(listContests(t, repo, repository.ContestListFilter{PublicOnly: true, Phase: phase})); n != want {
-				t.Errorf("lần %d: danh sách công khai phase %s có %d, muốn %d", run, phase, n, want)
+		for phase, want := range demoContestSlugsByPhase {
+			gotSlugs := sortedSlugs(listContests(t, repo, repository.ContestListFilter{PublicOnly: true, Phase: phase}))
+			if !reflect.DeepEqual(gotSlugs, want) {
+				t.Errorf("lần %d: danh sách công khai phase %s = %v, muốn %v", run, phase, gotSlugs, want)
 			}
 		}
 		for status, want := range map[string]int{model.ContestStatusPendingReview: 1, model.ContestStatusDraft: 1} {

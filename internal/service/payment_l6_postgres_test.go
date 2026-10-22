@@ -124,9 +124,14 @@ func caseTestAdminLateRefund_PerTransaction(t *testing.T, f *orderFixture) {
 func caseTestAdminLateRefund_LegacyDoneRowKeepsOldMeaning(t *testing.T, f *orderFixture) {
 	student := f.user()
 	orderID := f.twoFlaggedTransfers(student, "L6 dữ liệu cũ")
+	// Mốc dòng hoàn cũ lấy từ ĐỒNG HỒ GO, cùng đồng hồ với code thật ghi created_at của cờ (recordRefundFlag:
+	// time.Now()). Trước đây dùng now() của Postgres + 1s: hai đồng hồ khác nhau (DB chạy trong VM Docker, đồng hồ
+	// VM trôi so với máy host, nhất là sau khi máy ngủ), nên khi đồng hồ DB chậm hơn ~1s thì dòng hoàn cũ nằm
+	// TRƯỚC hai cờ vừa ghi và test đỏ ngẫu nhiên ở assert bên dưới. Cùng một đồng hồ thì thứ tự là nhân quả.
+	legacyDoneAt := time.Now().Truncate(time.Microsecond)
 	f.exec(`INSERT INTO order_status_histories (id, created_at, order_id, from_status, to_status, reason)
-		VALUES (gen_random_uuid(), now() + interval '1 second', ?, 'cancelled', ?, 'Late payment refunded by admin x (ref=OLD): legacy')`,
-		orderID, lateRefundDoneHistoryStatus)
+		VALUES (gen_random_uuid(), ?, ?, 'cancelled', ?, 'Late payment refunded by admin x (ref=OLD): legacy')`,
+		legacyDoneAt, orderID, lateRefundDoneHistoryStatus)
 
 	it := f.adminItem(student, orderID)
 	if it.RefundNeeded || it.LateRefunds == nil || it.LateRefunds.PendingCount != 0 || it.LateRefundedAt == nil {
@@ -137,7 +142,11 @@ func caseTestAdminLateRefund_LegacyDoneRowKeepsOldMeaning(t *testing.T, f *order
 	all := bankPaidMany(
 		grpc.BankTransaction{TransactionID: "L6-A", Amount: "499000", TransactionDate: bankDate(time.Now())},
 		grpc.BankTransaction{TransactionID: "L6-B", Amount: "250000", TransactionDate: bankDate(time.Now())}, extra)
-	time.Sleep(1200 * time.Millisecond) // cờ mới phải muộn hơn dòng hoàn cũ (đã đặt now()+1s)
+	// Cờ mới phải muộn hơn HẲN dòng hoàn cũ (cùng đồng hồ Go). Chờ vượt độ phân giải đồng hồ thô (Windows ~16ms)
+	// để hai mốc không thể trùng nhau.
+	for !time.Now().After(legacyDoneAt.Add(20 * time.Millisecond)) {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if _, err := f.paymentServiceWith(&fakeBankLookup{result: all}, nil).CheckAndProcessPayment(context.Background(), orderID, student, false); err != nil {
 		t.Fatalf("đối chiếu có khoản mới: %v", err)
 	}
