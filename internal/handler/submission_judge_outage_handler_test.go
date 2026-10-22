@@ -1,11 +1,11 @@
 package handler
 
-// Gap #5 (QA 261021): with Judge0 down, the live-assignment routes stored verdict=runtime_error
-// (POST /submissions) and answered 200 {"error":"Post \"http://localhost:2358/...\": dial tcp ..."}
-// (POST /submissions/run, /run-custom), leaking the judge URL. They must answer the same
-// 503 JUDGE_UNAVAILABLE as the lesson routes, write no submission row and never echo the URL.
-// Real SubmissionService + AssignmentService on a temporary Postgres schema; the judge URL points
-// at a port nothing listens on.
+// Gap #5 (QA 261021): with Judge0 down, POST /submissions stored verdict=runtime_error and
+// POST /submissions/run, /run-custom answered 200 {"error":"Post \"http://localhost:2358/...\": ..."},
+// leaking the judge URL. Now run and run-custom answer the same 503 JUDGE_UNAVAILABLE as the lesson
+// routes, and POST /submissions (still asynchronous: 201 pending) ends as system_error, never a
+// verdict on the code. No response echoes the URL. Real SubmissionService + AssignmentService on a
+// temporary Postgres schema; the judge URL points at a port nothing listens on.
 
 import (
 	"encoding/json"
@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -33,7 +34,7 @@ func closedJudgeURL(t *testing.T) string {
 	return url
 }
 
-func TestLiveAssignmentJudgeOutage_Returns503WithoutURLAndWritesNoRow(t *testing.T) {
+func TestLiveAssignmentJudgeOutage_Run503WithoutURLSubmitEndsSystemError(t *testing.T) {
 	db := pgtest.IsolatedSchema(t, database.Migrate)
 	mk := func(v interface{}) {
 		t.Helper()
@@ -70,11 +71,8 @@ func TestLiveAssignmentJudgeOutage_Returns503WithoutURLAndWritesNoRow(t *testing
 
 	aid := assignment.ID.String()
 	host := strings.TrimPrefix(judgeURL, "http://")
-	for path, body := range map[string]string{
-		"/submissions":            `{"assignment_id":"` + aid + `","language":"python","code":"print(1)"}`,
-		"/submissions/run":        `{"assignment_id":"` + aid + `","language":"python","code":"print(1)"}`,
-		"/submissions/run-custom": `{"assignment_id":"` + aid + `","language":"python","code":"print(1)","custom_input":"1"}`,
-	} {
+	post := func(path, body string) (int, []byte) {
+		t.Helper()
 		req := httptest.NewRequest("POST", path, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		res, err := app.Test(req, -1)
@@ -82,8 +80,18 @@ func TestLiveAssignmentJudgeOutage_Returns503WithoutURLAndWritesNoRow(t *testing
 			t.Fatal(err)
 		}
 		raw, _ := io.ReadAll(res.Body)
-		if res.StatusCode != fiber.StatusServiceUnavailable {
-			t.Errorf("%s: status=%d body=%s, want 503", path, res.StatusCode, raw)
+		if strings.Contains(string(raw), host) || strings.Contains(string(raw), "http://") || strings.Contains(string(raw), "dial tcp") {
+			t.Errorf("%s: judge address leaked: %s", path, raw)
+		}
+		return res.StatusCode, raw
+	}
+	for path, body := range map[string]string{
+		"/submissions/run":        `{"assignment_id":"` + aid + `","language":"python","code":"print(1)"}`,
+		"/submissions/run-custom": `{"assignment_id":"` + aid + `","language":"python","code":"print(1)","custom_input":"1"}`,
+	} {
+		status, raw := post(path, body)
+		if status != fiber.StatusServiceUnavailable {
+			t.Errorf("%s: status=%d body=%s, want 503", path, status, raw)
 		}
 		var out struct {
 			Code string `json:"code"`
@@ -92,18 +100,22 @@ func TestLiveAssignmentJudgeOutage_Returns503WithoutURLAndWritesNoRow(t *testing
 		if out.Code != "JUDGE_UNAVAILABLE" {
 			t.Errorf("%s: code=%q body=%s, want JUDGE_UNAVAILABLE", path, out.Code, raw)
 		}
-		if strings.Contains(string(raw), host) || strings.Contains(string(raw), "http://") || strings.Contains(string(raw), "dial tcp") {
-			t.Errorf("%s: judge address leaked: %s", path, raw)
-		}
 	}
 
-	var stored int64
-	if err := db.Model(&model.Submission{}).Where("assignment_id = ?", assignment.ID).Count(&stored).Error; err != nil {
-		t.Fatal(err)
+	status, raw := post("/submissions", `{"assignment_id":"`+aid+`","language":"python","code":"print(1)"}`)
+	if status != fiber.StatusCreated {
+		t.Fatalf("/submissions: status=%d body=%s, want 201 (grading stays asynchronous)", status, raw)
 	}
-	if stored != 0 {
-		var rows []model.Submission
-		db.Where("assignment_id = ?", assignment.ID).Find(&rows)
-		t.Fatalf("judge outage still stored %d submission(s): %+v", stored, rows)
+	var row model.Submission
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if err := db.Where("assignment_id = ?", assignment.ID).First(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+		if row.Verdict != model.VerdictPending {
+			break
+		}
+	}
+	if row.Verdict != service.VerdictJudgeUnavailable {
+		t.Fatalf("judge outage stored verdict %q, want %q (not a verdict on the code)", row.Verdict, service.VerdictJudgeUnavailable)
 	}
 }

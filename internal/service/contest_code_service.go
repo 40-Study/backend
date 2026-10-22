@@ -245,7 +245,7 @@ func (s *ContestService) JudgeCode(ctx context.Context, id uuid.UUID, a *Contest
 	if problem == nil {
 		return nil, ErrContestNotFound
 	}
-	// No fixed deadline here: judgeCodeTests budgets each test and the whole run by test count.
+	// No fixed deadline here: judgeCodeTests sizes it by test count (capped at 90 s).
 	// A fixed 60 s turned 4 slow tests into JUDGE_UNAVAILABLE (QA 261021 C1e).
 	var result *dto.ContestCodeResult
 	err = s.repo.Transaction(ctx, func(tx *gorm.DB) error {

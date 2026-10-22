@@ -69,9 +69,6 @@ func (h *SubmissionHandler) Submit(c *fiber.Ctx) error {
 
 	submission, err := h.svc.Submit(c.Context(), isAdminActor(c, h.permChecker, userID), req)
 	if err != nil {
-		if handled, resp := respondJudgeUnavailable(c, err); handled {
-			return resp
-		}
 		if errors.Is(err, service.ErrClassArchived) {
 			return assignmentWriteFail(c, err)
 		}

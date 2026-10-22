@@ -296,25 +296,6 @@ func (s *SubmissionService) Submit(ctx context.Context, isAdmin bool, req dto.Cr
 		Verdict:      model.VerdictPending,
 	}
 
-	// Code is judged BEFORE the row exists: a Judge0 outage returns ErrJudgeUnavailable (503) and
-	// stores nothing, instead of a background runtime_error the student cannot retry away.
-	if isJudgedLanguage(req.Language) {
-		testCases, err := s.testCaseRepo.GetByAssignment(ctx, assignmentID)
-		if err != nil {
-			return nil, err
-		}
-		grade, err := s.gradeAssignmentCode(ctx, req.Code, req.Language, assignment, testCases)
-		if err != nil {
-			return nil, err
-		}
-		submission.Verdict, submission.ExecutionTime, submission.MemoryUsed = grade.verdict, grade.avgTime, grade.avgMemory
-		submission.TestCasesPassed, submission.TotalTestCases = grade.passed, grade.total
-		if err := s.repo.Create(ctx, submission); err != nil {
-			return nil, err
-		}
-		return submission, nil
-	}
-
 	if err := s.repo.Create(ctx, submission); err != nil {
 		return nil, err
 	}
@@ -361,23 +342,30 @@ func (s *SubmissionService) ProcessSubmission(ctx context.Context, submissionID 
 	}
 
 	grade, err := s.gradeAssignmentCode(ctx, submission.Code, submission.Language, assignment, testCases)
+	if errors.Is(err, ErrJudgeUnavailable) {
+		// Not a verdict on the student's code (it used to be stored as runtime_error): mark the row
+		// so the UI can say "judge unavailable, submit again".
+		return s.repo.UpdateVerdict(ctx, submissionID, VerdictJudgeUnavailable, 0, 0, 0, 0)
+	}
 	if err != nil {
-		return err // judge unavailable: leave the row pending rather than store a wrong verdict
+		return err
 	}
 	return s.repo.UpdateVerdict(ctx, submissionID, grade.verdict, grade.avgTime, grade.avgMemory, grade.passed, grade.total)
 }
 
-// isJudgedLanguage: multiple choice ("json") and essays ("text") never reach Judge0.
-func isJudgedLanguage(language string) bool { return language != "json" && language != "text" }
+// VerdictJudgeUnavailable marks a live-assignment submission Judge0 could not grade (outage,
+// overload). It is not a verdict on the code: the student submits again. Same value the course
+// exercise flow already stores ("system_error").
+const VerdictJudgeUnavailable model.SubmissionVerdict = "system_error"
 
 type assignmentGrade struct {
 	verdict                           model.SubmissionVerdict
 	avgTime, avgMemory, passed, total int
 }
 
-// gradeAssignmentCode judges every test case of a live/homework assignment. Any judge failure
-// aborts with ErrJudgeUnavailable so the caller stores nothing; a job that outlives its per-test
-// budget is a time limit verdict (judgeOneTest).
+// gradeAssignmentCode judges every test case of a live/homework assignment. Any judge failure,
+// including the budget running out before Judge0 answers, aborts with ErrJudgeUnavailable and no
+// verdict. Grading runs in the background, so the budget is not capped like request grading.
 func (s *SubmissionService) gradeAssignmentCode(ctx context.Context, code, language string, assignment *model.Assignment, testCases []model.TestCase) (*assignmentGrade, error) {
 	grade := &assignmentGrade{verdict: model.VerdictAccepted, total: len(testCases)}
 	if len(testCases) == 0 {
@@ -631,6 +619,8 @@ func (s *SubmissionService) RunCode(ctx context.Context, requesterID uuid.UUID, 
 	)
 
 	// Never echo err.Error(): it carries the Judge0 URL (QA 261021 F5).
+	ctx, cancel := context.WithTimeout(ctx, judgeRequestBudget(1, assignment.TimeLimit))
+	defer cancel()
 	result, err := judgeOneTest(ctx, s.judge0Client, judgeReq)
 	if err != nil {
 		return nil, err
@@ -770,6 +760,8 @@ func (s *SubmissionService) RunCustomCode(ctx context.Context, requesterID uuid.
 	)
 
 	// Never echo err.Error(): it carries the Judge0 URL (QA 261021 F5).
+	ctx, cancel := context.WithTimeout(ctx, judgeRequestBudget(1, assignment.TimeLimit))
+	defer cancel()
 	result, err := judgeOneTest(ctx, s.judge0Client, judgeReq)
 	if err != nil {
 		return nil, err

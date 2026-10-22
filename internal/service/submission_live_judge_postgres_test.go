@@ -1,9 +1,10 @@
 package service
 
-// Gap #5 (QA 261021), service side: a live-assignment code submission is judged BEFORE any row is
-// written, so a Judge0 outage returns ErrJudgeUnavailable and stores nothing (it used to store
-// verdict=runtime_error from a background goroutine), while a slow program is stored as
-// time_limit_exceeded. Run and run-custom return ErrJudgeUnavailable instead of err.Error().
+// Gap #5 (QA 261021), service side. Live-assignment Submit stays asynchronous (the row is created
+// pending, grading runs in the background), but a Judge0 outage no longer stores a wrong verdict:
+// it used to store runtime_error, now the row is marked VerdictJudgeUnavailable ("system_error")
+// so the UI can ask the student to submit again. Run and run-custom return ErrJudgeUnavailable
+// instead of a 200 echoing err.Error() with the Judge0 URL.
 
 import (
 	"context"
@@ -12,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -51,29 +54,39 @@ func newLiveJudgeEnv(t *testing.T, judge Judge0Client) *liveJudgeEnv {
 	return &liveJudgeEnv{f: f, svc: svc, student: student, assignment: assignment}
 }
 
-func (e *liveJudgeEnv) stored(t *testing.T) []model.Submission {
+// submitAndWait submits, checks the immediate answer is the pending row, then waits for the
+// background grading to finish.
+func (e *liveJudgeEnv) submitAndWait(t *testing.T, code string) model.Submission {
 	t.Helper()
-	// Submit used to finish grading in a goroutine; give a regression the time to write its verdict.
-	time.Sleep(200 * time.Millisecond)
-	var rows []model.Submission
-	if err := e.f.db.Where("assignment_id = ?", e.assignment.ID).Find(&rows).Error; err != nil {
-		t.Fatal(err)
+	sub, err := e.svc.Submit(context.Background(), false, dto.CreateSubmissionDTO{AssignmentID: e.assignment.ID.String(), UserID: e.student.ID.String(), Language: "python", Code: code})
+	if err != nil || sub == nil || sub.Verdict != model.VerdictPending {
+		t.Fatalf("Submit must answer at once with the pending row: %+v err=%v", sub, err)
 	}
-	return rows
+	return waitForGradedSubmission(t, e.f.db, sub.ID)
 }
 
-func (e *liveJudgeEnv) submit(code string) (*model.Submission, error) {
-	return e.svc.Submit(context.Background(), false, dto.CreateSubmissionDTO{AssignmentID: e.assignment.ID.String(), UserID: e.student.ID.String(), Language: "python", Code: code})
+// waitForGradedSubmission polls until background grading has replaced the pending verdict.
+func waitForGradedSubmission(t *testing.T, db *gorm.DB, id uuid.UUID) model.Submission {
+	t.Helper()
+	var row model.Submission
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if err := db.First(&row, "id = ?", id).Error; err != nil {
+			t.Fatal(err)
+		}
+		if row.Verdict != model.VerdictPending {
+			return row
+		}
+	}
+	t.Fatalf("submission %s still pending after 5 s", id)
+	return row
 }
 
-func TestLiveAssignmentSubmit_JudgeOutageStoresNothing(t *testing.T) {
+func TestLiveAssignmentSubmit_JudgeOutageMarksRowJudgeUnavailable(t *testing.T) {
 	leak := errors.New(`Post "http://localhost:2358/submissions?base64_encoded=true&wait=true": dial tcp [::1]:2358: connect: connection refused`)
 	e := newLiveJudgeEnv(t, &stallingJudge{fail: leak})
-	if _, err := e.submit("print(input())"); !errors.Is(err, ErrJudgeUnavailable) {
-		t.Fatalf("Submit during outage: err=%v, want ErrJudgeUnavailable", err)
-	}
-	if rows := e.stored(t); len(rows) != 0 {
-		t.Fatalf("outage stored %d row(s), first verdict=%s", len(rows), rows[0].Verdict)
+	row := e.submitAndWait(t, "print(input())")
+	if row.Verdict != VerdictJudgeUnavailable || row.TestCasesPassed != 0 {
+		t.Fatalf("outage stored verdict=%s passed=%d, want %s (not a verdict on the code)", row.Verdict, row.TestCasesPassed, VerdictJudgeUnavailable)
 	}
 	run, err := e.svc.RunCode(context.Background(), e.student.ID, false, dto.RunCodeDTO{AssignmentID: e.assignment.ID.String(), Language: "python", Code: "print(1)"})
 	if !errors.Is(err, ErrJudgeUnavailable) || run != nil {
@@ -88,30 +101,22 @@ func TestLiveAssignmentSubmit_JudgeOutageStoresNothing(t *testing.T) {
 	}
 }
 
-func TestLiveAssignmentSubmit_GradesBeforeStoringAndSlowProgramIsTimeLimit(t *testing.T) {
+func TestLiveAssignmentSubmit_StalledJudgeIsUnavailableTimeLimitIsAVerdict(t *testing.T) {
 	useShortJudgeTestBudget(t, 100*time.Millisecond)
 	judge := &stallingJudge{status: 3}
 	e := newLiveJudgeEnv(t, judge)
-	sub, err := e.submit("print(input())")
-	if err != nil || sub.Verdict != model.VerdictAccepted || sub.TestCasesPassed != 2 || sub.TotalTestCases != 2 {
-		t.Fatalf("accepted submit: %+v err=%v", sub, err)
+	if row := e.submitAndWait(t, "print(input())"); row.Verdict != model.VerdictAccepted || row.TestCasesPassed != 2 || row.TotalTestCases != 2 {
+		t.Fatalf("accepted submit stored %+v", row)
 	}
 	if judge.lastReq.CPUTimeLimit != 2 {
 		t.Fatalf("assignment time limit not passed to Judge0: %+v", judge.lastReq)
 	}
-
+	judge.status = 5
+	if row := e.submitAndWait(t, "import time\ntime.sleep(60)"); row.Verdict != model.VerdictTimeLimitExceed {
+		t.Fatalf("Judge0 TIME_LIMIT stored as %s", row.Verdict)
+	}
 	judge.status, judge.stall = 0, 2*time.Second
-	slow, err := e.submit("import time\ntime.sleep(60)")
-	if err != nil || slow.Verdict != model.VerdictTimeLimitExceed || slow.TestCasesPassed != 0 {
-		t.Fatalf("slow submit: %+v err=%v, want time_limit_exceeded", slow, err)
-	}
-	rows := e.stored(t)
-	if len(rows) != 2 {
-		t.Fatalf("stored %d rows, want 2", len(rows))
-	}
-	for _, row := range rows {
-		if row.Verdict == model.VerdictPending || row.Verdict == model.VerdictRuntimeError {
-			t.Errorf("row %s stored verdict %s", row.ID, row.Verdict)
-		}
+	if row := e.submitAndWait(t, "print(1)"); row.Verdict != VerdictJudgeUnavailable {
+		t.Fatalf("judge that never answered stored as %s, want %s", row.Verdict, VerdictJudgeUnavailable)
 	}
 }

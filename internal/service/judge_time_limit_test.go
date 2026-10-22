@@ -1,10 +1,11 @@
 package service
 
 // Gap #3 (QA 261021): a slow or infinite program on Submit must end as TIME_LIMIT, never as
-// JUDGE_UNAVAILABLE. Before the fix no wall_time_limit was sent (Judge0 used its 20 s default),
-// 4 tests x 20 s overran the fixed 60 s grading context, and code_judge.go turned that deadline
-// into ErrJudgeUnavailable. Only a real transport failure, a 5xx or a judge-internal status may
-// still mean "judge unavailable".
+// JUDGE_UNAVAILABLE. Before the fix no wall_time_limit was sent (Judge0 used its 20 s default) and
+// 4 tests x 20 s overran the fixed 60 s grading context. Judge0 now stops the program at the wall
+// limit and answers status 5 itself; the grading deadline grows with the test count (capped at
+// 90 s for request grading). Our own deadline firing means the judge did not answer: that stays
+// JUDGE_UNAVAILABLE, like a transport failure, a 5xx or a judge-internal status.
 
 import (
 	"context"
@@ -19,7 +20,7 @@ import (
 	"study.com/v1/internal/dto"
 )
 
-// useShortJudgeTestBudget shrinks the per-test budget so a "program that never finishes" costs
+// useShortJudgeTestBudget shrinks the per-test budget so a judge that never answers costs
 // milliseconds instead of the real wall limit plus overhead.
 func useShortJudgeTestBudget(t *testing.T, d time.Duration) {
 	t.Helper()
@@ -28,9 +29,9 @@ func useShortJudgeTestBudget(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { judgeTestBudget = previous })
 }
 
-// stallingJudge models a Judge0 job that does not finish within the test's budget: Submit blocks
-// until the caller gives up (or a hard cap, so an unfixed caller still returns), then fails the
-// way an HTTP client does when its context ends.
+// stallingJudge is an in-process Judge0. With stall set it never answers in time (queued, hung):
+// Submit blocks until the caller gives up, or a hard cap, then fails the way an HTTP client does.
+// Otherwise it answers status immediately.
 type stallingJudge struct {
 	stall   time.Duration
 	fail    error
@@ -90,25 +91,26 @@ func TestJudge0Wire_SendsWallTimeLimitCappedAtJudgeMax(t *testing.T) {
 	}
 }
 
-func TestJudgeCodeTests_PerTestTimeoutIsTimeLimitNotUnavailable(t *testing.T) {
+func TestJudgeCodeTests_Judge0TimeLimitIsAVerdict(t *testing.T) {
+	judge := &stallingJudge{status: 5}
+	req := dto.ContestCodeRequest{RequestID: uuid.New(), Language: "python", Code: "while True: pass"}
+	result, err := judgeCodeTests(context.Background(), judge, req, uuid.New(), fourTests(), 100, 2, 128, true)
+	if err != nil || result.Status != "TIME_LIMIT" || result.Passed != 0 || result.Score != 0 || len(result.Tests) != 4 || judge.calls != 4 {
+		t.Fatalf("result=%+v err=%v calls=%d, want TIME_LIMIT on all 4 tests", result, err, judge.calls)
+	}
+}
+
+func TestJudgeCodeTests_StalledJudgeIsUnavailableNotTimeLimit(t *testing.T) {
 	useShortJudgeTestBudget(t, 100*time.Millisecond)
 	judge := &stallingJudge{stall: 2 * time.Second}
-	req := dto.ContestCodeRequest{RequestID: uuid.New(), Language: "python", Code: "while True: pass"}
+	req := dto.ContestCodeRequest{RequestID: uuid.New(), Language: "python", Code: "print(1)"}
 	started := time.Now()
 	result, err := judgeCodeTests(context.Background(), judge, req, uuid.New(), fourTests(), 100, 2, 128, true)
-	if err != nil {
-		t.Fatalf("slow program reported as %v, want a TIME_LIMIT verdict", err)
-	}
-	if result.Status != "TIME_LIMIT" || result.Passed != 0 || result.Score != 0 || len(result.Tests) != 4 || judge.calls != 4 {
-		t.Fatalf("result=%+v calls=%d", result, judge.calls)
-	}
-	for _, test := range result.Tests {
-		if test.Status != "TIME_LIMIT" {
-			t.Errorf("test %d: %s, want TIME_LIMIT", test.Number, test.Status)
-		}
+	if !errors.Is(err, ErrJudgeUnavailable) || result != nil {
+		t.Fatalf("judge that never answered graded as %+v err=%v, want ErrJudgeUnavailable", result, err)
 	}
 	if elapsed := time.Since(started); elapsed > 1500*time.Millisecond {
-		t.Fatalf("per-test budget not applied: took %v", elapsed)
+		t.Fatalf("grading budget not applied: took %v", elapsed)
 	}
 }
 
@@ -137,7 +139,7 @@ func TestJudgeCodeTests_CallerCancellationIsNotATimeLimit(t *testing.T) {
 	}
 }
 
-func TestJudgeBudget_ScalesWithTestCountAndCoversEveryTestBudget(t *testing.T) {
+func TestJudgeBudget_ScalesWithTestCountAndIsCappedForRequests(t *testing.T) {
 	for _, cpu := range []int{1, 2, 5, 10, 20} {
 		perTest := judgeTestBudget(judgeCPUSeconds(cpu))
 		wall := time.Duration(judgeWallSeconds(judgeCPUSeconds(cpu)) * float64(time.Second))
@@ -145,16 +147,21 @@ func TestJudgeBudget_ScalesWithTestCountAndCoversEveryTestBudget(t *testing.T) {
 			t.Errorf("cpu=%d: per-test budget %v leaves no room past the %v wall limit", cpu, perTest, wall)
 		}
 		if perTest >= judgeHTTPBackstop {
-			t.Errorf("cpu=%d: per-test budget %v must end before the HTTP backstop %v, or a slow program reads as an outage", cpu, perTest, judgeHTTPBackstop)
+			t.Errorf("cpu=%d: one job (%v) must end before the HTTP backstop %v", cpu, perTest, judgeHTTPBackstop)
 		}
 		for _, n := range []int{1, 4, 20} {
-			if total := judgeBudget(n, cpu); total < time.Duration(n)*perTest {
+			total := judgeBudget(n, cpu)
+			if total < time.Duration(n)*perTest {
 				t.Errorf("cpu=%d tests=%d: overall %v < %d x %v", cpu, n, total, n, perTest)
+			}
+			request := judgeRequestBudget(n, cpu)
+			if request > 90*time.Second || (total <= 90*time.Second && request != total) {
+				t.Errorf("cpu=%d tests=%d: request budget %v, uncapped %v, want min(uncapped, 90 s)", cpu, n, request, total)
 			}
 		}
 	}
 	// The QA reproduction: 4 tests at the Judge0 maximum wall time no longer fit in a fixed 60 s.
-	if judgeBudget(4, 20) <= 60*time.Second {
-		t.Fatalf("overall budget does not scale: %v", judgeBudget(4, 20))
+	if judgeBudget(4, 20) <= 60*time.Second || judgeRequestBudget(4, 20) != 90*time.Second {
+		t.Fatalf("budget does not scale: %v / request %v", judgeBudget(4, 20), judgeRequestBudget(4, 20))
 	}
 }

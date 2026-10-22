@@ -68,13 +68,7 @@ func TestContestCodeGradingPersistenceAndAccess(t *testing.T) {
 			return
 		}
 		if req.SourceCode == "slow" {
-			// A job that outlives its per-test budget: the client gives up first.
-			select {
-			case <-r.Context().Done():
-			case <-time.After(3 * time.Second):
-				w.WriteHeader(504)
-			}
-			return
+			status = 5 // Judge0 stopped the program at wall_time_limit
 		}
 		_ = json.NewEncoder(w).Encode(dto.Judge0ResponseDTO{Status: dto.Judge0StatusDTO{ID: status}, Stdout: req.ExpectedOutput, Time: "0.01", Memory: 32})
 	}))
@@ -153,7 +147,6 @@ func TestContestCodeGradingPersistenceAndAccess(t *testing.T) {
 	}
 	req.RequestID = uuid.New()
 	req.Code = "slow"
-	useShortJudgeTestBudget(t, 500*time.Millisecond)
 	slow, err := s.JudgeCode(ctx, created.ID, pupil, req, true)
 	if err != nil || slow.Status != "TIME_LIMIT" || slow.Score != 0 || len(slow.Tests) != 2 {
 		t.Fatalf("slow program: result=%+v err=%v, want TIME_LIMIT (not JUDGE_UNAVAILABLE)", slow, err)

@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"github.com/google/uuid"
 	"strconv"
 	"strings"
@@ -15,10 +14,11 @@ const (
 	judgeMaxWallSeconds = 20.0
 	// Compile, queue and transport time a job may take on top of the program's wall limit.
 	judgeTestOverhead = 8 * time.Second
-	// Backstop for the HTTP client; must outlast the largest per-test budget (20 s + overhead),
-	// otherwise a slow program ends as a transport error and reads as an outage.
-	judgeHTTPBackstop    = 60 * time.Second
-	judgeStatusTimeLimit = 5
+	// Backstop for the HTTP client; must outlast one job at the maximum wall limit plus overhead.
+	judgeHTTPBackstop = 60 * time.Second
+	// Lesson and contest grading answer within the request; the web proxy for them gives up at
+	// 100 s, so the whole run is capped below that.
+	judgeRequestBudgetCap = 90 * time.Second
 )
 
 // judgeCPUSeconds is the CPU limit sent to Judge0: the problem's seconds, else 5 s.
@@ -37,31 +37,36 @@ func judgeWallSeconds(cpuSeconds float64) float64 {
 	return judgeMaxWallSeconds
 }
 
-// judgeTestBudget is how long one Judge0 job may take before it counts as TIME_LIMIT.
-// A variable so tests can shrink it.
+// judgeTestBudget is the time one Judge0 job may take: its wall limit plus overhead. A slow program
+// is stopped by Judge0 itself (status 5); our deadline firing means the judge is queued, overloaded
+// or hung. A variable so tests can shrink it.
 var judgeTestBudget = func(cpuSeconds float64) time.Duration {
 	return time.Duration(judgeWallSeconds(cpuSeconds)*float64(time.Second)) + judgeTestOverhead
 }
 
-// judgeBudget is the backstop for grading n tests: it grows with the test count, so a submission
-// whose tests all hit the wall limit still gets graded instead of reported as an outage.
+// judgeBudget is the deadline for grading n tests. It grows with the test count, so a submission
+// whose tests all run to the wall limit is still graded instead of reported as an outage.
 func judgeBudget(tests, timeLimit int) time.Duration {
 	if tests < 1 {
 		tests = 1
 	}
-	return time.Duration(tests)*judgeTestBudget(judgeCPUSeconds(timeLimit)) + judgeTestOverhead
+	// One spare job's worth of margin for the queue and the database work around grading.
+	return time.Duration(tests+1) * judgeTestBudget(judgeCPUSeconds(timeLimit))
 }
 
-// judgeOneTest runs one job inside its own budget. A job that outlives the budget is the program's
-// fault (TIME_LIMIT). A transport error, a 5xx, the caller's own deadline or a status outside
-// 3..12 (queued, internal error) means the judge is unavailable, never a verdict.
-func judgeOneTest(ctx context.Context, judge Judge0Client, req dto.Judge0SubmissionDTO) (*dto.Judge0ResponseDTO, error) {
-	testCtx, cancel := context.WithTimeout(ctx, judgeTestBudget(req.CPUTimeLimit))
-	defer cancel()
-	judged, err := judge.Submit(testCtx, req)
-	if err != nil && ctx.Err() == nil && errors.Is(testCtx.Err(), context.DeadlineExceeded) {
-		return &dto.Judge0ResponseDTO{Status: dto.Judge0StatusDTO{ID: judgeStatusTimeLimit, Description: "Time Limit Exceeded"}}, nil
+// judgeRequestBudget is judgeBudget capped for grading done inside an HTTP request. Tests the
+// judge has not answered by then make the run unavailable, never a verdict.
+func judgeRequestBudget(tests, timeLimit int) time.Duration {
+	if budget := judgeBudget(tests, timeLimit); budget < judgeRequestBudgetCap {
+		return budget
 	}
+	return judgeRequestBudgetCap
+}
+
+// judgeOneTest submits one job. Only an answer from Judge0 is a verdict: a transport error, a 5xx,
+// an expired deadline or a status outside 3..12 (queued, internal error) is ErrJudgeUnavailable.
+func judgeOneTest(ctx context.Context, judge Judge0Client, req dto.Judge0SubmissionDTO) (*dto.Judge0ResponseDTO, error) {
+	judged, err := judge.Submit(ctx, req)
 	if err != nil || judged == nil || judged.Status.ID < 3 || judged.Status.ID > 12 {
 		return nil, ErrJudgeUnavailable
 	}
@@ -74,7 +79,7 @@ func judgeCodeTests(ctx context.Context, judge Judge0Client, req dto.ContestCode
 	if !ok || len(tests) == 0 {
 		return nil, invalidField("language", "Ngôn ngữ hoặc test không hợp lệ.")
 	}
-	ctx, cancel := context.WithTimeout(ctx, judgeBudget(len(tests), timeLimit))
+	ctx, cancel := context.WithTimeout(ctx, judgeRequestBudget(len(tests), timeLimit))
 	defer cancel()
 	result := &dto.ContestCodeResult{ProblemID: problemID, Language: req.Language, MaxScore: points, Total: len(tests), Status: "ACCEPTED", Tests: []dto.ContestCodeTestResult{}, CreatedAt: time.Now()}
 	for i, t := range tests {

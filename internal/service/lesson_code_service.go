@@ -111,7 +111,7 @@ func (s *ExerciseService) JudgeLessonCode(ctx context.Context, lessonID, exercis
 	if !ok {
 		return nil, ErrJudgeUnavailable
 	}
-	// No fixed deadline here: judgeCodeTests budgets each test and the whole run by test count.
+	// No fixed deadline here: judgeCodeTests sizes it by test count (capped at 90 s).
 	// A fixed 60 s turned 4 slow tests into JUDGE_UNAVAILABLE (QA 261021 C1e).
 	var result *dto.ContestCodeResult
 	err = store.JudgeTransaction(ctx, exerciseID, userID, func(tx *gorm.DB) error {
