@@ -156,6 +156,10 @@ type TimetableEntryDTO struct {
 	ScheduleID  *uuid.UUID `json:"schedule_id,omitempty"`
 	ClassName   string     `json:"class_name"`
 	ClassID     uuid.UUID  `json:"class_id"`
+	// OrganizationID/OrganizationName: tổ chức sở hữu lớp. Không có = lớp cá nhân của giảng viên (dạy tự do).
+	// Tổ chức đã xoá mềm vẫn trả id nhưng không trả tên, để client hiện "Tổ chức" chung chung.
+	OrganizationID   *uuid.UUID `json:"organization_id,omitempty"`
+	OrganizationName *string    `json:"organization_name,omitempty"`
 	DayOfWeek   int        `json:"day_of_week"`
 	Date        *string    `json:"date,omitempty"`
 	StartTime   string     `json:"start_time"`
@@ -181,4 +185,23 @@ type TimetableResponseDTO struct {
 	// CancelledOccurrences chỉ có khi hỏi kèm khoảng ngày (sessions_from/sessions_to). Buổi huỷ không nằm trong
 	// Entries (học viên không cần thấy), nhưng lịch lặp của giảng viên cần biết ngày nào bị huỷ để không vẽ lại.
 	CancelledOccurrences []TimetableOccurrenceDTO `json:"cancelled_occurrences,omitempty"`
+}
+
+// TimetableOrgFilter: lọc GET /me/timetable theo nguồn lớp. Rỗng = mọi lớp; OrganizationID = chỉ lớp của tổ
+// chức đó; PersonalOnly = chỉ lớp cá nhân (organization_id NULL). Không bao giờ đặt cả hai cùng lúc.
+type TimetableOrgFilter struct {
+	OrganizationID *uuid.UUID
+	PersonalOnly   bool
+}
+
+// CacheSuffix: phần đuôi khoá cache của thời khoá biểu, để mỗi bộ lọc có cache riêng.
+func (f TimetableOrgFilter) CacheSuffix() string {
+	switch {
+	case f.OrganizationID != nil:
+		return ":org:" + f.OrganizationID.String()
+	case f.PersonalOnly:
+		return ":personal"
+	default:
+		return ""
+	}
 }

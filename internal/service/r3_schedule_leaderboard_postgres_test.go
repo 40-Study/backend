@@ -127,7 +127,7 @@ func TestR3_MyTimetable_KemBuoiHocCuThe(t *testing.T) {
 	}
 
 	day := func(s string) time.Time { d, _ := time.Parse("2006-01-02", s); return d }
-	got, err := svc.GetMyTimetableWithSessions(ctx, e.coTeacher.ID, "TEACHER", day("2031-03-01"), day("2031-03-31"))
+	got, err := svc.GetMyTimetableWithSessions(ctx, e.coTeacher.ID, "TEACHER", day("2031-03-01"), day("2031-03-31"), dto.TimetableOrgFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestR3_MyTimetable_KemBuoiHocCuThe(t *testing.T) {
 	}
 
 	// Không xin khoảng ngày thì như cũ: chỉ lịch lặp, không có buổi cụ thể.
-	plain, err := svc.GetMyTimetable(ctx, e.coTeacher.ID, "TEACHER")
+	plain, err := svc.GetMyTimetable(ctx, e.coTeacher.ID, "TEACHER", dto.TimetableOrgFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,14 +162,14 @@ func TestR3_MyTimetable_KemBuoiHocCuThe(t *testing.T) {
 			t.Errorf("GetMyTimetable không kèm khoảng ngày mà lại trả buổi cụ thể: %+v", en)
 		}
 	}
-	if _, err := svc.GetMyTimetableWithSessions(ctx, e.coTeacher.ID, "TEACHER", day("2031-03-31"), day("2031-03-01")); !errors.Is(err, ErrTimetableRangeInvalid) {
+	if _, err := svc.GetMyTimetableWithSessions(ctx, e.coTeacher.ID, "TEACHER", day("2031-03-31"), day("2031-03-01"), dto.TimetableOrgFilter{}); !errors.Is(err, ErrTimetableRangeInvalid) {
 		t.Errorf("khoảng ngược: err=%v, muốn ErrTimetableRangeInvalid", err)
 	}
-	if _, err := svc.GetMyTimetableWithSessions(ctx, e.coTeacher.ID, "TEACHER", day("2031-01-01"), day("2032-06-01")); !errors.Is(err, ErrTimetableRangeInvalid) {
+	if _, err := svc.GetMyTimetableWithSessions(ctx, e.coTeacher.ID, "TEACHER", day("2031-01-01"), day("2032-06-01"), dto.TimetableOrgFilter{}); !errors.Is(err, ErrTimetableRangeInvalid) {
 		t.Errorf("khoảng quá dài: err=%v, muốn ErrTimetableRangeInvalid", err)
 	}
 	// Học viên của lớp xem cùng khoảng ngày thấy cùng buổi.
-	stu, err := svc.GetMyTimetableWithSessions(ctx, e.student.ID, "STUDENT", day("2031-03-01"), day("2031-03-31"))
+	stu, err := svc.GetMyTimetableWithSessions(ctx, e.student.ID, "STUDENT", day("2031-03-01"), day("2031-03-31"), dto.TimetableOrgFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}

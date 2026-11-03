@@ -417,6 +417,9 @@ func (s *ParentDashboardService) GetChildTimetable(ctx context.Context, parentID
 		}
 		entries = append(entries, entry)
 	}
+	if err := annotateTimetableOrganizations(ctx, s.scheduleRepo, entries); err != nil {
+		return nil, fmt.Errorf("failed to get class organizations: %w", err)
+	}
 	return &dto.TimetableResponseDTO{Entries: entries}, nil
 }
 

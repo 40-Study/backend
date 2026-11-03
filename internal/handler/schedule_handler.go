@@ -727,6 +727,11 @@ func (h *ScheduleHandler) GetMyTimetable(c *fiber.Ctx) error {
 
 	activeRole, _ := c.Locals("active_role").(string)
 
+	filter, errMsg := parseTimetableOrgFilter(c)
+	if errMsg != "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": errMsg})
+	}
+
 	// B-08: ?sessions_from=YYYY-MM-DD&sessions_to=YYYY-MM-DD kèm thêm buổi học cụ thể của lớp trong khoảng
 	// đó. Không gửi thì giữ nguyên hành vi cũ (chỉ lịch lặp tuần) nên trang lịch học viên không đổi.
 	var timetable *dto.TimetableResponseDTO
@@ -739,12 +744,12 @@ func (h *ScheduleHandler) GetMyTimetable(c *fiber.Ctx) error {
 				"message": "sessions_from and sessions_to must both be YYYY-MM-DD",
 			})
 		}
-		timetable, err = h.service.GetMyTimetableWithSessions(c.Context(), userID, activeRole, from, to)
+		timetable, err = h.service.GetMyTimetableWithSessions(c.Context(), userID, activeRole, from, to, filter)
 		if errors.Is(err, service.ErrTimetableRangeInvalid) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
 		}
 	} else {
-		timetable, err = h.service.GetMyTimetable(c.Context(), userID, activeRole)
+		timetable, err = h.service.GetMyTimetable(c.Context(), userID, activeRole, filter)
 	}
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -757,6 +762,30 @@ func (h *ScheduleHandler) GetMyTimetable(c *fiber.Ctx) error {
 		"message": "Timetable retrieved successfully",
 		"data":    timetable,
 	})
+}
+
+// parseTimetableOrgFilter đọc bộ lọc nguồn lớp của GET /me/timetable: ?organization_id=<uuid> (chỉ lớp của
+// tổ chức đó) hoặc ?scope=personal (chỉ lớp cá nhân). Không gửi = mọi lớp. Trả thông báo lỗi khi id sai,
+// scope khác "personal", hoặc gửi cả hai.
+func parseTimetableOrgFilter(c *fiber.Ctx) (dto.TimetableOrgFilter, string) {
+	rawOrg, scope := c.Query("organization_id"), c.Query("scope")
+	if rawOrg != "" && scope != "" {
+		return dto.TimetableOrgFilter{}, "organization_id and scope cannot be used together"
+	}
+	if scope != "" {
+		if scope != "personal" {
+			return dto.TimetableOrgFilter{}, "scope must be \"personal\""
+		}
+		return dto.TimetableOrgFilter{PersonalOnly: true}, ""
+	}
+	if rawOrg != "" {
+		orgID, err := uuid.Parse(rawOrg)
+		if err != nil {
+			return dto.TimetableOrgFilter{}, "organization_id must be a valid UUID"
+		}
+		return dto.TimetableOrgFilter{OrganizationID: &orgID}, ""
+	}
+	return dto.TimetableOrgFilter{}, ""
 }
 
 func (h *ScheduleHandler) GetMyAttendances(c *fiber.Ctx) error {
