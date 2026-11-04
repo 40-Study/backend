@@ -3,12 +3,15 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"study.com/v1/data"
+	"study.com/v1/internal/constants"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -24,11 +27,13 @@ type OrganizationServiceInterface interface {
 }
 
 type OrganizationService struct {
-	repo repository.OrganizationRepositoryInterface
+	repo        repository.OrganizationRepositoryInterface
+	redisClient *redis.Client
 }
 
-func NewOrganizationService(repo repository.OrganizationRepositoryInterface) *OrganizationService {
-	return &OrganizationService{repo: repo}
+// redisClient có thể nil (test): khi đó không vô hiệu hoá token của thành viên lúc xoá tổ chức.
+func NewOrganizationService(repo repository.OrganizationRepositoryInterface, redisClient *redis.Client) *OrganizationService {
+	return &OrganizationService{repo: repo, redisClient: redisClient}
 }
 
 // orgOwnerPermissionNames (23a, review vòng 1) — danh sách permission của role ORG_OWNER dùng để
@@ -191,7 +196,25 @@ func (s *OrganizationService) DeleteOrganization(ctx context.Context, id uuid.UU
 		return errors.New("organization not found")
 	}
 
-	return s.repo.DeleteOrganization(ctx, id, hardDelete)
+	// Thành viên phải được lấy TRƯỚC khi xoá: xoá tổ chức gỡ luôn vai trò của họ.
+	members, err := s.repo.ActiveMemberUserIDs(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.DeleteOrganization(ctx, id, hardDelete); err != nil {
+		return err
+	}
+
+	// Security: tăng user_version để token đang chọn tổ chức này (active_org_id) hết hiệu lực, như khi thu hồi vai trò
+	// (QA3-02). Lỗi Redis chỉ log: tổ chức đã xoá xong, token cũ cũng không còn vai trò nào để dùng.
+	if s.redisClient != nil {
+		for _, userID := range members {
+			if err := s.redisClient.Incr(ctx, constants.KeyUserVersion(userID.String())).Err(); err != nil {
+				log.Printf("[OrganizationService] không tăng được user_version của %s sau khi xoá tổ chức %s: %v", userID, id, err)
+			}
+		}
+	}
+	return nil
 }
 
 // ============ Helper Methods ============

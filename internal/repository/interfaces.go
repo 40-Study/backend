@@ -58,8 +58,11 @@ type AdminOrderFilter struct {
 	UserID *uuid.UUID
 	From   *time.Time
 	To     *time.Time
-	Page   int
-	Limit  int
+	// Keyword (query `q`): khớp "chứa chuỗi", không phân biệt hoa/thường và dấu tiếng Việt, trên mã đơn HOẶC email/tên
+	// (họ tên, tên đăng nhập) của người mua. Rỗng = không lọc. Kết hợp AND với các tiêu chí khác.
+	Keyword string
+	Page    int
+	Limit   int
 }
 
 // OrderItemRepositoryInterface defines the interface for OrderItem operations

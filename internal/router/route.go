@@ -90,20 +90,20 @@ func SetupAllRoutes(
 	})
 
 	SetupAuthRoutes(api, cfg, authHandler, oauthHandler, redis, permChecker)
-	SetupOrgRoleRoutes(api, cfg, roleHandler, redis, permChecker)
+	SetupOrgRoleRoutes(api, cfg, roleHandler, redis, permChecker, auditRec)
 	SetupSystemRoleRoutes(api, cfg, systemRoleHandler, redis, permChecker, auditRec)
 	SetupUserSystemRoleRoutes(api, cfg, userSystemRoleHandler, redis, permChecker, auditRec)
-	SetupUserOrganizationRoleRoutes(api, cfg, userOrgRoleHandler, redis, permChecker)
+	SetupUserOrganizationRoleRoutes(api, cfg, userOrgRoleHandler, redis, permChecker, auditRec)
 	SetupUserAdminRoutes(api, cfg, userAdminHandler, redis, permChecker, auditRec)
 	SetupPermissionRoutes(api, cfg, permissionHandler, redis, permChecker, auditRec)
-	SetupOrganizationRoutes(api, cfg, organizationHandler, redis, permChecker)
+	SetupOrganizationRoutes(api, cfg, organizationHandler, redis, permChecker, auditRec)
 	SetupProfileRoutes(api, cfg, profileHandler, redis)
 	SetupTeacherRoutes(api, cfg, teacherHandler, redis, permChecker)
 	// Phase 3: PHẢI trước SetupTeacherProfileRoutes — "/teacher-profiles/me" tĩnh phải thắng "/:id".
 	SetupApprovalRoutes(api, cfg, approvalHandler, redis, permChecker, auditRec)
 	SetupTeacherProfileRoutes(api, cfg, teacherProfileHandler, redis)
 	SetupClassRoutes(api, cfg, classHandler, attendanceHandler, redis, permChecker)
-	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis, permChecker)
+	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis, permChecker, auditRec)
 	SetupCartRoutes(api, cfg, cartHandler, redis)
 	SetupCourseRoutes(api, cfg, courseHandler, sectionHandler, lessonHandler, lessonContentHandler, lessonPreviewHandler, classHandler, classLessonContentHandler, attendanceHandler, redis)
 	SetupEnrollmentRoutes(api, cfg, enrollmentHandler, redis)
@@ -120,7 +120,7 @@ func SetupAllRoutes(
 
 	// Order & Payment routes
 	SetupOrderRoutes(api, cfg, orderHandler, adminOrderHandler, redis, permChecker, auditRec)
-	SetupVoucherRoutes(api, cfg, voucherHandler, redis, permChecker)
+	SetupVoucherRoutes(api, cfg, voucherHandler, redis, permChecker, auditRec)
 
 	// Gamification routes
 	SetupAchievementRoutes(api, cfg, achievementHandler, redis, permChecker)
@@ -176,7 +176,7 @@ func SetupAllRoutes(
 	SetupMessageRoutes(api, cfg, messageHandler, redis)
 
 	// Contest routes
-	SetupContestRoutes(api, cfg, contestHandler, redis, permChecker)
+	SetupContestRoutes(api, cfg, contestHandler, redis, permChecker, auditRec)
 
 	// Personal Event routes
 	SetupPersonalEventRoutes(api, cfg, personalEventHandler, redis)

@@ -228,8 +228,7 @@ func (r *VoucherRepository) GetAllVouchers(ctx context.Context, limit, offset in
 
 	// Apply filters
 	if keyword != "" {
-		pattern := utils.ContainsLikePattern(keyword)
-		query = query.Where("code ILIKE ? OR name ILIKE ?", pattern, pattern)
+		query = utils.ApplyAccentInsensitiveKeywordSearch(query, keyword, "code", "name")
 	}
 	if startTime != nil {
 		query = query.Where("start_date >= ?", startTime)

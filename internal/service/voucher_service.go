@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,13 @@ import (
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 )
+
+// voucherCodePattern: mã voucher chỉ gồm chữ in hoa không dấu, số, gạch ngang và gạch dưới (QA3-11: "qa3 test!" lọt qua
+// vì validation chỉ kiểm độ dài). Mã được chuẩn hoá in hoa (dto.NormalizeVoucherCode) trước khi kiểm.
+var voucherCodePattern = regexp.MustCompile(`^[A-Z0-9_-]+$`)
+
+// ErrVoucherCodeInvalid hiện thẳng cho quản trị viên (handler trả 400 ERR_INVALID_VOUCHER_CODE).
+var ErrVoucherCodeInvalid = errors.New("Mã voucher chỉ được gồm chữ cái không dấu, số, dấu gạch ngang (-) và gạch dưới (_), không có khoảng trắng hay ký tự đặc biệt")
 
 var (
 	ErrVoucherInactive        = errors.New("voucher is inactive")
@@ -168,6 +176,11 @@ func (vs *VoucherService) validateVoucherRequest(req *dto.CreateVoucherRequest) 
 }
 
 func (vs *VoucherService) CreateVoucher(ctx context.Context, req *dto.CreateVoucherRequest) (*model.Voucher, error) {
+	req.Code = dto.NormalizeVoucherCode(req.Code)
+	if !voucherCodePattern.MatchString(req.Code) {
+		return nil, ErrVoucherCodeInvalid
+	}
+
 	// Check code exists
 	if existingVoucher, _ := vs.vr.GetVoucherByCode(ctx, req.Code); existingVoucher != nil {
 		return nil, errors.New("voucher code already exists")

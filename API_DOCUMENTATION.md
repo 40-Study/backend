@@ -541,6 +541,13 @@ chưa nộp bài, đọc thẳng đáp án đúng từ `GET /api/quizzes/:id/que
 | POST | `/api/orders/:id/payment-intent` | CreatePaymentIntent | Tạo payment intent |
 | GET | `/api/orders/:id/payment-status` | GetPaymentStatus | Lấy trạng thái payment |
 | POST | `/api/orders/:id/check-payment` | CheckPayment | Kiểm tra payment |
+| GET | `/api/orders/admin` | ListOrders | Danh sách đơn của mọi người dùng (admin, quyền `PAYMENTS_MANAGE`) |
+
+**Query của `GET /api/orders/admin`:** `page`, `limit` (mặc định 1 / 20), `status` (một trong các trạng thái đơn, sai trả 400), `user_id`, `from`, `to` (RFC3339) và:
+
+| Param | Ý nghĩa |
+|-------|---------|
+| `q` | Tìm theo **mã đơn** (vd `FX-000226`) **hoặc email / họ tên / tên đăng nhập của người mua**. Khớp "chứa chuỗi", không phân biệt hoa/thường **và dấu tiếng Việt** (`nguyen` khớp `Nguyễn`); ký tự `%` `_` `\` khớp literal. Cắt khoảng trắng hai đầu; rỗng hoặc vắng = không lọc. Kết hợp AND với các tham số còn lại; `total` và phân trang tính trên tập đã lọc. |
 
 **Request DTO (CreateOrderRequest):**
 ```json

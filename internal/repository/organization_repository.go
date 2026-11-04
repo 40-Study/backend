@@ -23,6 +23,8 @@ type OrganizationRepositoryInterface interface {
 	UpdateOrganization(ctx context.Context, org *model.Organization) error
 	DeleteOrganization(ctx context.Context, id uuid.UUID, hardDelete bool) error
 	GetOrganizationWithRoles(ctx context.Context, orgID uuid.UUID) (*model.Organization, error)
+	// ActiveMemberUserIDs: user đang giữ ít nhất một vai trò active trong tổ chức (gọi TRƯỚC khi xoá tổ chức).
+	ActiveMemberUserIDs(ctx context.Context, orgID uuid.UUID) ([]uuid.UUID, error)
 }
 
 type OrganizationRepository struct {
@@ -80,7 +82,7 @@ func (r *OrganizationRepository) GetAllOrganizations(ctx context.Context, page, 
 	default: // "active" or empty
 	}
 	if keyword != "" {
-		query = query.Where("name ILIKE ?", utils.ContainsLikePattern(keyword))
+		query = utils.ApplyAccentInsensitiveKeywordSearch(query, keyword, "name")
 	}
 
 	if err := query.Count(&total).Error; err != nil {
@@ -124,7 +126,22 @@ func (r *OrganizationRepository) DeleteOrganization(ctx context.Context, id uuid
 			return tx.Unscoped().Delete(&model.Organization{}, "id = ?", id).Error
 		})
 	}
-	return r.db.WithContext(ctx).Delete(&model.Organization{}, "id = ?", id).Error
+	// Xoá mềm: FK CASCADE không chạy nên phải gỡ vai trò của mọi thành viên trong CÙNG transaction, nếu không họ giữ
+	// vai trò active trỏ vào tổ chức đã mất (QA3-02).
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("organization_id = ?", id).Delete(&model.UserOrganizationRole{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.Organization{}, "id = ?", id).Error
+	})
+}
+
+func (r *OrganizationRepository) ActiveMemberUserIDs(ctx context.Context, orgID uuid.UUID) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := r.db.WithContext(ctx).Model(&model.UserOrganizationRole{}).
+		Where("organization_id = ? AND status = ?", orgID, model.UserOrgRoleStatusActive).
+		Distinct().Pluck("user_id", &ids).Error
+	return ids, err
 }
 
 func (r *OrganizationRepository) GetOrganizationWithRoles(ctx context.Context, orgID uuid.UUID) (*model.Organization, error) {

@@ -18,7 +18,7 @@ var ErrAdminUserNotFound = errors.New("user not found")
 
 // AdminUserListFilter — tham số lọc GET /api/users (contract phase-01-user-management.md).
 type AdminUserListFilter struct {
-	Keyword string // khớp email/user_name/full_name, ILIKE
+	Keyword string // khớp email/user_name/full_name, không phân biệt hoa/thường và dấu
 	Role    string // tên SystemRole, join user_system_roles
 	Status  string // "active" | "locked" -> map is_active
 	Page    int
@@ -157,11 +157,8 @@ func (r *UserRepository) AdminListUsers(ctx context.Context, filter AdminUserLis
 		// của ILIKE), rồi mới escape `%`/`_` — cả 3 cặp thay thế chạy 1 lượt duy nhất qua
 		// strings.NewReplacer nên không bị escape lặp lại ký tự vừa chèn. Escaper nay nằm ở
 		// utils.ContainsLikePattern (QA vòng 2 G5) để mọi ô tìm kiếm dùng chung một chỗ.
-		like := utils.ContainsLikePattern(filter.Keyword)
-		query = query.Where(
-			"email ILIKE ? OR user_name ILIKE ? OR full_name ILIKE ?",
-			like, like, like,
-		)
+		// QA3-08: thêm bỏ dấu tiếng Việt ("nguyen" ra "Nguyễn") — xem utils.ApplyAccentInsensitiveKeywordSearch.
+		query = utils.ApplyAccentInsensitiveKeywordSearch(query, filter.Keyword, "email", "user_name", "full_name")
 	}
 	if filter.Status == "active" {
 		query = query.Where("is_active = ?", true)

@@ -405,7 +405,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 		Permission: service.NewPermissionService(repos.Permission),
 
 		// ===== Organization & Profile =====
-		Organization: service.NewOrganizationService(repos.Organization),
+		Organization: service.NewOrganizationService(repos.Organization, resources.Redis),
 
 		Profile: service.NewProfileService(
 			repos.ParentStudent,

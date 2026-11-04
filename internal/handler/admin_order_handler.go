@@ -57,8 +57,10 @@ func (h *AdminOrderHandler) ListOrders(c *fiber.Ctx) error {
 
 	filter := repository.AdminOrderFilter{
 		Status: status,
-		Page:   page,
-		Limit:  limit,
+		// `q`: tìm theo mã đơn hoặc email/tên người mua (QA3-01: ô tìm kiếm ở web chỉ lọc 20 dòng đã tải).
+		Keyword: strings.TrimSpace(c.Query("q", "")),
+		Page:    page,
+		Limit:   limit,
 	}
 
 	if userIDStr := c.Query("user_id", ""); userIDStr != "" {

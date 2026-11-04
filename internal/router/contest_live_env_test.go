@@ -105,7 +105,7 @@ func newCtEnv(t *testing.T) *ctEnv {
 	e.svc = service.NewContestService(repository.NewContestRepository(db), e.engine, e.issuer,
 		repository.NewEnrollmentRepository(db))
 	app := fiber.New()
-	SetupContestRoutes(app.Group("/api"), cfg, handler.NewContestHandler(e.svc, pc), rdb, pc)
+	SetupContestRoutes(app.Group("/api"), cfg, handler.NewContestHandler(e.svc, pc), rdb, pc, &auditSpyRouter{})
 	e.app = app
 	return e
 }

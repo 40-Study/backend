@@ -34,6 +34,32 @@ const (
 	AuditActionWithdrawalMarkCompleted   = "withdrawal.mark_completed"
 	AuditActionSettingPlatformFeeUpdate  = "setting.platform_fee_update"
 	AuditActionNotificationBroadcast     = "notification.broadcast"
+
+	// QA3-06: tổ chức, danh mục, voucher, vai trò tổ chức, gán vai trò tổ chức, cuộc thi (duyệt/chốt) trước đây không ghi nhật ký.
+	AuditActionOrganizationCreate  = "organization.create"
+	AuditActionOrganizationUpdate  = "organization.update"
+	AuditActionOrganizationDelete  = "organization.delete"
+	AuditActionCategoryCreate      = "category.create"
+	AuditActionCategoryUpdate      = "category.update"
+	AuditActionCategoryDelete      = "category.delete"
+	AuditActionVoucherCreate       = "voucher.create"
+	AuditActionVoucherUpdate       = "voucher.update"
+	AuditActionVoucherDelete       = "voucher.delete"
+	AuditActionVoucherRestore      = "voucher.restore"
+	AuditActionVoucherActivate     = "voucher.activate"
+	AuditActionVoucherDeactivate   = "voucher.deactivate"
+	AuditActionOrgRoleCreate       = "org_role.create"
+	AuditActionOrgRoleUpdate       = "org_role.update"
+	AuditActionOrgRoleDelete       = "org_role.delete"
+	AuditActionOrgRoleRestore      = "org_role.restore"
+	AuditActionOrgRolePermissions  = "org_role.permissions_change"
+	AuditActionUserOrgRoleAssign   = "user.org_role_assign"
+	AuditActionUserOrgRoleRevoke   = "user.org_role_revoke"
+	AuditActionContestApprove      = "contest.approve"
+	AuditActionContestReject       = "contest.reject"
+	AuditActionContestCancel       = "contest.cancel"
+	AuditActionContestPrizesUpdate = "contest.prizes_update"
+	AuditActionContestFinalize     = "contest.finalize"
 )
 
 // AuditActions: toàn bộ mã hành động hợp lệ, theo thứ tự nhóm trong bảng của phase 8.
@@ -49,6 +75,15 @@ var AuditActions = []string{
 	AuditActionWithdrawalApprove, AuditActionWithdrawalReject, AuditActionWithdrawalMarkCompleted,
 	AuditActionSettingPlatformFeeUpdate,
 	AuditActionNotificationBroadcast,
+	AuditActionOrganizationCreate, AuditActionOrganizationUpdate, AuditActionOrganizationDelete,
+	AuditActionCategoryCreate, AuditActionCategoryUpdate, AuditActionCategoryDelete,
+	AuditActionVoucherCreate, AuditActionVoucherUpdate, AuditActionVoucherDelete, AuditActionVoucherRestore,
+	AuditActionVoucherActivate, AuditActionVoucherDeactivate,
+	AuditActionOrgRoleCreate, AuditActionOrgRoleUpdate, AuditActionOrgRoleDelete, AuditActionOrgRoleRestore,
+	AuditActionOrgRolePermissions,
+	AuditActionUserOrgRoleAssign, AuditActionUserOrgRoleRevoke,
+	AuditActionContestApprove, AuditActionContestReject, AuditActionContestCancel,
+	AuditActionContestPrizesUpdate, AuditActionContestFinalize,
 }
 
 // AuditLog là một dòng nhật ký hoạt động quản trị. Chỉ-thêm (append-only): không có đường update

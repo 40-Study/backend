@@ -2,13 +2,36 @@ package handler
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
+	"study.com/v1/internal/utils"
 )
+
+// systemRoleInvalid trả 400 với thông báo tiếng Việt (hiện thẳng cho quản trị viên) + chi tiết theo trường.
+func systemRoleInvalid(c *fiber.Ctx, errs []utils.ValidationError) error {
+	message := "Dữ liệu vai trò không hợp lệ"
+	for _, e := range errs {
+		switch e.Field {
+		case "name":
+			message = "Tên vai trò phải có từ 2 đến 100 ký tự và không được để trống"
+		case "description":
+			message = "Mô tả vai trò tối đa 500 ký tự"
+		default:
+			continue
+		}
+		break
+	}
+	return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+		"message": message,
+		"code":    "ERR_VALIDATION",
+		"errors":  errs,
+	})
+}
 
 type SystemRoleHandlerInterface interface {
 	CreateSystemRole(c *fiber.Ctx) error
@@ -39,6 +62,14 @@ func (h *SystemRoleHandler) CreateSystemRole(c *fiber.Ctx) error {
 			"message": "Invalid request body",
 			"error":   err.Error(),
 		})
+	}
+
+	// QA3-03: handler không từng gọi ValidateStruct nên tạo được vai trò tên rỗng/"   "/1 ký tự (tag min=2 của DTO vô
+	// tác dụng). Trim TRƯỚC khi validate: "   " có 3 ký tự, qua được min=2 nếu không trim (cùng cách organization_handler).
+	req.Name = strings.TrimSpace(req.Name)
+	req.Description = strings.TrimSpace(req.Description)
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return systemRoleInvalid(c, errs)
 	}
 
 	role, err := h.service.CreateSystemRole(c.Context(), req)
@@ -118,6 +149,23 @@ func (h *SystemRoleHandler) UpdateSystemRole(c *fiber.Ctx) error {
 			"message": "Invalid request body",
 			"error":   err.Error(),
 		})
+	}
+
+	// QA3-03: như CreateSystemRole. Tên gửi lên (kể cả rỗng) vẫn phải qua luật tên của DTO tạo (SSOT): tag `omitempty`
+	// của con trỏ bỏ qua chuỗi rỗng, nên "" hoặc "   " sẽ lọt nếu chỉ validate UpdateSystemRoleDTO.
+	if req.Name != nil {
+		trimmed := strings.TrimSpace(*req.Name)
+		req.Name = &trimmed
+		if errs := utils.ValidateStruct(dto.CreateSystemRoleDTO{Name: trimmed}); len(errs) > 0 {
+			return systemRoleInvalid(c, errs)
+		}
+	}
+	if req.Description != nil {
+		trimmed := strings.TrimSpace(*req.Description)
+		req.Description = &trimmed
+	}
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return systemRoleInvalid(c, errs)
 	}
 
 	role, err := h.service.UpdateSystemRole(c.Context(), id, req)

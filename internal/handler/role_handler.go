@@ -42,7 +42,7 @@ func roleErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, service.ErrNotRoleOrgMember), errors.Is(err, service.ErrPermissionNotOrgScope):
 		return fiber.StatusForbidden
-	case errors.Is(err, service.ErrRoleInUse):
+	case errors.Is(err, service.ErrRoleInUse), errors.Is(err, service.ErrRoleNameTaken):
 		return fiber.StatusConflict
 	case err != nil && err.Error() == "role not found":
 		return fiber.StatusNotFound
@@ -74,6 +74,9 @@ func respondRoleError(c *fiber.Ctx, err error, fallbackStatus int, message strin
 			// Mã ổn định để web dịch câu tiếng Việt, không so khớp chuỗi tiếng Anh.
 			body["code"] = "ROLE_IN_USE"
 		}
+		if errors.Is(err, service.ErrRoleNameTaken) {
+			body["code"] = "ROLE_NAME_TAKEN"
+		}
 		return c.Status(status).JSON(body)
 	}
 	return c.Status(fallbackStatus).JSON(fiber.Map{"message": message, "error": err.Error()})
@@ -104,6 +107,9 @@ func (h *RoleHandler) CreateRole(c *fiber.Ctx) error {
 	if err != nil {
 		return respondRoleError(c, err, fiber.StatusBadRequest, "Failed to create role")
 	}
+
+	// Id nằm trong response chứ không ở URL: đặt đích cho middleware Audit.
+	middleware.SetAuditTarget(c, role.ID.String())
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message": "Role created successfully",

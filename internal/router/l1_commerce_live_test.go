@@ -93,7 +93,7 @@ func newL1Env(t *testing.T) *l1Env {
 	app := fiber.New()
 	api := app.Group("/api")
 	voucherSvc := service.NewVoucherService(repository.NewVoucherRepository(db), repository.NewUserRepository(db))
-	SetupVoucherRoutes(api, cfg, handler.NewVoucherHandler(voucherSvc), rdb, pc)
+	SetupVoucherRoutes(api, cfg, handler.NewVoucherHandler(voucherSvc), rdb, pc, &auditSpyRouter{})
 	courseSvc := service.NewCourseService(repository.NewCourseRepository(db), nil, nil, nil)
 	SetupCourseRoutes(api, cfg, handler.NewCourseHandler(courseSvc, pc), nil, nil, nil, nil, nil, nil, nil, rdb)
 	e.app = app

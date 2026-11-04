@@ -85,7 +85,7 @@ func (s auditSystemRoleSvc) CreateSystemRole(context.Context, dto.CreateSystemRo
 func TestSystemRoleHandler_CreateSetsAuditTargetFromResponse(t *testing.T) {
 	id := uuid.New()
 	h := NewSystemRoleHandler(auditSystemRoleSvc{id: id})
-	spy, _, status := auditWiringCall(t, "POST", "/system-roles", "/system-roles", `{"name":"X"}`,
+	spy, _, status := auditWiringCall(t, "POST", "/system-roles", "/system-roles", `{"name":"Xy"}`,
 		model.AuditActionSystemRoleCreate, "system_role", "", h.CreateSystemRole)
 	if status != 201 || len(spy.entries) != 1 || spy.entries[0].TargetID != id.String() {
 		t.Errorf("status=%d entries=%+v, muốn 1 dòng target=%s", status, spy.entries, id)

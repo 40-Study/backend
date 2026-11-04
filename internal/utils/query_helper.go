@@ -36,24 +36,11 @@ func ContainsLikePattern(keyword string) string {
 	return "%" + EscapeLikeKeyword(keyword) + "%"
 }
 
-// ApplyKeywordSearch applies ILIKE search across the given columns (keyword khớp literal).
+// ApplyKeywordSearch tìm "chứa chuỗi" trên các cột đã cho (keyword khớp literal), KHÔNG phân biệt hoa/thường và dấu
+// tiếng Việt: người Việt thường gõ không dấu, "nguyen" phải ra "Nguyễn" (QA3-08). Là tên ngắn của
+// ApplyAccentInsensitiveKeywordSearch để mọi ô tìm kiếm admin dùng chung một cách khớp; xem vietnamese_fold.go.
 func ApplyKeywordSearch(query *gorm.DB, keyword string, columns ...string) *gorm.DB {
-	if keyword == "" || len(columns) == 0 {
-		return query
-	}
-
-	pattern := ContainsLikePattern(keyword)
-	condition := ""
-	args := make([]interface{}, len(columns))
-	for i, col := range columns {
-		if i > 0 {
-			condition += " OR "
-		}
-		condition += col + " ILIKE ?"
-		args[i] = pattern
-	}
-
-	return query.Where(condition, args...)
+	return ApplyAccentInsensitiveKeywordSearch(query, keyword, columns...)
 }
 
 // ApplySoftDeleteStatus filters by soft-delete status for models using gorm.DeletedAt.

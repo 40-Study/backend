@@ -152,6 +152,14 @@ func (h *UserOrganizationRoleHandler) AssignOrgRolesToUser(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, granterID)
 
 	result, err := h.service.AssignOrgRolesToUser(c.Context(), userID, req, granterID, activeOrgID, isAdmin)
+	if errors.Is(err, service.ErrOrgRoleAlreadyAssigned) {
+		// Mã ổn định để web dịch; message/error đã là tiếng Việt nên hiện đúng cả khi web chưa có bản dịch.
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"message": err.Error(),
+			"error":   err.Error(),
+			"code":    "ORG_ROLE_ALREADY_ASSIGNED",
+		})
+	}
 	if err != nil {
 		status := fiber.StatusInternalServerError
 		errMsg := err.Error()
@@ -159,9 +167,6 @@ func (h *UserOrganizationRoleHandler) AssignOrgRolesToUser(c *fiber.Ctx) error {
 			strings.Contains(errMsg, "role not found") || strings.Contains(errMsg, "role is not active") ||
 			strings.Contains(errMsg, "does not belong to this organization") {
 			status = fiber.StatusNotFound
-		}
-		if strings.Contains(errMsg, "roles already assigned") {
-			status = fiber.StatusConflict
 		}
 		if errMsg == service.ErrOrgRoleForbidden.Error() {
 			status = fiber.StatusForbidden
