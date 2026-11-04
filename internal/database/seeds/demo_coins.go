@@ -16,6 +16,21 @@ var demoCoinPackages = []model.CoinPackage{
 	{Name: "Gói Siêu tiết kiệm", Description: ptr("2.500 xu tặng thêm 500 xu, giá tốt nhất."), CoinAmount: 2500, BonusAmount: 500, Price: money(425000), DiscountPercent: 15, SortOrder: 4},
 }
 
+// legacyCoinPackageNames: gói xu của phiên bản dữ liệu demo cũ, gần như trùng gói hiện tại (Khởi Động ~ Khởi đầu, Phổ
+// Thông ~ Tiêu chuẩn, Tiết Kiệm ~ Nâng cao, Cao Cấp ~ Siêu tiết kiệm) và có một huy hiệu nổi bật riêng, nên DB đã seed bằng
+// bản cũ hiện hai bộ gói trùng nhau cùng hai nhãn "Phổ biến" (QA3 Q22).
+var legacyCoinPackageNames = []string{"Gói Khởi Động", "Gói Phổ Thông", "Gói Tiết Kiệm", "Gói Cao Cấp"}
+
+// retireLegacyCoinPackages tắt (is_active = false, bỏ nổi bật) các gói cũ thay vì xoá: lịch sử mua có thể còn trỏ tới chúng.
+// Danh sách gói công khai chỉ lấy gói is_active nên chúng biến khỏi trang. Chạy lại là no-op.
+func (s *Seeder) retireLegacyCoinPackages() error {
+	if err := s.db.Model(&model.CoinPackage{}).Where("name IN ?", legacyCoinPackageNames).
+		UpdateColumns(map[string]interface{}{"is_active": false, "is_featured": false}).Error; err != nil {
+		return fmt.Errorf("failed to retire legacy coin packages: %w", err)
+	}
+	return nil
+}
+
 // demoCoinTx là một giao dịch xu demo. Package (nếu có) sinh kèm một coin_purchase COMPLETED.
 // Amount âm = tiêu xu (cùng quy ước coin_service ghi SPEND/gift).
 type demoCoinTx struct {
@@ -47,6 +62,9 @@ var demoCoinLedger = map[string][]demoCoinTx{
 // và lịch sử mua gói — dữ liệu cho trang (app)/coins. student2 có thêm 1 lần mua FAILED khớp thông
 // báo payment_failed. Số dư ví luôn đồng bộ lại theo tổng sổ giao dịch (không lệch khi chạy lại).
 func (s *Seeder) SeedDemoCoins(users map[string]model.User) error {
+	if err := s.retireLegacyCoinPackages(); err != nil {
+		return err
+	}
 	packages := make(map[string]model.CoinPackage, len(demoCoinPackages))
 	for _, p := range demoCoinPackages {
 		record := p

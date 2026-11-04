@@ -53,6 +53,11 @@ type Order struct {
 	// nội dung chuyển khoản, không phải mã giao dịch). Mọi lần tra ngân hàng dùng paymentCodeOf(order).
 	// Đơn hoàn tất TRƯỚC khi có cột này đã mất mã và không khôi phục được (xem migration backfill).
 	PaymentCode *string `gorm:"type:varchar(64)" json:"-"`
+	// TransferReportedAt (Q8, QA3): lúc chủ đơn bấm "Tôi đã chuyển khoản" (POST /orders/:id/check-payment) lần đầu.
+	// Chỉ dấu hiệu này mới cho biết họ nói là đã chuyển tiền; có mã thanh toán (processing) chưa có nghĩa là đã chuyển.
+	// Huỷ đơn dựa vào nó khi ngân hàng không trả lời được: chưa báo chuyển khoản thì cho huỷ, đã báo thì giữ đơn.
+	// Chỉ ghi một lần, không bao giờ xoá.
+	TransferReportedAt *time.Time `gorm:"type:timestamptz" json:"-"`
 	Notes       *string `gorm:"type:text" json:"notes,omitempty"`
 
 	// PlatformFeePercent/PlatformFeeAmount (tính năng đơn hàng+hoàn tiền+doanh thu, quyết định

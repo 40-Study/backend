@@ -47,8 +47,8 @@ func listContests(t *testing.T, repo *repository.ContestRepository, f repository
 // số lượng: thêm một cuộc thi demo mới (vd demo-code-judge0) phải sửa đúng chỗ này, và một cuộc thi bị mất hay đổi
 // phase hiện ra bằng tên thay vì một con số lệch.
 var demoContestSlugsByPhase = map[string][]string{
-	model.ContestPhaseUpcoming:  {"demo-thi-javascript-sap-dien-ra", "demo-thi-react-hooks-sap-dien-ra"},
-	model.ContestPhaseActive:    {"demo-code-judge0", "demo-thi-git-dang-dien-ra"},
+	model.ContestPhaseUpcoming:  {"demo-thi-javascript-es6", "demo-thi-react-hooks"},
+	model.ContestPhaseActive:    {"demo-code-judge0", "demo-thi-git-co-ban"},
 	model.ContestPhaseEnded:     {"demo-thi-sql-da-ket-thuc"},
 	model.ContestPhaseFinalized: {"demo-thi-git-da-chot"},
 }
@@ -159,7 +159,7 @@ func TestSeedDemoContests_Postgres_DuTabVaIdempotent(t *testing.T) {
 
 		// Mô phỏng nhiều ngày trôi qua: cuộc thi UPCOMING đã về quá khứ, lần seed sau phải đưa lại tương lai.
 		if run == 1 {
-			if err := db.Model(&model.Contest{}).Where("slug LIKE ?", "%sap-dien-ra").
+			if err := db.Model(&model.Contest{}).Where("slug IN ?", []string{"demo-thi-javascript-es6", "demo-thi-react-hooks"}).
 				Updates(map[string]interface{}{"start_time": time.Now().AddDate(0, 0, -5), "end_time": time.Now().AddDate(0, 0, -4)}).Error; err != nil {
 				t.Fatalf("làm trôi lịch: %v", err)
 			}

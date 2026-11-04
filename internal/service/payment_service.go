@@ -35,6 +35,10 @@ var (
 	// với ngân hàng (đang trong ân hạn, hoặc ngân hàng lỗi/timeout). Không được đổi trạng thái đơn
 	// (huỷ, mở phiên mới) khi chưa biết tiền đã về hay chưa. Handler trả 409 ERR_PAYMENT_VERIFYING.
 	ErrPaymentVerificationPending = errors.New("Đơn hàng đang được đối chiếu thanh toán với ngân hàng. Vui lòng không chuyển khoản lại và thử lại sau ít phút.")
+	// ErrPaymentProviderUnavailable (Q8, QA3): dịch vụ tra cứu ngân hàng không trả lời được VÀ chủ đơn đã báo chuyển
+	// khoản, nên chưa thể biết tiền đã về hay chưa. Khác ErrPaymentVerificationPending (ngân hàng trả lời nhưng giao
+	// dịch chưa khớp/đang ân hạn). Handler trả 503 ERR_PAYMENT_PROVIDER_UNAVAILABLE.
+	ErrPaymentProviderUnavailable = errors.New("Hệ thống đối chiếu ngân hàng đang tạm gián đoạn nên chưa xác minh được khoản chuyển khoản của bạn. Vui lòng không chuyển khoản lại và thử huỷ đơn sau ít phút.")
 )
 
 // paymentReconcileGracePeriod (review #76 vòng 3, quyết định chủ dự án 28/09): sau khi mã chuyển
@@ -55,6 +59,10 @@ const bankLookupDateSlack = 24 * time.Hour
 type PaymentServiceInterface interface {
 	CreatePaymentIntent(ctx context.Context, userID, orderID uuid.UUID, isAdmin bool, paymentMethod string) (*dto.PaymentIntentResponse, error)
 	CheckAndProcessPayment(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool) (*dto.PaymentStatusResponse, error)
+	// ConfirmTransferAndCheck: nút "Tôi đã chuyển khoản" — ghi nhận chủ đơn đã báo chuyển khoản (orders.transfer_reported_at)
+	// rồi kiểm tra như CheckAndProcessPayment. Chỉ route POST /orders/:id/check-payment gọi; poll GET payment-status
+	// và các job nền KHÔNG được ghi nhận.
+	ConfirmTransferAndCheck(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool) (*dto.PaymentStatusResponse, error)
 	GetPaymentStatus(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool) (*dto.PaymentStatusResponse, error)
 }
 
@@ -392,6 +400,24 @@ func (s *PaymentService) CheckAndProcessPayment(ctx context.Context, orderID, ac
 	return s.checkAndProcessPayment(ctx, orderID, actorUserID, isAdmin, reconcileOptions{})
 }
 
+// ConfirmTransferAndCheck — xem comment interface. Chỉ CHỦ đơn mới được ghi nhận (admin bấm hộ không tính), và chỉ khi
+// đơn đang processing có mã thanh toán. Lỗi ghi nhận được trả lên chứ không nuốt: nuốt thì lần huỷ sau tưởng họ chưa
+// chuyển khoản và có thể huỷ một đơn đã trả tiền.
+func (s *PaymentService) ConfirmTransferAndCheck(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool) (*dto.PaymentStatusResponse, error) {
+	order, err := s.orderRepo.GetByID(orderID)
+	if err != nil {
+		return nil, ErrOrderNotFound
+	}
+	if order.UserID == actorUserID && order.Status == "processing" && hasPaymentCode(order) && order.TransferReportedAt == nil {
+		if err := s.orderRepo.TxDB().WithContext(ctx).Model(&model.Order{}).
+			Where("id = ? AND transfer_reported_at IS NULL", orderID).
+			Update("transfer_reported_at", time.Now()).Error; err != nil {
+			return nil, fmt.Errorf("ghi nhận báo chuyển khoản: %w", err)
+		}
+	}
+	return s.CheckAndProcessPayment(ctx, orderID, actorUserID, isAdmin)
+}
+
 // reconcileOptions — tuỳ chọn riêng của job nền cho luồng đối chiếu; giá trị rỗng là hành vi của người dùng/admin.
 type reconcileOptions struct {
 	// deferUnverifiedExpiry (L8 mục 5): ngân hàng không trả lời được thì KHÔNG chốt expired "chưa xác minh"
@@ -685,6 +711,16 @@ func (s *PaymentService) ReconcileBeforeCancel(ctx context.Context, orderID uuid
 		return ErrPaymentAlreadyDone
 	}
 	if status.Reconciling {
+		if status.BankUnavailable {
+			// Ngân hàng không trả lời. Chủ đơn chưa từng báo chuyển khoản thì không có gì để chờ: cho huỷ (nếu họ đã
+			// chuyển mà không báo, giao dịch về sau vẫn được gắn cờ hoàn tiền trên đơn đã đóng, xem reconcileIssuedOrder).
+			// Đã báo chuyển khoản mà chưa xác minh được thì giữ đơn, báo rõ là do ngân hàng.
+			if order.TransferReportedAt == nil {
+				log.Printf("[PAYMENT-CHECK] order=%s cho huỷ dù ngân hàng không trả lời: chủ đơn chưa báo chuyển khoản", orderID)
+				return nil
+			}
+			return ErrPaymentProviderUnavailable
+		}
 		return ErrPaymentVerificationPending
 	}
 	return nil

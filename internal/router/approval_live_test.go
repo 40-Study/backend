@@ -142,7 +142,7 @@ func TestApprovalLive_CourseRejectNeedsReasonThenResubmit(t *testing.T) {
 func TestApprovalLive_TeacherApprovalTakesEffectImmediately(t *testing.T) {
 	e := newApvEnv(t)
 	uid := e.applicantID.String()
-	course := `{"title":"Khoa hoc moi cua ung vien","price":0}`
+	course := `{"title":"Khoa hoc moi cua ung vien","price":0,"is_free":true}`
 
 	expectStatus(t, "ung vien tao khoa truoc khi duyet", e.do(t, "POST", "/api/courses", e.applicantTok, course), 403)
 	expectStatus(t, "ung vien xem ho so", e.do(t, "GET", "/api/teacher-profiles/me", e.applicantTok, ""), 200)

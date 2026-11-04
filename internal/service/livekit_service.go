@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/livekit/protocol/auth"
@@ -26,18 +29,57 @@ type LivekitServiceInterface interface {
 	SendData(ctx context.Context, roomName string, req dto.SendDataDTO) error
 }
 
+// ErrLivekitNotConfigured (Q3-13, QA3): thiếu cấu hình LiveKit (khoá API / secret / địa chỉ node). Trước đây lỗi này lộ ra
+// là 500 "missing API key or secret key" từ SDK. Handler ánh xạ sang 503 ERR_LIVE_UNAVAILABLE.
+var ErrLivekitNotConfigured = errors.New("livekit is not configured")
+
 type LivekitService struct {
 	apiKey    string
 	apiSecret string
 	host      string
+	// configured: khoá, secret và địa chỉ node đều có (livekitMissingConfig rỗng) lúc khởi tạo.
+	configured bool
 }
 
 func NewLivekitService(cfg *config.Config) *LivekitService {
-	return &LivekitService{
+	s := &LivekitService{
 		apiKey:    cfg.LivekitAPIKey,
 		apiSecret: cfg.LivekitAPISecret,
 		host:      fmt.Sprintf("http://%s:%s", cfg.LivekitNodeIP, cfg.LivekitNodePort),
 	}
+	missing := livekitMissingConfig(cfg)
+	s.configured = len(missing) == 0
+	if len(missing) > 0 {
+		// Không dừng khởi động (phần còn lại của API vẫn dùng được) nhưng PHẢI ồn ào: mỗi lần bắt đầu/vào buổi học trực
+		// tuyến sẽ trả 503 ERR_LIVE_UNAVAILABLE cho tới khi cấu hình đủ.
+		log.Printf("[LIVEKIT] CHƯA CẤU HÌNH, thiếu: %s. Bắt đầu/vào buổi học trực tuyến sẽ trả 503 ERR_LIVE_UNAVAILABLE.", strings.Join(missing, ", "))
+	}
+	return s
+}
+
+// livekitMissingConfig liệt kê biến môi trường LiveKit còn trống (rỗng = cấu hình đủ).
+func livekitMissingConfig(cfg *config.Config) []string {
+	var missing []string
+	for _, f := range []struct{ name, value string }{
+		{"LIVEKIT_API_KEY", cfg.LivekitAPIKey},
+		{"LIVEKIT_API_SECRET", cfg.LivekitAPISecret},
+		{"LIVEKIT_NODE_IP", cfg.LivekitNodeIP},
+		{"LIVEKIT_NODE_PORT", cfg.LivekitNodePort},
+	} {
+		if strings.TrimSpace(f.value) == "" {
+			missing = append(missing, f.name)
+		}
+	}
+	return missing
+}
+
+// ensureConfigured trả ErrLivekitNotConfigured khi thiếu khoá/secret/địa chỉ node, để lỗi cấu hình không bị SDK biến
+// thành lỗi 500 khó hiểu.
+func (s *LivekitService) ensureConfigured() error {
+	if !s.configured {
+		return ErrLivekitNotConfigured
+	}
+	return nil
 }
 
 func (s *LivekitService) client() *lksdk.RoomServiceClient {
@@ -46,6 +88,9 @@ func (s *LivekitService) client() *lksdk.RoomServiceClient {
 
 // CreateRoom creates a new LiveKit room.
 func (s *LivekitService) CreateRoom(ctx context.Context, req dto.CreateRoomDTO) (*livekit.Room, error) {
+	if err := s.ensureConfigured(); err != nil {
+		return nil, err
+	}
 	return s.client().CreateRoom(ctx, &livekit.CreateRoomRequest{
 		Name:            req.RoomName,
 		EmptyTimeout:    req.EmptyTimeout,
@@ -93,6 +138,9 @@ func (s *LivekitService) UpdateRoomMetadata(ctx context.Context, roomName string
 
 // CreateJoinToken generates a JWT token for a participant to join a room.
 func (s *LivekitService) CreateJoinToken(ctx context.Context, roomName string, req dto.JoinTokenDTO) (string, error) {
+	if err := s.ensureConfigured(); err != nil {
+		return "", err
+	}
 	canPublish := true
 	if req.CanPublish != nil {
 		canPublish = *req.CanPublish

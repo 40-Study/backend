@@ -122,7 +122,7 @@ type VoucherServiceInterface interface {
 	// User Voucher (Bookmark/Save)
 	SaveVoucher(ctx context.Context, userID uuid.UUID, req *dto.SaveVoucherRequest) (*model.UserVoucher, error)
 	UnsaveVoucher(ctx context.Context, userID uuid.UUID, voucherID uuid.UUID) error
-	GetUserSavedVouchers(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*model.UserVoucher, int64, error)
+	GetUserSavedVouchers(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*dto.UserVoucherView, int64, error)
 	// GrantVoucherTx (contract "Cuộc thi" §6): phát voucher vào ví user TRÊN "tx" của caller — xem
 	// chú thích tại hàm.
 	GrantVoucherTx(ctx context.Context, tx *gorm.DB, userID, voucherID uuid.UUID, source, notes string) (*model.UserVoucher, error)
@@ -637,6 +637,82 @@ func calculateVoucherDiscountDecimal(voucher *model.Voucher, subtotal decimal.De
 	return discount
 }
 
+// voucherBlockingError là SSOT của các luật "mã này có dùng được với user này không" — dùng chung cho đường áp mã
+// (ValidateAndApplyVoucher) và danh sách ví voucher (GetUserSavedVouchers), để hai nơi không bao giờ lệch nhau.
+// Trả lỗi sentinel của luật đầu tiên chặn mã (thứ tự cố định: tắt, đơn đầu tiên, ngày hiệu lực, voucher điểm,
+// mức tối thiểu, hết lượt toàn hệ thống), hoặc nil nếu qua hết. subtotal == nil nghĩa là chưa có giỏ hàng nên bỏ
+// qua luật mức tối thiểu. Luật usage_per_user KHÔNG nằm ở đây vì lúc đặt đơn nó phải đếm trong transaction có khoá
+// (xem checkUserVoucherLimit / LockAndCheckUsagePerUser).
+func (vs *VoucherService) voucherBlockingError(ctx context.Context, voucher *model.Voucher, userID uuid.UUID, now time.Time, subtotal *decimal.Decimal) error {
+	if !voucher.IsActive {
+		return ErrVoucherInactive
+	}
+	if err := ensureFirstOrderEligible(ctx, vs.vr, voucher, userID, uuid.Nil); err != nil {
+		return err
+	}
+	if voucher.StartDate != nil && now.Before(*voucher.StartDate) {
+		return ErrVoucherNotStarted
+	}
+	if voucher.EndDate != nil && now.After(*voucher.EndDate) {
+		return ErrVoucherExpired
+	}
+	// H2-01: chặn hẳn voucher đổi bằng điểm (POINT) trước khi tính discount — khớp web, tránh
+	// trả về "áp dụng thành công, discount=0" gây hiểu nhầm mã hợp lệ.
+	if voucher.DiscountUnit != model.DiscountUnitMoney {
+		return ErrVoucherNotMoneyUnit
+	}
+	if subtotal != nil && voucher.MinPurchaseMoney != nil && subtotal.LessThan(*voucher.MinPurchaseMoney) {
+		return ErrVoucherMinPurchase
+	}
+	if voucher.IsUsageLimitReached() {
+		return ErrVoucherUsageLimitExceeded
+	}
+	return nil
+}
+
+// checkUserVoucherLimit đếm lượt usage_per_user của user (đã dùng + đang giữ chỗ bằng đơn pending/processing) trên repo
+// được truyền vào. Đường đặt đơn gọi nó trên repo của transaction SAU khi khoá dòng voucher; danh sách ví voucher
+// gọi trên repo thường (chỉ để hiển thị, không cần khoá).
+func checkUserVoucherLimit(ctx context.Context, repo *repository.VoucherRepository, voucher *model.Voucher, userID uuid.UUID) error {
+	if !voucher.HasPerUserLimit() {
+		return nil
+	}
+	completedCount, err := repo.CountUserVoucherUsage(ctx, userID, voucher.ID)
+	if err != nil {
+		return err
+	}
+	heldCount, err := repo.CountUserHeldOrders(ctx, userID, voucher.ID)
+	if err != nil {
+		return err
+	}
+	if completedCount+heldCount >= int64(voucher.UsagePerUser) {
+		return ErrVoucherPerUserLimitExceeded
+	}
+	return nil
+}
+
+// voucherIneligibleReason dịch lỗi luật voucher sang câu tiếng Việt hiển thị thẳng cho người dùng. ok == false khi err
+// không phải một luật voucher (lỗi hạ tầng) — caller phải trả lỗi đó lên chứ không được nuốt thành "không đủ điều kiện".
+func voucherIneligibleReason(err error) (reason string, ok bool) {
+	switch {
+	case errors.Is(err, ErrVoucherInactive):
+		return "Mã giảm giá đã bị tắt", true
+	case errors.Is(err, ErrVoucherFirstOrderOnly):
+		return ErrVoucherFirstOrderOnly.Error(), true
+	case errors.Is(err, ErrVoucherNotStarted):
+		return "Mã giảm giá chưa đến thời gian áp dụng", true
+	case errors.Is(err, ErrVoucherExpired):
+		return "Mã giảm giá đã hết hạn", true
+	case errors.Is(err, ErrVoucherNotMoneyUnit):
+		return "Mã này đổi bằng điểm, không dùng được khi thanh toán bằng tiền", true
+	case errors.Is(err, ErrVoucherUsageLimitExceeded):
+		return "Mã giảm giá đã hết lượt sử dụng", true
+	case errors.Is(err, ErrVoucherPerUserLimitExceeded):
+		return "Bạn đã dùng hết số lượt của mã này", true
+	}
+	return "", false
+}
+
 // ValidateAndApplyVoucher (item 24, review web + review vòng 1) — xem comment interface.
 func (vs *VoucherService) ValidateAndApplyVoucher(ctx context.Context, code string, userID uuid.UUID, subtotal decimal.Decimal, paymentMethod string) (*model.Voucher, decimal.Decimal, error) {
 	voucher, err := vs.vr.GetVoucherByCode(ctx, code)
@@ -658,34 +734,8 @@ func (vs *VoucherService) ValidateAndApplyVoucher(ctx context.Context, code stri
 		return nil, decimal.Zero, repository.ErrVoucherNotFound
 	}
 
-	if !voucher.IsActive {
-		return nil, decimal.Zero, ErrVoucherInactive
-	}
-
-	if err := ensureFirstOrderEligible(ctx, vs.vr, voucher, userID, uuid.Nil); err != nil {
+	if err := vs.voucherBlockingError(ctx, voucher, userID, time.Now(), &subtotal); err != nil {
 		return nil, decimal.Zero, err
-	}
-
-	now := time.Now()
-	if voucher.StartDate != nil && now.Before(*voucher.StartDate) {
-		return nil, decimal.Zero, ErrVoucherNotStarted
-	}
-	if voucher.EndDate != nil && now.After(*voucher.EndDate) {
-		return nil, decimal.Zero, ErrVoucherExpired
-	}
-
-	// H2-01: chặn hẳn voucher đổi bằng điểm (POINT) trước khi tính discount — khớp web, tránh
-	// trả về "áp dụng thành công, discount=0" gây hiểu nhầm mã hợp lệ.
-	if voucher.DiscountUnit != model.DiscountUnitMoney {
-		return nil, decimal.Zero, ErrVoucherNotMoneyUnit
-	}
-
-	if voucher.MinPurchaseMoney != nil && subtotal.LessThan(*voucher.MinPurchaseMoney) {
-		return nil, decimal.Zero, ErrVoucherMinPurchase
-	}
-
-	if voucher.IsUsageLimitReached() {
-		return nil, decimal.Zero, ErrVoucherUsageLimitExceeded
 	}
 
 	// I-02 (review vòng 5): phần đếm usage_per_user (CountUserVoucherUsage + CountUserHeldOrders)
@@ -791,18 +841,7 @@ func (vs *VoucherService) LockAndCheckUsagePerUser(ctx context.Context, tx *gorm
 	if err := txVr.LockVoucherForUpdate(ctx, voucher.ID); err != nil {
 		return err
 	}
-	completedCount, err := txVr.CountUserVoucherUsage(ctx, userID, voucher.ID)
-	if err != nil {
-		return err
-	}
-	heldCount, err := txVr.CountUserHeldOrders(ctx, userID, voucher.ID)
-	if err != nil {
-		return err
-	}
-	if completedCount+heldCount >= int64(voucher.UsagePerUser) {
-		return ErrVoucherPerUserLimitExceeded
-	}
-	return nil
+	return checkUserVoucherLimit(ctx, txVr, voucher, userID)
 }
 
 // RecordUsageLogTx — xem comment interface (RecordUsageLogTx/RecordUsageLog). Tự tra lại
@@ -1028,11 +1067,40 @@ func (vs *VoucherService) UnsaveVoucher(ctx context.Context, userID uuid.UUID, v
 	return vs.vr.DeleteUserVoucher(ctx, userVoucher.ID)
 }
 
-func (vs *VoucherService) GetUserSavedVouchers(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*model.UserVoucher, int64, error) {
+// GetUserSavedVouchers trả ví voucher của user kèm eligible/ineligible_reason cho từng mục (Q7): cùng luật với
+// đường áp mã (voucherBlockingError + checkUserVoucherLimit) nên web không còn xếp mã "đơn đầu tiên" vào "dùng được"
+// cho người đã có đơn. Mức tối thiểu và phương thức thanh toán phụ thuộc giỏ hàng nên không tính ở đây.
+func (vs *VoucherService) GetUserSavedVouchers(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*dto.UserVoucherView, int64, error) {
 	if _, err := vs.ur.FindUserByID(ctx, userID); err != nil {
 		return nil, 0, err
 	}
-	return vs.vr.GetUserVouchers(ctx, userID, limit, offset)
+	saved, total, err := vs.vr.GetUserVouchers(ctx, userID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	now := time.Now()
+	views := make([]*dto.UserVoucherView, 0, len(saved))
+	for _, uv := range saved {
+		view := &dto.UserVoucherView{UserVoucher: uv, Eligible: true}
+		if uv.Voucher == nil {
+			view.Eligible, view.IneligibleReason = false, "Mã giảm giá không còn tồn tại"
+			views = append(views, view)
+			continue
+		}
+		blockErr := vs.voucherBlockingError(ctx, uv.Voucher, userID, now, nil)
+		if blockErr == nil {
+			blockErr = checkUserVoucherLimit(ctx, vs.vr, uv.Voucher, userID)
+		}
+		if blockErr != nil {
+			reason, isRule := voucherIneligibleReason(blockErr)
+			if !isRule {
+				return nil, 0, blockErr
+			}
+			view.Eligible, view.IneligibleReason = false, reason
+		}
+		views = append(views, view)
+	}
+	return views, total, nil
 }
 
 // ============================================================

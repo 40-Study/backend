@@ -28,12 +28,16 @@ func (s *Seeder) SeedDemoContests(users map[string]model.User) error {
 	}
 	now := time.Now()
 
-	activeQuiz, err := s.seedContestQuiz("Đề thi demo: Git cơ bản (đang diễn ra)", teacher.ID, demoQuizQuestions)
+	if err := s.renameLegacyDemoContests(); err != nil {
+		return err
+	}
+
+	activeQuiz, err := s.seedContestQuiz("Đề thi demo: Git cơ bản", teacher.ID, demoQuizQuestions)
 	if err != nil {
 		return err
 	}
-	active := model.Contest{Slug: "demo-thi-git-dang-dien-ra", Title: "Thi nhanh Git cơ bản",
-		Description: ptr("Cuộc thi demo đang diễn ra — 3 câu, 30 phút."), Type: model.ContestTypeQuiz,
+	active := model.Contest{Slug: "demo-thi-git-co-ban", Title: "Thi nhanh Git cơ bản",
+		Description: ptr("Cuộc thi demo Git cơ bản — 3 câu, 30 phút."), Type: model.ContestTypeQuiz,
 		Status: model.ContestStatusPublished, DurationMinutes: ptr(30), IsPublic: true, CreatedBy: teacher.ID,
 		QuizID: &activeQuiz, ReviewedBy: &admin.ID, ReviewedAt: ptr(now)}
 	// Assign lịch mỗi lần seed để cuộc thi luôn ACTIVE (start = now-1h, end = now+7d).
@@ -84,6 +88,33 @@ func (s *Seeder) SeedDemoContests(users map[string]model.User) error {
 		return err
 	}
 	log.Printf("Seeded %d demo contests\n", len(bySlug))
+	return nil
+}
+
+// legacyDemoContestRenames: tên cũ → tên mới của dữ liệu cuộc thi demo mà phiên bản seed trước đặt theo THỜI ĐIỂM
+// ("sắp diễn ra", "đang diễn ra", "tháng 10"). Lịch của các cuộc thi này trôi theo ngày nên cái tên nói dối ngay khi
+// qua mốc đó (QA3 G-11: slug "...sap-dien-ra" mà trang báo "Đã kết thúc"). Seed đổi tên dòng cũ tại chỗ thay vì tạo
+// bản mới cạnh nó, để DB đã seed không bị nhân đôi cuộc thi.
+var legacyDemoContestRenames = []struct{ table, column, from, to string }{
+	{"contests", "slug", "demo-thi-javascript-sap-dien-ra", "demo-thi-javascript-es6"},
+	{"contests", "slug", "demo-thi-react-hooks-sap-dien-ra", "demo-thi-react-hooks"},
+	{"contests", "slug", "demo-thi-git-dang-dien-ra", "demo-thi-git-co-ban"},
+	{"contests", "title", "Thử thách JavaScript ES6+ tháng 10", "Thử thách JavaScript ES6+"},
+	{"contests", "description", "Cuộc thi demo đang diễn ra — 3 câu, 30 phút.", "Cuộc thi demo Git cơ bản — 3 câu, 30 phút."},
+	{"quizzes", "title", "Đề thi demo: JavaScript ES6+ (sắp diễn ra)", "Đề thi demo: JavaScript ES6+"},
+	{"quizzes", "title", "Đề thi demo: React Hooks (sắp diễn ra)", "Đề thi demo: React Hooks"},
+	{"quizzes", "title", "Đề thi demo: Git cơ bản (đang diễn ra)", "Đề thi demo: Git cơ bản"},
+}
+
+// renameLegacyDemoContests áp legacyDemoContestRenames. Chỉ đổi khi tên mới chưa có dòng nào dùng (không vi phạm unique
+// slug), nên chạy lại là no-op. Tên bảng/cột là hằng trong danh sách trên, không đến từ đầu vào.
+func (s *Seeder) renameLegacyDemoContests() error {
+	for _, r := range legacyDemoContestRenames {
+		q := fmt.Sprintf("UPDATE %[1]s SET %[2]s = ? WHERE %[2]s = ? AND NOT EXISTS (SELECT 1 FROM %[1]s WHERE %[2]s = ?)", r.table, r.column)
+		if err := s.db.Exec(q, r.to, r.from, r.to).Error; err != nil {
+			return fmt.Errorf("rename legacy demo %s.%s %q: %w", r.table, r.column, r.from, err)
+		}
+	}
 	return nil
 }
 

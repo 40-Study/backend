@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -675,6 +677,9 @@ func (r *EnrollmentRepository) GetPendingAssignmentsByCourseIDs(ctx context.Cont
 // giáo viên chưa tạo lớp nào dù khoá đã có rất nhiều đơn mua thật (enrollments).
 // ClassID/ClassName là con trỏ: chỉ có giá trị khi học viên này CŨNG đã được xếp vào một lớp
 // thuộc chính khoá học đó — không bịa dữ liệu lớp khi chưa có.
+//
+// Q3-08 (QA3): ClassOnly = true là dòng của học viên đang học trong một lớp của giáo viên nhưng CHƯA ghi danh khoá
+// nào của giáo viên: không có khoá (CourseID/CourseTitle nil) và tiến độ khoá không có nghĩa (ProgressPercent = 0).
 type TeacherStudentRow struct {
 	StudentID       uuid.UUID       `gorm:"column:student_id"`
 	FullName        *string         `gorm:"column:full_name"`
@@ -684,51 +689,83 @@ type TeacherStudentRow struct {
 	EnrolledAt      time.Time       `gorm:"column:enrolled_at"`
 	CompletedAt     *time.Time      `gorm:"column:completed_at"`
 	ProgressPercent decimal.Decimal `gorm:"column:progress_percentage"`
-	CourseID        uuid.UUID       `gorm:"column:course_id"`
-	CourseTitle     string          `gorm:"column:course_title"`
+	CourseID        *uuid.UUID      `gorm:"column:course_id"`
+	CourseTitle     *string         `gorm:"column:course_title"`
 	ClassID         *uuid.UUID      `gorm:"column:class_id"`
 	ClassName       *string         `gorm:"column:class_name"`
+	ClassOnly       bool            `gorm:"column:class_only"`
 }
 
-// GetByInstructor trả các lượt ghi danh (enrollment) vào bất kỳ khoá nào của instructorID —
-// đúng nghĩa "học viên của giáo viên" theo dữ liệu mua/enroll thật, kèm tên lớp nếu học viên đó
-// cũng thuộc một lớp của cùng khoá (2 subquery scalar, không JOIN trực tiếp để tránh nhân dòng
-// khi một học viên lỡ thuộc nhiều lớp của cùng khoá).
+// TeacherStudentsMaxPageSize là page_size lớn nhất của danh sách học viên giáo viên (web xin 200 một lần để xuất CSV
+// và gửi thông báo); vượt thì về mặc định, như các danh sách khác.
+const TeacherStudentsMaxPageSize = 200
+
+// teacherStudentsEnrolledSQL: 1 dòng/1 lượt ghi danh vào khoá của giáo viên, kèm lớp (nếu có) thuộc chính khoá đó
+// (2 subquery scalar, không JOIN trực tiếp để tránh nhân dòng khi một học viên lỡ thuộc nhiều lớp của cùng khoá).
+const teacherStudentsEnrolledSQL = `
+	SELECT u.id AS student_id, u.full_name, u.user_name, u.email, u.avatar_url,
+		e.enrolled_at, e.completed_at, e.progress_percentage,
+		e.course_id, co.title AS course_title,
+		(SELECT sc.class_id FROM student_classes sc
+			JOIN classes cl ON cl.id = sc.class_id
+			WHERE sc.student_id = u.id AND cl.course_id = co.id
+			LIMIT 1) AS class_id,
+		(SELECT cl2.name FROM student_classes sc2
+			JOIN classes cl2 ON cl2.id = sc2.class_id
+			WHERE sc2.student_id = u.id AND cl2.course_id = co.id
+			LIMIT 1) AS class_name,
+		false AS class_only
+	FROM enrollments e
+	JOIN courses co ON co.id = e.course_id
+	JOIN users u ON u.id = e.user_id
+	WHERE co.instructor_id = @instructor`
+
+// teacherStudentsClassOnlySQL: học viên ĐANG HỌC trong một lớp của giáo viên (giảng viên được gán, người tạo lớp, hoặc
+// chủ khoá của lớp) mà chưa có dòng ghi danh nào ở trên. Mỗi học viên đúng một dòng (lớp vào sớm nhất), nên học viên
+// ở nhiều lớp hay đã có ghi danh không bị liệt kê hai lần. "Đang học" dùng chung StudentClassActiveCondition.
+var teacherStudentsClassOnlySQL = `
+	SELECT DISTINCT ON (sc.student_id)
+		u.id AS student_id, u.full_name, u.user_name, u.email, u.avatar_url,
+		sc.enrolled_at, NULL::timestamptz AS completed_at, 0::numeric AS progress_percentage,
+		NULL::uuid AS course_id, NULL::text AS course_title,
+		cl.id AS class_id, cl.name AS class_name,
+		true AS class_only
+	FROM (SELECT * FROM student_classes WHERE ` + StudentClassActiveCondition + `) sc
+	JOIN classes cl ON cl.id = sc.class_id AND cl.deleted_at IS NULL
+	JOIN users u ON u.id = sc.student_id AND u.deleted_at IS NULL
+	LEFT JOIN courses co ON co.id = cl.course_id
+	WHERE (cl.created_by = @instructor
+			OR co.instructor_id = @instructor
+			OR EXISTS (SELECT 1 FROM teacher_classes tc WHERE tc.class_id = cl.id AND tc.teacher_id = @instructor))
+		AND NOT EXISTS (SELECT 1 FROM enrolled WHERE enrolled.student_id = sc.student_id)
+	ORDER BY sc.student_id, sc.enrolled_at`
+
+// GetByInstructor trả học viên của giáo viên: các lượt ghi danh (enrollment) vào bất kỳ khoá nào của instructorID —
+// đúng nghĩa "học viên của giáo viên" theo dữ liệu mua/enroll thật — cộng học viên đang học trong lớp của giáo viên
+// mà chưa ghi danh khoá nào (Q3-08). pageSize tối đa TeacherStudentsMaxPageSize.
 func (r *EnrollmentRepository) GetByInstructor(ctx context.Context, instructorID uuid.UUID, page, pageSize int) ([]TeacherStudentRow, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > TeacherStudentsMaxPageSize {
+		pageSize = 20
+	}
+	const union = "WITH enrolled AS (" + teacherStudentsEnrolledSQL + "), class_only AS ("
+	arg := sql.Named("instructor", instructorID)
+	body := union + "%s) SELECT * FROM enrolled UNION ALL SELECT * FROM class_only"
+
 	var total int64
-	if err := r.db.WithContext(ctx).
-		Table("enrollments e").
-		Joins("JOIN courses co ON co.id = e.course_id").
-		Where("co.instructor_id = ?", instructorID).
-		Count(&total).Error; err != nil {
+	countSQL := "SELECT count(*) FROM (" + fmt.Sprintf(body, teacherStudentsClassOnlySQL) + ") t"
+	if err := r.db.WithContext(ctx).Raw(countSQL, arg).Scan(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
 	var rows []TeacherStudentRow
-	query := r.db.WithContext(ctx).
-		Table("enrollments e").
-		Select(`
-			u.id AS student_id, u.full_name, u.user_name, u.email, u.avatar_url,
-			e.enrolled_at, e.completed_at, e.progress_percentage,
-			e.course_id, co.title AS course_title,
-			(SELECT sc.class_id FROM student_classes sc
-				JOIN classes cl ON cl.id = sc.class_id
-				WHERE sc.student_id = u.id AND cl.course_id = co.id
-				LIMIT 1) AS class_id,
-			(SELECT cl2.name FROM student_classes sc2
-				JOIN classes cl2 ON cl2.id = sc2.class_id
-				WHERE sc2.student_id = u.id AND cl2.course_id = co.id
-				LIMIT 1) AS class_name
-		`).
-		Joins("JOIN courses co ON co.id = e.course_id").
-		Joins("JOIN users u ON u.id = e.user_id").
-		Where("co.instructor_id = ?", instructorID)
-
-	if err := utils.ApplyPagination(query, page, pageSize).
-		Order("e.enrolled_at DESC").
+	listSQL := "SELECT * FROM (" + fmt.Sprintf(body, teacherStudentsClassOnlySQL) + ") t ORDER BY enrolled_at DESC, student_id, course_id LIMIT @limit OFFSET @offset"
+	if err := r.db.WithContext(ctx).
+		Raw(listSQL, arg, sql.Named("limit", pageSize), sql.Named("offset", (page-1)*pageSize)).
 		Scan(&rows).Error; err != nil {
 		return nil, 0, err
 	}
-
 	return rows, total, nil
 }

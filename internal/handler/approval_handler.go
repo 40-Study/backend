@@ -83,6 +83,13 @@ func courseReviewError(c *fiber.Ctx, err error, invalidStatusMsg string) error {
 			"code":    "COURSE_LESSON_NO_CONTENT",
 			"lessons": missing.Lessons,
 		})
+	case errors.Is(err, repository.ErrCourseIncomplete):
+		// Q3-09 (QA3): thiếu ảnh bìa / mô tả / giá — 422 kèm danh sách key và câu tiếng Việt nêu từng mục.
+		var incomplete *repository.CourseIncompleteError
+		_ = errors.As(err, &incomplete)
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"message": incomplete.MessageVI(), "code": "COURSE_INCOMPLETE", "missing": incomplete.Missing,
+		})
 	case errors.Is(err, repository.ErrCourseEmptyContent):
 		// D2 (QA vòng 2): dữ liệu khoá chưa đủ để nộp — 422, không phải trạng thái sai.
 		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{

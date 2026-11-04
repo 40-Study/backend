@@ -42,6 +42,22 @@ func writeDiscountPriceInvalid(c *fiber.Ctx, err error) bool {
 	return true
 }
 
+// PaidCoursePriceInvalidCode — mã lỗi 400 khi khoá có phí có giá <= 0 (Q3-09, QA3). Web hiện thông báo ở ô giá.
+const PaidCoursePriceInvalidCode = "PAID_COURSE_PRICE_INVALID"
+
+// writePaidCoursePriceInvalid ghi 400 nếu err là service.ErrPaidCoursePriceInvalid; trả false để handler đi tiếp. Dùng
+// chung cho tạo và sửa khoá học.
+func writePaidCoursePriceInvalid(c *fiber.Ctx, err error) bool {
+	if !errors.Is(err, service.ErrPaidCoursePriceInvalid) {
+		return false
+	}
+	_ = c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+		"message": service.ErrPaidCoursePriceInvalid.Error(),
+		"code":    PaidCoursePriceInvalidCode,
+	})
+	return true
+}
+
 // CourseHasEnrollmentsCode — mã lỗi 409 khi xoá khoá học còn ghi danh hoạt động (QA2 Q2-01, review M2). Web đọc mã
 // này để gợi ý "Lưu trữ" thay vì xoá.
 const CourseHasEnrollmentsCode = "COURSE_HAS_ENROLLMENTS"

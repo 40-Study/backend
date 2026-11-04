@@ -165,7 +165,7 @@ func TestCourseReview_PG_FullCycleAgainstRealConstraint(t *testing.T) {
 	tx := apvPgTx(t)
 	ctx := context.Background()
 	teacher, admin, other := apvUser(t, tx, "apv-teacher"), apvUser(t, tx, "apv-admin3"), apvUser(t, tx, "apv-other")
-	course := model.Course{InstructorID: teacher.ID, Title: "PG approval", Slug: "pg-approval-" + uuid.NewString(), Status: model.CourseStatusDraft}
+	course := model.Course{InstructorID: teacher.ID, Title: "PG approval", Slug: "pg-approval-" + uuid.NewString(), Status: model.CourseStatusDraft, ThumbnailURL: reviewReadyField("https://cdn.test/cover.png"), Description: reviewReadyField("Mô tả khoá học"), IsFree: true}
 	if err := tx.Create(&course).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestCourseReview_PG_SubmitRequiresContentInEveryLesson(t *testing.T) {
 	tx := apvPgTx(t)
 	ctx := context.Background()
 	teacher := apvUser(t, tx, "qa-t6-teacher")
-	course := model.Course{InstructorID: teacher.ID, Title: "QA-T6", Slug: "qa-t6-" + uuid.NewString(), Status: model.CourseStatusDraft}
+	course := model.Course{InstructorID: teacher.ID, Title: "QA-T6", Slug: "qa-t6-" + uuid.NewString(), Status: model.CourseStatusDraft, ThumbnailURL: reviewReadyField("https://cdn.test/cover.png"), Description: reviewReadyField("Mô tả khoá học"), IsFree: true}
 	if err := tx.Create(&course).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestCourseReview_PG_SubmitRequiresLessonAndWithdraw(t *testing.T) {
 	tx := apvPgTx(t)
 	ctx := context.Background()
 	teacher, other := apvUser(t, tx, "qa-apv-teacher"), apvUser(t, tx, "qa-apv-other")
-	course := model.Course{InstructorID: teacher.ID, Title: "QA-PG empty course", Slug: "qa-pg-empty-" + uuid.NewString(), Status: model.CourseStatusDraft}
+	course := model.Course{InstructorID: teacher.ID, Title: "QA-PG empty course", Slug: "qa-pg-empty-" + uuid.NewString(), Status: model.CourseStatusDraft, ThumbnailURL: reviewReadyField("https://cdn.test/cover.png"), Description: reviewReadyField("Mô tả khoá học"), IsFree: true}
 	if err := tx.Create(&course).Error; err != nil {
 		t.Fatal(err)
 	}

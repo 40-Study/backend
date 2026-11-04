@@ -24,6 +24,60 @@ var (
 	ErrCourseEmptyContent = errors.New("course must have at least one lesson before submitting for review")
 )
 
+// Khoá nộp duyệt còn thiếu thông tin bắt buộc (Q3-09, QA3): ảnh bìa, mô tả, giá của khoá có phí. Key ổn định cho web.
+const (
+	CourseMissingThumbnail   = "thumbnail_url"
+	CourseMissingDescription = "description"
+	CourseMissingPrice       = "price"
+)
+
+// courseMissingLabelsVI: tên tiếng Việt của từng thông tin còn thiếu, dùng dựng câu báo lỗi.
+var courseMissingLabelsVI = map[string]string{
+	CourseMissingThumbnail:   "ảnh bìa",
+	CourseMissingDescription: "mô tả khoá học",
+	CourseMissingPrice:       "giá bán (khoá có phí phải có giá lớn hơn 0)",
+}
+
+// ErrCourseIncomplete là sentinel để errors.Is cho CourseIncompleteError.
+var ErrCourseIncomplete = errors.New("course is missing required information before submitting for review")
+
+// CourseIncompleteError: nộp duyệt khi khoá thiếu ảnh bìa / mô tả / giá. Mang danh sách key (CourseMissing*) để handler
+// trả 422 kèm câu tiếng Việt nêu từng mục còn thiếu.
+type CourseIncompleteError struct {
+	Missing []string
+}
+
+func (e *CourseIncompleteError) Error() string {
+	return ErrCourseIncomplete.Error() + ": " + strings.Join(e.Missing, ", ")
+}
+
+func (e *CourseIncompleteError) Is(target error) bool { return target == ErrCourseIncomplete }
+
+// MessageVI là câu tiếng Việt hiển thị thẳng cho giảng viên.
+func (e *CourseIncompleteError) MessageVI() string {
+	labels := make([]string, len(e.Missing))
+	for i, k := range e.Missing {
+		labels[i] = courseMissingLabelsVI[k]
+	}
+	return "Khoá học chưa đủ thông tin để gửi duyệt. Còn thiếu: " + strings.Join(labels, "; ") + "."
+}
+
+// CourseMissingForReview là hàm THUẦN: các thông tin bắt buộc khoá còn thiếu khi nộp duyệt (rỗng = đủ). Ảnh bìa và mô tả
+// chỉ gồm khoảng trắng coi như thiếu; khoá có phí (is_free = false) phải có giá > 0 sau khi làm tròn 2 chữ số như cột DB.
+func CourseMissingForReview(c *model.Course) []string {
+	var missing []string
+	if c.ThumbnailURL == nil || strings.TrimSpace(*c.ThumbnailURL) == "" {
+		missing = append(missing, CourseMissingThumbnail)
+	}
+	if c.Description == nil || strings.TrimSpace(*c.Description) == "" {
+		missing = append(missing, CourseMissingDescription)
+	}
+	if !c.IsFree && !c.Price.Round(2).IsPositive() {
+		missing = append(missing, CourseMissingPrice)
+	}
+	return missing
+}
+
 // LessonWithoutContent: một bài học chưa có nội dung nào (QA T6).
 type LessonWithoutContent struct {
 	ID    uuid.UUID `json:"id"`
@@ -175,6 +229,10 @@ func (r *CourseReviewRepository) ApplyReviewAction(
 			}
 			if len(empty) > 0 {
 				return &CourseLessonsWithoutContentError{Lessons: empty}
+			}
+			// Q3-09 (QA3): ảnh bìa, mô tả và giá (khoá có phí) cũng bắt buộc — trước đây chỉ kiểm nội dung bài học.
+			if missing := CourseMissingForReview(&course); len(missing) > 0 {
+				return &CourseIncompleteError{Missing: missing}
 			}
 		}
 

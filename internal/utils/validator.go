@@ -16,6 +16,10 @@ func init() {
 	// Register custom URL validation
 	validate.RegisterValidation("safe_url", validateSafeURL)
 	// user_name: luật SSOT cho đăng ký và sửa hồ sơ (utils.UserNamePattern), không cho '@'.
+	// strong_password: chính sách mật khẩu mới duy nhất (utils.IsStrongPassword).
+	validate.RegisterValidation("strong_password", func(fl validator.FieldLevel) bool {
+		return IsStrongPassword(fl.Field().String())
+	})
 	validate.RegisterValidation("user_name", func(fl validator.FieldLevel) bool {
 		return IsValidUserName(fl.Field().String())
 	})
@@ -100,6 +104,8 @@ func getErrorMessage(err validator.FieldError) string {
 	case "user_name":
 		// Hiện thẳng cho người dùng ở web (thay cho thông báo chung "Cập nhật thất bại"), nên viết tiếng Việt.
 		return "Tên đăng nhập gồm 3-30 ký tự: chữ không dấu, số hoặc dấu gạch dưới (_). Không dùng @ hay email"
+	case "strong_password":
+		return PasswordPolicyMessage
 	case "numeric":
 		return field + " must contain only numeric characters"
 	case "oneof":

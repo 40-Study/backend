@@ -183,14 +183,14 @@ type RequestPasswordResetDto struct {
 type ResetPasswordRequestDto struct {
 	Email           string `json:"email" validate:"required,email"`
 	Otp             string `json:"otp" validate:"required,len=6,numeric"`
-	NewPassword     string `json:"new_password" validate:"required,min=8,max=72"`
+	NewPassword     string `json:"new_password" validate:"required,max=72,strong_password"`
 	ConfirmPassword string `json:"confirm_password" validate:"required,eqfield=NewPassword"`
 }
 
 
 type ChangePasswordRequestDto struct {
 	OldPassword     string        `json:"old_password" validate:"required,min=8,max=72" example:"OldPass123!"`
-	NewPassword     string        `json:"new_password" validate:"required,min=8,max=72,nefield=OldPassword,containsany=!@#$%^&*()" example:"NewSecurePass123!"`
+	NewPassword     string        `json:"new_password" validate:"required,max=72,nefield=OldPassword,strong_password" example:"NewSecurePass123!"`
 	ConfirmPassword string        `json:"confirm_password" validate:"required,eqfield=NewPassword" example:"NewSecurePass123!"`
 	DeviceInfo      DeviceInfoDTO `json:"device_info" validate:"required"`
 	RevokeOthers    bool          `json:"revoke_others" example:"true"`
@@ -202,7 +202,7 @@ type ChangePasswordRequestDto struct {
 // Role được chọn sau khi đăng ký, ở bước SelectRole.
 type RegisterRequestDto struct {
 	Email           string `json:"email" validate:"required,email,max=255" example:"student@example.com"`
-	Password        string `json:"password" validate:"required,min=8,max=72" example:"SecurePass123!"`
+	Password        string `json:"password" validate:"required,max=72,strong_password" example:"SecurePass123!"`
 	ConfirmPassword string `json:"confirm_password" validate:"required,eqfield=Password" example:"SecurePass123!"`
 	UserName        string `json:"user_name" validate:"required,user_name" example:"student123"`
 	FullName        string `json:"full_name,omitempty" validate:"omitempty,min=2,max=255" example:"Nguyen Van A"`

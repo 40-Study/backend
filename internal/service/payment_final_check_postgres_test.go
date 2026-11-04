@@ -394,6 +394,7 @@ func TestCancelOrder_ProcessingReconcilesWithBankFirst(t *testing.T) {
 		offset     time.Duration // hạn mã so với bây giờ
 		bank       func(codeExpiry time.Time) *fakeBankLookup
 		noReconcil bool
+		reported   bool // chủ đơn đã bấm "Tôi đã chuyển khoản" (orders.transfer_reported_at)
 		wantErr    error
 		wantStatus string
 	}
@@ -401,10 +402,19 @@ func TestCancelOrder_ProcessingReconcilesWithBankFirst(t *testing.T) {
 		"có tiền khớp → hoàn tất, không huỷ": {offset: time.Hour, bank: func(e time.Time) *fakeBankLookup {
 			return &fakeBankLookup{result: bankPaid(time.Now().Add(-time.Minute))}
 		}, wantErr: ErrPaymentAlreadyDone, wantStatus: "completed"},
-		"ngân hàng lỗi → không huỷ": {offset: time.Hour, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{result: bankError} },
-			wantErr: ErrPaymentVerificationPending, wantStatus: "processing"},
-		"gRPC timeout → không huỷ": {offset: time.Hour, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{err: context.DeadlineExceeded} },
-			wantErr: ErrPaymentVerificationPending, wantStatus: "processing"},
+		// Q8 (QA3): ngân hàng không trả lời. Đã báo chuyển khoản → giữ đơn và báo lỗi do ngân hàng (503); chưa báo → huỷ được.
+		"ngân hàng lỗi, đã báo chuyển khoản → không huỷ (503)": {offset: time.Hour, reported: true, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{result: bankError} },
+			wantErr: ErrPaymentProviderUnavailable, wantStatus: "processing"},
+		"gRPC timeout, đã báo chuyển khoản → không huỷ (503)": {offset: time.Hour, reported: true, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{err: context.DeadlineExceeded} },
+			wantErr: ErrPaymentProviderUnavailable, wantStatus: "processing"},
+		"ngân hàng lỗi, chưa báo chuyển khoản → huỷ được": {offset: time.Hour, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{result: bankError} },
+			wantStatus: "cancelled"},
+		"gRPC timeout, chưa báo chuyển khoản → huỷ được": {offset: time.Hour, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{err: context.DeadlineExceeded} },
+			wantStatus: "cancelled"},
+		// Có giao dịch mang mã của đơn nhưng sai số tiền: tiền ĐÃ chuyển, dù chủ đơn chưa bấm nút thì cũng không được huỷ.
+		"sai số tiền, chưa báo chuyển khoản → không huỷ": {offset: time.Hour, bank: func(time.Time) *fakeBankLookup {
+			return &fakeBankLookup{result: &grpc.CheckTransactionResult{Found: true, Status: "success", TransactionID: "BANK-WRONG", Amount: "1000", TransactionDate: bankDate(time.Now().Add(-time.Minute))}}
+		}, wantErr: ErrPaymentVerificationPending, wantStatus: "processing"},
 		"trong ân hạn → không huỷ": {offset: -time.Minute, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{result: bankNotFound} },
 			wantErr: ErrPaymentVerificationPending, wantStatus: "processing"},
 		"không nối bộ đối chiếu → không huỷ": {offset: time.Hour, bank: func(time.Time) *fakeBankLookup { return &fakeBankLookup{result: bankNotFound} },
@@ -425,6 +435,9 @@ func TestCancelOrder_ProcessingReconcilesWithBankFirst(t *testing.T) {
 			f := newOrderFixture(t)
 			student := f.user()
 			orderID, exp, _ := f.processingWithCodeExpiring(student, "QA-r3 huỷ "+name, c.offset)
+			if c.reported {
+				f.exec("UPDATE orders SET transfer_reported_at = now() WHERE id = ?", orderID)
+			}
 			bank := c.bank(exp)
 			if !c.noReconcil {
 				f.svc.SetPaymentReconciler(f.paymentServiceWith(bank, nil))
@@ -555,5 +568,56 @@ func TestExpiredOrder_ReleasesVoucherExactlyOnce(t *testing.T) {
 	}
 	if n := vouchers.released.Load(); n != 1 {
 		t.Fatalf("ReleaseVoucherUsage = %d lần, muốn đúng 1", n)
+	}
+}
+
+// Q8 (QA3): chỉ nút "Tôi đã chuyển khoản" (ConfirmTransferAndCheck) của CHỦ đơn mới ghi transfer_reported_at.
+// Poll trạng thái, kiểm tra nội bộ, admin bấm hộ và đơn chưa có mã đều không được ghi nhận.
+func TestConfirmTransferAndCheck_RecordsOnlyTheOwnersExplicitReport(t *testing.T) {
+	f := newOrderFixture(t)
+	owner := f.user()
+	admin := f.user()
+	orderID, _, _ := f.processingWithCodeExpiring(owner, "QA-q8 báo chuyển khoản", time.Hour)
+	svc := f.paymentServiceWith(&fakeBankLookup{result: bankNotFound}, nil)
+	ctx := context.Background()
+	reported := func() bool { return f.loadOrder(orderID).TransferReportedAt != nil }
+
+	if _, err := svc.GetPaymentStatus(ctx, orderID, owner, false); err != nil {
+		t.Fatalf("GetPaymentStatus: %v", err)
+	}
+	if _, err := svc.CheckAndProcessPayment(ctx, orderID, owner, false); err != nil {
+		t.Fatalf("CheckAndProcessPayment: %v", err)
+	}
+	if reported() {
+		t.Fatal("poll/kiểm tra nội bộ không được ghi nhận báo chuyển khoản")
+	}
+
+	if _, err := svc.ConfirmTransferAndCheck(ctx, orderID, admin, true); err != nil {
+		t.Fatalf("admin ConfirmTransferAndCheck: %v", err)
+	}
+	if reported() {
+		t.Fatal("admin bấm hộ không được tính là chủ đơn báo chuyển khoản")
+	}
+
+	if _, err := svc.ConfirmTransferAndCheck(ctx, orderID, owner, false); err != nil {
+		t.Fatalf("owner ConfirmTransferAndCheck: %v", err)
+	}
+	first := f.loadOrder(orderID).TransferReportedAt
+	if first == nil {
+		t.Fatal("chủ đơn bấm nút nhưng transfer_reported_at vẫn rỗng")
+	}
+	if _, err := svc.ConfirmTransferAndCheck(ctx, orderID, owner, false); err != nil {
+		t.Fatal(err)
+	}
+	if again := f.loadOrder(orderID).TransferReportedAt; !again.Equal(*first) {
+		t.Fatalf("transfer_reported_at bị ghi đè: %v -> %v", first, again)
+	}
+
+	pending := f.createOrder(owner, f.course("QA-q8 đơn chưa có mã"))
+	if _, err := svc.ConfirmTransferAndCheck(ctx, pending.ID, owner, false); err != nil {
+		t.Fatal(err)
+	}
+	if f.loadOrder(pending.ID).TransferReportedAt != nil {
+		t.Fatal("đơn pending chưa có mã thanh toán không thể có báo chuyển khoản")
 	}
 }

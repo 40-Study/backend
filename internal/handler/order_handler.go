@@ -213,6 +213,10 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 	err = h.orderService.CancelOrder(c.Context(), userID, orderID, isAdmin, req.Reason)
 	if err != nil {
+		// Q8: ngân hàng không trả lời mà chủ đơn đã báo chuyển khoản → 503 để web phân biệt với "đang đối chiếu" (409).
+		if errors.Is(err, service.ErrPaymentProviderUnavailable) {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"code": "ERR_PAYMENT_PROVIDER_UNAVAILABLE", "message": err.Error()})
+		}
 		// Review #76 vòng 3 MAJOR 3: đơn có mã đã được thanh toán / đang đối chiếu → 409 kèm câu tiếng Việt.
 		if body, ok := paymentStateConflict(err); ok {
 			return c.Status(fiber.StatusConflict).JSON(body)
@@ -357,7 +361,8 @@ func (h *OrderHandler) CheckPayment(c *fiber.Ctx) error {
 	}
 
 	isAdmin := isAdminActor(c, h.permChecker, userID)
-	status, err := h.paymentService.CheckAndProcessPayment(c.Context(), orderID, userID, isAdmin)
+	// POST check-payment là nút "Tôi đã chuyển khoản": ghi nhận chủ đơn đã báo chuyển khoản rồi kiểm tra.
+	status, err := h.paymentService.ConfirmTransferAndCheck(c.Context(), orderID, userID, isAdmin)
 	if err != nil {
 		if respStatus := orderErrorStatus(err); respStatus != 0 {
 			return c.Status(respStatus).JSON(fiber.Map{

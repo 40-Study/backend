@@ -43,6 +43,9 @@ func NewLivestreamHandler(svc service.LivestreamServiceInterface, permChecker *m
 	return &LivestreamHandler{svc: svc, permChecker: permChecker}
 }
 
+// livestreamUnavailableMessage: câu tiếng Việt hiển thị thẳng cho người dùng khi dịch vụ học trực tuyến chưa sẵn sàng.
+const livestreamUnavailableMessage = "Dịch vụ học trực tuyến hiện chưa sẵn sàng. Vui lòng thử lại sau hoặc liên hệ quản trị viên."
+
 // respondForbiddenOrError (V3-6/V3-7, issue #58) gom MOT cho duy nhat viec phan loai loi cua moi
 // handler livestream: sentinel UY QUYEN -> 403, con lai -> 500. Truoc day moi handler tu viet
 // `if err != nil { 500 }`, nen khi them kiem quyen ma quen nhanh phan loai thi nguoi dung nhan 500
@@ -64,6 +67,9 @@ func respondForbiddenOrError(c *fiber.Ctx, err error) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "Validation failed", "error": err.Error()})
 	case errors.Is(err, service.ErrLivestreamStateConflict):
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"message": "LIVESTREAM_STATE_CONFLICT", "error": err.Error()})
+	case errors.Is(err, service.ErrLivekitNotConfigured):
+		// Q3-13: LiveKit chưa cấu hình là lỗi môi trường, không phải lỗi của người dùng hay của request: 503 có mã ổn định.
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"code": "ERR_LIVE_UNAVAILABLE", "message": livestreamUnavailableMessage})
 	case errors.Is(err, service.ErrSessionNotFound), errors.Is(err, service.ErrClassNotFound):
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
 	}
