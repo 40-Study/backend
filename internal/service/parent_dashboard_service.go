@@ -509,75 +509,94 @@ func (s *ParentDashboardService) GetChildAssignments(ctx context.Context, parent
 		pageSize = 20
 	}
 
-	submissions, total, err := s.submissionRepo.GetByUser(ctx, childID, page, pageSize)
+	// Danh sách dựng từ bài tập của các lớp học sinh đang theo học (LEFT JOIN bài nộp của em), không từ bài đã nộp:
+	// bài quá hạn mà chưa nộp lần nào phải hiện ra với phụ huynh (QA3 P-01). Phân trang theo bài tập; thống kê
+	// đếm trên toàn bộ bài tập chứ không chỉ trang này.
+	assignments, total, err := s.submissionRepo.ListStudentClassAssignments(ctx, childID, page, pageSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get assignments: %w", err)
+	}
+
+	ids := make([]uuid.UUID, len(assignments))
+	for i, a := range assignments {
+		ids[i] = a.ID
+	}
+	submissions, err := s.submissionRepo.ListUserSubmissionsForAssignments(ctx, childID, ids)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get submissions: %w", err)
 	}
-
-	assignmentMap := make(map[uuid.UUID]*dto.ChildAssignmentDto)
-	stats := dto.AssignmentStatsDto{}
-
+	subsByAssignment := make(map[uuid.UUID][]model.Submission, len(assignments))
 	for _, sub := range submissions {
-		if sub.Assignment == nil {
-			continue
-		}
-
-		aID := sub.AssignmentID
-		if existing, ok := assignmentMap[aID]; ok {
-			existing.SubmissionCount++
-			if sub.CreatedAt.After(*existing.LastSubmittedAt) {
-				existing.LastSubmittedAt = &sub.CreatedAt
-			}
-			if sub.TestCasesPassed > existing.TestCasesPassed {
-				existing.TestCasesPassed = sub.TestCasesPassed
-				verdict := string(sub.Verdict)
-				existing.BestVerdict = &verdict
-			}
-		} else {
-			className := ""
-			if sub.Assignment.Class != nil {
-				className = sub.Assignment.Class.Name
-			}
-
-			status := "in_progress"
-			if sub.Verdict == model.VerdictAccepted {
-				status = "completed"
-				stats.Completed++
-			} else {
-				stats.InProgress++
-			}
-
-			submittedAt := sub.CreatedAt
-			verdict := string(sub.Verdict)
-			assignmentMap[aID] = &dto.ChildAssignmentDto{
-				ID:              sub.Assignment.ID.String(),
-				Title:           sub.Assignment.Title,
-				Type:            sub.Assignment.Type,
-				Difficulty:      string(sub.Assignment.Difficulty),
-				ClassName:       className,
-				DueDate:         sub.Assignment.EndTime,
-				Status:          status,
-				BestVerdict:     &verdict,
-				TestCasesPassed: sub.TestCasesPassed,
-				TotalTestCases:  sub.TotalTestCases,
-				SubmissionCount: 1,
-				LastSubmittedAt: &submittedAt,
-			}
-		}
+		subsByAssignment[sub.AssignmentID] = append(subsByAssignment[sub.AssignmentID], sub)
 	}
 
-	assignments := make([]dto.ChildAssignmentDto, 0, len(assignmentMap))
-	for _, a := range assignmentMap {
-		assignments = append(assignments, *a)
+	now := time.Now()
+	items := make([]dto.ChildAssignmentDto, 0, len(assignments))
+	for _, a := range assignments {
+		items = append(items, buildChildAssignmentDto(a, subsByAssignment[a.ID], now))
 	}
 
-	stats.TotalAssignments = len(assignments)
+	counts, err := s.submissionRepo.StudentClassAssignmentStats(ctx, childID, now)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get assignment stats: %w", err)
+	}
 
 	return &dto.ChildAssignmentsResponseDto{
-		Assignments: assignments,
-		Stats:       stats,
-		Total:       total,
-		Page:        page,
-		PageSize:    pageSize,
+		Assignments: items,
+		Stats: dto.AssignmentStatsDto{
+			TotalAssignments: int(counts.Total),
+			Completed:        int(counts.Completed),
+			InProgress:       int(counts.InProgress),
+			NotStarted:       int(counts.NotStarted),
+			Overdue:          int(counts.Overdue),
+		},
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
 	}, nil
+}
+
+// buildChildAssignmentDto dựng một dòng bài tập từ bài tập + các bài nộp của học sinh (mới nhất trước, có thể rỗng).
+// Trạng thái: completed = có bài accepted; in_progress = đã nộp nhưng chưa accepted; chưa nộp thì overdue khi quá
+// hạn, còn lại not_started. PHẢI khớp StudentClassAssignmentStats (cùng quy tắc, phía SQL).
+func buildChildAssignmentDto(a model.Assignment, subs []model.Submission, now time.Time) dto.ChildAssignmentDto {
+	className := ""
+	if a.Class != nil {
+		className = a.Class.Name
+	}
+	item := dto.ChildAssignmentDto{
+		ID:              a.ID.String(),
+		Title:           a.Title,
+		Type:            a.Type,
+		Difficulty:      string(a.Difficulty),
+		ClassName:       className,
+		DueDate:         a.EndTime,
+		SubmissionCount: len(subs),
+	}
+
+	if len(subs) == 0 {
+		item.Status = "not_started"
+		if a.EndTime != nil && a.EndTime.Before(now) {
+			item.Status = "overdue"
+		}
+		return item
+	}
+
+	item.Status = "in_progress"
+	last := subs[0].CreatedAt
+	item.LastSubmittedAt = &last
+	best := subs[0]
+	for _, sub := range subs {
+		if sub.Verdict == model.VerdictAccepted {
+			item.Status = "completed"
+		}
+		if sub.TestCasesPassed > best.TestCasesPassed {
+			best = sub
+		}
+	}
+	verdict := string(best.Verdict)
+	item.BestVerdict = &verdict
+	item.TestCasesPassed = best.TestCasesPassed
+	item.TotalTestCases = best.TotalTestCases
+	return item
 }
