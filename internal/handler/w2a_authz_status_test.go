@@ -45,6 +45,9 @@ func (f w2aPaymentSvc) CreatePaymentIntent(context.Context, uuid.UUID, uuid.UUID
 func (f w2aPaymentSvc) CheckAndProcessPayment(context.Context, uuid.UUID, uuid.UUID, bool) (*dto.PaymentStatusResponse, error) {
 	return nil, f.err
 }
+func (f w2aPaymentSvc) ConfirmTransferAndCheck(context.Context, uuid.UUID, uuid.UUID, bool) (*dto.PaymentStatusResponse, error) {
+	return nil, f.err
+}
 func (f w2aPaymentSvc) GetPaymentStatus(context.Context, uuid.UUID, uuid.UUID, bool) (*dto.PaymentStatusResponse, error) {
 	return nil, f.err
 }
