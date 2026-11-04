@@ -113,7 +113,12 @@ func TestGenerateSessions_RejectsRangeOverOneYear(t *testing.T) {
 	var before int64
 	e.f.db.Model(&model.ClassSession{}).Where("class_id = ?", e.class.ID).Count(&before)
 
-	_, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: "2026-01-01", EndDate: "2030-01-01"})
+	// Ngày tính từ hôm nay: lịch lặp của s5MakeSchedule có hiệu lực từ time.Now(), nên khoảng ngày ghi cứng sẽ
+	// rơi vào quá khứ và không sinh được buổi nào (test từng tự hỏng khi qua tháng 10/2026).
+	tomorrow := time.Now().AddDate(0, 0, 1)
+	day := func(t time.Time) string { return t.Format("2006-01-02") }
+
+	_, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: day(tomorrow), EndDate: day(tomorrow.AddDate(4, 0, 0))})
 	if !errors.Is(err, ErrGenerateRangeTooLong) {
 		t.Fatalf("khoảng 4 năm: err=%v, muốn ErrGenerateRangeTooLong", err)
 	}
@@ -124,7 +129,7 @@ func TestGenerateSessions_RejectsRangeOverOneYear(t *testing.T) {
 	}
 
 	// Khoảng vài tuần vẫn sinh buổi bình thường (trần chỉ chặn khoảng quá một năm).
-	if _, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: "2026-10-01", EndDate: "2026-10-28"}); err != nil {
+	if _, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: day(tomorrow), EndDate: day(tomorrow.AddDate(0, 0, 27))}); err != nil {
 		t.Fatalf("khoảng 4 tuần bị chặn nhầm: %v", err)
 	}
 }
