@@ -60,6 +60,15 @@ func (s *Seeder) SeedDemoEnrollments(
 		}
 	}
 
+	// total_students suy ra từ ghi danh vừa seed (xem syncCourseStudentCount); khoá nào chưa có ghi danh về 0.
+	for slug := range courses {
+		course := courses[slug]
+		if err := s.syncCourseStudentCount(&course); err != nil {
+			return err
+		}
+		courses[slug] = course
+	}
+
 	log.Printf("Seeded %d enrollments\n", len(demoEnrollments))
 	return nil
 }

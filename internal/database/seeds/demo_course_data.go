@@ -28,7 +28,6 @@ type courseSpec struct {
 	DiscountPrice    int64 // 0 = không giảm giá
 	IsFree           bool
 	IsFeatured       bool
-	TotalStudents    int
 	Requirements     []string
 	Objectives       []string
 	TargetAudience   []string
@@ -48,7 +47,6 @@ var demoCourses = []courseSpec{
 		Price:            999000,
 		DiscountPrice:    499000,
 		IsFeatured:       true,
-		TotalStudents:    1250,
 		Requirements:     []string{"Biết HTML/CSS cơ bản", "Có nền tảng JavaScript ES6"},
 		Objectives:       []string{"Thành thạo React Hooks", "Hiểu rõ Server Components", "Triển khai ứng dụng Next.js lên production"},
 		TargetAudience:   []string{"Sinh viên CNTT", "Lập trình viên backend muốn học frontend"},
@@ -80,7 +78,6 @@ var demoCourses = []courseSpec{
 		TagNames:         []string{"Python", "Machine Learning"},
 		Level:            "beginner",
 		Price:            699000,
-		TotalStudents:    890,
 		Requirements:     []string{"Không yêu cầu kiến thức lập trình trước đó"},
 		Objectives:       []string{"Sử dụng thành thạo Pandas", "Trực quan hoá dữ liệu", "Huấn luyện mô hình ML cơ bản"},
 		TargetAudience:   []string{"Người mới bắt đầu", "Nhân sự chuyển ngành sang Data"},
@@ -110,7 +107,6 @@ var demoCourses = []courseSpec{
 		Level:            "beginner",
 		Price:            599000,
 		IsFeatured:       true,
-		TotalStudents:    640,
 		Requirements:     []string{"Biết lập trình hướng đối tượng cơ bản"},
 		Objectives:       []string{"Xây dựng UI với Flutter widget", "Quản lý state", "Phát hành ứng dụng lên store"},
 		TargetAudience:   []string{"Lập trình viên mobile mới", "Sinh viên làm đồ án"},
@@ -135,7 +131,6 @@ var demoCourses = []courseSpec{
 		TagNames:         []string{"Docker", "Kubernetes", "AWS"},
 		Level:            "advanced",
 		Price:            799000,
-		TotalStudents:    412,
 		Requirements:     []string{"Thành thạo Linux command line", "Đã từng triển khai ứng dụng web"},
 		Objectives:       []string{"Viết Dockerfile tối ưu", "Triển khai cluster Kubernetes", "Thiết lập pipeline CI/CD"},
 		TargetAudience:   []string{"Backend developer", "DevOps engineer"},
@@ -161,7 +156,6 @@ var demoCourses = []courseSpec{
 		Level:            "beginner",
 		Price:            0,
 		IsFree:           true,
-		TotalStudents:    2100,
 		Requirements:     []string{"Chỉ cần một máy tính"},
 		Objectives:       []string{"Sử dụng Git hằng ngày", "Làm việc nhóm qua pull request"},
 		TargetAudience:   []string{"Sinh viên năm nhất", "Người mới vào nghề"},

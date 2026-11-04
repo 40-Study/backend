@@ -78,6 +78,9 @@ func (s *Seeder) SeedDemoCourses(
 		if err := s.syncCourseRatingStats(&course); err != nil {
 			return nil, err
 		}
+		if err := s.syncCourseStudentCount(&course); err != nil {
+			return nil, err
+		}
 
 		result[spec.Slug] = course
 	}
@@ -103,7 +106,6 @@ func (s *Seeder) upsertCourse(spec courseSpec, instructorID, categoryID uuid.UUI
 		Price:             money(spec.Price),
 		TotalDurationMins: totalDuration(spec.Sections),
 		TotalLessons:      totalLessons(spec.Sections),
-		TotalStudents:     spec.TotalStudents,
 		// AverageRating/TotalReviews KHÔNG ghi cứng nữa (A6, QA vòng 2): con số 318/204/... cũ không
 		// khớp bảng reviews (thực tế 0 review) nên trang khoá hiện "318 đánh giá" mà danh sách rỗng.
 		// Hai cột này là giá trị suy ra từ bảng reviews — syncCourseRatingStats tính lại sau upsert.
@@ -157,6 +159,22 @@ func (s *Seeder) syncCourseRatingStats(course *model.Course) error {
 	}
 	course.AverageRating = avg
 	course.TotalReviews = int(stats.Total)
+	return nil
+}
+
+// syncCourseStudentCount ghi total_students của khoá bằng số ghi danh THẬT (enrollments chưa xoá mềm), cùng nguyên tắc với
+// syncCourseRatingStats: số này là giá trị suy ra, không phải số liệu để ghi cứng. Trước đây khoá Git ghi cứng 2.100 học
+// viên trong khi chỉ có vài ghi danh và 1 đánh giá, nên trang khoá hiện "2.100 học viên · Bestseller" (QA3 G-11). Chạy mỗi
+// lần seed nên sửa luôn DB đã seed số giả; chạy lại cho cùng kết quả.
+func (s *Seeder) syncCourseStudentCount(course *model.Course) error {
+	var n int64
+	if err := s.db.Model(&model.Enrollment{}).Where("course_id = ?", course.ID).Count(&n).Error; err != nil {
+		return fmt.Errorf("failed to count enrollments for course %s: %w", course.Slug, err)
+	}
+	if err := s.db.Model(&model.Course{}).Where("id = ?", course.ID).UpdateColumn("total_students", n).Error; err != nil {
+		return fmt.Errorf("failed to sync total_students for course %s: %w", course.Slug, err)
+	}
+	course.TotalStudents = int(n)
 	return nil
 }
 

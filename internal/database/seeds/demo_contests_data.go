@@ -38,9 +38,9 @@ const contestDay = 24 * time.Hour
 
 var demoExtraContests = []contestSeedSpec{
 	{
-		Slug: "demo-thi-javascript-sap-dien-ra", Title: "Thử thách JavaScript ES6+ tháng 10",
+		Slug: "demo-thi-javascript-es6", Title: "Thử thách JavaScript ES6+",
 		Description:  "45 phút ôn lại let/const, arrow function, destructuring và Promise. Top 3 nhận chứng nhận.",
-		QuizTitle:    "Đề thi demo: JavaScript ES6+ (sắp diễn ra)",
+		QuizTitle:    "Đề thi demo: JavaScript ES6+",
 		CreatorEmail: "teacher1@demo.com", Status: model.ContestStatusPublished,
 		StartOffset: 3 * contestDay, EndOffset: 4 * contestDay, ReassignWindow: true,
 		DurationMinutes: 45, MaxParticipants: 200,
@@ -48,9 +48,9 @@ var demoExtraContests = []contestSeedSpec{
 		Questions: contestQuestionsJS,
 	},
 	{
-		Slug: "demo-thi-react-hooks-sap-dien-ra", Title: "React Hooks Challenge",
+		Slug: "demo-thi-react-hooks", Title: "React Hooks Challenge",
 		Description:  "Kiểm tra hiểu biết về useState, useEffect và quy tắc của Hooks. Mở cho mọi học viên.",
-		QuizTitle:    "Đề thi demo: React Hooks (sắp diễn ra)",
+		QuizTitle:    "Đề thi demo: React Hooks",
 		CreatorEmail: "teacher2@demo.com", Status: model.ContestStatusPublished,
 		StartOffset: 10 * contestDay, EndOffset: 12 * contestDay, ReassignWindow: true,
 		DurationMinutes: 30,
@@ -90,9 +90,9 @@ var demoExtraContests = []contestSeedSpec{
 
 // student1 có mặt ở UPCOMING, ACTIVE, ENDED (+ FINALIZED từ cuộc thi Git đã chốt).
 var demoContestJoins = []contestJoinSpec{
-	{Slug: "demo-thi-javascript-sap-dien-ra", Email: "student1@demo.com", Correct: -1},
-	{Slug: "demo-thi-javascript-sap-dien-ra", Email: "student2@demo.com", Correct: -1},
-	{Slug: "demo-thi-git-dang-dien-ra", Email: "student1@demo.com", Correct: -1},
+	{Slug: "demo-thi-javascript-es6", Email: "student1@demo.com", Correct: -1},
+	{Slug: "demo-thi-javascript-es6", Email: "student2@demo.com", Correct: -1},
+	{Slug: "demo-thi-git-co-ban", Email: "student1@demo.com", Correct: -1},
 	{Slug: "demo-thi-sql-da-ket-thuc", Email: "student1@demo.com", Correct: 3},
 	{Slug: "demo-thi-sql-da-ket-thuc", Email: "student2@demo.com", Correct: 2},
 }

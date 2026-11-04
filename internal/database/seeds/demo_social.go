@@ -134,6 +134,9 @@ func (s *Seeder) SeedDemoGroups(users map[string]model.User, courses map[string]
 		}
 		convs[spec.Slug] = conv.ID
 	}
+	if err := s.syncAllGroupMemberCounts(); err != nil {
+		return nil, err
+	}
 	log.Printf("Seeded %d demo groups\n", len(demoGroupSpecs))
 	return convs, nil
 }
@@ -178,19 +181,40 @@ func (s *Seeder) upsertDemoGroup(spec demoGroupSpec, users map[string]model.User
 		}
 	}
 
-	// member_count là cột mà GroupService tăng/giảm tay (không đếm lại khi đọc) — ghi đúng bằng số
-	// thành viên ACTIVE thật để trang nhóm không hiện "0 thành viên" hay vượt MaxMembers sai.
-	var active int64
-	if err := s.db.Model(&model.GroupMember{}).
-		Where("group_id = ? AND status = ?", group.ID, model.GroupMemberActive).Count(&active).Error; err != nil {
-		return model.Group{}, fmt.Errorf("failed to count members of group %s: %w", spec.Slug, err)
-	}
-	if err := s.db.Model(&model.Group{}).Where("id = ?", group.ID).
-		UpdateColumn("member_count", active).Error; err != nil {
-		return model.Group{}, fmt.Errorf("failed to sync member_count of group %s: %w", spec.Slug, err)
+	active, err := s.syncGroupMemberCount(group.ID)
+	if err != nil {
+		return model.Group{}, fmt.Errorf("group %s: %w", spec.Slug, err)
 	}
 	group.MemberCount = int(active)
 	return group, nil
+}
+
+// syncGroupMemberCount ghi member_count của MỘT nhóm bằng số thành viên ACTIVE thật. member_count là cột mà GroupService
+// tăng/giảm tay (không đếm lại khi đọc), nên lệch là trang nhóm hiện "0 thành viên" hay vượt MaxMembers sai.
+func (s *Seeder) syncGroupMemberCount(groupID uuid.UUID) (int64, error) {
+	var active int64
+	if err := s.db.Model(&model.GroupMember{}).
+		Where("group_id = ? AND status = ?", groupID, model.GroupMemberActive).Count(&active).Error; err != nil {
+		return 0, fmt.Errorf("failed to count members: %w", err)
+	}
+	if err := s.db.Model(&model.Group{}).Where("id = ?", groupID).UpdateColumn("member_count", active).Error; err != nil {
+		return 0, fmt.Errorf("failed to sync member_count: %w", err)
+	}
+	return active, nil
+}
+
+// syncAllGroupMemberCounts đưa member_count của MỌI nhóm chưa xoá về số thành viên ACTIVE thật. Nhóm do dữ liệu cũ tạo
+// (không qua GroupService) có thể mang member_count = 0 dù đã có thành viên: "Nhóm dự án Web ForteX" hiện 0 thành viên
+// với 7 người (QA3 Q22). Một câu UPDATE, chạy lại là no-op.
+func (s *Seeder) syncAllGroupMemberCounts() error {
+	err := s.db.Exec(`UPDATE groups SET member_count = (
+			SELECT COUNT(*) FROM group_members m
+			WHERE m.group_id = groups.id AND m.status = ? AND m.deleted_at IS NULL)
+		WHERE deleted_at IS NULL`, model.GroupMemberActive).Error
+	if err != nil {
+		return fmt.Errorf("failed to sync member_count of all groups: %w", err)
+	}
+	return nil
 }
 
 // ensureDemoParticipant thêm user vào hội thoại nếu chưa là participant (khoá tự nhiên conversation+user).
