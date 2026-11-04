@@ -12,6 +12,8 @@ import (
 
 type ClassRepositoryInterface interface {
 	Create(ctx context.Context, class *model.Class) error
+	// CreateWithPrimaryTeacher: tạo lớp và (khi teacherID != nil) gán người đó làm giảng viên chính trong CÙNG transaction.
+	CreateWithPrimaryTeacher(ctx context.Context, class *model.Class, teacherID *uuid.UUID) error
 	GetAll(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.Class, int64, error)
 	// GetAllVisible (W2-A): như GetAll nhưng chỉ lớp userID xem được: giảng viên lớp, người tạo, chủ khoá, học viên
 	// ĐANG học, hoặc lớp thuộc một tổ chức trong managedOrgIDs (tổ chức người đó quản trị).
@@ -60,6 +62,20 @@ func NewClassRepository(db *gorm.DB) *ClassRepository {
 
 func (r *ClassRepository) Create(ctx context.Context, class *model.Class) error {
 	return r.db.WithContext(ctx).Create(class).Error
+}
+
+// CreateWithPrimaryTeacher — xem comment interface. Lớp không có giảng viên không hiện trong GET /classes/me (liệt kê
+// theo teacher_classes), nên gán người tạo ở đây chứ không để hai bước tách rời có thể chỉ xong một nửa.
+func (r *ClassRepository) CreateWithPrimaryTeacher(ctx context.Context, class *model.Class, teacherID *uuid.UUID) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(class).Error; err != nil {
+			return err
+		}
+		if teacherID == nil {
+			return nil
+		}
+		return tx.Create(&model.TeacherClass{ID: uuid.New(), TeacherID: *teacherID, ClassID: class.ID, Role: "primary"}).Error
+	})
 }
 
 func (r *ClassRepository) GetAll(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.Class, int64, error) {

@@ -247,7 +247,17 @@ func (s *ClassService) CreateClass(ctx context.Context, actorUserID uuid.UUID, i
 		class.EndDate = &t
 	}
 
-	if err := s.classRepo.Create(ctx, class); err != nil {
+	// Q3-06: người tạo lớp là giảng viên chính của lớp (cùng transaction với việc tạo). Admin hệ thống tạo hộ mà không
+	// phải giảng viên thì không bị gán vào lớp.
+	var primaryTeacher *uuid.UUID
+	if !isAdmin {
+		primaryTeacher = &actorUserID
+	} else if isTeacher, err := s.teacherRepo.Exists(ctx, actorUserID); err != nil {
+		return nil, err
+	} else if isTeacher {
+		primaryTeacher = &actorUserID
+	}
+	if err := s.classRepo.CreateWithPrimaryTeacher(ctx, class, primaryTeacher); err != nil {
 		return nil, err
 	}
 

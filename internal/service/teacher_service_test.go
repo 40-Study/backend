@@ -45,6 +45,7 @@ func TestGetMyStudents_TraVeHocVienTuEnrollment_KhongCanLop(t *testing.T) {
 	studentID := uuid.New()
 	courseID := uuid.New()
 	fullName := "Nguyen Van Test"
+	courseTitleStub := "QA-Khoa test GV"
 
 	enrollRepo := &stubEnrollmentRepoForTeacherStudents{
 		rows: []repository.TeacherStudentRow{
@@ -55,8 +56,8 @@ func TestGetMyStudents_TraVeHocVienTuEnrollment_KhongCanLop(t *testing.T) {
 				Email:           "test@demo.com",
 				EnrolledAt:      time.Now(),
 				ProgressPercent: decimal.NewFromInt(0),
-				CourseID:        courseID,
-				CourseTitle:     "QA-Khoa test GV",
+				CourseID:        &courseID,
+				CourseTitle:     &courseTitleStub,
 				// KHÔNG có lớp — đúng kịch bản QA (mọi khoá của teacher1 đều "Chưa có lớp nào").
 				ClassID:   nil,
 				ClassName: nil,

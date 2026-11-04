@@ -69,12 +69,13 @@ func (s *TeacherService) GetTeacherByID(ctx context.Context, id uuid.UUID) (*dto
 // GetMyStudents (P1 QA 260927 teacher): liệt kê học viên theo ĐƠN GHI DANH khoá học thật của
 // giáo viên (enrollments), không còn chỉ đếm học viên đã được xếp vào một lớp — trước bản vá
 // này "Quản lý học viên" luôn trống nếu giáo viên chưa tạo lớp, dù khoá đã có hàng nghìn học
-// viên mua (xem EnrollmentRepository.GetByInstructor).
+// viên mua (xem EnrollmentRepository.GetByInstructor). Q3-08: cộng cả học viên đang học trong
+// lớp của giáo viên mà chưa ghi danh khoá nào; page_size tối đa 200.
 func (s *TeacherService) GetMyStudents(ctx context.Context, teacherID uuid.UUID, page, pageSize int) (*dto.TeacherStudentListResponseDTO, error) {
 	if page < 1 {
 		page = 1
 	}
-	if pageSize < 1 || pageSize > 100 {
+	if pageSize < 1 || pageSize > repository.TeacherStudentsMaxPageSize {
 		pageSize = 20
 	}
 
@@ -110,9 +111,12 @@ func (s *TeacherService) GetMyStudents(ctx context.Context, teacherID uuid.UUID,
 			status = "graduated"
 		}
 
-		progress, _ := row.ProgressPercent.Float64()
-		courseID := row.CourseID
-		courseTitle := row.CourseTitle
+		// Dòng chỉ-có-lớp (Q3-08): chưa ghi danh khoá nào nên không có khoá và không có tiến độ để hiển thị.
+		var progress *float64
+		if !row.ClassOnly {
+			p, _ := row.ProgressPercent.Float64()
+			progress = &p
+		}
 
 		result[i] = dto.TeacherStudentDTO{
 			ID:          row.StudentID,
@@ -122,10 +126,10 @@ func (s *TeacherService) GetMyStudents(ctx context.Context, teacherID uuid.UUID,
 			ParentPhone: parentPhone,
 			ClassID:     row.ClassID,
 			ClassName:   row.ClassName,
-			CourseID:    &courseID,
-			CourseName:  &courseTitle,
+			CourseID:    row.CourseID,
+			CourseName:  row.CourseTitle,
 			Status:      status,
-			Progress:    &progress,
+			Progress:    progress,
 			EnrolledAt:  row.EnrolledAt,
 		}
 
