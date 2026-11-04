@@ -45,8 +45,8 @@ type ScheduleServiceInterface interface {
 
 	// Timetable
 	GetClassTimetable(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool) (*dto.TimetableResponseDTO, error)
-	GetMyTimetable(ctx context.Context, userID uuid.UUID, role string) (*dto.TimetableResponseDTO, error)
-	GetMyTimetableWithSessions(ctx context.Context, userID uuid.UUID, role string, from, to time.Time) (*dto.TimetableResponseDTO, error)
+	GetMyTimetable(ctx context.Context, userID uuid.UUID, role string, filter dto.TimetableOrgFilter) (*dto.TimetableResponseDTO, error)
+	GetMyTimetableWithSessions(ctx context.Context, userID uuid.UUID, role string, from, to time.Time, filter dto.TimetableOrgFilter) (*dto.TimetableResponseDTO, error)
 
 	// Reminder
 	GetReminderSettings(ctx context.Context, userID uuid.UUID) ([]dto.ReminderSettingResponseDTO, error)
@@ -1001,13 +1001,44 @@ func (s *ScheduleService) GetClassTimetable(ctx context.Context, classID, actorI
 		}
 		entries = append(entries, entry)
 	}
+	if err := annotateTimetableOrganizations(ctx, s.repo, entries); err != nil {
+		return nil, err
+	}
 
 	return &dto.TimetableResponseDTO{Entries: entries}, nil
 }
 
-func (s *ScheduleService) GetMyTimetable(ctx context.Context, userID uuid.UUID, role string) (*dto.TimetableResponseDTO, error) {
-	// Check cache
-	cacheKey := timetableCachePrefix + userID.String()
+// GetMyTimetable: lịch lặp tuần của mọi lớp mình dạy/học, lọc theo nguồn lớp (filter), mỗi mục kèm tổ chức
+// sở hữu lớp.
+func (s *ScheduleService) GetMyTimetable(ctx context.Context, userID uuid.UUID, role string, filter dto.TimetableOrgFilter) (*dto.TimetableResponseDTO, error) {
+	result, err := s.myWeeklyTimetable(ctx, userID, role, filter)
+	if err != nil {
+		return nil, err
+	}
+	if err := annotateTimetableOrganizations(ctx, s.repo, result.Entries); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// myClassIDs: lớp mình dạy (TEACHER) hoặc học, đã lọc theo nguồn lớp bằng SQL.
+func (s *ScheduleService) myClassIDs(ctx context.Context, userID uuid.UUID, role string, filter dto.TimetableOrgFilter) ([]uuid.UUID, error) {
+	var classIDs []uuid.UUID
+	var err error
+	if role == "TEACHER" {
+		classIDs, err = s.repo.GetTeacherClassIDs(ctx, userID)
+	} else {
+		classIDs, err = s.repo.GetStudentClassIDs(ctx, userID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.FilterClassIDsByOrganization(ctx, classIDs, filter)
+}
+
+func (s *ScheduleService) myWeeklyTimetable(ctx context.Context, userID uuid.UUID, role string, filter dto.TimetableOrgFilter) (*dto.TimetableResponseDTO, error) {
+	// Check cache — mỗi bộ lọc nguồn lớp một khoá riêng.
+	cacheKey := timetableCachePrefix + userID.String() + filter.CacheSuffix()
 	if s.redis != nil {
 		cached, err := s.redis.Get(ctx, cacheKey).Result()
 		if err == nil {
@@ -1018,14 +1049,7 @@ func (s *ScheduleService) GetMyTimetable(ctx context.Context, userID uuid.UUID, 
 		}
 	}
 
-	var classIDs []uuid.UUID
-	var err error
-
-	if role == "TEACHER" {
-		classIDs, err = s.repo.GetTeacherClassIDs(ctx, userID)
-	} else {
-		classIDs, err = s.repo.GetStudentClassIDs(ctx, userID)
-	}
+	classIDs, err := s.myClassIDs(ctx, userID, role, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -1091,25 +1115,23 @@ var ErrTimetableRangeInvalid = errors.New("invalid sessions range: sessions_to m
 // của lớp mình dạy/học trong [from, to] (mục có session_id + date). Trước đây lịch giảng viên chỉ vẽ
 // livestream nên buổi tạo qua POST /classes/:id/sessions và lịch lặp của lớp không hiện ở đâu. Không cache
 // phần buổi cụ thể (thay đổi theo từng thao tác tạo/sửa/huỷ buổi); lịch lặp vẫn đi qua cache cũ.
-func (s *ScheduleService) GetMyTimetableWithSessions(ctx context.Context, userID uuid.UUID, role string, from, to time.Time) (*dto.TimetableResponseDTO, error) {
+func (s *ScheduleService) GetMyTimetableWithSessions(ctx context.Context, userID uuid.UUID, role string, from, to time.Time, filter dto.TimetableOrgFilter) (*dto.TimetableResponseDTO, error) {
 	if to.Before(from) || to.Sub(from) > maxTimetableSessionDays*24*time.Hour {
 		return nil, ErrTimetableRangeInvalid
 	}
-	base, err := s.GetMyTimetable(ctx, userID, role)
+	base, err := s.myWeeklyTimetable(ctx, userID, role, filter)
 	if err != nil {
 		return nil, err
 	}
 
-	var classIDs []uuid.UUID
-	if role == "TEACHER" {
-		classIDs, err = s.repo.GetTeacherClassIDs(ctx, userID)
-	} else {
-		classIDs, err = s.repo.GetStudentClassIDs(ctx, userID)
-	}
+	classIDs, err := s.myClassIDs(ctx, userID, role, filter)
 	if err != nil {
 		return nil, err
 	}
 	if len(classIDs) == 0 {
+		if err := annotateTimetableOrganizations(ctx, s.repo, base.Entries); err != nil {
+			return nil, err
+		}
 		return base, nil
 	}
 	sessions, err := s.repo.GetSessionsByClassIDsAndDateRange(ctx, classIDs, from.Format("2006-01-02"), to.Format("2006-01-02"))
@@ -1141,6 +1163,9 @@ func (s *ScheduleService) GetMyTimetableWithSessions(ctx context.Context, userID
 	var occurrences []dto.TimetableOccurrenceDTO
 	for _, sess := range cancelled {
 		occurrences = append(occurrences, dto.TimetableOccurrenceDTO{ScheduleID: *sess.ScheduleID, Date: sess.Date.Format("2006-01-02")})
+	}
+	if err := annotateTimetableOrganizations(ctx, s.repo, entries); err != nil {
+		return nil, err
 	}
 	return &dto.TimetableResponseDTO{Entries: entries, Week: base.Week, CancelledOccurrences: occurrences}, nil
 }

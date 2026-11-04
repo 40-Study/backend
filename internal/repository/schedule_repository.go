@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 )
 
@@ -54,6 +55,8 @@ type ScheduleRepositoryInterface interface {
 	GetStudentClassIDs(ctx context.Context, studentID uuid.UUID) ([]uuid.UUID, error)
 	GetTeacherClassIDs(ctx context.Context, teacherID uuid.UUID) ([]uuid.UUID, error)
 	GetSchedulesByClassIDs(ctx context.Context, classIDs []uuid.UUID) ([]model.ClassSchedule, error)
+	FilterClassIDsByOrganization(ctx context.Context, classIDs []uuid.UUID, filter dto.TimetableOrgFilter) ([]uuid.UUID, error)
+	GetClassOrganizations(ctx context.Context, classIDs []uuid.UUID) (map[uuid.UUID]ClassOrganization, error)
 	GetCalendarLivestreamsByClassIDs(ctx context.Context, classIDs []uuid.UUID) ([]model.LivestreamSession, error)
 }
 
@@ -368,6 +371,55 @@ func (r *ScheduleRepository) GetTeacherClassIDs(ctx context.Context, teacherID u
 		Where("teacher_id = ?", teacherID).
 		Pluck("class_id", &ids).Error
 	return ids, err
+}
+
+// FilterClassIDsByOrganization: giữ lại các lớp trong classIDs khớp bộ lọc nguồn lớp, lọc bằng SQL trên
+// classes.organization_id. Bộ lọc rỗng trả nguyên classIDs.
+func (r *ScheduleRepository) FilterClassIDsByOrganization(ctx context.Context, classIDs []uuid.UUID, filter dto.TimetableOrgFilter) ([]uuid.UUID, error) {
+	if len(classIDs) == 0 || (filter.OrganizationID == nil && !filter.PersonalOnly) {
+		return classIDs, nil
+	}
+	q := r.db.WithContext(ctx).Table("classes").Where("id IN ? AND deleted_at IS NULL", classIDs)
+	if filter.OrganizationID != nil {
+		q = q.Where("organization_id = ?", *filter.OrganizationID)
+	} else {
+		q = q.Where("organization_id IS NULL")
+	}
+	var ids []uuid.UUID
+	err := q.Pluck("id", &ids).Error
+	return ids, err
+}
+
+// ClassOrganization: tổ chức sở hữu một lớp. ID nil = lớp cá nhân; Name nil khi tổ chức đã xoá mềm.
+type ClassOrganization struct {
+	ID   *uuid.UUID
+	Name *string
+}
+
+// GetClassOrganizations: tổ chức sở hữu từng lớp trong classIDs, một truy vấn cho cả danh sách.
+func (r *ScheduleRepository) GetClassOrganizations(ctx context.Context, classIDs []uuid.UUID) (map[uuid.UUID]ClassOrganization, error) {
+	out := make(map[uuid.UUID]ClassOrganization, len(classIDs))
+	if len(classIDs) == 0 {
+		return out, nil
+	}
+	var rows []struct {
+		ID               uuid.UUID
+		OrganizationID   *uuid.UUID
+		OrganizationName *string
+	}
+	err := r.db.WithContext(ctx).
+		Table("classes AS c").
+		Select("c.id, c.organization_id, o.name AS organization_name").
+		Joins("LEFT JOIN organizations o ON o.id = c.organization_id AND o.deleted_at IS NULL").
+		Where("c.id IN ?", classIDs).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		out[row.ID] = ClassOrganization{ID: row.OrganizationID, Name: row.OrganizationName}
+	}
+	return out, nil
 }
 
 func (r *ScheduleRepository) GetSchedulesByClassIDs(ctx context.Context, classIDs []uuid.UUID) ([]model.ClassSchedule, error) {

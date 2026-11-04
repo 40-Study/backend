@@ -199,11 +199,11 @@ type w2bTimetableSvc struct {
 	from, to    time.Time
 }
 
-func (s *w2bTimetableSvc) GetMyTimetable(context.Context, uuid.UUID, string) (*dto.TimetableResponseDTO, error) {
+func (s *w2bTimetableSvc) GetMyTimetable(context.Context, uuid.UUID, string, dto.TimetableOrgFilter) (*dto.TimetableResponseDTO, error) {
 	return &dto.TimetableResponseDTO{}, nil
 }
 
-func (s *w2bTimetableSvc) GetMyTimetableWithSessions(_ context.Context, _ uuid.UUID, _ string, from, to time.Time) (*dto.TimetableResponseDTO, error) {
+func (s *w2bTimetableSvc) GetMyTimetableWithSessions(_ context.Context, _ uuid.UUID, _ string, from, to time.Time, _ dto.TimetableOrgFilter) (*dto.TimetableResponseDTO, error) {
 	s.withSession, s.from, s.to = true, from, to
 	return &dto.TimetableResponseDTO{}, s.err
 }

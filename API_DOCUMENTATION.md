@@ -1021,6 +1021,25 @@ Model: ClassSchedule
 | GET | `/api/classes/:id/timetable` | Lấy timetable tuần/tháng |
 | GET | `/api/me/timetable` | Lấy timetable cá nhân |
 
+**`GET /api/me/timetable` — nguồn lớp (dạy tự do vs tổ chức):**
+
+Mỗi mục trong `entries` (của cả `/api/me/timetable`, `/api/classes/:id/timetable` và timetable phụ huynh) có thêm:
+
+| Field | Kiểu | Ý nghĩa |
+|-------|------|---------|
+| `organization_id` | uuid, bỏ trống | Tổ chức sở hữu lớp. Không có = lớp cá nhân của giảng viên (dạy tự do) |
+| `organization_name` | string, bỏ trống | Tên tổ chức. Tổ chức đã xoá mềm: vẫn có `organization_id`, không có tên |
+
+Query params lọc (tuỳ chọn, dùng được cùng `sessions_from`/`sessions_to`, áp dụng cho cả giảng viên và học viên):
+
+| Param | Ý nghĩa |
+|-------|---------|
+| `organization_id=<uuid>` | Chỉ lớp của tổ chức đó |
+| `scope=personal` | Chỉ lớp cá nhân (không thuộc tổ chức) |
+| (không gửi) | Mọi lớp, như trước |
+
+`400` khi `organization_id` không phải UUID, `scope` khác `personal`, hoặc gửi cả hai. Kiểm tra trùng giờ khi tạo buổi vẫn tính chung mọi lớp của giảng viên, không phân biệt nguồn lớp.
+
 ---
 
 #### ❌ Thiếu: Calendar View API

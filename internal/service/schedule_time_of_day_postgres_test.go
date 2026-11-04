@@ -39,7 +39,7 @@ func TestSchedule_GioHHMM_TaoVaDocLai(t *testing.T) {
 	if err != nil || len(tt.Entries) != 1 || tt.Entries[0].StartTime != "14:00" || tt.Entries[0].EndTime != "15:30" {
 		t.Errorf("GetClassTimetable: %+v %v, muốn 1 mục 14:00-15:30", tt, err)
 	}
-	mine, err := svc.GetMyTimetable(ctx, e.student.ID, "STUDENT")
+	mine, err := svc.GetMyTimetable(ctx, e.student.ID, "STUDENT", dto.TimetableOrgFilter{})
 	if err != nil || len(mine.Entries) != 1 || mine.Entries[0].StartTime != "14:00" {
 		t.Errorf("GetMyTimetable: %+v %v, muốn 1 mục 14:00", mine, err)
 	}

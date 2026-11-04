@@ -165,7 +165,7 @@ func TestW2B_Timetable_ReportsCancelledGeneratedSessions(t *testing.T) {
 
 	from, _ := time.Parse("2006-01-02", "2031-03-01")
 	to, _ := time.Parse("2006-01-02", "2031-03-31")
-	got, err := svc.GetMyTimetableWithSessions(ctx, e.coTeacher.ID, "TEACHER", from, to)
+	got, err := svc.GetMyTimetableWithSessions(ctx, e.coTeacher.ID, "TEACHER", from, to, dto.TimetableOrgFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
