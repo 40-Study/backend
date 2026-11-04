@@ -6,6 +6,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 )
 
 // SetupOrganizationRoutes đăng ký route quản lý tổ chức.
@@ -19,6 +20,7 @@ func SetupOrganizationRoutes(
 	organizationHandler *handler.OrganizationHandler,
 	redis *redis.Client,
 	permChecker *middleware.PermissionChecker,
+	auditRec middleware.AuditRecorder,
 ) {
 	authMiddleware := middleware.AuthMiddleware(cfg, redis)
 
@@ -26,7 +28,8 @@ func SetupOrganizationRoutes(
 	{
 		// Tạo tổ chức mới: cần đăng nhập + quyền ORG_CREATE (chỉ SYSTEM_ADMIN theo data/roles.json
 		// từ A-P0-4, QA 260927 — mô hình B2C không còn cho TEACHER tự tạo tổ chức).
-		organizations.Post("/", authMiddleware, permChecker.RequirePermissions("ORG_CREATE"), organizationHandler.CreateOrganization)
+		// Id tổ chức mới nằm trong response, handler đặt đích bằng SetAuditTarget.
+		organizations.Post("/", authMiddleware, permChecker.RequirePermissions("ORG_CREATE"), middleware.Audit(auditRec, model.AuditActionOrganizationCreate, "organization", ""), organizationHandler.CreateOrganization)
 		// A-P2-1 (QA 260927): trước đây danh sách/chi tiết tổ chức public hoàn toàn — người chưa
 		// đăng nhập liệt kê được toàn bộ tổ chức. Đã grep web/src: GET /organizations chỉ được gọi
 		// từ /admin/organizations và /admin/page.tsx (trang admin, luôn có token sẵn) — không màn
@@ -37,7 +40,7 @@ func SetupOrganizationRoutes(
 		// không thể so khớp "chủ sở hữu" trực tiếp trong DB. Dùng RequireOrgPermission: chỉ
 		// system admin ("*"), hoặc user đang giữ ORG_ROLES_MANAGE (vai ORG_OWNER) VÀ đang active
 		// đúng tổ chức đó (active_org_id == :id) mới được sửa/xóa.
-		organizations.Put("/:id", authMiddleware, permChecker.RequireOrgPermission("id", "ORG_ROLES_MANAGE"), organizationHandler.UpdateOrganization)
-		organizations.Delete("/:id", authMiddleware, permChecker.RequireOrgPermission("id", "ORG_ROLES_MANAGE"), organizationHandler.DeleteOrganization)
+		organizations.Put("/:id", authMiddleware, permChecker.RequireOrgPermission("id", "ORG_ROLES_MANAGE"), middleware.Audit(auditRec, model.AuditActionOrganizationUpdate, "organization", "id"), organizationHandler.UpdateOrganization)
+		organizations.Delete("/:id", authMiddleware, permChecker.RequireOrgPermission("id", "ORG_ROLES_MANAGE"), middleware.Audit(auditRec, model.AuditActionOrganizationDelete, "organization", "id"), organizationHandler.DeleteOrganization)
 	}
 }

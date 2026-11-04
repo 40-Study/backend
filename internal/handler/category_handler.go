@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
@@ -39,6 +40,9 @@ func (h *CategoryHandler) CreateCategory(c *fiber.Ctx) error {
 			"error":   err.Error(),
 		})
 	}
+
+	// Id nằm trong response chứ không ở URL: đặt đích cho middleware Audit.
+	middleware.SetAuditTarget(c, category.ID.String())
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message": "Category created successfully",

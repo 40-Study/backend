@@ -7,6 +7,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
@@ -32,6 +33,9 @@ func (h *VoucherHandler) CreateVoucher(c *fiber.Ctx) error {
 		})
 	}
 
+	// Chuẩn hoá mã TRƯỚC validate độ dài (xem dto.NormalizeVoucherCode).
+	req.Code = dto.NormalizeVoucherCode(req.Code)
+
 	// M-01 (audit 260909 vòng 2): DTO đã có validate tag đầy đủ (required/oneof/min/max)
 	// nhưng handler trước đây không gọi ValidateStruct — mọi tag đều vô tác dụng, user có
 	// thể tạo voucher discount_percent > 100, usage_limit âm, v.v.
@@ -44,12 +48,21 @@ func (h *VoucherHandler) CreateVoucher(c *fiber.Ctx) error {
 	}
 
 	voucher, err := h.voucherService.CreateVoucher(c.Context(), &req)
+	if errors.Is(err, service.ErrVoucherCodeInvalid) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"code":    "ERR_INVALID_VOUCHER_CODE",
+			"message": err.Error(),
+		})
+	}
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"code":    "ERR_CREATE_VOUCHER",
 			"message": err.Error(),
 		})
 	}
+
+	// Id nằm trong response chứ không ở URL: đặt đích cho middleware Audit.
+	middleware.SetAuditTarget(c, voucher.ID.String())
 
 	return c.Status(fiber.StatusCreated).JSON(voucher)
 }

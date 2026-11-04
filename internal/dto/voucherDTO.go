@@ -1,10 +1,17 @@
 package dto
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// NormalizeVoucherCode: mã voucher luôn lưu dạng IN HOA, không khoảng trắng hai đầu (web cũng gõ/gửi in hoa).
+// Gọi TRƯỚC khi validate độ dài để " ab " không qua min=3 rồi bị cắt còn 2 ký tự.
+func NormalizeVoucherCode(code string) string {
+	return strings.ToUpper(strings.TrimSpace(code))
+}
 
 // ============================================
 // VOUCHER MANAGEMENT DTOs

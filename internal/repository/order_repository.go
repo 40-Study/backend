@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/utils"
 )
 
 var (
@@ -374,6 +375,13 @@ func (r *OrderRepository) ListAdmin(filter AdminOrderFilter) ([]model.Order, int
 	}
 	if filter.To != nil {
 		query = query.Where("created_at <= ?", *filter.To)
+	}
+	if filter.Keyword != "" {
+		// (mã đơn LIKE kw) OR (người mua có email/tên khớp). Người mua tra bằng truy vấn con để không JOIN làm nhân
+		// dòng và không đổi cách đếm; không lọc deleted_at của users: admin vẫn tra được đơn cũ của tài khoản đã xoá.
+		buyers := utils.ApplyKeywordSearch(r.db.Table("users").Select("id"), filter.Keyword, "email", "full_name", "user_name")
+		match := utils.ApplyKeywordSearch(r.db, filter.Keyword, "orders.order_number").Or("orders.user_id IN (?)", buyers)
+		query = query.Where(match)
 	}
 
 	var total int64

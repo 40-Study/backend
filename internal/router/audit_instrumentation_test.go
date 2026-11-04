@@ -88,6 +88,33 @@ var auditRoutes = []auditRoute{
 	{"POST", "/api/admin/withdrawals/:id/mark-completed", model.AuditActionWithdrawalMarkCompleted, "withdrawal", "id"},
 	{"PUT", "/api/admin/settings/platform-fee", model.AuditActionSettingPlatformFeeUpdate, "setting", ""},
 	{"POST", "/api/admin/notifications/broadcast", model.AuditActionNotificationBroadcast, "", ""},
+	// QA3-06
+	{"POST", "/api/organizations/", model.AuditActionOrganizationCreate, "organization", ""},
+	{"PUT", "/api/organizations/:id", model.AuditActionOrganizationUpdate, "organization", "id"},
+	{"DELETE", "/api/organizations/:id", model.AuditActionOrganizationDelete, "organization", "id"},
+	{"POST", "/api/categories/", model.AuditActionCategoryCreate, "category", ""},
+	{"PUT", "/api/categories/:id", model.AuditActionCategoryUpdate, "category", "id"},
+	{"DELETE", "/api/categories/:id", model.AuditActionCategoryDelete, "category", "id"},
+	{"POST", "/api/vouchers/", model.AuditActionVoucherCreate, "voucher", ""},
+	{"PUT", "/api/vouchers/:id", model.AuditActionVoucherUpdate, "voucher", "id"},
+	{"DELETE", "/api/vouchers/:id", model.AuditActionVoucherDelete, "voucher", "id"},
+	{"POST", "/api/vouchers/:id/restore", model.AuditActionVoucherRestore, "voucher", "id"},
+	{"POST", "/api/vouchers/:id/activate", model.AuditActionVoucherActivate, "voucher", "id"},
+	{"POST", "/api/vouchers/:id/deactivate", model.AuditActionVoucherDeactivate, "voucher", "id"},
+	{"POST", "/api/org-roles/", model.AuditActionOrgRoleCreate, "org_role", ""},
+	{"PUT", "/api/org-roles/:id", model.AuditActionOrgRoleUpdate, "org_role", "id"},
+	{"DELETE", "/api/org-roles/:id", model.AuditActionOrgRoleDelete, "org_role", "id"},
+	{"PATCH", "/api/org-roles/:id/restore", model.AuditActionOrgRoleRestore, "org_role", "id"},
+	{"POST", "/api/org-roles/:id/permissions", model.AuditActionOrgRolePermissions, "org_role", "id"},
+	{"PUT", "/api/org-roles/:id/permissions", model.AuditActionOrgRolePermissions, "org_role", "id"},
+	{"DELETE", "/api/org-roles/:id/permissions", model.AuditActionOrgRolePermissions, "org_role", "id"},
+	{"POST", "/api/users/:user_id/org-roles/", model.AuditActionUserOrgRoleAssign, "user", "user_id"},
+	{"DELETE", "/api/users/:user_id/org-roles/:org_role_id", model.AuditActionUserOrgRoleRevoke, "user", "user_id"},
+	{"POST", "/api/admin/contests/:id/approve", model.AuditActionContestApprove, "contest", "id"},
+	{"POST", "/api/admin/contests/:id/reject", model.AuditActionContestReject, "contest", "id"},
+	{"POST", "/api/admin/contests/:id/cancel", model.AuditActionContestCancel, "contest", "id"},
+	{"PUT", "/api/admin/contests/:id/prizes", model.AuditActionContestPrizesUpdate, "contest", "id"},
+	{"POST", "/api/admin/contests/:id/finalize", model.AuditActionContestFinalize, "contest", "id"},
 }
 
 // auditRoutesNotInTable: action do HANDLER đặt (SetAuditAction), cùng route với một dòng bảng.
@@ -100,6 +127,7 @@ const stubStatusHeader = "X-Audit-Stub-Status"
 var auditRoutePerms = []string{
 	"ROLES_MANAGE_SYSTEM", "USERS_BAN", "COURSES_APPROVE_ALL", "REPORTS_MODERATE",
 	"PAYMENTS_MANAGE", "WALLET_WITHDRAWALS_MANAGE", "SYSTEM_SETTINGS_MANAGE",
+	"ORG_CREATE", "ORG_ROLES_MANAGE", "ORG_MEMBERS_MANAGE", "CATEGORIES_SYSTEM_MANAGE", "CONTESTS_APPROVE_ALL",
 }
 
 type auditEnv struct {

@@ -119,8 +119,8 @@ func newS6OrgRouteEnv(t *testing.T) *s6OrgRouteEnv {
 
 	app := fiber.New()
 	api := app.Group("/api")
-	SetupOrgRoleRoutes(api, cfg, handler.NewRoleHandler(roleSvc, pc), rdb, pc)
-	SetupUserOrganizationRoleRoutes(api, cfg, handler.NewUserOrganizationRoleHandler(uorSvc, pc), rdb, pc)
+	SetupOrgRoleRoutes(api, cfg, handler.NewRoleHandler(roleSvc, pc), rdb, pc, &auditSpyRouter{})
+	SetupUserOrganizationRoleRoutes(api, cfg, handler.NewUserOrganizationRoleHandler(uorSvc, pc), rdb, pc, &auditSpyRouter{})
 	SetupNotificationRoutes(api, cfg, handler.NewNotificationHandler(&s5NotificationSvc{}), rdb, pc)
 	e.app = app
 

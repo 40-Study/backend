@@ -85,6 +85,10 @@ func (s *ProfileService) GetOrganizations(ctx context.Context, userID uuid.UUID,
 	// Giữ lại role đầu tiên tìm được
 	orgMap := make(map[string]dto.MyOrganizationDto)
 	for _, or := range orgRoles {
+		// Organization/Role nil khi tổ chức hoặc vai trò đã bị xoá mềm: bỏ dòng đó thay vì panic (QA3-02).
+		if or.Organization == nil || or.Role == nil {
+			continue
+		}
 		orgID := or.Organization.ID.String()
 		if _, exists := orgMap[orgID]; !exists {
 			orgMap[orgID] = dto.MyOrganizationDto{

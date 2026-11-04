@@ -106,8 +106,8 @@ func newR5RouteEnv(t *testing.T) *r5RouteEnv {
 	app := fiber.New()
 	api := app.Group("/api")
 	SetupClassRoutes(api, cfg, handler.NewClassHandler(classSvc, pc), handler.NewAttendanceHandler(attSvc, pc), rdb, pc)
-	SetupOrgRoleRoutes(api, cfg, handler.NewRoleHandler(roleSvc, pc), rdb, pc)
-	SetupUserOrganizationRoleRoutes(api, cfg, handler.NewUserOrganizationRoleHandler(uorSvc, pc), rdb, pc)
+	SetupOrgRoleRoutes(api, cfg, handler.NewRoleHandler(roleSvc, pc), rdb, pc, &auditSpyRouter{})
+	SetupUserOrganizationRoleRoutes(api, cfg, handler.NewUserOrganizationRoleHandler(uorSvc, pc), rdb, pc, &auditSpyRouter{})
 	e.app = app
 
 	token := func(u model.User, role string, org *uuid.UUID) string {

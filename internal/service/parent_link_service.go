@@ -225,11 +225,17 @@ func (s *ParentLinkService) checkKnownRelation(ctx context.Context, r *repositor
 // vẫn trả 409 nghiệp vụ thay vì 500. Bắt cả gorm.ErrDuplicatedKey (API bật TranslateError trong
 // postgres.go) và *pgconn.PgError 23505 (kết nối không bật dịch lỗi, vd test).
 func mapUniqueViolation(err error) error {
-	var pgErr *pgconn.PgError
-	if errors.Is(err, gorm.ErrDuplicatedKey) || (errors.As(err, &pgErr) && pgErr.Code == "23505") {
+	if isUniqueViolation(err) {
 		return errLinkPendingExists
 	}
 	return err
+}
+
+// isUniqueViolation: lỗi vi phạm ràng buộc unique, dù kết nối có bật TranslateError (gorm.ErrDuplicatedKey) hay
+// không (*pgconn.PgError 23505, vd test). Dùng chung cho mọi service cần đổi lỗi unique thành lỗi nghiệp vụ.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.Is(err, gorm.ErrDuplicatedKey) || (errors.As(err, &pgErr) && pgErr.Code == "23505")
 }
 
 func (s *ParentLinkService) ListSent(ctx context.Context, parentID uuid.UUID) ([]dto.ParentLinkRequestDto, error) {

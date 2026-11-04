@@ -9,6 +9,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 )
 
 // contestUserRateLimit — giới hạn theo user_id (contract §2.2), đặt SAU auth nên luôn có user_id.
@@ -34,7 +35,7 @@ func contestUserRateLimit(rdb *redis.Client, prefix string, max int) fiber.Handl
 // Route cũ đã GỠ (lộ đáp án/không có kiểm quyền): POST /:id/publish, GET|POST /:id/problems,
 // PUT|DELETE /:id/problems/:problemId, POST /:id/problems/:problemId/submit, GET /:id/submissions/me.
 func SetupContestRoutes(api fiber.Router, cfg *config.Config, h *handler.ContestHandler, rdb *redis.Client,
-	permChecker *middleware.PermissionChecker) {
+	permChecker *middleware.PermissionChecker, auditRec middleware.AuditRecorder) {
 	auth := middleware.AuthMiddleware(cfg, rdb)
 	optional := middleware.OptionalAuth(cfg, rdb)
 	manage := permChecker.RequirePermissions("CONTESTS_MANAGE_OWN")
@@ -74,9 +75,9 @@ func SetupContestRoutes(api fiber.Router, cfg *config.Config, h *handler.Contest
 
 	// ── Admin ──
 	api.Get("/admin/contests", auth, approve, h.AdminListContests)
-	api.Post("/admin/contests/:id/approve", auth, approve, h.ApproveContest)
-	api.Post("/admin/contests/:id/reject", auth, approve, h.RejectContest)
-	api.Post("/admin/contests/:id/cancel", auth, approve, h.CancelContest)
-	api.Put("/admin/contests/:id/prizes", auth, approve, h.UpdatePrizes)
-	api.Post("/admin/contests/:id/finalize", auth, approve, h.FinalizeContest)
+	api.Post("/admin/contests/:id/approve", auth, approve, middleware.Audit(auditRec, model.AuditActionContestApprove, "contest", "id"), h.ApproveContest)
+	api.Post("/admin/contests/:id/reject", auth, approve, middleware.Audit(auditRec, model.AuditActionContestReject, "contest", "id"), h.RejectContest)
+	api.Post("/admin/contests/:id/cancel", auth, approve, middleware.Audit(auditRec, model.AuditActionContestCancel, "contest", "id"), h.CancelContest)
+	api.Put("/admin/contests/:id/prizes", auth, approve, middleware.Audit(auditRec, model.AuditActionContestPrizesUpdate, "contest", "id"), h.UpdatePrizes)
+	api.Post("/admin/contests/:id/finalize", auth, approve, middleware.Audit(auditRec, model.AuditActionContestFinalize, "contest", "id"), h.FinalizeContest)
 }

@@ -113,6 +113,14 @@ func (r *UserOrganizationRoleRepository) HardDelete(ctx context.Context, id uuid
 
 // Truy van
 
+// inLiveOrganization loại các dòng gán vai trò thuộc tổ chức đã xoá mềm. Xoá mềm tổ chức không chạy FK CASCADE nên
+// dòng gán cũ vẫn còn trong DB, còn Preload("Organization") thì không nạp tổ chức đã xoá (nil) và mọi chỗ đọc
+// Organization.* sau đó panic (QA3-02: GET /me/organizations 500). DeleteOrganization nay gỡ các dòng này, còn bộ lọc
+// này chặn cả dữ liệu cũ đã mồ côi từ trước bản sửa.
+func (r *UserOrganizationRoleRepository) inLiveOrganization(db *gorm.DB) *gorm.DB {
+	return db.Where("user_organization_roles.organization_id IN (?)", r.db.Model(&model.Organization{}).Select("id"))
+}
+
 func (r *UserOrganizationRoleRepository) FindByUserID(ctx context.Context, userID uuid.UUID, status string) ([]model.UserOrganizationRole, error) {
 	var userOrgRoles []model.UserOrganizationRole
 	query := r.db.WithContext(ctx).Where("user_id = ?", userID)
@@ -134,7 +142,8 @@ func (r *UserOrganizationRoleRepository) FindByUserIDWithDetails(ctx context.Con
 		Preload("Role").
 		Preload("Organization").
 		Preload("Granter").
-		Where("user_id = ?", userID)
+		Where("user_id = ?", userID).
+		Scopes(r.inLiveOrganization)
 
 	if status != "" {
 		query = query.Where("status = ?", status)
@@ -246,7 +255,8 @@ func (r *UserOrganizationRoleRepository) FindByUserAndOrganization(ctx context.C
 	var userOrgRoles []model.UserOrganizationRole
 	query := r.db.WithContext(ctx).
 		Preload("Role").
-		Where("user_id = ? AND organization_id = ?", userID, organizationID)
+		Where("user_id = ? AND organization_id = ?", userID, organizationID).
+		Scopes(r.inLiveOrganization)
 
 	if status != "" {
 		query = query.Where("status = ?", status)

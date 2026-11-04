@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -15,6 +16,10 @@ type SubmissionRepositoryInterface interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*model.Submission, error)
 	GetByAssignment(ctx context.Context, assignmentID uuid.UUID, page, pageSize int) ([]model.Submission, int64, error)
 	GetByUser(ctx context.Context, userID uuid.UUID, page, pageSize int) ([]model.Submission, int64, error)
+	// Bài tập của MỌI lớp học sinh đang theo học (kể cả bài chưa nộp): xem submission_student_assignments.go.
+	ListStudentClassAssignments(ctx context.Context, studentID uuid.UUID, page, pageSize int) ([]model.Assignment, int64, error)
+	ListUserSubmissionsForAssignments(ctx context.Context, userID uuid.UUID, assignmentIDs []uuid.UUID) ([]model.Submission, error)
+	StudentClassAssignmentStats(ctx context.Context, studentID uuid.UUID, now time.Time) (StudentAssignmentStats, error)
 	GetByAssignmentAndUser(ctx context.Context, assignmentID, userID uuid.UUID) ([]model.Submission, error)
 	GetLatestByAssignmentAndUser(ctx context.Context, assignmentID, userID uuid.UUID) (*model.Submission, error)
 	Update(ctx context.Context, submission *model.Submission) error

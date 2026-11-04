@@ -6,6 +6,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 )
 
 func SetupCategoryRoutes(
@@ -15,6 +16,7 @@ func SetupCategoryRoutes(
 	tagHandler *handler.TagHandler,
 	redis *redis.Client,
 	permChecker *middleware.PermissionChecker,
+	auditRec middleware.AuditRecorder,
 ) {
 	auth := middleware.AuthMiddleware(cfg, redis)
 	// A-P0-2 (QA 260927): trước đây các route ghi chỉ có `auth` — bất kỳ user đã đăng nhập nào
@@ -29,9 +31,10 @@ func SetupCategoryRoutes(
 		categories.Get("/:id", categoryHandler.GetCategoryByID)
 
 		// Protected routes - require authentication + CATEGORIES_SYSTEM_MANAGE
-		categories.Post("/", auth, requireSystemManage, categoryHandler.CreateCategory)
-		categories.Put("/:id", auth, requireSystemManage, categoryHandler.UpdateCategory)
-		categories.Delete("/:id", auth, requireSystemManage, categoryHandler.DeleteCategory)
+		// Id danh mục mới nằm trong response, handler đặt đích bằng SetAuditTarget.
+		categories.Post("/", auth, requireSystemManage, middleware.Audit(auditRec, model.AuditActionCategoryCreate, "category", ""), categoryHandler.CreateCategory)
+		categories.Put("/:id", auth, requireSystemManage, middleware.Audit(auditRec, model.AuditActionCategoryUpdate, "category", "id"), categoryHandler.UpdateCategory)
+		categories.Delete("/:id", auth, requireSystemManage, middleware.Audit(auditRec, model.AuditActionCategoryDelete, "category", "id"), categoryHandler.DeleteCategory)
 	}
 
 	// Tags - public read, admin-only write

@@ -6,6 +6,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 )
 
 func SetupUserOrganizationRoleRoutes(
@@ -14,6 +15,7 @@ func SetupUserOrganizationRoleRoutes(
 	userOrgRoleHandler *handler.UserOrganizationRoleHandler,
 	redis *redis.Client,
 	permChecker *middleware.PermissionChecker,
+	auditRec middleware.AuditRecorder,
 ) {
 	authMiddleware := middleware.AuthMiddleware(cfg, redis)
 	requireMembersManage := permChecker.RequirePermissions("ORG_MEMBERS_MANAGE")
@@ -27,8 +29,8 @@ func SetupUserOrganizationRoleRoutes(
 		// Gán/gỡ org role cho user là thao tác quản trị thành viên tổ chức.
 		userOrgRoles := users.Group("/:user_id/org-roles")
 		userOrgRoles.Get("/", authMiddleware, requireMembersManage, userOrgRoleHandler.GetUserOrgRoles)
-		userOrgRoles.Post("/", authMiddleware, requireMembersManage, userOrgRoleHandler.AssignOrgRolesToUser)
-		userOrgRoles.Delete("/:org_role_id", authMiddleware, requireMembersManage, userOrgRoleHandler.RevokeOrgRoleFromUser)
+		userOrgRoles.Post("/", authMiddleware, requireMembersManage, middleware.Audit(auditRec, model.AuditActionUserOrgRoleAssign, "user", "user_id"), userOrgRoleHandler.AssignOrgRolesToUser)
+		userOrgRoles.Delete("/:org_role_id", authMiddleware, requireMembersManage, middleware.Audit(auditRec, model.AuditActionUserOrgRoleRevoke, "user", "user_id"), userOrgRoleHandler.RevokeOrgRoleFromUser)
 	}
 
 	orgRoles := api.Group("/org-roles", authMiddleware)

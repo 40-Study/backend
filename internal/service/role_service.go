@@ -33,6 +33,10 @@ var ErrPermissionNotOrgScope = errors.New("forbidden: permission is outside orga
 // ErrRoleInUse (B-16): role tổ chức còn thành viên đang được gán nên không xoá được. Handler trả 409.
 var ErrRoleInUse = errors.New("role is still assigned to members; revoke it from them first")
 
+// ErrRoleNameTaken (QA3-22): tên role đã dùng trong tổ chức (unique idx_role_name_org, tính cả role đã xoá mềm). Trước đây
+// lỗi unique của GORM lọt ra thành 400 "duplicated key not allowed" tiếng Anh. Handler trả 409 ROLE_NAME_TAKEN.
+var ErrRoleNameTaken = errors.New("Tên vai trò đã tồn tại trong tổ chức này (kể cả vai trò đã xoá, hãy khôi phục hoặc chọn tên khác)")
+
 type RoleServiceInterface interface {
 	// Mọi hàm nhận (activeOrgID, isAdmin) của người gọi: admin (SYSTEM_SETTINGS_MANAGE) làm việc trên
 	// mọi tổ chức, người khác chỉ trong tổ chức đang active của mình (S6).
@@ -76,6 +80,9 @@ func (s *RoleService) CreateRole(ctx context.Context, activeOrgID *uuid.UUID, is
 	}
 
 	if err := s.repo.CreateRole(ctx, role); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrRoleNameTaken
+		}
 		return nil, err
 	}
 
@@ -179,6 +186,9 @@ func (s *RoleService) UpdateRole(ctx context.Context, id uuid.UUID, activeOrgID 
 	}
 
 	if err := s.repo.UpdateRole(ctx, role); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrRoleNameTaken
+		}
 		return nil, err
 	}
 

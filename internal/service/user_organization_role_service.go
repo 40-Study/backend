@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,6 +36,10 @@ type UserOrganizationRoleServiceInterface interface {
 // organization_id của bản ghi đang thao tác) với active_org_id trong JWT; SYSTEM_ADMIN
 // (isAdmin=true, đã xác định qua SYSTEM_SETTINGS_MANAGE) được bỏ qua.
 var ErrOrgRoleForbidden = errors.New("forbidden: organization does not match your active organization")
+
+// ErrOrgRoleAlreadyAssigned (QA3-22): gán lại vai trò tổ chức đang active cho user. Trước đây trả 409 nhưng thông báo
+// tiếng Anh thô ("roles already assigned to user: [..]"). Handler trả 409 ORG_ROLE_ALREADY_ASSIGNED, tên vai trò nối sau.
+var ErrOrgRoleAlreadyAssigned = errors.New("Vai trò đã được gán cho người dùng này")
 
 // requireOrgMatch (H-01 residual): admin bỏ qua kiểm tra; còn lại bắt buộc targetOrgID khớp
 // đúng activeOrgID trong JWT.
@@ -229,12 +234,16 @@ func (s *UserOrganizationRoleService) AssignOrgRolesToUser(ctx context.Context, 
 
 	// Tra loi neu co role da active
 	if len(alreadyActiveRoles) > 0 {
-		return nil, fmt.Errorf("roles already assigned to user: %v", alreadyActiveRoles)
+		return nil, fmt.Errorf("%w: %s", ErrOrgRoleAlreadyAssigned, strings.Join(alreadyActiveRoles, ", "))
 	}
 
 	// Thuc hien trong transaction
 	if len(rolesToReactivate) > 0 || len(rolesToAssign) > 0 {
 		if err := s.repo.AssignRolesWithTx(ctx, rolesToReactivate, rolesToAssign); err != nil {
+			// Hai yêu cầu gán cùng lúc: yêu cầu thua đụng unique idx_uor_user_role_org, cùng ý nghĩa "đã được gán".
+			if isUniqueViolation(err) {
+				return nil, ErrOrgRoleAlreadyAssigned
+			}
 			return nil, err
 		}
 	}
