@@ -918,6 +918,75 @@ sau `AuthMiddleware` — **cần token hợp lệ** (đổi từ public sang yê
 
 ---
 
+## Thay đổi hợp đồng QA3 (2026-11-04)
+
+### Chính sách mật khẩu mới (P-04)
+
+Một luật DUY NHẤT cho mật khẩu MỚI: `POST /api/auth/register/request` (`password`), `POST /api/auth/reset-password`
+(`new_password`) và `PUT /api/auth/change-password` (`new_password`). Luật: **tối thiểu 8 ký tự, có ít nhất 1 chữ in hoa,
+1 chữ số và 1 ký tự đặc biệt** (ký tự đặc biệt = không phải chữ, không phải số, không phải khoảng trắng). Tối đa 72 ký tự.
+Vi phạm trả `400` với `errors[].tag = "strong_password"` và `errors[].message` là câu tiếng Việt cố định:
+
+> Mật khẩu phải có ít nhất 8 ký tự, gồm ít nhất 1 chữ in hoa, 1 chữ số và 1 ký tự đặc biệt
+
+`POST /api/auth/login` KHÔNG áp luật này: tài khoản có mật khẩu yếu cũ vẫn đăng nhập được. Nguồn luật:
+`utils.IsStrongPassword` / `utils.PasswordPolicyMessage`.
+
+### Ví voucher có `eligible` (Q7)
+
+`GET /api/vouchers/me` (đăng nhập): mỗi phần tử của `vouchers[]` giữ nguyên các field cũ (`id`, `voucher_id`, `source`,
+`saved_at`, `voucher{...}`) và thêm:
+
+| Field | Kiểu | Ý nghĩa |
+|---|---|---|
+| `eligible` | bool | `true` nếu người gọi dùng được mã ngay bây giờ |
+| `ineligible_reason` | string | Câu tiếng Việt khi `eligible = false` (đã tắt, chưa đến ngày, hết hạn, đơn hàng đầu tiên, hết lượt toàn hệ thống, hết lượt của bạn, mã đổi bằng điểm, mã không còn tồn tại); chuỗi rỗng khi dùng được |
+
+Dùng đúng các luật của đường áp mã (`ValidateAndApplyVoucher` + `LockAndCheckUsagePerUser`). Không xét giỏ hàng nên
+mức mua tối thiểu và phương thức thanh toán không nằm trong `eligible`.
+
+### Huỷ đơn khi ngân hàng không trả lời (Q8)
+
+`POST /api/orders/:id/check-payment` (nút "Tôi đã chuyển khoản") ghi nhận chủ đơn đã báo chuyển khoản
+(`orders.transfer_reported_at`, chỉ ghi một lần). Poll `GET /orders/:id/payment-status`, job nền và admin bấm hộ không ghi nhận.
+
+`POST /api/orders/:id/cancel` trên đơn `processing` đã có mã chuyển khoản:
+
+| Tình huống | Kết quả |
+|---|---|
+| Ngân hàng xác nhận có tiền khớp | `409 ERR_ORDER_ALREADY_PAID`, đơn hoàn tất, không huỷ |
+| Ngân hàng **không trả lời**, chủ đơn **chưa** báo chuyển khoản | huỷ được (`200`) |
+| Ngân hàng **không trả lời**, chủ đơn **đã** báo chuyển khoản | `503 ERR_PAYMENT_PROVIDER_UNAVAILABLE`, đơn giữ nguyên |
+| Ngân hàng trả lời nhưng đang ân hạn, hoặc có giao dịch sai số tiền | `409 ERR_PAYMENT_VERIFYING`, đơn giữ nguyên |
+
+Cả hai lỗi trả `{ "code": ..., "message": <câu tiếng Việt> }`.
+
+### Tạo/sửa khoá có phí và gửi duyệt (Q3-09)
+
+- `POST /api/courses`, `PUT /api/courses/:id`: khoá có phí (`is_free` bỏ trống hoặc `false`) phải có `price > 0` (sau làm
+  tròn 2 chữ số). Vi phạm trả `400 PAID_COURSE_PRICE_INVALID`. `PUT` chỉ kiểm khi request đổi `price` hoặc `is_free`.
+- `POST /api/courses/:id/submit-review`: ngoài nội dung bài học, khoá phải có ảnh bìa (`thumbnail_url`), mô tả
+  (`description`) và giá (khoá có phí). Thiếu trả `422 COURSE_INCOMPLETE` với `missing[]` (`thumbnail_url`,
+  `description`, `price`) và `message` tiếng Việt nêu từng mục. Thứ tự kiểm: `COURSE_EMPTY` → `COURSE_LESSON_NO_CONTENT` → `COURSE_INCOMPLETE`.
+
+### Lớp học và danh sách học viên giáo viên (Q3-06, Q3-08)
+
+- `POST /api/classes`: người tạo (giảng viên, hoặc admin có hồ sơ giảng viên) được gán làm giảng viên **chính** của lớp
+  trong cùng transaction, nên lớp có `teacher_count = 1` và xuất hiện ở `GET /api/classes/me`. Gọi
+  `POST /classes/:id/teachers` cho chính người tạo sẽ nhận lỗi "đã được gán".
+- `GET /api/teachers/me/students`: ngoài học viên ghi danh khoá của giáo viên, gồm cả học viên **đang học** (status active)
+  trong lớp của giáo viên (giảng viên được gán, người tạo lớp, hoặc chủ khoá của lớp) mà chưa ghi danh khoá nào; mỗi học viên
+  một dòng. Dòng này có `class_id`/`class_name` nhưng không có `course_id`/`course_name`/`progress`. `page_size` tối đa **200**
+  (vượt thì về 20).
+
+### Livestream chưa cấu hình LiveKit (Q3-13)
+
+`POST /api/livestream/:id/start` và `POST /api/livestream/:id/join` khi thiếu `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`,
+`LIVEKIT_NODE_IP` hoặc `LIVEKIT_NODE_PORT` trả `503` với `{ "code": "ERR_LIVE_UNAVAILABLE", "message": "Dịch vụ học trực tuyến hiện chưa sẵn sàng. ..." }`
+(không còn `500` "missing API key"). Khởi động API ghi log `[LIVEKIT] CHƯA CẤU HÌNH, thiếu: ...`.
+
+---
+
 ## Phân tích tính năng còn thiếu
 
 ### 1. SCHEDULING & TIMETABLE (Lịch học)
