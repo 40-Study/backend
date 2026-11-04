@@ -22,6 +22,19 @@ var ErrNotCourseOwner = errors.New("forbidden: not the owner")
 // đã giảm giá mà người học vẫn trả giá gốc. Handler ánh xạ sang 400 DISCOUNT_PRICE_INVALID.
 var ErrDiscountPriceInvalid = errors.New("discount_price must be greater than 0 and less than price; send null to remove the discount")
 
+// ErrPaidCoursePriceInvalid (Q3-09, QA3): khoá có phí (is_free = false) phải có giá > 0; muốn giá 0 thì đặt is_free = true.
+// Trước đây wizard tạo khoá "Có phí" với giá bỏ trống thành price = 0 rồi nộp duyệt được. Handler ánh xạ sang 400
+// PAID_COURSE_PRICE_INVALID.
+var ErrPaidCoursePriceInvalid = errors.New("Khoá học có phí phải có giá lớn hơn 0. Nhập giá bán hoặc chọn miễn phí.")
+
+// validatePaidCoursePrice: khoá có phí thì giá (sau làm tròn 2 chữ số như cột decimal(12,2)) phải > 0.
+func validatePaidCoursePrice(isFree bool, price decimal.Decimal) error {
+	if !isFree && !price.Round(2).IsPositive() {
+		return ErrPaidCoursePriceInvalid
+	}
+	return nil
+}
+
 // validateDiscountPrice kiểm discount có hợp lệ so với price không (0 < discount < price).
 //
 // So sánh trên giá trị ĐÃ LÀM TRÒN 2 chữ số, đúng như cột decimal(12,2) của Postgres (làm tròn
@@ -133,6 +146,10 @@ func NewCourseService(
 }
 
 func (s *CourseService) CreateCourse(ctx context.Context, req dto.CreateCourseDTO) (*dto.CourseResponseDTO, error) {
+	// Q3-09: is_free bỏ trống nghĩa là khoá có phí (mặc định của model), nên giá phải > 0.
+	if err := validatePaidCoursePrice(req.IsFree != nil && *req.IsFree, req.Price); err != nil {
+		return nil, err
+	}
 	// Kiểm giá TRƯỚC mọi truy vấn: lỗi đầu vào không cần chạm DB. Tạo mới gửi null/bỏ trống = không
 	// khuyến mãi (hợp lệ), chỉ giá trị có mặt mới bị kiểm.
 	if req.DiscountPrice != nil {
@@ -401,6 +418,17 @@ func (s *CourseService) UpdateCourse(ctx context.Context, id, actorUserID uuid.U
 	priceAfter := course.Price
 	if req.Price != nil {
 		priceAfter = *req.Price
+	}
+	// Q3-09: chỉ kiểm khi request đổi giá hoặc is_free, để dữ liệu cũ (có phí mà giá 0) không chặn việc sửa không liên quan;
+	// cổng nộp duyệt (CourseMissingForReview) vẫn chặn khoá như vậy.
+	if req.Price != nil || req.IsFree != nil {
+		isFreeAfter := course.IsFree
+		if req.IsFree != nil {
+			isFreeAfter = *req.IsFree
+		}
+		if err := validatePaidCoursePrice(isFreeAfter, priceAfter); err != nil {
+			return nil, err
+		}
 	}
 	switch {
 	case req.DiscountPrice != nil:

@@ -24,7 +24,7 @@ func TestCourseReviewGate_ArticleOnlyAndQuizOnlyLessonsCountAsHavingContent(t *t
 	if err := db.Create(&teacher).Error; err != nil {
 		t.Fatal(err)
 	}
-	course := model.Course{InstructorID: teacher.ID, Title: "QA-gate", Slug: "qa-gate-" + uuid.NewString(), Status: model.CourseStatusDraft}
+	course := model.Course{InstructorID: teacher.ID, Title: "QA-gate", Slug: "qa-gate-" + uuid.NewString(), Status: model.CourseStatusDraft, ThumbnailURL: reviewReadyField("https://cdn.test/cover.png"), Description: reviewReadyField("Mô tả khoá học"), IsFree: true}
 	if err := db.Create(&course).Error; err != nil {
 		t.Fatal(err)
 	}
