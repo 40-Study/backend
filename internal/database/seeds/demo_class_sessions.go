@@ -17,7 +17,7 @@ const demoSessionLookaheadDays = 14
 func (s *Seeder) seedDemoClassSessions(spec classSpec, class model.Class, teacher model.User, students []model.User, schedules map[int]model.ClassSchedule) error {
 	today := demoToday()
 	start := dateOrToday(class.StartDate)
-	last := today.AddDate(0, 0, demoSessionLookaheadDays)
+	last := demoSessionLastDay(today, class.EndDate)
 
 	number := 0
 	for d := start; !d.After(last); d = d.AddDate(0, 0, 1) {
@@ -42,6 +42,19 @@ func (s *Seeder) seedDemoClassSessions(spec classSpec, class model.Class, teache
 		}
 	}
 	return nil
+}
+
+// demoSessionLastDay: ngày cuối còn sinh buổi học = hôm nay + lookahead, nhưng KHÔNG quá ngày kết thúc lớp. Ngày kết
+// thúc chỉ đặt ở lần seed đầu (FirstOrCreate) còn "hôm nay" trôi theo mỗi lần chạy lại, nên thiếu chặn này thì lớp đã
+// kết thúc 04/11 vẫn được sinh thêm "Buổi 12" ngày 14/11 trên lịch dạy (QA-B-12).
+func demoSessionLastDay(today time.Time, classEnd *time.Time) time.Time {
+	last := today.AddDate(0, 0, demoSessionLookaheadDays)
+	if classEnd != nil {
+		if end := toLocalDate(*classEnd); end.Before(last) {
+			return end
+		}
+	}
+	return last
 }
 
 func (s *Seeder) upsertDemoSession(spec classSpec, class model.Class, schedule model.ClassSchedule, day time.Time, number int, isPast bool) (model.ClassSession, error) {

@@ -43,11 +43,12 @@ func (s *Seeder) SeedDemoEngagement(users map[string]model.User, courses map[str
 		run  func() error
 	}{
 		{"notifications", func() error { return s.SeedDemoNotifications(all, courses) }},
+		// Đánh giá phải có TRƯỚC gamification: huy hiệu "Người góp ý" chỉ cấp khi đã có đánh giá thật (QA-A-04).
+		{"reviews", func() error { return s.SeedDemoReviews(all, courses) }},
 		{"gamification", func() error { return s.SeedDemoGamification(all) }},
 		{"coins", func() error { return s.SeedDemoCoins(all) }},
 		{"certificates", func() error { return s.SeedDemoCertificates(all, courses) }},
 		{"user vouchers", func() error { return s.SeedDemoUserVouchers(all) }},
-		{"reviews", func() error { return s.SeedDemoReviews(all, courses) }},
 		{"wishlists & notes", func() error { return s.SeedDemoWishlistsAndNotes(all, courses) }},
 	}
 	for _, step := range steps {

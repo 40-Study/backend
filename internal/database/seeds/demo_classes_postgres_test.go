@@ -37,7 +37,7 @@ func expectedDemoClassCounts(t *testing.T, s *Seeder) demoClassCounts {
 		c.schedules += int64(len(spec.Days))
 
 		start := dateOrToday(class.StartDate)
-		last := today.AddDate(0, 0, demoSessionLookaheadDays)
+		last := demoSessionLastDay(today, class.EndDate)
 		for _, day := range spec.Days {
 			first := start.AddDate(0, 0, (day-int(start.Weekday())+7)%7)
 			for d := first; !d.After(last); d = d.AddDate(0, 0, 7) {

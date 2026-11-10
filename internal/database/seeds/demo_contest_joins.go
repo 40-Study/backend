@@ -5,9 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 	"github.com/shopspring/decimal"
-	"gorm.io/gorm"
 	"study.com/v1/internal/model"
 )
 
@@ -62,41 +60,15 @@ func (s *Seeder) seedContestJoin(c model.Contest, userID uuid.UUID, correct, seq
 // thời lượng làm bài, cùng quiz_attempt_answers: `correct` câu đầu chọn đúng đáp án, các câu sau
 // chọn một đáp án sai — điểm/phần trăm tính từ chính các câu trả lời này.
 func (s *Seeder) seedContestSubmittedAttempt(c model.Contest, userID uuid.UUID, correct, seq int) (uuid.UUID, error) {
-	var questions []model.Question
-	byOrder := func(db *gorm.DB) *gorm.DB { return db.Order("display_order") }
-	if err := s.db.Preload("Answers", byOrder).Where("quiz_id = ?", *c.QuizID).Order("display_order").
-		Find(&questions).Error; err != nil {
-		return uuid.Nil, fmt.Errorf("load contest questions: %w", err)
-	}
-	if len(questions) == 0 {
-		return uuid.Nil, fmt.Errorf("cuộc thi %s chưa có câu hỏi", c.Slug)
+	questions, err := s.loadContestQuestions(c)
+	if err != nil {
+		return uuid.Nil, err
 	}
 	started := c.StartTime.Add(time.Duration(5+seq) * time.Minute)
 	spent := 12*60 + seq*37
 	completed := started.Add(time.Duration(spent) * time.Second)
 
-	score, total := decimal.Zero, decimal.Zero
-	answers := make([]model.QuizAttemptAnswer, 0, len(questions))
-	for i, q := range questions {
-		total = total.Add(q.Points)
-		wantRight := i < correct
-		var picked pq.StringArray
-		for _, a := range q.Answers {
-			if a.IsCorrect == wantRight {
-				picked = append(picked, a.ID.String())
-				if !wantRight {
-					break // câu sai: chỉ chọn một đáp án sai
-				}
-			}
-		}
-		earned := decimal.Zero
-		if wantRight {
-			earned = q.Points
-			score = score.Add(earned)
-		}
-		answers = append(answers, model.QuizAttemptAnswer{QuestionID: q.ID, SelectedAnswerIDs: picked,
-			IsCorrect: ptr(wantRight), PointsEarned: earned})
-	}
+	answers, score, total := demoContestAnswers(questions, correct)
 	pct := score.Div(total).Mul(decimal.NewFromInt(100)).Round(2)
 	attempt := model.QuizAttempt{UserID: userID, QuizID: *c.QuizID, Mode: "contest", Score: &score,
 		TotalPoints: &total, Percentage: &pct, IsPassed: ptr(pct.GreaterThanOrEqual(decimal.NewFromInt(50))),

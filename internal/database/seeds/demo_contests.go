@@ -68,7 +68,7 @@ func (s *Seeder) SeedDemoContests(users map[string]model.User) error {
 		return err
 	}
 	for i, u := range []model.User{s1, s2} {
-		if err := s.seedContestWinner(done, u.ID, i+1, decimal.NewFromInt(int64(3-i))); err != nil {
+		if err := s.seedContestWinner(done, u.ID, i+1, 3-i); err != nil { // student1 đúng 3/3 hạng 1, student2 đúng 2/3 hạng 2
 			return err
 		}
 	}
@@ -207,22 +207,35 @@ func (s *Seeder) seedContestPrizeRanges(contestID uuid.UUID, ranges []contestPri
 	return nil
 }
 
-// seedContestWinner — attempt đã nộp + participant có hạng + award có số chứng nhận.
-func (s *Seeder) seedContestWinner(c model.Contest, userID uuid.UUID, rank int, score decimal.Decimal) error {
-	var existing int64
-	if err := s.db.Model(&model.ContestParticipant{}).Where("contest_id = ? AND user_id = ?", c.ID, userID).
-		Count(&existing).Error; err != nil || existing > 0 {
-		return err // existing > 0: đã seed
+// seedContestWinner — attempt đã nộp (kèm đáp án từng câu: `correct` câu đầu đúng) + participant có hạng + award có số
+// chứng nhận. Participant đã có (DB seed trước đó) thì chỉ vá đáp án còn thiếu, không tạo lại.
+func (s *Seeder) seedContestWinner(c model.Contest, userID uuid.UUID, rank, correct int) error {
+	var existing model.ContestParticipant
+	if err := s.db.Where("contest_id = ? AND user_id = ?", c.ID, userID).Limit(1).Find(&existing).Error; err != nil {
+		return err
 	}
-	total := decimal.NewFromInt(3)
+	if existing.ID != uuid.Nil {
+		return s.backfillContestAttemptAnswers(c, existing)
+	}
+	questions, err := s.loadContestQuestions(c)
+	if err != nil {
+		return err
+	}
+	answers, score, total := demoContestAnswers(questions, correct)
 	pct := score.Div(total).Mul(decimal.NewFromInt(100)).Round(2)
 	started := c.StartTime.Add(time.Duration(rank) * time.Minute)
 	completed := started.Add(10 * time.Minute)
 	attempt := model.QuizAttempt{UserID: userID, QuizID: *c.QuizID, Mode: "contest", Score: &score,
-		TotalPoints: &total, Percentage: &pct, IsPassed: ptr(true), TimeSpentSecs: ptr(600),
-		StartedAt: started, CompletedAt: &completed}
+		TotalPoints: &total, Percentage: &pct, IsPassed: ptr(pct.GreaterThanOrEqual(decimal.NewFromInt(50))),
+		TimeSpentSecs: ptr(600), StartedAt: started, CompletedAt: &completed}
 	if err := s.db.Create(&attempt).Error; err != nil {
 		return fmt.Errorf("seed contest attempt: %w", err)
+	}
+	for i := range answers {
+		answers[i].AttemptID = attempt.ID
+	}
+	if err := s.db.Create(&answers).Error; err != nil {
+		return fmt.Errorf("seed contest winner answers: %w", err)
 	}
 	p := model.ContestParticipant{ContestID: c.ID, UserID: userID, AttemptID: &attempt.ID, Rank: &rank}
 	if err := s.db.Create(&p).Error; err != nil {
