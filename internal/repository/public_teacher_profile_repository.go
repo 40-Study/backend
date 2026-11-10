@@ -81,11 +81,21 @@ func (r *PublicTeacherProfileRepository) PublishedCourseStats(ctx context.Contex
 	var s PublicTeacherCourseStats
 	err := r.db.WithContext(ctx).Model(&model.Course{}).
 		Select(`COUNT(*) AS course_count,
-			COALESCE(SUM(total_students), 0) AS student_count,
 			COALESCE(SUM(total_reviews), 0) AS review_count,
 			COALESCE(SUM(average_rating * total_reviews), 0) AS rating_points`).
 		Where("instructor_id = ? AND status = ?", instructorID, model.CourseStatusPublished).
 		Scan(&s).Error
+	if err != nil {
+		return s, err
+	}
+	// QA-B-19: "số học viên" là số NGƯỜI, không phải tổng lượt ghi danh. Trước đây SUM(total_students) đếm một người học
+	// 2 khoá thành 2 (trang hồ sơ ghi 4 học viên khi thực tế 2 người). Đếm DISTINCT user trên ghi danh còn hiệu lực
+	// (chưa xoá mềm) của đúng các khoá published chưa xoá — cùng tập khoá với course_count ở trên.
+	err = r.db.WithContext(ctx).Model(&model.Enrollment{}).
+		Joins("JOIN courses ON courses.id = enrollments.course_id AND courses.deleted_at IS NULL").
+		Where("courses.instructor_id = ? AND courses.status = ?", instructorID, model.CourseStatusPublished).
+		Distinct("enrollments.user_id").
+		Count(&s.StudentCount).Error
 	return s, err
 }
 

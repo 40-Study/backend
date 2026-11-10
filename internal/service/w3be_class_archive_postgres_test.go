@@ -43,6 +43,7 @@ func TestW3BE_LopLuuTru_ChiDoc_Postgres(t *testing.T) {
 	e := newR5ClassEnv(t)
 	ctx := context.Background()
 	class := e.classInOrgA(t)
+	e.enrollInClassCourse(t, class, e.newStudent) // QA-B-10: ghi danh khoá trước, để lỗi chỉ còn do lớp lưu trữ
 	grades := e.newGradeService(e.checker)
 	classRepo, courseRepo := repository.NewClassRepository(e.db), repository.NewCourseRepository(e.db)
 	livestreams := NewLivestreamService(repository.NewLivestreamRepository(e.db), nil, repository.NewAnalyticsRepository(e.db),

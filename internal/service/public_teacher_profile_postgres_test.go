@@ -72,7 +72,27 @@ func TestPublicTeacherProfile_ChiKhoaPublishedVaThongKeDung(t *testing.T) {
 	gone := w.course(teacher, model.CourseStatusPublished, 999, 99, "1.00")
 	w.f.db.Delete(&gone)
 	other := w.f.user("other-teacher")
-	w.course(other, model.CourseStatusPublished, 500, 50, "3.00") // khoá của giảng viên khác không được tính
+	otherCourse := w.course(other, model.CourseStatusPublished, 500, 50, "3.00") // khoá của giảng viên khác không được tính
+	draft := w.course(teacher, model.CourseStatusDraft, 0, 0, "0.00")
+
+	// QA-B-19: học viên đếm theo NGƯỜI trên ghi danh thật. learner1 học cả a và b (1 người), learner2 học a. Không tính:
+	// ghi danh khoá nháp, khoá published đã xoá mềm, ghi danh đã huỷ (xoá mềm), khoá của giảng viên khác.
+	learner1, learner2, onlyDraft, onlyGone, dropped, otherLearner := w.f.user("l1"), w.f.user("l2"), w.f.user("l3"), w.f.user("l4"), w.f.user("l5"), w.f.user("l6")
+	enroll := func(u model.User, c model.Course) model.Enrollment {
+		e := model.Enrollment{UserID: u.ID, CourseID: c.ID}
+		if err := w.f.db.Create(&e).Error; err != nil {
+			t.Fatalf("ghi danh: %v", err)
+		}
+		return e
+	}
+	enroll(learner1, a)
+	enroll(learner1, b)
+	enroll(learner2, a)
+	enroll(onlyDraft, draft)
+	enroll(onlyGone, gone)
+	cancelled := enroll(dropped, b)
+	w.f.db.Delete(&cancelled)
+	enroll(otherLearner, otherCourse)
 
 	p, err := w.svc.Get(ctx, teacher.ID)
 	if err != nil {
@@ -88,12 +108,12 @@ func TestPublicTeacherProfile_ChiKhoaPublishedVaThongKeDung(t *testing.T) {
 	if len(p.Courses) != 2 || !got[a.ID] || !got[b.ID] {
 		t.Fatalf("muon dung 2 khoa published cua giang vien, duoc %d: %v", len(p.Courses), got)
 	}
-	// 10+30 hoc vien, 4+6 danh gia, rating trung binh co trong so theo so danh gia: (5*4 + 4*6) / 10 = 4.4.
+	// 2 hoc vien (khong phai 10+30 cua total_students), 4+6 danh gia, rating co trong so: (5*4 + 4*6) / 10 = 4.4.
 	s := p.Stats
 	if s == nil {
 		t.Fatal("stats nil")
 	}
-	if s.CourseCount != 2 || s.StudentCount != 40 || s.ReviewCount != 10 || !s.AverageRating.Equal(decimal.RequireFromString("4.4")) {
+	if s.CourseCount != 2 || s.StudentCount != 2 || s.ReviewCount != 10 || !s.AverageRating.Equal(decimal.RequireFromString("4.4")) {
 		t.Fatalf("stats sai: %+v", s)
 	}
 }

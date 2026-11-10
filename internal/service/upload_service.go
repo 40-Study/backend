@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
 	"study.com/v1/internal/config"
+	"study.com/v1/internal/storage"
 )
 
 // UploadResult chứa thông tin kết quả sau khi upload file thành công
@@ -76,20 +77,12 @@ func NewUploadService(objStorage *minio.Client, cfg *config.Config) *UploadServi
 	return &UploadService{objStorage: objStorage, cfg: cfg}
 }
 
-// constructFileURL tạo URL đầy đủ để truy cập file trên MinIO
-// Format: protocol://host:port/bucket/objectName
-// Lý do cần method này: MinIO client không tự động tạo URL, phải tự build
+// constructFileURL tạo URL đầy đủ để trình duyệt truy cập file trên MinIO: base/bucket/objectName.
+// QA-B-02: base là MINIO_PUBLIC_ENDPOINT nếu có (VD: http://localhost:9000), không thì endpoint nội bộ
+// MINIO_HOST:MINIO_PORT như trước. Trước đây luôn dùng endpoint nội bộ nên trong Docker client nhận
+// http://minio:9000/... và ảnh vỡ (trình duyệt không resolve được "minio").
 func (s *UploadService) constructFileURL(bucket, objectName string) string {
-	// Mặc định dùng HTTP, chuyển sang HTTPS nếu config bật SSL
-	// Lý do check SSL: Production thường dùng HTTPS, development dùng HTTP
-	protocol := "http"
-	if s.cfg.MinioUseSSL {
-		protocol = "https"
-	}
-	// Tạo URL theo format: protocol://host:port/bucket/objectName
-	// VD: http://localhost:9000/images/products/2024/12/20/abc-123.jpg
-	return fmt.Sprintf("%s://%s:%s/%s/%s",
-		protocol, s.cfg.MinioHost, s.cfg.MinioPort, bucket, objectName)
+	return storage.PublicObjectURL(s.cfg, bucket, objectName)
 }
 
 // sniffContentType đọc 512 byte đầu của file để xác định MIME type THẬT bằng magic bytes
@@ -309,7 +302,9 @@ func (s *UploadService) DeleteByURL(ctx context.Context, fileURL string) error {
 	// Parse URL để lấy bucket và objectName
 	// VD: http://localhost:9000/images/products/2024/12/20/abc.jpg
 	// parts = ["http:", "", "localhost:9000", "images", "products", "2024", "12", "20", "abc.jpg"]
-	parts := strings.Split(fileURL, "/")
+	// QA-B-02: URL client gửi lên là URL công khai (MINIO_PUBLIC_ENDPOINT); đổi về dạng nội bộ để vị trí bucket
+	// trong URL đúng như format ở trên dù public endpoint có path.
+	parts := strings.Split(storage.InternalizeURL(s.cfg, fileURL), "/")
 	// Validate URL phải có ít nhất 5 parts: protocol, empty, host:port, bucket, object
 	// Nếu ít hơn 5 parts -> URL không đúng format
 	if len(parts) < 5 {

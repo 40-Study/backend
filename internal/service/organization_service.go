@@ -9,8 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-	"study.com/v1/data"
 	"study.com/v1/internal/constants"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
@@ -36,13 +34,6 @@ func NewOrganizationService(repo repository.OrganizationRepositoryInterface, red
 	return &OrganizationService{repo: repo, redisClient: redisClient}
 }
 
-// orgOwnerPermissionNames (23a, review vòng 1) — danh sách permission của role ORG_OWNER dùng để
-// tạo Role "ORG_OWNER" theo TỪNG tổ chức (bảng "roles", phân biệt với SystemRole "ORG_OWNER" toàn
-// cục đã seed sẵn — xem comment ở CreateOrganization). S6: lấy từ SSOT data/permissions/
-// org_owner_permissions.json (cùng nguồn với bộ lọc phạm vi org ở PermissionChecker), không còn
-// lặp danh sách bằng tay ở đây.
-var orgOwnerPermissionNames = data.OrgPermissionNames()
-
 // CreateOrganization (M-01/23a, review vòng 1): TRƯỚC ĐÂY chỉ INSERT bản ghi Organization,
 // không cấp role nào cho người tạo. PUT/DELETE /organizations/:id yêu cầu ORG_ROLES_MANAGE
 // VÀ active_org_id khớp org đó (RequireOrgPermission, organization_router.go) — một TEACHER
@@ -54,7 +45,7 @@ var orgOwnerPermissionNames = data.OrgPermissionNames()
 // "ORG_OWNER" RIÊNG cho tổ chức này (bảng "roles", OrganizationID = org mới, PHÂN BIỆT với
 // SystemRole "ORG_OWNER" toàn cục dùng cho luồng B-01/self-service — hai bảng khác nhau: role
 // tổ chức này chỉ có hiệu lực khi active_org_id khớp, không cấp quyền toàn hệ thống), gán đúng
-// bộ permission của ORG_OWNER theo data/roles.json, rồi tạo UserOrganizationRole cho người tạo.
+// bộ permission của ORG_OWNER (SSOT data/permissions/org_owner_permissions.json), rồi tạo UserOrganizationRole cho người tạo.
 // Người tạo cần chuyển active_org_id sang tổ chức mới (SwitchOrg/SelectOrg, luồng đã có sẵn)
 // để permission có hiệu lực — không cần sửa gì thêm ở đó.
 func (s *OrganizationService) CreateOrganization(ctx context.Context, creatorUserID uuid.UUID, req dto.CreateOrganizationDTO) (*dto.OrganizationResponseDTO, error) {
@@ -79,25 +70,15 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, creatorUse
 			return err
 		}
 
-		ownerRole := model.Role{
-			Name:           "ORG_OWNER",
-			OrganizationID: &org.ID,
-			Status:         "active",
-		}
-		if err := tx.Where("name = ? AND organization_id = ?", ownerRole.Name, org.ID).
-			FirstOrCreate(&ownerRole).Error; err != nil {
+		// QA-C-01: tạo đủ bộ vai mặc định (ORG_OWNER kèm quyền chủ tổ chức, TEACHER, STUDENT) — trước đây chỉ có
+		// ORG_OWNER nên không thêm được giảng viên/học viên vào tổ chức. Xem repository/default_org_roles.go.
+		if _, err := repository.EnsureDefaultOrgRoles(tx, org.ID); err != nil {
 			return err
 		}
-
-		var perms []model.Permission
-		if err := tx.Where("name IN ?", orgOwnerPermissionNames).Find(&perms).Error; err != nil {
+		var ownerRole model.Role
+		if err := tx.Where("name = ? AND organization_id = ?", repository.OrgOwnerRoleName, org.ID).
+			First(&ownerRole).Error; err != nil {
 			return err
-		}
-		for _, perm := range perms {
-			rp := model.RolePermission{RoleID: ownerRole.ID, PermissionID: perm.ID}
-			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&rp).Error; err != nil {
-				return err
-			}
 		}
 
 		uor := &model.UserOrganizationRole{

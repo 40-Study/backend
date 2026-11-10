@@ -134,6 +134,11 @@ func (s *ClassService) WithAuthorizer(authz ClassAuthorizer) *ClassService {
 // ErrNotOrgMember: tạo lớp trong một tổ chức mà người gọi không phải thành viên active (và không phải admin). Handler tra 403.
 var ErrNotOrgMember = errors.New("forbidden: not an active member of this organization")
 
+// ErrStudentNotEnrolledInCourse (QA-B-10): ghi danh vào lớp GẮN KHOÁ một học viên chưa mua/chưa ghi danh khoá đó. Trước
+// đây giảng viên đưa được người chưa trả tiền vào lớp của khoá có phí. Lớp không gắn khoá không áp luật này. Handler trả
+// 400 STUDENT_NOT_ENROLLED_IN_COURSE.
+var ErrStudentNotEnrolledInCourse = errors.New("student is not enrolled in the course of this class")
+
 // ErrNotTeacher (S4): tạo lớp không gắn khoá mà người gọi không phải giảng viên (và không phải admin).
 var ErrNotTeacher = errors.New("forbidden: only teachers can create classes")
 
@@ -368,7 +373,14 @@ func (s *ClassService) SearchEnrollableStudents(ctx context.Context, classID, ac
 	if err := s.requireClassTeacherOrAdmin(ctx, classID, actorUserID, isAdmin); err != nil {
 		return nil, err
 	}
-	students, err := s.studentRepo.SearchEnrollable(ctx, classID, strings.TrimSpace(keyword), maxEnrollableResults)
+	class, err := s.classRepo.GetByID(ctx, classID)
+	if err != nil {
+		return nil, err
+	}
+	if class == nil {
+		return nil, ErrClassNotFound
+	}
+	students, err := s.studentRepo.SearchEnrollable(ctx, classID, class.CourseID, strings.TrimSpace(keyword), maxEnrollableResults)
 	if err != nil {
 		return nil, err
 	}
@@ -731,6 +743,18 @@ func (s *ClassService) EnrollStudentToClass(ctx context.Context, classID, actorU
 		return nil, errors.New("student not found")
 	}
 
+	// QA-B-10: lớp gắn khoá chỉ nhận người đã có ghi danh khoá (mua hoặc khoá miễn phí) — áp cho mọi người gọi, kể cả
+	// admin, để số học viên của lớp không vượt danh sách thành viên của khoá.
+	if class.CourseID != nil {
+		enrolled, err := s.studentRepo.IsEnrolledInCourse(ctx, req.StudentID, *class.CourseID)
+		if err != nil {
+			return nil, err
+		}
+		if !enrolled {
+			return nil, ErrStudentNotEnrolledInCourse
+		}
+	}
+
 	// Check if student is already enrolled
 	alreadyEnrolled, err := s.classRepo.StudentClassExists(ctx, classID, req.StudentID)
 	if err != nil {
@@ -880,9 +904,20 @@ func (s *ClassService) toClassResponseDTO(ctx context.Context, class *model.Clas
 		MaxStudents:    class.MaxStudents,
 		StartDate:      class.StartDate,
 		EndDate:        class.EndDate,
+		IsEnded:        isClassEnded(class, time.Now()),
 		TeacherCount:   teacherCount,
 		StudentCount:   studentCount,
 		CreatedAt:      utils.FormatTimestamp(class.CreatedAt),
 		UpdatedAt:      utils.FormatTimestamp(class.UpdatedAt),
 	}
+}
+
+// isClassEnded (QA-B-12): lớp đang "active" mà end_date đã qua. end_date là cột DATE (ngày lịch, không múi giờ) và là
+// ngày học CUỐI, nên lớp chỉ kết thúc khi ngày hiện tại theo giờ VN đã sang ngày sau end_date. So chuỗi YYYY-MM-DD để
+// không phụ thuộc múi giờ mà driver gán cho giá trị DATE. Lớp nháp/lưu trữ có trạng thái riêng nên không gắn cờ này.
+func isClassEnded(class *model.Class, now time.Time) bool {
+	if class.Status != "active" || class.EndDate == nil {
+		return false
+	}
+	return now.In(vnZone).Format("2006-01-02") > class.EndDate.Format("2006-01-02")
 }

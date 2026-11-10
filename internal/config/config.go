@@ -217,6 +217,9 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("MINIO_BUCKET_IMAGES", "images")
 	viper.SetDefault("MINIO_BUCKET_VIDEOS", "videos")
 	viper.SetDefault("MINIO_BUCKET_NAME", "videos")
+	// QA-B-02: phải có default thì viper.Unmarshal mới thấy biến môi trường MINIO_PUBLIC_ENDPOINT khi file .env
+	// không khai báo khoá này (AutomaticEnv chỉ áp cho khoá viper đã biết). Rỗng = giữ URL nội bộ như cũ.
+	viper.SetDefault("MINIO_PUBLIC_ENDPOINT", "")
 
 	// Transaction Service
 	viper.SetDefault("TRANSACTION_SERVICE_HOST", "localhost")

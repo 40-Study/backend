@@ -50,7 +50,7 @@ func classErrorStatus(err error) int {
 		errors.Is(err, service.ErrNotTeacher),
 		errors.Is(err, service.ErrClassDeleteAdminOnly):
 		return fiber.StatusForbidden
-	case errors.Is(err, service.ErrTeacherNotOrgMember):
+	case errors.Is(err, service.ErrTeacherNotOrgMember), errors.Is(err, service.ErrStudentNotEnrolledInCourse):
 		// 400 (không 422): web (api-client) bỏ code/message của 422 và chỉ hiện "dữ liệu không hợp lệ" chung.
 		return fiber.StatusBadRequest
 	case errors.Is(err, service.ErrClassArchived):
@@ -77,6 +77,8 @@ func classErrorBody(err error) fiber.Map {
 	switch {
 	case errors.Is(err, service.ErrTeacherNotOrgMember):
 		body["code"] = "TEACHER_NOT_ORG_MEMBER"
+	case errors.Is(err, service.ErrStudentNotEnrolledInCourse):
+		body["code"] = "STUDENT_NOT_ENROLLED_IN_COURSE"
 	case errors.Is(err, service.ErrClassDeleteAdminOnly):
 		body["code"] = "CLASS_DELETE_ADMIN_ONLY"
 	case errors.Is(err, service.ErrClassArchived):
