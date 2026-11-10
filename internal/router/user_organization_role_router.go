@@ -51,5 +51,7 @@ func SetupUserOrganizationRoleRoutes(
 		orgGroup := organizations.Group("/:organization_id")
 		orgGroup.Get("/members", authMiddleware, permChecker.RequireOrgPermission("organization_id", "ORG_MEMBERS_MANAGE"), userOrgRoleHandler.GetOrganizationMembers)
 		orgGroup.Get("/roles/:role_id/users", authMiddleware, permChecker.RequireOrgPermission("organization_id", "ORG_MEMBERS_MANAGE"), userOrgRoleHandler.GetUsersWithOrgRole)
+		// QA-C-01: chủ tổ chức tra một người theo email chính xác để lấy user_id rồi gán org role.
+		orgGroup.Get("/user-lookup", authMiddleware, permChecker.RequireOrgPermission("organization_id", "ORG_MEMBERS_MANAGE"), userOrgRoleHandler.LookupUserByEmail)
 	}
 }

@@ -357,3 +357,18 @@ func (h *UserOrganizationRoleHandler) GetUsersWithOrgRole(c *fiber.Ctx) error {
 		"data":    result,
 	})
 }
+
+// LookupUserByEmail (QA-C-01): GET /organizations/:organization_id/user-lookup?email= — chủ tổ chức tìm người để thêm vào
+// tổ chức (GET /users chỉ dành cho quản trị hệ thống). Quyền: RequireOrgPermission ORG_MEMBERS_MANAGE ở router.
+func (h *UserOrganizationRoleHandler) LookupUserByEmail(c *fiber.Ctx) error {
+	user, err := h.service.LookupUserByEmail(c.Context(), c.Query("email"))
+	switch {
+	case errors.Is(err, service.ErrLookupEmailInvalid):
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "INVALID_EMAIL", "message": err.Error()})
+	case errors.Is(err, service.ErrLookupUserNotFound):
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"code": "USER_NOT_FOUND", "message": err.Error()})
+	case err != nil:
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"message": "Failed to look up user", "error": err.Error()})
+	}
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Success", "data": user})
+}

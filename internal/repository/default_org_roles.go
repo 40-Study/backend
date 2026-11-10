@@ -18,22 +18,29 @@ import (
 // Quyền: chỉ quyền phạm vi tổ chức (data/permissions/org_owner_permissions.json) mới có nghĩa với org role
 // (PermissionChecker lọc bỏ quyền khác), và đó đều là quyền QUẢN TRỊ tổ chức. Giảng viên và học viên không quản trị
 // tổ chức nên vai của họ không mang quyền nào: là thành viên active là đủ để được gán dạy lớp của tổ chức
-// (requireOrgMemberTeacher) hay học lớp; quyền dạy (COURSES_CREATE...) vẫn đến từ system role TEACHER. Tên vai trùng
-// mã system role để web hiện đúng nhãn "Giảng viên"/"Học viên" (getOrgRoleLabel) mà không cần trường tên hiển thị mới.
+// (requireOrgMemberTeacher) hay học lớp; quyền dạy (COURSES_CREATE...) vẫn đến từ system role TEACHER.
+//
+// Tên vai CỐ Ý khác mã system role (ORG_TEACHER, không phải TEACHER): chọn org role lúc đăng nhập thì tên vai thành claim
+// active_role, mà một số route chỉ kiểm claim này (vd /open-design đòi active_role == "TEACHER"). Đặt trùng tên thì chủ
+// tổ chức gán vai cho một học viên là học viên đó vượt được cổng dành cho giảng viên đã được admin duyệt.
 type defaultOrgRole struct {
 	name        string
 	description string
 	permissions []string
 }
 
-// OrgOwnerRoleName: vai chủ tổ chức, được cấp cho người tạo tổ chức.
-const OrgOwnerRoleName = "ORG_OWNER"
+// OrgOwnerRoleName: vai chủ tổ chức, được cấp cho người tạo tổ chức. Org role này đã tồn tại trước QA-C-01, giữ tên.
+const (
+	OrgOwnerRoleName   = "ORG_OWNER"
+	OrgTeacherRoleName = "ORG_TEACHER"
+	OrgStudentRoleName = "ORG_STUDENT"
+)
 
 func defaultOrgRoles() []defaultOrgRole {
 	return []defaultOrgRole{
 		{OrgOwnerRoleName, "Chủ tổ chức: quản lý thành viên, vai trò, danh mục và báo cáo của tổ chức", data.OrgPermissionNames()},
-		{"TEACHER", "Giảng viên của tổ chức: được gán dạy các lớp thuộc tổ chức", nil},
-		{"STUDENT", "Học viên của tổ chức", nil},
+		{OrgTeacherRoleName, "Giảng viên của tổ chức: được gán dạy các lớp thuộc tổ chức", nil},
+		{OrgStudentRoleName, "Học viên của tổ chức", nil},
 	}
 }
 

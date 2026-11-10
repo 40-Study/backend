@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -24,7 +25,15 @@ type UserOrganizationRoleServiceInterface interface {
 	GetUsersWithOrgRoleByRoleID(ctx context.Context, roleID uuid.UUID, page, pageSize int, status string, activeOrgID *uuid.UUID, isAdmin bool) (*dto.UserOrgRoleListResponseDTO, error)
 	GetOrganizationMembers(ctx context.Context, organizationID uuid.UUID, page, pageSize int, status string) (*dto.UserOrgRoleListResponseDTO, error)
 	GetUsersWithOrgRole(ctx context.Context, roleID, organizationID uuid.UUID, page, pageSize int, status string) (*dto.UsersWithOrgRoleResponseDTO, error)
+	// LookupUserByEmail (QA-C-01): tra một user đang hoạt động theo email chính xác (trim, không phân biệt hoa thường).
+	LookupUserByEmail(ctx context.Context, email string) (*dto.OrgUserLookupDTO, error)
 }
+
+// ErrLookupEmailInvalid / ErrLookupUserNotFound (QA-C-01): handler trả 400 INVALID_EMAIL / 404 USER_NOT_FOUND.
+var (
+	ErrLookupEmailInvalid = errors.New("a valid email is required")
+	ErrLookupUserNotFound = errors.New("no active user with this email")
+)
 
 // ErrOrgRoleForbidden (H-01 residual, review vòng 1): route POST/DELETE
 // "/users/:user_id/org-roles" chỉ có :user_id trên URL, organization_id nằm trong BODY
@@ -489,4 +498,22 @@ func toUserOrgRoleResponseDTO(uor *model.UserOrganizationRole) *dto.UserOrgRoleR
 	}
 
 	return result
+}
+
+// LookupUserByEmail: chỉ khớp CẢ email (không tìm theo một phần chuỗi) để route không thành công cụ liệt kê người dùng;
+// người gọi phải biết sẵn email. Chuỗi kiểu "Tên <a@b.c>" hay có khoảng trắng bên trong bị coi là sai định dạng.
+func (s *UserOrganizationRoleService) LookupUserByEmail(ctx context.Context, email string) (*dto.OrgUserLookupDTO, error) {
+	email = strings.TrimSpace(email)
+	addr, err := mail.ParseAddress(email)
+	if email == "" || err != nil || addr.Address != email || addr.Name != "" {
+		return nil, ErrLookupEmailInvalid
+	}
+	user, err := s.userRepo.FindActiveUserByEmailCI(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, ErrLookupUserNotFound
+	}
+	return &dto.OrgUserLookupDTO{ID: user.ID, UserName: user.UserName, FullName: user.FullName, AvatarURL: user.AvatarURL, Email: user.Email}, nil
 }

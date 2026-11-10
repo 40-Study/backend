@@ -28,6 +28,9 @@ type AdminUserListFilter struct {
 type UserRepositoryInterface interface {
 	CreateUser(ctx context.Context, user *model.User) error
 	FindUserByEmail(ctx context.Context, email string) (*model.User, error)
+	// FindActiveUserByEmailCI (QA-C-01): khớp email CHÍNH XÁC không phân biệt hoa thường, chỉ user đang hoạt động (chưa
+	// bị khoá is_active=false); user đã xoá mềm bị GORM loại sẵn. nil khi không có.
+	FindActiveUserByEmailCI(ctx context.Context, email string) (*model.User, error)
 	FindUserByPhone(ctx context.Context, phone string) (*model.User, error)
 	FindUserByID(ctx context.Context, id uuid.UUID) (*model.User, error)
 	// UserNameExists — đã có tài khoản (kể cả đã xoá mềm: tên cũ vẫn có thể còn nằm ở dữ liệu liên quan)
@@ -75,6 +78,18 @@ func (r *UserRepository) FindUserByEmail(ctx context.Context, email string) (*mo
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (r *UserRepository) FindActiveUserByEmailCI(ctx context.Context, email string) (*model.User, error) {
+	var user model.User
+	err := r.db.WithContext(ctx).Where("lower(email) = lower(?) AND is_active = ?", email, true).First(&user).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	return &user, nil
