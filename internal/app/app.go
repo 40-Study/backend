@@ -14,6 +14,7 @@ import (
 	"study.com/v1/internal/middleware"
 	asynq_queue "study.com/v1/internal/queue/asynq"
 	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
+	"study.com/v1/internal/repository"
 	"study.com/v1/internal/router"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/socket"
@@ -52,6 +53,13 @@ func New() (*App, error) {
 	seeder := seeds.NewSeeder(resources.DB)
 	if err := seeder.SeedAll("./data"); err != nil {
 		log.Printf("Warning: seeder failed: %v", err)
+	}
+	// QA-C-01: tổ chức tạo trước bản vá (và tổ chức demo seed) không có vai giảng viên/học viên. Chỉ THÊM vai còn thiếu,
+	// không gán cho ai, chạy lại không đổi gì (repository/default_org_roles.go). Lỗi chỉ cảnh báo, không chặn khởi động.
+	if n, err := repository.BackfillDefaultOrgRoles(context.Background(), resources.DB); err != nil {
+		log.Printf("Warning: backfill default org roles failed: %v", err)
+	} else if n > 0 {
+		log.Printf("Backfilled %d default organization roles", n)
 	}
 
 	services := InitServices(resources, repos, notifier, permChecker)

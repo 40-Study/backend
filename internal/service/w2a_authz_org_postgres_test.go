@@ -72,7 +72,8 @@ func TestW2A_GanGiangVien_ChiThanhVienToChuc_Postgres(t *testing.T) {
 	if _, err := e.classes.AssignTeacherToClass(ctx, personal.ID, e.instructor.ID, false, dto.AssignTeacherDTO{TeacherID: e.coTeacher.ID}); err != nil {
 		t.Errorf("lớp cá nhân bị giới hạn nhầm: %v", err)
 	}
-	// Ghi danh học viên vẫn chọn bất kỳ học viên (B2C), kể cả người không thuộc tổ chức.
+	// Ghi danh học viên vẫn chọn bất kỳ học viên (B2C), kể cả người không thuộc tổ chức — miễn đã ghi danh khoá (QA-B-10).
+	e.enrollInClassCourse(t, class, e.newStudent)
 	if _, err := e.classes.EnrollStudentToClass(ctx, class.ID, e.ownerA.ID, false, dto.EnrollStudentDTO{StudentID: e.newStudent.ID}); err != nil {
 		t.Errorf("ghi danh học viên ngoài tổ chức bị chặn: %v", err)
 	}
@@ -136,6 +137,7 @@ func TestW2A_GhiVaoLop_KhongXemDuoc404_Postgres(t *testing.T) {
 	e := newR5ClassEnv(t)
 	ctx := context.Background()
 	class := e.classInOrgA(t)
+	e.enrollInClassCourse(t, class, e.newStudent) // QA-B-10: điều kiện để ca "ghi danh" của vai được phép thành công
 	active := "active"
 	ops := map[string]func(actor model.User) error{
 		"sửa lớp": func(a model.User) error {

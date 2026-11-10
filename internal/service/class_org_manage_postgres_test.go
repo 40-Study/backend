@@ -62,6 +62,12 @@ func (e *r5ClassEnv) buildClassService(authz ClassAuthorizer) *ClassService {
 	return svc
 }
 
+// enrollInClassCourse: ghi danh u vào khoá của lớp (như sau khi mua), điều kiện để vào lớp gắn khoá (QA-B-10).
+func (e *r5ClassEnv) enrollInClassCourse(t *testing.T, class model.Class, u model.User) {
+	t.Helper()
+	mustCreate(t, e.db, &model.Enrollment{UserID: u.ID, CourseID: *class.CourseID})
+}
+
 func TestR5_OrgOwner_QuanLyLopCuaToChuc_Postgres(t *testing.T) {
 	e := newR5ClassEnv(t)
 	ctx := context.Background()
@@ -174,6 +180,11 @@ func TestR5_OrgOwner_QuanLyLopCuaToChuc_Postgres(t *testing.T) {
 		if _, err := e.classes.AssignTeacherToClass(ctx, class.ID, e.ownerA.ID, false, dto.AssignTeacherDTO{TeacherID: e.newTeacher.ID}); err != nil {
 			t.Fatalf("gán giảng viên: %v", err)
 		}
+		// QA-B-10: lớp gắn khoá chỉ nhận người đã ghi danh khoá; chưa ghi danh thì bị từ chối, ghi danh rồi thì được.
+		if _, err := e.classes.EnrollStudentToClass(ctx, class.ID, e.ownerA.ID, false, dto.EnrollStudentDTO{StudentID: e.newStudent.ID}); !errors.Is(err, ErrStudentNotEnrolledInCourse) {
+			t.Fatalf("ghi danh người chưa mua khoá: err=%v, muốn ErrStudentNotEnrolledInCourse", err)
+		}
+		e.enrollInClassCourse(t, class, e.newStudent)
 		if _, err := e.classes.EnrollStudentToClass(ctx, class.ID, e.ownerA.ID, false, dto.EnrollStudentDTO{StudentID: e.newStudent.ID}); err != nil {
 			t.Fatalf("ghi danh học viên: %v", err)
 		}
@@ -264,6 +275,11 @@ func TestR5_OrgOwner_QuanLyLopCuaToChuc_Postgres(t *testing.T) {
 			mustCreate(t, e.db, &model.UserSystemRole{UserID: u.ID, SystemRoleID: sys.ID, Status: model.UserSystemRoleStatusActive})
 		}
 		class := e.classInOrgA(t) // e.student đang học lớp này
+		// QA-B-10: new-student chưa ghi danh khoá của lớp thì không được gợi ý.
+		if got, err := e.classes.SearchEnrollableStudents(ctx, class.ID, e.ownerA.ID, false, ""); err != nil || len(got) != 0 {
+			t.Fatalf("ứng viên khi chưa ai mua khoá=%+v err=%v, muốn rỗng", got, err)
+		}
+		e.enrollInClassCourse(t, class, e.newStudent)
 		got, err := e.classes.SearchEnrollableStudents(ctx, class.ID, e.ownerA.ID, false, "")
 		if err != nil {
 			t.Fatal(err)

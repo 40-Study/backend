@@ -100,3 +100,13 @@ type UserOrgRoleQueryDTO struct {
 	Page           int        `query:"page" default:"1"`
 	PageSize       int        `query:"page_size" default:"20"`
 }
+
+// OrgUserLookupDTO (QA-C-01): GET /organizations/:organization_id/user-lookup?email= — chủ tổ chức tra MỘT người theo
+// email chính xác để lấy user_id rồi gán org role. Chỉ đủ trường để hiển thị và xác nhận đúng người.
+type OrgUserLookupDTO struct {
+	ID        uuid.UUID `json:"id"`
+	UserName  string    `json:"user_name"`
+	FullName  *string   `json:"full_name"`
+	AvatarURL *string   `json:"avatar_url"`
+	Email     string    `json:"email"`
+}

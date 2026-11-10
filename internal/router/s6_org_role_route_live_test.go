@@ -22,6 +22,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/constants"
 	"study.com/v1/internal/database"
@@ -45,6 +46,7 @@ type s6OrgRouteEnv struct {
 	ownerID    uuid.UUID
 	memberID   uuid.UUID // thuộc CẢ tổ chức A và B
 	poisoned   model.Role
+	db         *gorm.DB // QA-C-01 (org_user_lookup_route_live_test.go) cần tạo user mục tiêu
 }
 
 func newS6OrgRouteEnv(t *testing.T) *s6OrgRouteEnv {
@@ -62,7 +64,7 @@ func newS6OrgRouteEnv(t *testing.T) *s6OrgRouteEnv {
 			t.Fatal(err)
 		}
 	}
-	e := &s6OrgRouteEnv{perm: map[string]uuid.UUID{}}
+	e := &s6OrgRouteEnv{perm: map[string]uuid.UUID{}, db: db}
 	for _, n := range []string{"ORG_ROLES_MANAGE", "ORG_MEMBERS_MANAGE", "REPORTS_VIEW_ORG", "SYSTEM_SETTINGS_MANAGE", "PAYMENTS_MANAGE", "USERS_BAN"} {
 		p := model.Permission{Name: n}
 		must(db.Create(&p).Error)

@@ -3,15 +3,10 @@ package service
 import (
 	"context"
 	"errors"
-	"log"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-	"study.com/v1/data"
-	"study.com/v1/internal/constants"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -27,21 +22,12 @@ type OrganizationServiceInterface interface {
 }
 
 type OrganizationService struct {
-	repo        repository.OrganizationRepositoryInterface
-	redisClient *redis.Client
+	repo repository.OrganizationRepositoryInterface
 }
 
-// redisClient có thể nil (test): khi đó không vô hiệu hoá token của thành viên lúc xoá tổ chức.
-func NewOrganizationService(repo repository.OrganizationRepositoryInterface, redisClient *redis.Client) *OrganizationService {
-	return &OrganizationService{repo: repo, redisClient: redisClient}
+func NewOrganizationService(repo repository.OrganizationRepositoryInterface) *OrganizationService {
+	return &OrganizationService{repo: repo}
 }
-
-// orgOwnerPermissionNames (23a, review vòng 1) — danh sách permission của role ORG_OWNER dùng để
-// tạo Role "ORG_OWNER" theo TỪNG tổ chức (bảng "roles", phân biệt với SystemRole "ORG_OWNER" toàn
-// cục đã seed sẵn — xem comment ở CreateOrganization). S6: lấy từ SSOT data/permissions/
-// org_owner_permissions.json (cùng nguồn với bộ lọc phạm vi org ở PermissionChecker), không còn
-// lặp danh sách bằng tay ở đây.
-var orgOwnerPermissionNames = data.OrgPermissionNames()
 
 // CreateOrganization (M-01/23a, review vòng 1): TRƯỚC ĐÂY chỉ INSERT bản ghi Organization,
 // không cấp role nào cho người tạo. PUT/DELETE /organizations/:id yêu cầu ORG_ROLES_MANAGE
@@ -54,7 +40,7 @@ var orgOwnerPermissionNames = data.OrgPermissionNames()
 // "ORG_OWNER" RIÊNG cho tổ chức này (bảng "roles", OrganizationID = org mới, PHÂN BIỆT với
 // SystemRole "ORG_OWNER" toàn cục dùng cho luồng B-01/self-service — hai bảng khác nhau: role
 // tổ chức này chỉ có hiệu lực khi active_org_id khớp, không cấp quyền toàn hệ thống), gán đúng
-// bộ permission của ORG_OWNER theo data/roles.json, rồi tạo UserOrganizationRole cho người tạo.
+// bộ permission của ORG_OWNER (SSOT data/permissions/org_owner_permissions.json), rồi tạo UserOrganizationRole cho người tạo.
 // Người tạo cần chuyển active_org_id sang tổ chức mới (SwitchOrg/SelectOrg, luồng đã có sẵn)
 // để permission có hiệu lực — không cần sửa gì thêm ở đó.
 func (s *OrganizationService) CreateOrganization(ctx context.Context, creatorUserID uuid.UUID, req dto.CreateOrganizationDTO) (*dto.OrganizationResponseDTO, error) {
@@ -79,25 +65,15 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, creatorUse
 			return err
 		}
 
-		ownerRole := model.Role{
-			Name:           "ORG_OWNER",
-			OrganizationID: &org.ID,
-			Status:         "active",
-		}
-		if err := tx.Where("name = ? AND organization_id = ?", ownerRole.Name, org.ID).
-			FirstOrCreate(&ownerRole).Error; err != nil {
+		// QA-C-01: tạo đủ bộ vai mặc định (ORG_OWNER kèm quyền chủ tổ chức, ORG_TEACHER, ORG_STUDENT) — trước đây chỉ có
+		// ORG_OWNER nên không thêm được giảng viên/học viên vào tổ chức. Xem repository/default_org_roles.go.
+		if _, err := repository.EnsureDefaultOrgRoles(tx, org.ID); err != nil {
 			return err
 		}
-
-		var perms []model.Permission
-		if err := tx.Where("name IN ?", orgOwnerPermissionNames).Find(&perms).Error; err != nil {
+		var ownerRole model.Role
+		if err := tx.Where("name = ? AND organization_id = ?", repository.OrgOwnerRoleName, org.ID).
+			First(&ownerRole).Error; err != nil {
 			return err
-		}
-		for _, perm := range perms {
-			rp := model.RolePermission{RoleID: ownerRole.ID, PermissionID: perm.ID}
-			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&rp).Error; err != nil {
-				return err
-			}
 		}
 
 		uor := &model.UserOrganizationRole{
@@ -196,23 +172,15 @@ func (s *OrganizationService) DeleteOrganization(ctx context.Context, id uuid.UU
 		return errors.New("organization not found")
 	}
 
-	// Thành viên phải được lấy TRƯỚC khi xoá: xoá tổ chức gỡ luôn vai trò của họ.
-	members, err := s.repo.ActiveMemberUserIDs(ctx, id)
-	if err != nil {
-		return err
-	}
+	// QA-C-20 (261110): KHÔNG tăng user_version của thành viên. Bản cũ (QA3-02) tăng user_version để token đang chọn
+	// tổ chức này hết hiệu lực, nhưng user_version là khoá "đăng xuất mọi nơi": mọi access token VÀ refresh token của
+	// người đó trên mọi thiết bị bị từ chối, nên admin vừa xoá tổ chức mình tạo (tự thành chủ) văng ra /login ngay.
+	// Không cần cho bảo mật: quyền của org role được tính lại từ DB ở MỖI request (PermissionChecker.
+	// resolveOrgRolePermissions, không có cache quyền), mà repo đã gỡ user_organization_roles (xoá mềm) hoặc xoá vai
+	// (xoá cứng) trong cùng transaction, nên token còn mang active_org_id của tổ chức đã xoá không được quyền tổ chức
+	// nào nữa. Claim active_role chỉ dùng cho giao diện/giới hạn theo vai, không cấp quyền tổ chức.
 	if err := s.repo.DeleteOrganization(ctx, id, hardDelete); err != nil {
 		return err
-	}
-
-	// Security: tăng user_version để token đang chọn tổ chức này (active_org_id) hết hiệu lực, như khi thu hồi vai trò
-	// (QA3-02). Lỗi Redis chỉ log: tổ chức đã xoá xong, token cũ cũng không còn vai trò nào để dùng.
-	if s.redisClient != nil {
-		for _, userID := range members {
-			if err := s.redisClient.Incr(ctx, constants.KeyUserVersion(userID.String())).Err(); err != nil {
-				log.Printf("[OrganizationService] không tăng được user_version của %s sau khi xoá tổ chức %s: %v", userID, id, err)
-			}
-		}
 	}
 	return nil
 }

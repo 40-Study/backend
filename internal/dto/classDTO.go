@@ -43,6 +43,9 @@ type ClassResponseDTO struct {
 	StudentCount   int64      `json:"student_count"`
 	CreatedAt      string     `json:"created_at"`
 	UpdatedAt      string     `json:"updated_at"`
+	// IsEnded (QA-B-12): lớp "active" đã qua end_date (theo ngày giờ VN), tính lúc đọc, không có cột lưu. Status giữ
+	// nguyên giá trị đã lưu (draft/active/archived) để bộ lọc và luồng lưu trữ không đổi nghĩa.
+	IsEnded bool `json:"is_ended"`
 	// CanManage / CanAssignTeachers (B-12): chỉ có ở GET /classes/:id, tính theo ĐÚNG luật quyền của các thao tác
 	// ghi (ensureClassManage, ensureClassOwner) để UI ẩn nút khi không có quyền. omitempty: vắng = không có quyền
 	// (hoặc không phải endpoint chi tiết), UI không được suy ra quyền từ vai trò.

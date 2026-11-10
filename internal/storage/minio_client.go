@@ -198,20 +198,8 @@ func (m *MinioClient) GetPresignedUploadURL(ctx context.Context, bucket, objectK
 // replaceWithPublicEndpoint thay thế internal MinIO endpoint bằng public endpoint
 // Ví dụ: http://localhost:9000/... -> https://cdn.fortex.ai.vn/...
 func (m *MinioClient) replaceWithPublicEndpoint(presignedURL string) string {
-	if m.cfg.MinioPublicEndpoint == "" {
-		return presignedURL
-	}
-
-	// Build internal endpoint
-	internalEndpoint := m.cfg.MinioHost + ":" + m.cfg.MinioPort
-	if m.cfg.MinioUseSSL {
-		internalEndpoint = "https://" + internalEndpoint
-	} else {
-		internalEndpoint = "http://" + internalEndpoint
-	}
-
-	// Replace internal with public endpoint
-	return strings.Replace(presignedURL, internalEndpoint, m.cfg.MinioPublicEndpoint, 1)
+	// QA-B-02: dùng chung PublicizeURL (public_url.go) với URL upload ảnh để hai đường không lệch nhau.
+	return PublicizeURL(m.cfg, presignedURL)
 }
 
 // ObjectURL trả về URL public đầy đủ để truy cập một object trên MinIO
@@ -225,16 +213,7 @@ func (m *MinioClient) replaceWithPublicEndpoint(presignedURL string) string {
 // replaceWithPublicEndpoint để nhất quán với URL presigned của GetPresignedUploadURL /
 // GetPresignedDownloadURL; khi MINIO_PUBLIC_ENDPOINT rỗng thì kết quả giống hệt constructFileURL.
 func (m *MinioClient) ObjectURL(bucket, objectKey string) string {
-	// Mặc định HTTP, chuyển HTTPS nếu config bật SSL — phải khớp với cách
-	// replaceWithPublicEndpoint dựng internalEndpoint bên dưới, nếu lệch protocol thì phần thay
-	// thế endpoint sẽ không khớp và URL public bị bỏ qua lặng lẽ.
-	protocol := "http"
-	if m.cfg.MinioUseSSL {
-		protocol = "https"
-	}
-	objectURL := fmt.Sprintf("%s://%s:%s/%s/%s",
-		protocol, m.cfg.MinioHost, m.cfg.MinioPort, bucket, objectKey)
-	return m.replaceWithPublicEndpoint(objectURL)
+	return PublicObjectURL(m.cfg, bucket, objectKey)
 }
 
 // CompleteMultipartUpload hoàn tất quá trình multipart upload
