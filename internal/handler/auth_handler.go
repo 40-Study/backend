@@ -625,10 +625,11 @@ func (h *AuthHandler) SelectRole(c *fiber.Ctx) error {
 
 	response, err := h.authService.SelectRole(c.Context(), req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Select role failed",
-			"error":   err.Error(),
-		})
+		body := fiber.Map{"message": "Select role failed", "error": err.Error()}
+		if errors.Is(err, service.ErrOrgRoleNameReserved) {
+			body["code"] = "ORG_ROLE_NAME_RESERVED"
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(body)
 	}
 
 	h.setAuthCookies(c, response.AccessToken, response.RefreshToken)
@@ -770,10 +771,11 @@ func (h *AuthHandler) SwitchRole(c *fiber.Ctx) error {
 
 	response, err := h.authService.SwitchRole(c.Context(), userID, deviceID, req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Switch role failed",
-			"error":   err.Error(),
-		})
+		body := fiber.Map{"message": "Switch role failed", "error": err.Error()}
+		if errors.Is(err, service.ErrOrgRoleNameReserved) {
+			body["code"] = "ORG_ROLE_NAME_RESERVED"
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(body)
 	}
 
 	h.setAuthCookies(c, response.AccessToken, response.RefreshToken)

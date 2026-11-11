@@ -2,6 +2,7 @@ package model
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,6 +56,23 @@ func (SystemRolePermissionSeed) TableName() string {
 // API quản trị từ chối. Phải khớp roles.json — test trong package service pin sự khớp đó.
 var BuiltInSystemRoleNames = []string{
 	"SYSTEM_ADMIN", "ORG_OWNER", "TEACHER", "TEACHER_APPLICANT", "STUDENT", "PARENT",
+}
+
+// OrgRoleNameReserved (review #144, phát hiện 1): tên org role không được trùng tên vai hệ thống dựng sẵn. Chọn org role lúc
+// đăng nhập thì TÊN vai thành claim active_role, mà một số cổng chỉ so chuỗi claim (open-design đòi "TEACHER", lesson
+// code và contest đòi "STUDENT", DenyActiveRole chặn "PARENT"). Vai tên TEACHER trong tổ chức sẽ biến người được gán
+// thành "giảng viên" ở các cổng đó dù chưa được admin duyệt. So sau khi trim + viết hoa để "teacher " cũng bị chặn.
+//
+// ORG_OWNER là ngoại lệ ở bước cấp token (OrgRoleNameBlockedForToken): đó chính là org role chủ tổ chức do hệ thống tạo
+// (CreateOrganization, backfill) và web đọc đúng claim này để vào khu /org; không cổng backend nào cấp quyền theo chuỗi
+// "ORG_OWNER" (quyền chủ tổ chức luôn tính từ permission trong DB). API tạo/đổi tên vai vẫn chặn cả ORG_OWNER.
+func OrgRoleNameReserved(name string) bool {
+	return IsBuiltInSystemRole(strings.ToUpper(strings.TrimSpace(name)))
+}
+
+// OrgRoleNameBlockedForToken: org role có tên này không được cấp thành active_role (xem OrgRoleNameReserved).
+func OrgRoleNameBlockedForToken(name string) bool {
+	return OrgRoleNameReserved(name) && strings.ToUpper(strings.TrimSpace(name)) != "ORG_OWNER"
 }
 
 // IsBuiltInSystemRole báo name có phải vai trò hệ thống dựng sẵn không (so khớp chính xác, vì
