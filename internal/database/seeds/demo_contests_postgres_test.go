@@ -112,8 +112,9 @@ func TestSeedDemoContests_Postgres_DuTabVaIdempotent(t *testing.T) {
 			if gotSlugs, want := sortedSlugs(all), allDemoContestSlugs(); !reflect.DeepEqual(gotSlugs, want) {
 				t.Fatalf("lần 1: cuộc thi demo = %v, muốn đúng %v", gotSlugs, want)
 			}
-			if got.participants != 7 || got.attempts != 4 || got.attemptAnswers != 8 {
-				t.Fatalf("lần 1: %+v, muốn 7 participant / 4 attempt / 8 attempt answer", got)
+			// 14 = 2 bài nộp ở cuộc thi ENDED (8 dòng) + 2 người đoạt giải cuộc thi đã chốt × 3 câu (QA-A-03).
+			if got.participants != 7 || got.attempts != 4 || got.attemptAnswers != 14 {
+				t.Fatalf("lần 1: %+v, muốn 7 participant / 4 attempt / 14 attempt answer", got)
 			}
 		} else if got != first {
 			t.Errorf("lần 2: %+v, muốn giữ nguyên %+v — seed lại không được nhân bản", got, first)
@@ -182,4 +183,52 @@ func TestSeedDemoContests_Postgres_DuTabVaIdempotent(t *testing.T) {
 			t.Errorf("attempt %s score=%v, tổng điểm đáp án=%s", a.ID, a.Score, earned)
 		}
 	}
+}
+
+// QA-A-03: bài thi của người đoạt giải ở cuộc thi đã chốt có điểm 2/3 mà không có dòng đáp án nào ("Bạn bỏ trống câu
+// này" cho mọi câu). Seed mới phải ghi đáp án khớp điểm, và chạy lại trên DB seed bằng bản cũ phải vá được.
+func TestSeedDemoContests_Postgres_FinalizedWinnersHaveAnswersMatchingScore(t *testing.T) {
+	db := pgtest.IsolatedSchema(t, database.Migrate)
+	s := NewSeeder(db)
+	users := laneADemoUsers(t, db, "admin@demo.com", "teacher1@demo.com", "teacher2@demo.com",
+		"student1@demo.com", "student2@demo.com")
+
+	check := func(label string) {
+		t.Helper()
+		var done model.Contest
+		if err := db.Where("slug = ?", "demo-thi-git-da-chot").First(&done).Error; err != nil {
+			t.Fatalf("%s: đọc cuộc thi đã chốt: %v", label, err)
+		}
+		var questions int64
+		db.Model(&model.Question{}).Where("quiz_id = ?", *done.QuizID).Count(&questions)
+		var attempts []model.QuizAttempt
+		db.Where("quiz_id = ?", *done.QuizID).Find(&attempts)
+		if len(attempts) != 2 {
+			t.Fatalf("%s: %d attempt ở cuộc thi đã chốt, muốn 2", label, len(attempts))
+		}
+		for _, a := range attempts {
+			var rows int64
+			var earned decimal.Decimal
+			db.Model(&model.QuizAttemptAnswer{}).Where("attempt_id = ?", a.ID).Count(&rows)
+			db.Raw("SELECT COALESCE(SUM(points_earned),0) FROM quiz_attempt_answers WHERE attempt_id = ?", a.ID).Scan(&earned)
+			if rows != questions || a.Score == nil || !a.Score.Equal(earned) {
+				t.Errorf("%s: attempt %s score=%v, %d/%d dòng đáp án, tổng điểm đáp án=%s", label, a.ID, a.Score, rows, questions, earned)
+			}
+		}
+	}
+
+	if err := s.SeedDemoContests(users); err != nil {
+		t.Fatal(err)
+	}
+	check("seed mới")
+
+	// DB seed bằng bản cũ: attempt người đoạt giải không có đáp án.
+	if err := db.Exec(`DELETE FROM quiz_attempt_answers WHERE attempt_id IN (SELECT cp.attempt_id FROM contest_participants cp
+		JOIN contests c ON c.id = cp.contest_id WHERE c.slug = 'demo-thi-git-da-chot')`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SeedDemoContests(users); err != nil {
+		t.Fatal(err)
+	}
+	check("chạy lại trên DB cũ")
 }

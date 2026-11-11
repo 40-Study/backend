@@ -22,7 +22,9 @@ var demoEnrollments = []enrollmentSpec{
 	{StudentEmail: "student1@demo.com", CourseSlug: "react-nextjs-tu-co-ban-den-nang-cao", Progress: 65},
 	{StudentEmail: "student1@demo.com", CourseSlug: "flutter-mobile-development", Progress: 20},
 	{StudentEmail: "student1@demo.com", CourseSlug: "git-github-cho-nguoi-moi-bat-dau", Progress: 100},
-	{StudentEmail: "student2@demo.com", CourseSlug: "python-cho-khoa-hoc-du-lieu", Progress: 10},
+	// 50% của 6 bài = 3 bài hoàn thành trong 3 ngày liền gần nhất: student2 có chuỗi 3 ngày và huy hiệu "Bước chân đầu
+	// tiên" là THẬT (QA-A-04: trước là 10% = 0 bài mà vẫn có chuỗi 3 ngày và huy hiệu đó).
+	{StudentEmail: "student2@demo.com", CourseSlug: "python-cho-khoa-hoc-du-lieu", Progress: 50},
 }
 
 // SeedDemoEnrollments ghi danh học viên demo và sinh tiến độ từng bài học
@@ -115,7 +117,8 @@ func (s *Seeder) upsertEnrollment(userID, courseID uuid.UUID, progress float64) 
 		LastAccessedAt:  &lastAccessed,
 	}
 	if progress >= 100 {
-		completed := daysAgo(3)
+		// Khoá xong đúng lúc bài cuối xong (bài cuối luôn rơi vào mốc gần nhất, xem seedLessonProgress).
+		completed := demoCompletionTime(time.Now(), 0)
 		enrollment.CompletedAt = &completed
 	}
 
@@ -138,7 +141,8 @@ func (s *Seeder) seedLessonProgress(enrollment model.Enrollment, courseID uuid.U
 		return nil
 	}
 
-	completedCount := int(float64(len(lessons)) * progress / 100)
+	completedCount := demoCompletedLessonCount(len(lessons), progress)
+	now := time.Now()
 
 	for i, lesson := range lessons {
 		status := "not_started"
@@ -149,7 +153,9 @@ func (s *Seeder) seedLessonProgress(enrollment model.Enrollment, courseID uuid.U
 		case i < completedCount:
 			status = "completed"
 			percent = 100
-			ts := daysAgo(5)
+			// Mỗi ngày một bài, bài cuối ở mốc gần nhất: biểu đồ "Hoạt động học tập" có dữ liệu thật để chuỗi ngày
+			// (suy ra ở SeedDemoGamification) khớp. Trước đây mọi bài cùng daysAgo(5), nằm ngoài khung 7 ngày sau ít hôm.
+			ts := demoCompletionTime(now, completedCount-1-i)
 			completedAt = &ts
 		case i == completedCount && progress < 100:
 			status = "in_progress"
@@ -181,6 +187,11 @@ func (s *Seeder) seedLessonProgress(enrollment model.Enrollment, courseID uuid.U
 		}
 	}
 	return nil
+}
+
+// demoCompletedLessonCount: số bài đầu khoá được đánh dấu hoàn thành để đạt xấp xỉ progress phần trăm (làm tròn xuống).
+func demoCompletedLessonCount(total int, progress float64) int {
+	return int(float64(total) * progress / 100)
 }
 
 // courseLessonsInOrder trả về toàn bộ bài học của khoá theo đúng thứ tự hiển thị.

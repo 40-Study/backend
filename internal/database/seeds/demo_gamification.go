@@ -3,6 +3,7 @@ package seeds
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -25,34 +26,25 @@ var demoAchievements = []model.Achievement{
 	{Slug: "bi-mat-40study", Name: "Nhà thám hiểm", Description: "Khám phá tính năng ẩn của 40Study.", Category: "special", Points: 150, Requirement: "secret_explorer", Threshold: 1, IsHidden: true},
 }
 
-// demoLearnerStat: số liệu gamification của một học viên demo. Điểm tuần/tháng là phần của
-// total_points kiếm được trong kỳ hiện tại.
+// demoLearnerStat: số liệu điểm của một học viên demo. Điểm tuần/tháng là phần của total_points kiếm được trong kỳ hiện
+// tại. Chuỗi ngày, số bài đã học và huy hiệu KHÔNG khai ở đây: chúng suy ra từ dữ liệu học thật (demo_learning_facts.go),
+// để không thể lệch với widget hoạt động/tiến độ (QA-A-04).
 type demoLearnerStat struct {
-	Email          string
-	TotalPoints    int
-	WeeklyPoints   int
-	MonthlyPoints  int
-	CurrentStreak  int
-	LongestStreak  int
-	TotalCheckins  int
-	Lessons        int
-	Quizzes        int
-	StudyMinutes   int
-	AchievementIDs []string // slug achievement đã mở khoá
-	EarnedDaysAgo  int
+	Email         string
+	TotalPoints   int
+	WeeklyPoints  int
+	MonthlyPoints int
+	TotalCheckins int
+	Quizzes       int
+	StudyMinutes  int
 }
 
 var demoLearnerStats = []demoLearnerStat{
-	{Email: "student1@demo.com", TotalPoints: 1850, WeeklyPoints: 260, MonthlyPoints: 940, CurrentStreak: 12, LongestStreak: 21, TotalCheckins: 48, Lessons: 11, Quizzes: 3, StudyMinutes: 540,
-		AchievementIDs: []string{"buoc-chan-dau-tien", "hoan-thanh-khoa-dau-tien", "chuoi-7-ngay", "nguoi-danh-gia"}, EarnedDaysAgo: 18},
-	{Email: "student3@demo.com", TotalPoints: 1420, WeeklyPoints: 310, MonthlyPoints: 820, CurrentStreak: 9, LongestStreak: 15, TotalCheckins: 37, Lessons: 22, Quizzes: 6, StudyMinutes: 610,
-		AchievementIDs: []string{"buoc-chan-dau-tien", "hoc-vien-cham-chi", "chuoi-7-ngay", "bac-thay-trac-nghiem"}, EarnedDaysAgo: 25},
-	{Email: "student2@demo.com", TotalPoints: 980, WeeklyPoints: 120, MonthlyPoints: 450, CurrentStreak: 3, LongestStreak: 5, TotalCheckins: 16, Lessons: 2, Quizzes: 1, StudyMinutes: 180,
-		AchievementIDs: []string{"buoc-chan-dau-tien", "nguoi-danh-gia"}, EarnedDaysAgo: 9},
-	{Email: "student4@demo.com", TotalPoints: 760, WeeklyPoints: 180, MonthlyPoints: 390, CurrentStreak: 5, LongestStreak: 8, TotalCheckins: 20, Lessons: 9, Quizzes: 2, StudyMinutes: 260,
-		AchievementIDs: []string{"buoc-chan-dau-tien", "chuoi-7-ngay", "cu-dem"}, EarnedDaysAgo: 14},
-	{Email: "student5@demo.com", TotalPoints: 430, WeeklyPoints: 70, MonthlyPoints: 210, CurrentStreak: 1, LongestStreak: 4, TotalCheckins: 8, Lessons: 4, Quizzes: 1, StudyMinutes: 120,
-		AchievementIDs: []string{"buoc-chan-dau-tien"}, EarnedDaysAgo: 6},
+	{Email: "student1@demo.com", TotalPoints: 1850, WeeklyPoints: 260, MonthlyPoints: 940, TotalCheckins: 48, Quizzes: 3, StudyMinutes: 540},
+	{Email: "student3@demo.com", TotalPoints: 1420, WeeklyPoints: 310, MonthlyPoints: 820, TotalCheckins: 37, Quizzes: 6, StudyMinutes: 610},
+	{Email: "student2@demo.com", TotalPoints: 980, WeeklyPoints: 120, MonthlyPoints: 450, TotalCheckins: 16, Quizzes: 1, StudyMinutes: 180},
+	{Email: "student4@demo.com", TotalPoints: 760, WeeklyPoints: 180, MonthlyPoints: 390, TotalCheckins: 20, Quizzes: 2, StudyMinutes: 260},
+	{Email: "student5@demo.com", TotalPoints: 430, WeeklyPoints: 70, MonthlyPoints: 210, TotalCheckins: 8, Quizzes: 1, StudyMinutes: 120},
 }
 
 var demoRewards = []model.Reward{
@@ -76,24 +68,36 @@ func (s *Seeder) SeedDemoGamification(users map[string]model.User) error {
 		achievements[a.Slug] = record
 	}
 
+	now := time.Now()
+	facts := make(map[string]demoLearnerFacts, len(demoLearnerStats))
 	for _, st := range demoLearnerStats {
 		user, err := demoUser(users, st.Email)
 		if err != nil {
 			return err
 		}
-		if err := s.seedLearnerPointsAndStreak(user, st); err != nil {
+		f, err := s.loadDemoLearnerFacts(user.ID)
+		if err != nil {
 			return err
 		}
-		for _, slug := range st.AchievementIDs {
-			ua := model.UserAchievement{UserID: user.ID, AchievementID: achievements[slug].ID, EarnedAt: daysAgo(st.EarnedDaysAgo), Progress: 100}
+		facts[st.Email] = f
+		if err := s.seedLearnerPointsAndStreak(user, st, f, now); err != nil {
+			return err
+		}
+		// Duyệt theo demoAchievements (không theo map) để thứ tự ghi ổn định giữa các lần chạy.
+		for _, a := range demoAchievements {
+			earnedAt, ok := demoAchievementEarnedAt(a, f)
+			if !ok {
+				continue
+			}
+			ua := model.UserAchievement{UserID: user.ID, AchievementID: achievements[a.Slug].ID, EarnedAt: earnedAt, Progress: 100}
 			if err := s.db.Where("user_id = ? AND achievement_id = ?", user.ID, ua.AchievementID).
 				Attrs(ua).FirstOrCreate(&ua).Error; err != nil {
-				return fmt.Errorf("failed to seed user achievement %s for %s: %w", slug, st.Email, err)
+				return fmt.Errorf("failed to seed user achievement %s for %s: %w", a.Slug, st.Email, err)
 			}
 		}
 	}
 
-	if err := s.seedDemoLeaderboardEntries(users); err != nil {
+	if err := s.seedDemoLeaderboardEntries(users, facts); err != nil {
 		return err
 	}
 
@@ -107,8 +111,10 @@ func (s *Seeder) SeedDemoGamification(users map[string]model.User) error {
 	return nil
 }
 
-// seedLearnerPointsAndStreak tạo user_points và user_streaks (unique theo user_id).
-func (s *Seeder) seedLearnerPointsAndStreak(user model.User, st demoLearnerStat) error {
+// seedLearnerPointsAndStreak tạo user_points và user_streaks (unique theo user_id). Chuỗi ngày tính từ ngày hoàn thành
+// bài thật và được GHI ĐÈ mỗi lần chạy (Assign): đây là số dẫn xuất, và chưa service nào cập nhật user_streaks, nên chạy
+// lại seed là cách duy nhất để nó khớp lại với lịch sử học sau khi thời gian trôi.
+func (s *Seeder) seedLearnerPointsAndStreak(user model.User, st demoLearnerStat, f demoLearnerFacts, now time.Time) error {
 	points := model.UserPoint{
 		UserID:         user.ID,
 		TotalPoints:    st.TotalPoints,
@@ -121,18 +127,19 @@ func (s *Seeder) seedLearnerPointsAndStreak(user model.User, st demoLearnerStat)
 		return fmt.Errorf("failed to seed user points for %s: %w", user.Email, err)
 	}
 
-	lastCheckin := daysAgo(0)
-	if st.CurrentStreak == 0 {
-		lastCheckin = daysAgo(3)
+	current, longest := demoStreaks(now, f.Lessons)
+	days := demoActivityDays(f.Lessons)
+	var lastCheckin *time.Time
+	if len(days) > 0 {
+		lastCheckin = ptr(days[len(days)-1])
 	}
-	streak := model.UserStreak{
-		UserID:          user.ID,
-		CurrentStreak:   st.CurrentStreak,
-		LongestStreak:   st.LongestStreak,
-		LastCheckinDate: &lastCheckin,
-		TotalCheckins:   st.TotalCheckins,
-	}
-	if err := s.db.Where("user_id = ?", user.ID).Attrs(streak).FirstOrCreate(&streak).Error; err != nil {
+	// Lượt điểm danh không thể ít hơn số ngày đã học.
+	checkins := max(st.TotalCheckins, len(days))
+	streak := model.UserStreak{UserID: user.ID}
+	if err := s.db.Where("user_id = ?", user.ID).
+		Assign(map[string]interface{}{"current_streak": current, "longest_streak": longest,
+			"last_checkin_date": lastCheckin, "total_checkins": checkins}).
+		FirstOrCreate(&streak).Error; err != nil {
 		return fmt.Errorf("failed to seed user streak for %s: %w", user.Email, err)
 	}
 	return nil
@@ -141,7 +148,7 @@ func (s *Seeder) seedLearnerPointsAndStreak(user model.User, st demoLearnerStat)
 // seedDemoLeaderboardEntries tạo bảng xếp hạng tuần/tháng của KỲ HIỆN TẠI (định dạng period lấy từ
 // repository.CurrentPeriod — cùng hàm API dùng). Trang web hiện luôn xếp all_time (lỗi tham số
 // period_type/period phía handler), nhưng dữ liệu này sẵn sàng khi nút Tuần/Tháng được sửa.
-func (s *Seeder) seedDemoLeaderboardEntries(users map[string]model.User) error {
+func (s *Seeder) seedDemoLeaderboardEntries(users map[string]model.User, facts map[string]demoLearnerFacts) error {
 	for _, periodType := range []string{"weekly", "monthly"} {
 		period := repository.CurrentPeriod(periodType)
 		ranked := append([]demoLearnerStat(nil), demoLearnerStats...)
@@ -168,7 +175,7 @@ func (s *Seeder) seedDemoLeaderboardEntries(users map[string]model.User) error {
 				PeriodType:       periodType,
 				Points:           pointsOf(st),
 				Rank:             i + 1,
-				LessonsCompleted: min(st.Lessons, 2*scale),
+				LessonsCompleted: min(len(facts[st.Email].Lessons), 2*scale),
 				QuizzesCompleted: min(st.Quizzes, scale),
 				StudyMinutes:     st.StudyMinutes * scale / 8,
 			}

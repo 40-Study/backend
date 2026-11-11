@@ -8,10 +8,10 @@ import (
 	"study.com/v1/internal/model"
 )
 
-// calendarSlot trả mốc giờ cố định (giờ:00) của ngày cách hôm nay dayOffset ngày, theo giờ máy chủ.
-func calendarSlot(dayOffset, hour int) time.Time {
-	d := time.Now().AddDate(0, 0, dayOffset)
-	return time.Date(d.Year(), d.Month(), d.Day(), hour, 0, 0, 0, d.Location())
+// calendarSlot trả mốc giờ cố định (giờ:00 THEO GIỜ VIỆT NAM) của ngày cách hôm nay dayOffset ngày. Trước đây lấy
+// múi giờ máy chạy seed: trong container UTC, "19:00 ôn tập" thành 19:00 UTC = 02:00 sáng hôm sau ở web (QA-B-15).
+func calendarSlot(now time.Time, dayOffset, hour int) time.Time {
+	return demoWallClock(demoTodayAt(now), dayOffset, hour, 0)
 }
 
 type demoPersonalEventSpec struct {
@@ -43,7 +43,7 @@ func (s *Seeder) SeedDemoPersonalEvents(users map[string]model.User) error {
 		if !ok {
 			return fmt.Errorf("personal event %q: user %s not found", spec.Title, spec.Email)
 		}
-		start := calendarSlot(spec.Day, spec.Hour)
+		start := calendarSlot(time.Now(), spec.Day, spec.Hour)
 		event := model.PersonalEvent{UserID: user.ID, Title: spec.Title, Description: ptr(spec.Description),
 			StartTime: start, EndTime: start.Add(time.Duration(spec.DurationMin) * time.Minute),
 			Color: ptr(spec.Color), ReminderMin: ptr(spec.ReminderMin)}
