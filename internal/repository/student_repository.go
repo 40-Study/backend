@@ -16,7 +16,8 @@ type StudentRepositoryInterface interface {
 	// QA-B-10: courseID khác nil (lớp gắn khoá) thì chỉ trả người đang có ghi danh khoá đó, cùng luật với
 	// IsEnrolledInCourse, để ô chọn không gợi ý người mà API ghi danh sẽ từ chối.
 	SearchEnrollable(ctx context.Context, classID uuid.UUID, courseID *uuid.UUID, keyword string, limit int) ([]model.User, error)
-	// IsEnrolledInCourse (QA-B-10): học viên có ghi danh khoá (enrollments chưa xoá mềm) hay không. Ghi danh chỉ được tạo
+	// IsEnrolledInCourse (QA-B-10): học viên có ghi danh khoá CÒN HẠN (enrollments chưa xoá mềm, expires_at NULL hoặc chưa
+	// qua, xem enrollmentNotExpiredCondition) hay không. Ghi danh chỉ được tạo
 	// sau khi mua (hoặc khoá miễn phí), nên đây là điều kiện "đã mua hoặc đã ghi danh khoá".
 	IsEnrolledInCourse(ctx context.Context, studentID, courseID uuid.UUID) (bool, error)
 }
@@ -52,7 +53,8 @@ func (r *StudentRepository) SearchEnrollable(ctx context.Context, classID uuid.U
 		Where("users.is_active = ?", true).
 		Where("users.id NOT IN (SELECT student_id FROM student_classes WHERE class_id = ? AND "+StudentClassActiveCondition+")", classID)
 	if courseID != nil {
-		query = query.Where("EXISTS (SELECT 1 FROM enrollments e WHERE e.user_id = users.id AND e.course_id = ? AND e.deleted_at IS NULL)", *courseID)
+		query = query.Where("EXISTS (SELECT 1 FROM enrollments e WHERE e.user_id = users.id AND e.course_id = ? AND e.deleted_at IS NULL AND "+
+			enrollmentNotExpiredCondition("e")+")", *courseID)
 	}
 	query = utils.ApplyKeywordSearch(query, keyword, "users.user_name", "users.full_name")
 	err := query.Select("users.*").Order("users.full_name ASC, users.user_name ASC").Limit(limit).Find(&students).Error
@@ -67,7 +69,15 @@ func (r *StudentRepository) SearchEnrollable(ctx context.Context, classID uuid.U
 func (r *StudentRepository) IsEnrolledInCourse(ctx context.Context, studentID, courseID uuid.UUID) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.Enrollment{}).
-		Where("user_id = ? AND course_id = ?", studentID, courseID).
+		Where("user_id = ? AND course_id = ? AND "+enrollmentNotExpiredCondition("enrollments"), studentID, courseID).
 		Count(&count).Error
 	return count > 0, err
+}
+
+// enrollmentNotExpiredCondition (review #144, phát hiện 3; chủ dự án chốt 11/11/2026): ghi danh có expires_at đã qua thì
+// không còn đủ điều kiện để được THÊM vào lớp gắn khoá. expires_at NULL = không giới hạn thời gian. Chỉ áp lúc thêm mới
+// (IsEnrolledInCourse, SearchEnrollable): học viên đã ở trong lớp từ trước không bị tự gỡ khi ghi danh hết hạn. So với
+// now() của Postgres vì cột là timestamptz, không phụ thuộc múi giờ của tiến trình Go.
+func enrollmentNotExpiredCondition(table string) string {
+	return "(" + table + ".expires_at IS NULL OR " + table + ".expires_at > now())"
 }

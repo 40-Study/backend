@@ -136,8 +136,9 @@ var ErrNotOrgMember = errors.New("forbidden: not an active member of this organi
 
 // ErrStudentNotEnrolledInCourse (QA-B-10): ghi danh vào lớp GẮN KHOÁ một học viên chưa mua/chưa ghi danh khoá đó. Trước
 // đây giảng viên đưa được người chưa trả tiền vào lớp của khoá có phí. Lớp không gắn khoá không áp luật này. Handler trả
-// 400 STUDENT_NOT_ENROLLED_IN_COURSE.
-var ErrStudentNotEnrolledInCourse = errors.New("student is not enrolled in the course of this class")
+// 400 STUDENT_NOT_ENROLLED_IN_COURSE. Ghi danh đã hết hạn (expires_at đã qua) cũng tính là chưa ghi danh, cùng mã: với
+// giảng viên hai trường hợp xử lý như nhau (học viên phải mua/gia hạn khoá trước), nên web không cần thêm câu mới.
+var ErrStudentNotEnrolledInCourse = errors.New("student is not enrolled in the course of this class or the enrollment has expired")
 
 // ErrNotTeacher (S4): tạo lớp không gắn khoá mà người gọi không phải giảng viên (và không phải admin).
 var ErrNotTeacher = errors.New("forbidden: only teachers can create classes")
