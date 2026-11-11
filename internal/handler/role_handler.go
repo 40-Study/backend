@@ -44,6 +44,8 @@ func roleErrorStatus(err error) int {
 		return fiber.StatusForbidden
 	case errors.Is(err, service.ErrRoleInUse), errors.Is(err, service.ErrRoleNameTaken):
 		return fiber.StatusConflict
+	case errors.Is(err, service.ErrRoleNameReserved):
+		return fiber.StatusBadRequest
 	case err != nil && err.Error() == "role not found":
 		return fiber.StatusNotFound
 	default:
@@ -76,6 +78,9 @@ func respondRoleError(c *fiber.Ctx, err error, fallbackStatus int, message strin
 		}
 		if errors.Is(err, service.ErrRoleNameTaken) {
 			body["code"] = "ROLE_NAME_TAKEN"
+		}
+		if errors.Is(err, service.ErrRoleNameReserved) {
+			body["code"] = "ROLE_NAME_RESERVED"
 		}
 		return c.Status(status).JSON(body)
 	}

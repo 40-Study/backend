@@ -1810,6 +1810,9 @@ func (s *AuthService) SwitchRole(ctx context.Context, userID uuid.UUID, deviceID
 	return s.completeLoginUnified(ctx, user, deviceInfo, activeRole)
 }
 
+// ErrOrgRoleNameReserved: org role được chọn có tên trùng vai hệ thống. Handler trả 400 ORG_ROLE_NAME_RESERVED.
+var ErrOrgRoleNameReserved = errors.New("organization role name collides with a system role name; ask the organization owner to rename it")
+
 // hàm này tương tự completeLogin cũ nhưng dùng UnifiedRoleDto để hỗ trợ cả system role và org role, giúp code sạch hơn
 func (s *AuthService) completeLoginUnified(
 	ctx context.Context,
@@ -1818,6 +1821,14 @@ func (s *AuthService) completeLoginUnified(
 	activeRole dto.UnifiedRoleDto,
 ) (*dto.SelectRoleResponseDto, error) {
 	deviceID, _ := uuid.Parse(deviceInfo.DeviceID)
+
+	// Review #144 (phát hiện 1): org role tên trùng vai hệ thống (dữ liệu cũ hoặc ghi thẳng DB, vì API tạo vai nay đã chặn)
+	// không được thành claim active_role, nếu không người được gán vai qua được các cổng chỉ so chuỗi claim. Từ chối
+	// thay vì đổi định dạng claim: web đang đọc nguyên tên (ORG_OWNER...). Đặt ở đây vì SelectRole và SwitchRole đều đi
+	// qua hàm này với role_type=organization.
+	if activeRole.Type == "organization" && model.OrgRoleNameBlockedForToken(activeRole.RoleName) {
+		return nil, ErrOrgRoleNameReserved
+	}
 
 	// Get/increment user version
 	userVersionKey := constants.KeyUserVersion(user.ID.String())

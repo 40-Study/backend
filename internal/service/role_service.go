@@ -35,6 +35,10 @@ var ErrRoleInUse = errors.New("role is still assigned to members; revoke it from
 
 // ErrRoleNameTaken (QA3-22): tên role đã dùng trong tổ chức (unique idx_role_name_org, tính cả role đã xoá mềm). Trước đây
 // lỗi unique của GORM lọt ra thành 400 "duplicated key not allowed" tiếng Anh. Handler trả 409 ROLE_NAME_TAKEN.
+// ErrRoleNameReserved (review #144, phát hiện 1): tên org role trùng tên vai hệ thống — xem model.OrgRoleNameReserved.
+// Handler trả 400 ROLE_NAME_RESERVED.
+var ErrRoleNameReserved = errors.New("Tên vai trò trùng tên vai trò hệ thống (SYSTEM_ADMIN, ORG_OWNER, TEACHER, TEACHER_APPLICANT, STUDENT, PARENT), hãy chọn tên khác")
+
 var ErrRoleNameTaken = errors.New("Tên vai trò đã tồn tại trong tổ chức này (kể cả vai trò đã xoá, hãy khôi phục hoặc chọn tên khác)")
 
 type RoleServiceInterface interface {
@@ -68,6 +72,10 @@ func (s *RoleService) CreateRole(ctx context.Context, activeOrgID *uuid.UUID, is
 	// role trong tổ chức B. Cùng luật với gán org role (requireOrgMatch, H-01).
 	if err := requireOrgMatch(req.OrganizationID, activeOrgID, isAdmin); err != nil {
 		return nil, ErrNotRoleOrgMember
+	}
+
+	if model.OrgRoleNameReserved(req.Name) {
+		return nil, ErrRoleNameReserved
 	}
 
 	role := &model.Role{
@@ -177,6 +185,10 @@ func (s *RoleService) UpdateRole(ctx context.Context, id uuid.UUID, activeOrgID 
 	}
 
 	if req.Name != nil {
+		// Chỉ chặn khi ĐỔI tên: form sửa gửi lại tên cũ (vd vai ORG_OWNER do hệ thống tạo) không được 400.
+		if *req.Name != role.Name && model.OrgRoleNameReserved(*req.Name) {
+			return nil, ErrRoleNameReserved
+		}
 		role.Name = *req.Name
 	}
 
@@ -228,6 +240,11 @@ func (s *RoleService) RestoreRole(ctx context.Context, id uuid.UUID, activeOrgID
 	}
 	if err := requireRoleOrgMatch(role, activeOrgID, isAdmin); err != nil {
 		return err
+	}
+	// Vai trùng tên hệ thống tạo trước khi API chặn tên (đã xoá mềm) không được khôi phục, nếu không lỗ active_role mở
+	// lại. ORG_OWNER do hệ thống tạo vẫn khôi phục được (xem model.OrgRoleNameBlockedForToken).
+	if model.OrgRoleNameBlockedForToken(role.Name) {
+		return ErrRoleNameReserved
 	}
 	return s.repo.RestoreRole(ctx, id)
 }

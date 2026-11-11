@@ -1,6 +1,9 @@
 package router
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/redis/go-redis/v9"
 	"study.com/v1/internal/config"
@@ -52,6 +55,19 @@ func SetupUserOrganizationRoleRoutes(
 		orgGroup.Get("/members", authMiddleware, permChecker.RequireOrgPermission("organization_id", "ORG_MEMBERS_MANAGE"), userOrgRoleHandler.GetOrganizationMembers)
 		orgGroup.Get("/roles/:role_id/users", authMiddleware, permChecker.RequireOrgPermission("organization_id", "ORG_MEMBERS_MANAGE"), userOrgRoleHandler.GetUsersWithOrgRole)
 		// QA-C-01: chủ tổ chức tra một người theo email chính xác để lấy user_id rồi gán org role.
-		orgGroup.Get("/user-lookup", authMiddleware, permChecker.RequireOrgPermission("organization_id", "ORG_MEMBERS_MANAGE"), userOrgRoleHandler.LookupUserByEmail)
+		// Review #144 (phát hiện 2): route trả lời "email này có tài khoản không", nên giới hạn theo user (30 lần/phút)
+		// để không dò hàng loạt; ai giữ system role ORG_OWNER qua được RequireOrgPermission ở mọi tổ chức.
+		orgGroup.Get("/user-lookup", authMiddleware, userLookupRateLimiter(redis), permChecker.RequireOrgPermission("organization_id", "ORG_MEMBERS_MANAGE"), userOrgRoleHandler.LookupUserByEmail)
 	}
 }
+
+// userLookupRateLimiter: 30 lần tra cứu/phút cho mỗi user đăng nhập (đặt sau AuthMiddleware nên luôn có user_id).
+func userLookupRateLimiter(rdb *redis.Client) fiber.Handler {
+	return middleware.RateLimiter(rdb, middleware.RateLimitConfig{
+		Max: userLookupMaxPerMinute, Window: time.Minute, KeyPrefix: "rate:org-user-lookup",
+		KeyGenerator: func(c *fiber.Ctx) string { return fmt.Sprint(c.Locals("user_id")) },
+		Message:      "Bạn tra cứu quá nhiều lần. Vui lòng chờ một phút.",
+	})
+}
+
+const userLookupMaxPerMinute = 30
