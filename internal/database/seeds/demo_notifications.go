@@ -24,7 +24,15 @@ type notificationSpec struct {
 	IsRead     bool
 	// ProgressOf: email học viên có enrollment (khoá CourseSlug) cấp giá trị cho {progress} trong Content.
 	ProgressOf string
+	// StreakOf: email học viên cấp chuỗi ngày học HIỆN TẠI (suy từ bài đã hoàn thành) cho {streak} trong Content.
+	// Chuỗi bằng 0 thì dùng NoStreakContent (không in "chuỗi 0 ngày").
+	StreakOf        string
+	NoStreakContent string
 }
+
+// streakPlaceholder trong Content được thay bằng chuỗi ngày học thật của StreakOf (QA4 N-13: thông báo "giữ chuỗi 12 ngày"
+// cạnh trang chủ "Chuỗi ngày học 0").
+const streakPlaceholder = "{streak}"
 
 var demoNotifications = map[string][]notificationSpec{
 	"student1@demo.com": {
@@ -59,7 +67,9 @@ var demoNotifications = map[string][]notificationSpec{
 		{Title: "Con bạn đã nhận chứng chỉ", Content: "Lê Văn C vừa hoàn thành khoá \"Git & GitHub cho người mới bắt đầu\" và nhận chứng chỉ.", Type: "certificate_earned", CourseSlug: "git-github-cho-nguoi-moi-bat-dau", HoursAgo: 70, IsRead: true},
 		{Title: "Con bạn mở khoá huy hiệu mới", Content: "Lê Văn C đạt huy hiệu \"Chuỗi 7 ngày\" nhờ học đều đặn cả tuần.", Type: "achievement", HoursAgo: 50},
 		{Title: "Tiến độ tuần này của Lê Văn C", Content: "Tuần này con hoàn thành 4 bài học, tổng 95 phút. Khoá React + Next.js đạt khoảng {progress}%.", Type: "course_update", CourseSlug: "react-nextjs-tu-co-ban-den-nang-cao", HoursAgo: 18, ProgressOf: "student1@demo.com"},
-		{Title: "Con bạn sắp mất chuỗi học tập", Content: "Hôm nay Lê Văn C chưa học bài nào. Một lời nhắc nhỏ có thể giúp con giữ chuỗi 12 ngày.", Type: "streak", HoursAgo: 3},
+		{Title: "Con bạn sắp mất chuỗi học tập", Content: "Lê Văn C đang có chuỗi {streak} ngày học liên tiếp. Một lời nhắc nhỏ mỗi tối giúp con không bỏ lỡ ngày nào.",
+			NoStreakContent: "Mấy hôm nay Lê Văn C chưa học bài nào. Một lời nhắc nhỏ có thể giúp con bắt đầu lại chuỗi học tập.",
+			Type:            "streak", HoursAgo: 3, StreakOf: "student1@demo.com"},
 		{Title: "Ưu đãi gia đình: giảm 50.000đ", Content: "Mã SUMMER50K áp dụng cho đơn từ 300.000đ khi bạn mua khoá học bằng tài khoản phụ huynh của mình.", Type: "promotion", HoursAgo: 30},
 	},
 }
@@ -114,6 +124,9 @@ func (s *Seeder) SeedDemoNotifications(users map[string]model.User, courses map[
 // resolveNotificationContent thay {progress} bằng % tiến độ thật của enrollment (làm tròn như trang con).
 // Thiếu enrollment -> lỗi rõ ràng (seed enrollments phải chạy trước), không in số đoán.
 func (s *Seeder) resolveNotificationContent(users map[string]model.User, courses map[string]model.Course, spec notificationSpec) (string, error) {
+	if strings.Contains(spec.Content, streakPlaceholder) {
+		return s.resolveStreakContent(users, spec)
+	}
 	if !strings.Contains(spec.Content, progressPlaceholder) {
 		return spec.Content, nil
 	}
@@ -131,4 +144,22 @@ func (s *Seeder) resolveNotificationContent(users map[string]model.User, courses
 			spec.Title, spec.ProgressOf, spec.CourseSlug, err)
 	}
 	return strings.ReplaceAll(spec.Content, progressPlaceholder, enrollment.ProgressPercent.Round(0).String()), nil
+}
+
+// resolveStreakContent thay {streak} bằng chuỗi ngày học hiện tại của StreakOf, cùng cách tính SeedDemoGamification ghi vào
+// user_streaks (demoStreaks trên lesson_progress đã hoàn thành), nên thông báo và trang chủ cùng một số.
+func (s *Seeder) resolveStreakContent(users map[string]model.User, spec notificationSpec) (string, error) {
+	student, err := demoUser(users, spec.StreakOf)
+	if err != nil {
+		return "", fmt.Errorf("notification %q: %w", spec.Title, err)
+	}
+	facts, err := s.loadDemoLearnerFacts(student.ID)
+	if err != nil {
+		return "", err
+	}
+	current, _ := demoStreaks(time.Now(), facts.Lessons)
+	if current == 0 {
+		return spec.NoStreakContent, nil
+	}
+	return strings.ReplaceAll(spec.Content, streakPlaceholder, fmt.Sprint(current)), nil
 }

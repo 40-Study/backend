@@ -80,6 +80,16 @@ func (s *Seeder) SeedDemoData() error {
 		return fmt.Errorf("demo social and payouts: %w", err)
 	}
 
+	// QA4 A17: chủ + thành viên cho các tổ chức đã seed. Chạy cuối vì cần student3 (SeedDemoEngagement tạo).
+	if err := s.SeedDemoOrgMembers(); err != nil {
+		return fmt.Errorf("demo org members: %w", err)
+	}
+	fixedUsers, fixedOrders, err := s.repairDemoTimestamps()
+	if err != nil {
+		return fmt.Errorf("demo timestamps: %w", err)
+	}
+	log.Printf("Repaired demo timestamps: %d users (last login), %d orders (paid_at)\n", fixedUsers, fixedOrders)
+
 	log.Println("=== Demo data seeded successfully ===")
 	return nil
 }

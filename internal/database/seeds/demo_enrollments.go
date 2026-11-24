@@ -185,6 +185,14 @@ func (s *Seeder) seedLessonProgress(enrollment model.Enrollment, courseID uuid.U
 			FirstOrCreate(&record).Error; err != nil {
 			return fmt.Errorf("failed to seed lesson progress: %w", err)
 		}
+		// QA4 S20/N-13: mốc hoàn thành tương đối với hôm nay, ghi lại mỗi lần seed. Chỉ đặt lúc tạo thì DB seed từ
+		// tháng trước có "0 hoạt động 7 ngày qua" cạnh 260 điểm tuần. Chỉ sửa dòng đang hoàn thành.
+		if completedAt != nil {
+			if err := s.db.Model(&model.LessonProgress{}).Where("id = ? AND status = ?", record.ID, "completed").
+				Update("completed_at", *completedAt).Error; err != nil {
+				return fmt.Errorf("failed to refresh lesson completion: %w", err)
+			}
+		}
 	}
 	return nil
 }

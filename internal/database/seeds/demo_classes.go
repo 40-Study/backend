@@ -92,8 +92,20 @@ func (s *Seeder) upsertDemoClass(spec classSpec, teacher model.User, course mode
 	if err := s.db.Where("name = ?", spec.Name).Attrs(class).FirstOrCreate(&class).Error; err != nil {
 		return model.Class{}, fmt.Errorf("failed to seed class: %w", err)
 	}
+	// QA4: ngày kết thúc chỉ đặt lúc tạo, nên lớp demo seed từ vài tháng trước đã "kết thúc" và lịch tuần này/tuần sau
+	// trống. Lớp demo luôn còn chạy: kéo ngày kết thúc ra ít nhất demoClassMinRemainingDays (ngày khai giảng giữ nguyên
+	// để số buổi ổn định). Chỉ kéo dài, không rút ngắn.
+	if minEnd := demoToday().AddDate(0, 0, demoClassMinRemainingDays); class.EndDate == nil || toLocalDate(*class.EndDate).Before(minEnd) {
+		if err := s.db.Model(&model.Class{}).Where("id = ?", class.ID).Update("end_date", minEnd).Error; err != nil {
+			return model.Class{}, fmt.Errorf("failed to extend demo class %s: %w", spec.Name, err)
+		}
+		class.EndDate = &minEnd
+	}
 	return class, nil
 }
+
+// demoClassMinRemainingDays: lớp demo còn ít nhất chừng này ngày (phủ lịch tuần này, tuần sau và lookahead buổi học).
+const demoClassMinRemainingDays = 28
 
 // linkDemoClassMembers gán giáo viên chính và ghi danh học sinh (active) vào lớp.
 func (s *Seeder) linkDemoClassMembers(class model.Class, teacher model.User, students []model.User) error {
@@ -128,8 +140,9 @@ func (s *Seeder) upsertDemoSchedules(spec classSpec, class model.Class) (map[int
 			EffectiveFrom:  from,
 			EffectiveUntil: class.EndDate,
 		}
+		// effective_until đi theo ngày kết thúc lớp (có thể vừa được kéo dài ở upsertDemoClass).
 		if err := s.db.Where("class_id = ? AND day_of_week = ?", class.ID, day).
-			Attrs(sch).FirstOrCreate(&sch).Error; err != nil {
+			Attrs(sch).Assign(map[string]interface{}{"effective_until": class.EndDate}).FirstOrCreate(&sch).Error; err != nil {
 			return nil, fmt.Errorf("failed to seed schedule: %w", err)
 		}
 		result[day] = sch

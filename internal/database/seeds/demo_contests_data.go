@@ -78,6 +78,18 @@ var demoExtraContests = []contestSeedSpec{
 		Questions: contestQuestionsPython,
 	},
 	{
+		// QA4: ca kiểm duyệt của admin — đã gửi duyệt nhưng giờ bắt đầu đã qua mà chưa ai duyệt. ReassignWindow giữ nó
+		// luôn "đã bắt đầu 1 ngày" để admin thấy phải từ chối hoặc yêu cầu dời lịch.
+		Slug: "demo-thi-html-css-cho-duyet-qua-gio", Title: "HTML & CSS cơ bản: vòng mở rộng",
+		Description:  "Đã gửi duyệt nhưng tới giờ bắt đầu vẫn chưa được duyệt. Quản trị viên cần từ chối hoặc yêu cầu giảng viên dời lịch.",
+		QuizTitle:    "Đề thi demo: HTML & CSS (chờ duyệt, quá giờ)",
+		CreatorEmail: "teacher1@demo.com", Status: model.ContestStatusPendingReview,
+		StartOffset: -1 * contestDay, EndOffset: contestDay, ReassignWindow: true,
+		DurationMinutes: 30,
+		Prizes:          []contestPrizeSpec{{1, 3}},
+		Questions:       contestQuestionsHTML,
+	},
+	{
 		Slug: "demo-thi-cau-truc-du-lieu-ban-nhap", Title: "Cấu trúc dữ liệu & giải thuật (bản nháp)",
 		Description:  "Bản nháp của giảng viên: stack, queue và độ phức tạp thuật toán.",
 		QuizTitle:    "Đề thi demo: Cấu trúc dữ liệu (bản nháp)",
@@ -150,4 +162,10 @@ var contestQuestionsDSA = []demoQuestionSpec{
 	cqSingle("Stack hoạt động theo nguyên tắc nào?", cqRight("LIFO - vào sau ra trước"), cqWrong("FIFO - vào trước ra trước"), cqWrong("Ngẫu nhiên"), cqWrong("Theo độ ưu tiên")),
 	cqSingle("Độ phức tạp tìm kiếm nhị phân trên mảng đã sắp xếp là?", cqRight("O(log n)"), cqWrong("O(n)"), cqWrong("O(n log n)"), cqWrong("O(1)")),
 	cqTrueFalse("Queue phù hợp để cài đặt duyệt đồ thị theo chiều rộng (BFS).", true),
+}
+
+var contestQuestionsHTML = []demoQuestionSpec{
+	cqSingle("Thẻ nào dùng cho tiêu đề quan trọng nhất của trang?", cqRight("<h1>"), cqWrong("<head>"), cqWrong("<title>"), cqWrong("<h6>")),
+	cqTrueFalse("Thuộc tính `alt` của thẻ <img> giúp trình đọc màn hình mô tả ảnh.", true),
+	cqSingle("Thuộc tính CSS nào đổi hướng trục chính của flexbox?", cqRight("flex-direction"), cqWrong("justify-content"), cqWrong("align-items"), cqWrong("flex-wrap")),
 }

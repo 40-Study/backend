@@ -54,7 +54,7 @@ var demoContestSlugsByPhase = map[string][]string{
 }
 
 // demoContestSlugsHidden: cuộc thi demo không công khai (chờ duyệt, bản nháp).
-var demoContestSlugsHidden = []string{"demo-thi-cau-truc-du-lieu-ban-nhap", "demo-thi-python-cho-duyet"}
+var demoContestSlugsHidden = []string{"demo-thi-cau-truc-du-lieu-ban-nhap", "demo-thi-python-cho-duyet", "demo-thi-html-css-cho-duyet-qua-gio"}
 
 // allDemoContestSlugs: mọi slug cuộc thi demo mà SeedDemoContests phải tạo, đã sắp xếp.
 func allDemoContestSlugs() []string {
@@ -126,15 +126,22 @@ func TestSeedDemoContests_Postgres_DuTabVaIdempotent(t *testing.T) {
 				t.Errorf("lần %d: danh sách công khai phase %s = %v, muốn %v", run, phase, gotSlugs, want)
 			}
 		}
-		for status, want := range map[string]int{model.ContestStatusPendingReview: 1, model.ContestStatusDraft: 1} {
+		for status, want := range map[string]int{model.ContestStatusPendingReview: 2, model.ContestStatusDraft: 1} {
 			for _, c := range listContests(t, repo, repository.ContestListFilter{Status: status}) {
 				want--
+				// QA4: một cuộc thi chờ duyệt CỐ Ý đã quá giờ bắt đầu (ca kiểm duyệt của admin), luôn ở quá khứ.
+				if c.Slug == "demo-thi-html-css-cho-duyet-qua-gio" {
+					if c.StartTime.After(time.Now()) || c.SubmittedAt == nil || !c.SubmittedAt.Before(c.StartTime) {
+						t.Errorf("lần %d: %s phải đã quá giờ bắt đầu và gửi duyệt trước giờ đó: start=%v submitted=%v", run, c.Slug, c.StartTime, c.SubmittedAt)
+					}
+					continue
+				}
 				if !c.StartTime.After(time.Now()) {
 					t.Errorf("lần %d: %s %s có start_time quá khứ — admin/giáo viên không thao tác được", run, status, c.Slug)
 				}
 			}
 			if want != 0 {
-				t.Errorf("lần %d: số cuộc thi %s lệch %d so với kỳ vọng 1", run, status, -want)
+				t.Errorf("lần %d: số cuộc thi %s lệch %d so với kỳ vọng", run, status, -want)
 			}
 		}
 		t2 := users["teacher2@demo.com"].ID
