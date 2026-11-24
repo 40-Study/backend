@@ -151,7 +151,8 @@ type reminderChild struct {
 	Name string
 }
 
-// parentChildrenInClass: các con (liên kết active, được xem điểm danh) của userID đang học lớp classID.
+// parentChildrenInClass: các con (liên kết active, được xem điểm danh, tài khoản còn hoạt động) của userID
+// đang học lớp classID.
 func (s *LessonReminderService) parentChildrenInClass(ctx context.Context, userID, classID uuid.UUID) ([]reminderChild, error) {
 	var children []reminderChild
 	err := s.db.WithContext(ctx).Raw(`SELECT DISTINCT u.id, COALESCE(NULLIF(u.full_name, ''), u.user_name) AS name
@@ -159,6 +160,7 @@ func (s *LessonReminderService) parentChildrenInClass(ctx context.Context, userI
    JOIN student_classes sc ON sc.student_id = p.student_user_id AND sc.status = 'active'
    JOIN users u ON u.id = p.student_user_id
    WHERE p.parent_user_id = ? AND p.status = 'active' AND p.can_view_attendance AND sc.class_id = ?
+    AND u.deleted_at IS NULL AND u.is_active
    ORDER BY name`, userID, classID).Scan(&children).Error
 	return children, err
 }

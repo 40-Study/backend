@@ -2,7 +2,8 @@ package service
 
 // QA4-N10: phụ huynh có 2 con cùng lớp nhận nguyên văn nhắc nhở của học viên ("… Hãy vào lớp đúng giờ.") và
 // không biết buổi của con nào. Giờ: một nhắc nhở cho MỖI con, ghi tên con, trỏ về màn chi tiết của con đó.
-// Postgres THẬT. Mutation đã kiểm: đổi lại LIMIT 1 / bỏ tên con khỏi nội dung làm test ĐỎ.
+// Con có tài khoản bị khoá thì không được nhắc. Postgres THẬT. Mutation đã kiểm: đổi lại LIMIT 1 / bỏ tên con khỏi
+// nội dung / bỏ lọc u.is_active làm test ĐỎ.
 
 import (
 	"context"
@@ -22,16 +23,18 @@ func TestLessonReminder_ParentGetsOneNamedNoticePerChild_Postgres(t *testing.T) 
 		}
 	}
 	teacher, parent := f.user("n10-teacher"), f.user("n10-parent")
-	kidA, kidB := f.user("n10-kid-a"), f.user("n10-kid-b")
+	kidA, kidB, gone := f.user("n10-kid-a"), f.user("n10-kid-b"), f.user("n10-kid-gone")
 	fullName := "Lê Văn C"
 	must(f.db.Model(&model.User{}).Where("id = ?", kidA.ID).Update("full_name", fullName).Error)
 	class := model.Class{Name: "Tiếng Anh 6", Status: "active"}
 	must(f.db.Create(&class).Error)
 	must(f.db.Create(&model.TeacherClass{TeacherID: teacher.ID, ClassID: class.ID}).Error)
-	for _, kid := range []model.User{kidA, kidB} {
+	for _, kid := range []model.User{kidA, kidB, gone} {
 		must(f.db.Create(&model.StudentClass{StudentID: kid.ID, ClassID: class.ID, Status: "active"}).Error)
 		must(f.db.Create(&model.ParentStudentRelation{ParentUserID: parent.ID, StudentUserID: kid.ID, Status: "active", CanViewAttendance: true}).Error)
 	}
+	// Review #148: con đã khoá tài khoản (vẫn active trong lớp) không sinh nhắc nhở cho phụ huynh.
+	must(f.db.Model(&model.User{}).Where("id = ?", gone.ID).Update("is_active", false).Error)
 	now := time.Date(2026, 10, 15, 3, 0, 0, 0, time.UTC)
 	start, end := now.Add(15*time.Minute), now.Add(75*time.Minute)
 	must(f.db.Create(&model.LivestreamSession{HostID: teacher.ID, ClassID: class.ID, Title: "Unit 3", RoomName: uuid.NewString(),
