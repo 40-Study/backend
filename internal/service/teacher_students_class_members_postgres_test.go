@@ -1,7 +1,8 @@
 package service
 
 // Q3-08 (QA3): "Học viên của tôi" của giáo viên phải gồm cả học viên đang học trong lớp của giáo viên mà chưa ghi danh khoá
-// nào (trước đây chỉ đọc enrollments), mỗi người đúng một dòng, và nhận page_size tới 200.
+// nào (trước đây chỉ đọc enrollments), và nhận page_size tới 200. QA4-T17: mỗi LỚP đang học của học viên có mặt (một dòng
+// mỗi học viên + lớp), kể cả lớp ngoài khoá học viên đã ghi danh; web gom theo học viên (group-students.ts).
 
 import (
 	"context"
@@ -45,10 +46,11 @@ func TestGetMyStudents_IncludesActiveClassMembersWithoutEnrollment(t *testing.T)
 	// Lớp của giáo viên khác.
 	classZ := mkClass("Lớp Z", nil, &other.ID)
 
-	member(classX, enrolled, "active") // đã có dòng ghi danh: không lặp lại
+	member(classX, enrolled, "active") // đã có ở dòng ghi danh: không lặp lại lớp X
+	member(classY, enrolled, "active") // QA4-T17: lớp ngoài khoá đã ghi danh vẫn phải hiện
 	member(classX, classOnly, "active")
 	member(classX, multiClass, "active")
-	member(classY, multiClass, "active") // ở hai lớp: vẫn một dòng
+	member(classY, multiClass, "active") // ở hai lớp: hai dòng lớp, mỗi lớp một lần
 	member(classX, dropped, "dropped")   // đã rời lớp: không tính
 	member(classZ, foreign, "active")    // lớp người khác: không tính
 
@@ -57,44 +59,60 @@ func TestGetMyStudents_IncludesActiveClassMembersWithoutEnrollment(t *testing.T)
 	if err != nil {
 		t.Fatalf("GetByInstructor: %v", err)
 	}
-	got := map[string]int{}
-	byStudent := map[string]repository.TeacherStudentRow{}
+	// Khoá (học viên, lớp, có khoá hay không) -> số lần xuất hiện.
+	type key struct {
+		user, class string
+		course      bool
+	}
+	got := map[key]int{}
+	className := map[uuid.UUID]string{classX.ID: "X", classY.ID: "Y", classZ.ID: "Z"}
 	for _, r := range rows {
-		got[r.UserName]++
-		byStudent[r.UserName] = r
+		k := key{user: r.UserName, course: r.CourseID != nil}
+		if r.ClassID != nil {
+			k.class = className[*r.ClassID]
+		}
+		got[k]++
+		if r.ClassOnly == (r.CourseID != nil) {
+			t.Errorf("class_only=%v nhưng course_id=%v: %+v", r.ClassOnly, r.CourseID, r)
+		}
 	}
-	want := []model.User{enrolled, classOnly, multiClass}
+	want := map[key]int{
+		{enrolled.UserName, "X", true}:    1, // dòng ghi danh mang lớp X của khoá
+		{enrolled.UserName, "Y", false}:   1, // QA4-T17
+		{classOnly.UserName, "X", false}:  1,
+		{multiClass.UserName, "X", false}: 1,
+		{multiClass.UserName, "Y", false}: 1,
+	}
 	if total != int64(len(want)) || len(rows) != len(want) {
-		t.Fatalf("total=%d rows=%d (%v), muốn %d học viên: enrolled, class-only, multi-class", total, len(rows), got, len(want))
+		t.Fatalf("total=%d rows=%d (%v), muốn %d dòng %v", total, len(rows), got, len(want), want)
 	}
-	for _, u := range want {
-		if got[u.UserName] != 1 {
-			t.Errorf("%s xuất hiện %d lần, muốn 1", u.UserName, got[u.UserName])
+	for k, n := range want {
+		if got[k] != n {
+			t.Errorf("%+v xuất hiện %d lần, muốn %d (tất cả: %v)", k, got[k], n, got)
 		}
 	}
-	for _, u := range []model.User{dropped, foreign} {
-		if got[u.UserName] != 0 {
-			t.Errorf("%s không được xuất hiện (đã rời lớp / lớp giáo viên khác)", u.UserName)
+	for k := range got {
+		if k.user == dropped.UserName || k.user == foreign.UserName {
+			t.Errorf("%s không được xuất hiện (đã rời lớp / lớp giáo viên khác)", k.user)
 		}
-	}
-	if r := byStudent[enrolled.UserName]; r.ClassOnly || r.CourseID == nil || *r.CourseID != course.ID || r.ClassID == nil || *r.ClassID != classX.ID {
-		t.Errorf("dòng ghi danh phải giữ khoá và lớp: %+v", r)
-	}
-	if r := byStudent[classOnly.UserName]; !r.ClassOnly || r.CourseID != nil || r.ClassID == nil || *r.ClassID != classX.ID {
-		t.Errorf("dòng chỉ-có-lớp phải không có khoá, có lớp X: %+v", r)
 	}
 
 	// Phân trang qua cả hai nguồn: không mất, không lặp dòng.
 	seen := map[string]bool{}
-	for page := 1; page <= 3; page++ {
+	for page := 1; page <= len(want); page++ {
 		pageRows, pageTotal, err := repo.GetByInstructor(ctx, teacher.ID, page, 1)
-		if err != nil || pageTotal != 3 {
+		if err != nil || pageTotal != int64(len(want)) {
 			t.Fatalf("page %d: total=%d err=%v", page, pageTotal, err)
 		}
-		if len(pageRows) != 1 || seen[pageRows[0].UserName] {
-			t.Fatalf("page %d: rows=%v lặp hoặc thiếu", page, pageRows)
+		if len(pageRows) != 1 {
+			t.Fatalf("page %d: rows=%v thiếu", page, pageRows)
 		}
-		seen[pageRows[0].UserName] = true
+		r := pageRows[0]
+		k := r.UserName + "|" + r.ClassID.String()
+		if seen[k] {
+			t.Fatalf("page %d: dòng %s lặp", page, k)
+		}
+		seen[k] = true
 	}
 }
 

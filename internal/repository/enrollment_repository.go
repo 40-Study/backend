@@ -720,11 +720,12 @@ const teacherStudentsEnrolledSQL = `
 	JOIN users u ON u.id = e.user_id
 	WHERE co.instructor_id = @instructor`
 
-// teacherStudentsClassOnlySQL: học viên ĐANG HỌC trong một lớp của giáo viên (giảng viên được gán, người tạo lớp, hoặc
-// chủ khoá của lớp) mà chưa có dòng ghi danh nào ở trên. Mỗi học viên đúng một dòng (lớp vào sớm nhất), nên học viên
-// ở nhiều lớp hay đã có ghi danh không bị liệt kê hai lần. "Đang học" dùng chung StudentClassActiveCondition.
+// teacherStudentsClassOnlySQL: lớp ĐANG HỌC của học viên trong các lớp của giáo viên (giảng viên được gán, người tạo lớp,
+// hoặc chủ khoá của lớp) mà chưa hiện ở dòng ghi danh nào ở trên. Một dòng mỗi (học viên, lớp): QA4-T17 — trước đây chỉ
+// học viên CHƯA ghi danh khoá nào mới có dòng lớp, nên lớp không thuộc khoá đã ghi danh (vd lớp không gắn khoá) biến mất
+// khỏi trang chi tiết học viên. Lớp đã có ở dòng ghi danh không lặp lại. "Đang học" dùng chung StudentClassActiveCondition.
 var teacherStudentsClassOnlySQL = `
-	SELECT DISTINCT ON (sc.student_id)
+	SELECT DISTINCT ON (sc.student_id, cl.id)
 		u.id AS student_id, u.full_name, u.user_name, u.email, u.avatar_url,
 		sc.enrolled_at, NULL::timestamptz AS completed_at, 0::numeric AS progress_percentage,
 		NULL::uuid AS course_id, NULL::text AS course_title,
@@ -737,8 +738,8 @@ var teacherStudentsClassOnlySQL = `
 	WHERE (cl.created_by = @instructor
 			OR co.instructor_id = @instructor
 			OR EXISTS (SELECT 1 FROM teacher_classes tc WHERE tc.class_id = cl.id AND tc.teacher_id = @instructor))
-		AND NOT EXISTS (SELECT 1 FROM enrolled WHERE enrolled.student_id = sc.student_id)
-	ORDER BY sc.student_id, sc.enrolled_at`
+		AND NOT EXISTS (SELECT 1 FROM enrolled WHERE enrolled.student_id = sc.student_id AND enrolled.class_id = cl.id)
+	ORDER BY sc.student_id, cl.id, sc.enrolled_at`
 
 // GetByInstructor trả học viên của giáo viên: các lượt ghi danh (enrollment) vào bất kỳ khoá nào của instructorID —
 // đúng nghĩa "học viên của giáo viên" theo dữ liệu mua/enroll thật — cộng học viên đang học trong lớp của giáo viên
