@@ -24,6 +24,9 @@ var sendRegisterOTPMail = utils.SendRegisterOTP
 // /register/request. Mã cũ hết hiệu lực, số lần nhập sai về 0, hạn 5 phút tính lại từ bây giờ. Số lần gửi bị
 // OTPRateLimiter giới hạn theo email ở router (dùng chung bộ đếm với /register/request).
 func (s *AuthService) ResendRegisterOTP(ctx context.Context, email string) error {
+	// GET rồi SET, không nguyên tử (chấp nhận, review #148): nếu một lần xác thực OTP sai chạy chen giữa, bản ghi
+	// của nó (attempts+1, hash CŨ) có thể ghi đè bản này, mã vừa gửi bị từ chối và người dùng bấm gửi lại lần
+	// nữa. Không ảnh hưởng an ninh: giới hạn số lần sai vẫn áp cho mỗi hash, và số lần gửi bị giới hạn theo email.
 	pendingKey := constants.KeyRegisterOTP(email)
 	raw, err := s.redisClient.Get(ctx, pendingKey).Result()
 	if err == redis.Nil {

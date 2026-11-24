@@ -2,10 +2,11 @@ package service
 
 // QA4-N07 (contract 8): "Gửi lại mã" ở bước OTP đăng ký phải chạy được chỉ với email (web bỏ mật khẩu khỏi
 // sessionStorage). AuthService THẬT + miniredis; chỉ thay bộ gửi mail để bắt mã OTP và repo user giả.
-// Mutation đã kiểm: không ghi lại OTPHash mới trong ResendRegisterOTP làm test ĐỎ (mã mới bị từ chối).
+// Mutation đã kiểm: không ghi lại OTPHash mới, hoặc không đặt lại Attempts = 0, trong ResendRegisterOTP làm test ĐỎ.
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -64,9 +65,18 @@ func TestResendRegisterOTP_EmailOnly_NewCodeWorksOldDoesNot(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := nextOTP()
-	// Một lần nhập sai trước khi gửi lại: số lần sai phải về 0 sau khi gửi lại.
-	if _, err := svc.Register(ctx, dto.VerifyOtpRequestDto{Email: email, OTP: "000000"}); err == nil && first != "000000" {
-		t.Fatal("OTP sai được chấp nhận")
+	// Bốn lần nhập sai trước khi gửi lại (giới hạn là 5): số lần sai phải về 0 sau khi gửi lại.
+	wrong := "000000"
+	if first == wrong {
+		wrong = "111111"
+	}
+	for i := 0; i < 4; i++ {
+		if _, err := svc.Register(ctx, dto.VerifyOtpRequestDto{Email: email, OTP: wrong}); err == nil {
+			t.Fatal("OTP sai được chấp nhận")
+		}
+	}
+	if got := pendingAttempts(t, mr, email); got != 4 {
+		t.Fatalf("attempts trước khi gửi lại = %d, muốn 4", got)
 	}
 	mr.FastForward(4 * time.Minute)
 
@@ -74,6 +84,9 @@ func TestResendRegisterOTP_EmailOnly_NewCodeWorksOldDoesNot(t *testing.T) {
 		t.Fatalf("gửi lại: %v", err)
 	}
 	second := nextOTP()
+	if got := pendingAttempts(t, mr, email); got != 0 {
+		t.Fatalf("attempts sau khi gửi lại = %d, muốn 0", got)
+	}
 	if ttl := mr.TTL("register:otp:" + email); ttl <= 4*time.Minute {
 		t.Fatalf("hạn sau khi gửi lại = %v, muốn tính lại 5 phút", ttl)
 	}
@@ -89,4 +102,17 @@ func TestResendRegisterOTP_EmailOnly_NewCodeWorksOldDoesNot(t *testing.T) {
 	if len(users.created) != 1 || resp.Email != email || users.created[0].PasswordHash == "" || users.created[0].PasswordHash == pw {
 		t.Fatalf("user tạo ra sai: %+v", users.created)
 	}
+}
+
+func pendingAttempts(t *testing.T, mr *miniredis.Miniredis, email string) int {
+	t.Helper()
+	raw, err := mr.Get("register:otp:" + email)
+	if err != nil {
+		t.Fatalf("đọc bản đăng ký đang chờ: %v", err)
+	}
+	var p PendingRegistration
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		t.Fatal(err)
+	}
+	return p.Attempts
 }
