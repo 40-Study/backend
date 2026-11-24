@@ -63,7 +63,7 @@ func TestCourseSlugRoute_Archived_HocVienDaGhiDanhVao_NguoiLaVaKhach404(t *testi
 	courseRepo := repository.NewCourseRepository(db)
 	svc := service.NewCourseService(courseRepo, repository.NewCategoryRepository(db), repository.NewTagRepository(db), repository.NewEnrollmentRepository(db))
 	app := fiber.New()
-	SetupCourseRoutes(app.Group("/api"), cfg, handler.NewCourseHandler(svc, nil), nil, nil, nil, nil, nil, nil, nil, rdb)
+	SetupCourseRoutes(app.Group("/api"), cfg, handler.NewCourseHandler(svc, nil), nil, nil, nil, nil, nil, nil, nil, rdb, nil)
 
 	get := func(who string) int {
 		t.Helper()

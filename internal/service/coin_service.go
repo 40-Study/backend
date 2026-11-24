@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,11 @@ import (
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 )
+
+// ErrCoinBankUnavailable (QA4-S7): dịch vụ tra cứu ngân hàng không trả lời (hoặc chưa cấu hình) nên chưa
+// xác minh được giao dịch nạp xu. Handler trả 503 ERR_PAYMENT_PROVIDER_UNAVAILABLE (cùng mã đơn hàng dùng);
+// lỗi gốc chỉ ghi log, không bao giờ trả về người dùng.
+var ErrCoinBankUnavailable = errors.New("Hệ thống đối chiếu ngân hàng đang tạm gián đoạn nên chưa xác minh được giao dịch nạp xu. Vui lòng thử lại sau ít phút.")
 
 type CoinServiceInterface interface {
 	// Wallet
@@ -219,7 +225,8 @@ func (s *CoinService) VerifyPurchase(ctx context.Context, userID, purchaseID uui
 		return nil, errors.New("purchase is not pending")
 	}
 	if s.transactionService == nil {
-		return nil, errors.New("payment verification service unavailable")
+		log.Printf("[Coin] verify %s: chưa cấu hình dịch vụ tra cứu ngân hàng", purchaseID)
+		return nil, ErrCoinBankUnavailable
 	}
 	if purchase.PaymentReference == nil || *purchase.PaymentReference == "" {
 		return nil, errors.New("purchase has no payment code")
@@ -227,9 +234,19 @@ func (s *CoinService) VerifyPurchase(ctx context.Context, userID, purchaseID uui
 
 	toTime := time.Now()
 	fromTime := purchase.CreatedAt.Add(-time.Minute)
-	result, err := s.transactionService.CheckTransaction(ctx, *purchase.PaymentReference, fromTime, toTime)
+	// Có hạn như đơn hàng (bankLookupTimeout): gRPC treo thì trả 503, không treo request.
+	lookupCtx, cancel := context.WithTimeout(ctx, bankLookupTimeout)
+	result, err := s.transactionService.CheckTransaction(lookupCtx, *purchase.PaymentReference, fromTime, toTime)
+	cancel()
 	if err != nil {
-		return nil, fmt.Errorf("failed to check transaction: %w", err)
+		log.Printf("[Coin] verify %s: tra cứu ngân hàng lỗi: %v", purchaseID, err)
+		return nil, ErrCoinBankUnavailable
+	}
+	// Dịch vụ ngân hàng báo lỗi upstream ngay trong kết quả (Found=false, Status="error"; xem
+	// payment_reconcile.go): chưa biết tiền đã về hay chưa, không được trả "chưa thanh toán".
+	if result.Status == "error" {
+		log.Printf("[Coin] verify %s: ngân hàng trả lỗi: %s", purchaseID, result.ErrorMessage)
+		return nil, ErrCoinBankUnavailable
 	}
 	if !result.Found {
 		// Chưa thấy giao dịch chuyển khoản khớp mã — trả về trạng thái pending hiện

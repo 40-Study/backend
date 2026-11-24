@@ -50,6 +50,8 @@ func SetupAuthRoutes(api fiber.Router, cfg *config.Config, authHandler *handler.
 
 	// Public routes with rate limiting
 	auth.Post("/register/request", otpRateLimiter, authHandler.RequestRegister)
+	// QA4-N07: gửi lại OTP đăng ký chỉ bằng email; cùng bộ đếm OTP theo email với /register/request.
+	auth.Post("/register/resend-otp", otpRateLimiter, authHandler.ResendRegisterOTP)
 	auth.Post("/register", authRateLimiter, accountLockoutRegister, authHandler.Register)
 	auth.Post("/login", authRateLimiter, accountLockoutLogin, authHandler.Login)
 	// M-03 (audit 260909): select-role trước đây không rate-limit dù chạm Redis/DB và cấp

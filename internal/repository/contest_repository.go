@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/utils"
 )
 
 // ContestRepository — truy cập dữ liệu cuộc thi (MVP "Cuộc thi", contract §1–§5). Mọi chuyển
@@ -175,8 +176,9 @@ func (r *ContestRepository) List(ctx context.Context, f ContestListFilter) ([]mo
 	if f.CourseID != nil {
 		q = q.Where("contests.course_id = ?", *f.CourseID)
 	}
+	// QA4-A05: bỏ qua dấu tiếng Việt như mọi ô tìm kiếm admin khác ("vong loai" ra "vòng loại").
 	if s := strings.TrimSpace(f.Q); s != "" {
-		q = q.Where("contests.title ILIKE ?", "%"+escapeLike(s)+"%")
+		q = utils.ApplyKeywordSearch(q, s, "contests.title")
 	}
 	q = phaseCondition(q, f.Phase, f.Now)
 

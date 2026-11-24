@@ -606,6 +606,12 @@ func (s *OrderService) GetOrderByID(ctx context.Context, orderID, actorUserID uu
 	if !isAdmin {
 		hideInternalRefundFields(resp)
 	}
+	// Đơn vẫn tồn tại khi đọc người mua lỗi (vd user bị xoá cứng): ghi log, để Buyer trống, không biến thành 404.
+	if buyer, err := orderBuyerOf(ctx, s.orderRepo.TxDB(), order.UserID); err != nil {
+		log.Printf("[Order] %s: không đọc được người mua %s: %v", order.ID, order.UserID, err)
+	} else {
+		resp.Buyer = buyer
+	}
 	return resp, nil
 }
 

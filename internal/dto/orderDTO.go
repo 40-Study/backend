@@ -54,6 +54,16 @@ type OrderResponse struct {
 	RefundReason         *string    `json:"refund_reason,omitempty"`
 	RefundTransactionRef *string    `json:"refund_transaction_ref,omitempty"`
 	RefundedAt           *time.Time `json:"refunded_at,omitempty"`
+	// Buyer (QA4-A08, contract 5): người mua, chỉ có ở GET /orders/:id (admin xem đơn bất kỳ; chủ đơn thấy
+	// chính mình). Danh sách đơn không có trường này.
+	Buyer *OrderBuyer `json:"buyer,omitempty"`
+}
+
+// OrderBuyer — người mua của một đơn (QA4-A08).
+type OrderBuyer struct {
+	ID       uuid.UUID `json:"id"`
+	FullName string    `json:"full_name"`
+	Email    string    `json:"email"`
 }
 
 type OrderItemResponse struct {

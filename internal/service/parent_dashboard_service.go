@@ -455,7 +455,7 @@ func (s *ParentDashboardService) GetChildAttendance(ctx context.Context, parentI
 
 		var checkInTime *string
 		if r.CheckInTime != nil {
-			t := r.CheckInTime.Format("15:04")
+			t := r.CheckInTime.In(sessionDayZone).Format("15:04") // QA4-N12: giờ Việt Nam, không phải UTC
 			checkInTime = &t
 		}
 

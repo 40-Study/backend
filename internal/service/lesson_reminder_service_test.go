@@ -66,6 +66,12 @@ func TestLessonReminder_AudienceRetryRescheduleCancel_Postgres(t *testing.T) {
 		if n.UserID == parent.ID && (n.ReferenceType == nil || *n.ReferenceType != "child_schedule" || n.ReferenceID == nil || *n.ReferenceID != student.ID) {
 			t.Fatalf("parent target incorrect: %+v", n)
 		}
+		if n.UserID == parent.ID {
+			if n.Content != student.UserName+" có buổi Python lúc 10:15 · 15/10." {
+				t.Fatalf("parent copy incorrect: %s", n.Content)
+			}
+			continue
+		}
 		if n.Content != "Python · 10:15 · 15/10. Chuẩn bị vào lớp nhé." {
 			t.Fatalf("VN time incorrect: %s", n.Content)
 		}

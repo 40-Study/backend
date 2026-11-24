@@ -115,6 +115,11 @@ var auditRoutes = []auditRoute{
 	{"POST", "/api/admin/contests/:id/cancel", model.AuditActionContestCancel, "contest", "id"},
 	{"PUT", "/api/admin/contests/:id/prizes", model.AuditActionContestPrizesUpdate, "contest", "id"},
 	{"POST", "/api/admin/contests/:id/finalize", model.AuditActionContestFinalize, "contest", "id"},
+	// QA4-A09
+	{"POST", "/api/tags/", model.AuditActionTagCreate, "tag", ""},
+	{"PUT", "/api/tags/:id", model.AuditActionTagUpdate, "tag", "id"},
+	{"DELETE", "/api/tags/:id", model.AuditActionTagDelete, "tag", "id"},
+	{"DELETE", "/api/courses/:id", model.AuditActionCourseDelete, "course", "id"},
 }
 
 // auditRoutesNotInTable: action do HANDLER đặt (SetAuditAction), cùng route với một dòng bảng.

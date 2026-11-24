@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
 	"study.com/v1/internal/utils"
 )
@@ -40,6 +41,7 @@ func (h *TagHandler) CreateTag(c *fiber.Ctx) error {
 		})
 	}
 
+	middleware.SetAuditTarget(c, tag.ID.String()) // QA4-A09: id thẻ mới chỉ có trong response
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message": "Tag created successfully",
 		"data":    tag,

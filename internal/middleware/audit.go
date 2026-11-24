@@ -25,6 +25,8 @@ type auditState struct {
 	// recordOnFailure: handler đã chủ động đánh dấu "ghi cả khi response không phải 2xx" (xem
 	// SetAuditRecordOnFailure). Mặc định false: D6 chỉ ghi 2xx.
 	recordOnFailure bool
+	// skip: handler xác định request này không phải hành động quản trị (xem SkipAudit).
+	skip bool
 }
 
 // Audit ghi một dòng nhật ký quản trị khi handler phía sau THÀNH CÔNG (plan D5/D6, contract C2).
@@ -47,6 +49,9 @@ func Audit(rec AuditRecorder, action, targetType, targetParam string) fiber.Hand
 
 		if err := c.Next(); err != nil {
 			return err
+		}
+		if st.skip {
+			return nil
 		}
 		status := c.Response().StatusCode()
 		if (status < fiber.StatusOK || status >= fiber.StatusMultipleChoices) && !st.recordOnFailure {
@@ -110,6 +115,15 @@ func SetAuditAction(c *fiber.Ctx, action string) {
 func SetAuditRecordOnFailure(c *fiber.Ctx) {
 	if st := auditStateOf(c); st != nil {
 		st.recordOnFailure = true
+	}
+}
+
+// SkipAudit bỏ ghi nhật ký cho request hiện tại: dùng khi một route dùng chung cho cả quản trị viên và
+// chủ sở hữu (vd DELETE /courses/:id), và người gọi lần này KHÔNG hành động với tư cách quản trị.
+// No-op khi route không gắn middleware Audit.
+func SkipAudit(c *fiber.Ctx) {
+	if st := auditStateOf(c); st != nil {
+		st.skip = true
 	}
 }
 

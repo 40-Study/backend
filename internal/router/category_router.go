@@ -44,8 +44,9 @@ func SetupCategoryRoutes(
 		tags.Get("/:id", tagHandler.GetTagByID)
 
 		// Protected routes - require authentication + CATEGORIES_SYSTEM_MANAGE
-		tags.Post("/", auth, requireSystemManage, tagHandler.CreateTag)
-		tags.Put("/:id", auth, requireSystemManage, tagHandler.UpdateTag)
-		tags.Delete("/:id", auth, requireSystemManage, tagHandler.DeleteTag)
+		// QA4-A09: thẻ được ghi nhật ký như danh mục; id thẻ mới nằm trong response (SetAuditTarget).
+		tags.Post("/", auth, requireSystemManage, middleware.Audit(auditRec, model.AuditActionTagCreate, "tag", ""), tagHandler.CreateTag)
+		tags.Put("/:id", auth, requireSystemManage, middleware.Audit(auditRec, model.AuditActionTagUpdate, "tag", "id"), tagHandler.UpdateTag)
+		tags.Delete("/:id", auth, requireSystemManage, middleware.Audit(auditRec, model.AuditActionTagDelete, "tag", "id"), tagHandler.DeleteTag)
 	}
 }

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
@@ -204,6 +205,12 @@ func (h *CoinHandler) VerifyPurchase(c *fiber.Ctx) error {
 	}
 
 	result, err := h.coinService.VerifyPurchase(c.Context(), userID, purchaseID)
+	if errors.Is(err, service.ErrCoinBankUnavailable) {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"code":    "ERR_PAYMENT_PROVIDER_UNAVAILABLE",
+			"message": err.Error(),
+		})
+	}
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": err.Error(),
