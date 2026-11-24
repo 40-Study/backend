@@ -208,6 +208,11 @@ type RegisterRequestDto struct {
 	FullName        string `json:"full_name,omitempty" validate:"omitempty,min=2,max=255" example:"Nguyen Van A"`
 }
 
+// ResendRegisterOtpRequestDto (QA4-N07) - POST /auth/register/resend-otp: chỉ email, không mật khẩu.
+type ResendRegisterOtpRequestDto struct {
+	Email string `json:"email" validate:"required,email,max=255" example:"student@example.com"`
+}
+
 // RegisterResponseDto - Response for successful registration
 type RegisterResponseDto struct {
 	ID       string  `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`

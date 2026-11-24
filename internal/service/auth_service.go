@@ -24,6 +24,8 @@ type AuthServiceInterface interface {
 	// Auth
 	RequestRegister(ctx context.Context, req dto.RegisterRequestDto) error
 	Register(ctx context.Context, req dto.VerifyOtpRequestDto) (*dto.RegisterResponseDto, error)
+	// ResendRegisterOTP (QA4-N07): gửi lại OTP đăng ký từ bản đăng ký server đang giữ.
+	ResendRegisterOTP(ctx context.Context, email string) error
 	Login(ctx context.Context, req dto.LoginRequestDto) (*dto.LoginResponseDto, error)
 	RefreshToken(ctx context.Context, oldRefreshToken string) (*dto.RefreshTokenResponseDto, error)
 	RequestPasswordReset(ctx context.Context, email string) error
@@ -171,6 +173,9 @@ type PendingRegistration struct {
 	ExistingUserID string `json:"existing_user_id,omitempty"` // UUID of existing user to reactivate
 }
 
+// registerOTPTTL: hạn của một đăng ký đang chờ OTP (cả lần gửi đầu và mỗi lần gửi lại).
+const registerOTPTTL = 5 * time.Minute
+
 func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterRequestDto) error {
 	existingUser, err := s.userRepo.FindUserByEmail(ctx, req.Email)
 	if err != nil {
@@ -222,7 +227,6 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 		return fmt.Errorf("failed to marshal pending data: %w", err)
 	}
 
-	registerOTPTTL := 5 * time.Minute
 	if err := s.redisClient.Set(ctx, pendingKey, pendingBytes, registerOTPTTL).Err(); err != nil {
 		return fmt.Errorf("failed to save pending registration: %w", err)
 	}
@@ -231,7 +235,7 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 	// M-05: bọc bằng SafeGo — panic khi gửi mail (vd cấu hình SMTP thiếu) không được recover
 	// trước đây có thể làm sập cả server.
 	utils.SafeGo(func() {
-		if err := utils.SendRegisterOTP(s.cfg, req.Email, otp); err != nil {
+		if err := sendRegisterOTPMail(s.cfg, req.Email, otp); err != nil {
 			log.Printf("[WARN] Failed to send register OTP email to %s: %v", req.Email, err)
 		}
 	})

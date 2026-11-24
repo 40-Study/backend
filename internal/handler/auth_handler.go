@@ -134,6 +134,26 @@ func (h *AuthHandler) RequestRegister(c *fiber.Ctx) error {
 	})
 }
 
+// ResendRegisterOTP - POST /auth/register/resend-otp (QA4-N07, contract 8).
+func (h *AuthHandler) ResendRegisterOTP(c *fiber.Ctx) error {
+	var req dto.ResendRegisterOtpRequestDto
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "Invalid request body"})
+	}
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "Validation failed", "errors": errs})
+	}
+	err := h.authService.ResendRegisterOTP(c.Context(), req.Email)
+	if errors.Is(err, service.ErrRegistrationNotPending) {
+		return c.Status(fiber.StatusGone).JSON(fiber.Map{"code": "ERR_REGISTRATION_EXPIRED", "message": err.Error()})
+	}
+	if err != nil {
+		log.Printf("[Auth] resend register OTP: %v", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"message": "Không gửi lại được mã. Vui lòng thử lại."})
+	}
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "OTP sent to your email. Please verify within 5 minutes."})
+}
+
 func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	var req dto.LoginRequestDto
 	if err := c.BodyParser(&req); err != nil {
