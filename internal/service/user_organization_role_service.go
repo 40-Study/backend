@@ -27,6 +27,9 @@ type UserOrganizationRoleServiceInterface interface {
 	GetUsersWithOrgRole(ctx context.Context, roleID, organizationID uuid.UUID, page, pageSize int, status string) (*dto.UsersWithOrgRoleResponseDTO, error)
 	// LookupUserByEmail (QA-C-01): tra một user đang hoạt động theo email chính xác (trim, không phân biệt hoa thường).
 	LookupUserByEmail(ctx context.Context, email string) (*dto.OrgUserLookupDTO, error)
+	// QA4-A02: metadata nhật ký cho gán / thu hồi vai trò tổ chức (user_org_role_audit_meta.go).
+	OrgMemberAuditMeta(ctx context.Context, targetUserID, organizationID uuid.UUID, roleIDs []uuid.UUID) (map[string]any, error)
+	OrgAssignmentAuditMeta(ctx context.Context, assignmentID uuid.UUID) (map[string]any, error)
 }
 
 // ErrLookupEmailInvalid / ErrLookupUserNotFound (QA-C-01): handler trả 400 INVALID_EMAIL / 404 USER_NOT_FOUND.

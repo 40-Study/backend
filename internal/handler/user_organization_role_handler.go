@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"log"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -177,6 +178,9 @@ func (h *UserOrganizationRoleHandler) AssignOrgRolesToUser(c *fiber.Ctx) error {
 		})
 	}
 
+	h.setOrgMemberAuditMeta(c, func() (map[string]any, error) {
+		return h.service.OrgMemberAuditMeta(c.Context(), userID, req.OrganizationID, req.RoleIDs)
+	})
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Organization roles assigned successfully",
 		"data":    result,
@@ -236,9 +240,24 @@ func (h *UserOrganizationRoleHandler) RevokeOrgRoleFromUser(c *fiber.Ctx) error 
 		})
 	}
 
+	// Dòng gán vẫn còn (chỉ chuyển inactive) nên đọc metadata sau khi thu hồi được.
+	h.setOrgMemberAuditMeta(c, func() (map[string]any, error) {
+		return h.service.OrgAssignmentAuditMeta(c.Context(), orgRoleID)
+	})
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Organization role revoked successfully",
 	})
+}
+
+// setOrgMemberAuditMeta (QA4-A02) gắn metadata cho dòng nhật ký. Thao tác đã commit, nên đọc metadata lỗi
+// chỉ ghi log lớn tiếng (dòng nhật ký vẫn được ghi, thiếu metadata), không biến thành lỗi cho người dùng.
+func (h *UserOrganizationRoleHandler) setOrgMemberAuditMeta(c *fiber.Ctx, read func() (map[string]any, error)) {
+	meta, err := read()
+	if err != nil {
+		log.Printf("[Audit] KHÔNG đọc được metadata vai trò tổ chức %s %s: %v", c.Method(), c.Path(), err)
+		return
+	}
+	middleware.SetAuditMeta(c, meta)
 }
 
 // GetUsersWithOrgRoleSimple lay users theo organization role
