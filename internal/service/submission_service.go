@@ -288,6 +288,11 @@ func (s *SubmissionService) Submit(ctx context.Context, isAdmin bool, req dto.Cr
 		return nil, errors.New("assignment is not published")
 	}
 
+	// QA6 review M3: ngôn ngữ ngoài danh sách của bài bị từ chối TRƯỚC khi lưu (không lọt vào "pending" chấm tay).
+	if !assignmentAllowsLanguage([]string(assignment.Language), req.Language) {
+		return nil, errLanguageNotAllowed(req.Language)
+	}
+
 	submission := &model.Submission{
 		AssignmentID: assignmentID,
 		UserID:       userID,
@@ -330,13 +335,13 @@ func (s *SubmissionService) ProcessSubmission(ctx context.Context, submissionID 
 		return errors.New("assignment not found")
 	}
 
-	// Handle multiple choice assignments
-	if submission.Language == "json" {
+	// Handle multiple choice assignments (QA6 L1: so khớp chuẩn hoá, "JSON" cũng là trắc nghiệm)
+	if normalizeSubmissionLanguage(submission.Language) == "json" {
 		return s.processMultipleChoiceSubmission(ctx, submission, assignment)
 	}
 
 	// Handle essay assignments (no auto-grading)
-	if submission.Language == "text" {
+	if normalizeSubmissionLanguage(submission.Language) == "text" {
 		return s.repo.UpdateVerdict(ctx, submissionID, model.VerdictAccepted, 0, 0, 0, 0)
 	}
 
@@ -619,6 +624,9 @@ func (s *SubmissionService) RunCode(ctx context.Context, requesterID uuid.UUID, 
 	}
 
 	tc := testCases[0]
+	if !assignmentAllowsLanguage([]string(assignment.Language), req.Language) { // QA6 review M3: kiểm trước ngôn ngữ-không-hỗ-trợ
+		return nil, errLanguageNotAllowed(req.Language)
+	}
 	languageID, ok := CodeLanguageID(req.Language)
 	if !ok {
 		return nil, errLanguageUnsupported(req.Language)
@@ -735,6 +743,9 @@ func (s *SubmissionService) RunCustomCode(ctx context.Context, requesterID uuid.
 		return nil, errors.New("assignment not found")
 	}
 
+	if !assignmentAllowsLanguage([]string(assignment.Language), req.Language) { // QA6 review M3: kiểm trước ngôn ngữ-không-hỗ-trợ
+		return nil, errLanguageNotAllowed(req.Language)
+	}
 	languageID, ok := CodeLanguageID(req.Language)
 	if !ok {
 		return nil, errLanguageUnsupported(req.Language)

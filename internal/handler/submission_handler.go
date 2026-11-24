@@ -40,10 +40,11 @@ func respondJudgeUnavailable(c *fiber.Ctx, err error) (bool, error) {
 	return true, respondContestError(c, err)
 }
 
-// respondLanguageUnsupported: ngôn ngữ máy chấm không chạy được -> 422 ERR_LANGUAGE_UNSUPPORTED (QA6 S6-01, C11).
+// respondLanguageUnsupported: ngôn ngữ máy chấm không chạy được -> 422 ERR_LANGUAGE_UNSUPPORTED (QA6 S6-01, C11); ngôn ngữ
+// ngoài danh sách của bài -> 400 ERR_LANGUAGE_NOT_ALLOWED (QA6 review M3).
 func respondLanguageUnsupported(c *fiber.Ctx, err error) (bool, error) {
 	var ce *service.ContestError
-	if !errors.As(err, &ce) || ce.Code != "ERR_LANGUAGE_UNSUPPORTED" {
+	if !errors.As(err, &ce) || (ce.Code != "ERR_LANGUAGE_UNSUPPORTED" && ce.Code != "ERR_LANGUAGE_NOT_ALLOWED") {
 		return false, nil
 	}
 	return true, respondContestError(c, err)
@@ -80,6 +81,9 @@ func (h *SubmissionHandler) Submit(c *fiber.Ctx) error {
 	if err != nil {
 		if errors.Is(err, service.ErrClassArchived) {
 			return assignmentWriteFail(c, err)
+		}
+		if handled, resp := respondLanguageUnsupported(c, err); handled {
+			return resp
 		}
 		if errors.Is(err, service.ErrAssignmentNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assignment not found"})
