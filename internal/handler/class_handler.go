@@ -67,6 +67,12 @@ func assignmentWriteFail(c *fiber.Ctx, err error) error {
 	if errors.Is(err, service.ErrClassArchived) {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"code": "CLASS_ARCHIVED", "message": err.Error(), "error": err.Error()})
 	}
+	if errors.Is(err, service.ErrAssignmentHasSubmissions) {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"code": "ERR_ASSIGNMENT_HAS_SUBMISSIONS", "message": err.Error(), "error": err.Error()})
+	}
+	if errors.Is(err, service.ErrDueDateInPast) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_DUE_DATE_IN_PAST", "message": err.Error(), "error": err.Error()})
+	}
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 }
 

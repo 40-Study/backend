@@ -19,7 +19,19 @@ var (
 	ErrAssignmentNotFound       = errors.New("assignment not found")
 	ErrAssignmentForbidden      = errors.New("forbidden: only the owning teacher or an admin can modify this assignment")
 	ErrAssignmentTargetRequired = errors.New("session_id or class_id is required")
+	// QA4-T01: bài tập đã có bài nộp thì không xoá được (handler -> 409 ERR_ASSIGNMENT_HAS_SUBMISSIONS).
+	ErrAssignmentHasSubmissions = errors.New("Bài tập đã có học viên nộp bài nên không thể xoá.")
+	// QA4-T08: hạn nộp (end_time) đã qua khi tạo/sửa/công bố (handler -> 400 ERR_DUE_DATE_IN_PAST).
+	ErrDueDateInPast = errors.New("Hạn nộp phải ở tương lai.")
 )
+
+// ensureDueInFuture (QA4-T08): hạn nộp nil (không có hạn) thì hợp lệ; có hạn thì phải sau thời điểm hiện tại.
+func ensureDueInFuture(due *time.Time, now time.Time) error {
+	if due != nil && !due.After(now) {
+		return ErrDueDateInPast
+	}
+	return nil
+}
 
 // assignmentClassAccess / assignmentSessionGate: hai phép kiểm "thành viên" có sẵn ở nơi khác
 // (ClassRepository, LivestreamService) — tái dùng đúng định nghĩa thành viên của chat/bảng trắng
@@ -236,6 +248,10 @@ func (s *AssignmentService) Create(ctx context.Context, actorID uuid.UUID, isAdm
 		}
 	}
 
+	if err := ensureDueInFuture(assignment.EndTime, time.Now()); err != nil {
+		return nil, err
+	}
+
 	if err := s.repo.Create(ctx, assignment); err != nil {
 		return nil, err
 	}
@@ -374,6 +390,13 @@ func (s *AssignmentService) Update(ctx context.Context, id uuid.UUID, req dto.Up
 	}
 	if req.EndTime != nil {
 		if t, err := time.Parse(time.RFC3339, *req.EndTime); err == nil {
+			// QA4-T08: chỉ kiểm khi hạn nộp THAY ĐỔI — sửa tiêu đề một bài đã quá hạn (web gửi lại end_time cũ)
+			// không bị chặn, nhưng đặt một hạn mới đã qua thì bị chặn.
+			if assignment.EndTime == nil || !assignment.EndTime.Equal(t) {
+				if err := ensureDueInFuture(&t, time.Now()); err != nil {
+					return nil, err
+				}
+			}
 			assignment.EndTime = &t
 		}
 	}
@@ -389,6 +412,17 @@ func (s *AssignmentService) Delete(ctx context.Context, id uuid.UUID) error {
 	if err := s.requireClassWritableFor(ctx, id); err != nil {
 		return err
 	}
+	// QA4-T01: xoá bài đã có bài nộp sẽ mất bài nộp/điểm của học viên — từ chối thay vì xoá.
+	if s.submissionRepo == nil {
+		return errors.New("assignment delete: submission repository not configured")
+	}
+	_, submitted, err := s.submissionRepo.GetByAssignment(ctx, id, 1, 1)
+	if err != nil {
+		return err
+	}
+	if submitted > 0 {
+		return ErrAssignmentHasSubmissions
+	}
 	return s.repo.Delete(ctx, id)
 }
 
@@ -402,6 +436,10 @@ func (s *AssignmentService) Publish(ctx context.Context, id uuid.UUID, livekitSv
 	}
 	if assignment == nil {
 		return nil, errors.New("assignment not found")
+	}
+	// QA4-T08: không công bố một bài đã quá hạn nộp.
+	if err := ensureDueInFuture(assignment.EndTime, time.Now()); err != nil {
+		return nil, err
 	}
 
 	if err := s.repo.Publish(ctx, id); err != nil {
