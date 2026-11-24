@@ -8,7 +8,6 @@ import (
 	"errors"
 	"testing"
 	"time"
-
 )
 
 func TestCancelledOrderHold_EndsThirtyMinutesAfterCancelNotAfterCodeExpiry(t *testing.T) {
@@ -64,4 +63,3 @@ func TestProcessingOrderHold_HasNoRetryAfter(t *testing.T) {
 		}
 	}
 }
-
