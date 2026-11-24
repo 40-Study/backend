@@ -238,22 +238,26 @@ type QuizAttemptAnswerDTO struct {
 	Options         *[]ReviewAnswerOptionDTO `json:"options,omitempty"`
 	AcceptedAnswers *[]string                `json:"accepted_answers,omitempty"`
 
-	// AnswersHidden (QA6, contract C10): đặt true thì JSON ghi RÕ correct_answer_ids và explanation là null (không bỏ
-	// vắng như omitempty), để web phân biệt "giảng viên đã ẩn" với "câu này chưa có đáp án để hiện". Không ra JSON.
+	// AnswersHidden (QA6, contract C10): đặt true thì JSON ghi RÕ correct_answer_ids, explanation, is_correct và
+	// points_earned là null (không bỏ vắng như omitempty), để web phân biệt "giảng viên đã ẩn" với "câu này chưa có đáp án
+	// để hiện". Không ra JSON.
 	AnswersHidden bool `json:"-"`
 }
 
-// MarshalJSON: dòng đã ẩn đáp án ghi null tường minh cho correct_answer_ids và explanation; dòng thường giữ nguyên dạng cũ.
+// MarshalJSON: dòng đã ẩn đáp án ghi null tường minh cho correct_answer_ids, explanation, is_correct và points_earned
+// (hai trường sau lộ đáp án đúng của từng câu); dòng thường giữ nguyên dạng cũ.
 func (a QuizAttemptAnswerDTO) MarshalJSON() ([]byte, error) {
 	type plain QuizAttemptAnswerDTO
 	if !a.AnswersHidden {
 		return json.Marshal(plain(a))
 	}
-	// Field cùng tên JSON ở tầng nông hơn thắng field của plain (encoding/json), nên hai field dưới thay omitempty bằng null.
+	// Field cùng tên JSON ở tầng nông hơn thắng field của plain (encoding/json), nên các field dưới ghi null thay vì giá trị/omitempty.
 	return json.Marshal(struct {
 		plain
 		CorrectAnswerIDs []string `json:"correct_answer_ids"`
 		Explanation      *string  `json:"explanation"`
+		IsCorrect        *bool    `json:"is_correct"`
+		PointsEarned     *string  `json:"points_earned"`
 	}{plain: plain(a)})
 }
 

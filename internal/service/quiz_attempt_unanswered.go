@@ -51,8 +51,8 @@ func (s *QuizService) withUnansweredQuestions(ctx context.Context, quizID uuid.U
 			CorrectAnswerIDs:  correctIDs,
 			Explanation:       q.Explanation,
 		}
-		if hideAnswers { // C10: câu bỏ trống cũng không lộ đáp án đúng/giải thích khi giảng viên đã ẩn
-			row.CorrectAnswerIDs, row.Explanation, row.AnswersHidden = nil, nil, true
+		if hideAnswers { // C10: câu bỏ trống cũng không lộ đáp án đúng/giải thích khi giảng viên đã ẩn; is_correct cũng null (cùng dạng dòng đã trả lời)
+			row.CorrectAnswerIDs, row.Explanation, row.IsCorrect, row.AnswersHidden = nil, nil, nil, true
 		}
 		out = append(out, row)
 	}

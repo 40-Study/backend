@@ -1521,6 +1521,11 @@ func (s *QuizService) GetAttemptByID(ctx context.Context, attemptID, userID uuid
 			PointsEarned:      aa.PointsEarned,
 		}
 		answers[i].AnswersHidden = hideAnswers
+		if hideAnswers {
+			// B1 (QA6 C10): is_correct và points_earned của từng dòng lộ đáp án đúng y như correct_answer_ids (chọn đúng thì
+			// is_correct=true / points>0), nên cũng bỏ. Điểm tổng và số câu đúng nằm ở QuizAttemptResponseDTO, giữ nguyên.
+			answers[i].IsCorrect, answers[i].PointsEarned = nil, decimal.Zero
+		}
 		if submitted && !hideAnswers {
 			answers[i].Explanation = aa.Question.Explanation
 			var correctIDs []string
