@@ -65,7 +65,7 @@ func TestContestLive_IDORTeacherB(t *testing.T) {
 	cid := r.data()["id"].(string)
 	body := contestBody(quizID, "")
 
-	e.must("B xem ban quan ly", e.do("GET", "/api/contests/manage/"+cid, "teacherB", ""), 404, "ERR_NOT_FOUND")
+	e.must("B xem ban quan ly", e.do("GET", "/api/contests/manage/"+cid, "teacherB", ""), 404, "CONTEST_NOT_FOUND")
 	e.must("B xem nguoi tham gia", e.do("GET", "/api/contests/manage/"+cid+"/participants", "teacherB", ""), 404, "CONTEST_NOT_FOUND")
 	e.must("B sua", e.do("PUT", "/api/contests/"+cid, "teacherB", body), 403, "CONTEST_FORBIDDEN")
 	e.must("B xoa", e.do("DELETE", "/api/contests/"+cid, "teacherB", ""), 403, "CONTEST_FORBIDDEN")
