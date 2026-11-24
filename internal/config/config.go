@@ -313,6 +313,15 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	// QA4-T09: không âm thầm trả URL MinIO nội bộ cho trình duyệt.
+	minioWarning, err := validateMinioPublicEndpoint(env, config.MinioPublicEndpoint, config.MinioHost)
+	if err != nil {
+		return nil, err
+	}
+	if minioWarning != "" {
+		fmt.Println(minioWarning)
+	}
+
 	minWithdrawal, err := parseWithdrawalMinAmount(config.WithdrawalMinAmountRaw)
 	if err != nil {
 		return nil, err
