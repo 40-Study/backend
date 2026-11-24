@@ -146,6 +146,10 @@ type SessionAttendanceResponseDTO struct {
 	SessionID         uuid.UUID  `json:"session_id"`
 	StudentID         uuid.UUID  `json:"student_id"`
 	StudentName       string     `json:"student_name"`
+	// ClassName/SessionTitle (QA5 R2): lớp và buổi của dòng điểm danh, chỉ điền ở GET /me/attendances
+	// (nơi buổi học được preload); các endpoint điểm danh khác để vắng.
+	ClassName         string     `json:"class_name,omitempty"`
+	SessionTitle      string     `json:"session_title,omitempty"`
 	Status            string     `json:"status"`
 	CheckInTime       *time.Time `json:"check_in_time,omitempty"`
 	CheckOutTime      *time.Time `json:"check_out_time,omitempty"`
@@ -183,6 +187,8 @@ type TimetableEntryDTO struct {
 	ScheduleID  *uuid.UUID `json:"schedule_id,omitempty"`
 	ClassName   string     `json:"class_name"`
 	ClassID     uuid.UUID  `json:"class_id"`
+	// TeacherName (QA5 R3): giảng viên chính của lớp; không có giảng viên chính thì vắng.
+	TeacherName string `json:"teacher_name,omitempty"`
 	// OrganizationID/OrganizationName: tổ chức sở hữu lớp. Không có = lớp cá nhân của giảng viên (dạy tự do).
 	// Tổ chức đã xoá mềm vẫn trả id nhưng không trả tên, để client hiện "Tổ chức" chung chung.
 	OrganizationID   *uuid.UUID `json:"organization_id,omitempty"`

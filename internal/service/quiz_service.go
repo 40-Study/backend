@@ -1525,6 +1525,14 @@ func (s *QuizService) GetAttemptByID(ctx context.Context, attemptID, userID uuid
 		}
 	}
 
+	if submitted {
+		// R1 (QA5 S5-11): câu bỏ trống không có dòng quiz_attempt_answers nên trước đây biến mất khỏi
+		// bài chữa; bổ sung đủ đề, mỗi câu kèm đáp án đúng như câu đã trả lời.
+		if answers, err = s.withUnansweredQuestions(ctx, attempt.QuizID, answers); err != nil {
+			return nil, err
+		}
+	}
+
 	return &dto.QuizAttemptDetailDTO{
 		QuizAttemptResponseDTO: *s.mapAttemptToDTO(attempt),
 		Answers:                answers,

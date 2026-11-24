@@ -970,6 +970,13 @@ Cả hai lỗi trả `{ "code": ..., "message": <câu tiếng Việt> }`.
 - **C4** Dòng nhật ký admin: `metadata.target_name` (tên đối tượng, kể cả đã xoá) với user, course, contest, voucher, category, tag, system_role, org_role, permission, organization, order, report. Loại chưa có tên (withdrawal, setting, broadcast) không có khoá này.
 - **C5** `POST /api/classes/:id/schedules`, `PUT .../:scheduleId`: phản hồi có `data.warnings` (và bản sao `warnings` ở cấp ngoài): `[{ class_id, class_name, weekday, start_time, end_time }]` cho lịch tuần đang hoạt động của lớp active khác mà giảng viên của lớp cũng dạy, trùng thứ + giờ + khoảng hiệu lực; mảng rỗng khi không trùng; không bao giờ chặn.
 
+### QA5 round 2 contract notes (backend-r2)
+
+- **R1** `GET /api/quizzes/:id/attempts/:attemptId` (và `.../progress`) trên attempt **đã nộp**: `answers[]` có MỌI câu của đề theo `display_order`, kể cả câu bỏ trống. Câu bỏ trống cùng dạng với câu đã trả lời: `id` = `00000000-0000-0000-0000-000000000000`, `selected_answer_ids: []`, `is_correct: false`, `points_earned: 0`, kèm `correct_answer_ids` và `explanation`. Chưa nộp thì không đổi (không lộ đáp án).
+- **R2** `GET /api/me/attendances`: mỗi dòng thêm `class_name` (tên lớp) và `session_title` (chủ đề buổi, không có chủ đề thì `"Buổi N"`). Hai trường này chỉ có ở endpoint này.
+- **R3** Mỗi mục `entries` của timetable (`/api/me/timetable`, `/api/classes/:id/timetable`, timetable của con phụ huynh) thêm `teacher_name`: tên hiển thị của giảng viên chính của lớp (vai trò `primary`, người được gán sớm nhất nếu có nhiều). Lớp không có giảng viên chính thì vắng trường.
+- **R4** `DELETE /api/classes/:id/sessions/:sessionId`: buổi đã tới giờ bắt đầu (`date` + `start_time`, giờ Việt Nam) trả `422 { "code": "ERR_SESSION_ALREADY_STARTED", "message": "Buổi học đã bắt đầu hoặc đã diễn ra nên không thể huỷ." }`, buổi không đổi trạng thái.
+
 ### Tạo/sửa khoá có phí và gửi duyệt (Q3-09)
 
 - `POST /api/courses`, `PUT /api/courses/:id`: khoá có phí (`is_free` bỏ trống hoặc `false`) phải có `price > 0` (sau làm

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -63,6 +64,7 @@ type ScheduleRepositoryInterface interface {
 	GetSchedulesByClassIDs(ctx context.Context, classIDs []uuid.UUID) ([]model.ClassSchedule, error)
 	FilterClassIDsByOrganization(ctx context.Context, classIDs []uuid.UUID, filter dto.TimetableOrgFilter) ([]uuid.UUID, error)
 	GetClassOrganizations(ctx context.Context, classIDs []uuid.UUID) (map[uuid.UUID]ClassOrganization, error)
+	GetClassMainTeacherNames(ctx context.Context, classIDs []uuid.UUID) (map[uuid.UUID]string, error)
 	GetCalendarLivestreamsByClassIDs(ctx context.Context, classIDs []uuid.UUID) ([]model.LivestreamSession, error)
 }
 
@@ -480,6 +482,39 @@ func (r *ScheduleRepository) GetClassOrganizations(ctx context.Context, classIDs
 	}
 	for _, row := range rows {
 		out[row.ID] = ClassOrganization{ID: row.OrganizationID, Name: row.OrganizationName}
+	}
+	return out, nil
+}
+
+// GetClassMainTeacherNames (QA5 R3): tên hiển thị của giảng viên chính (teacher_classes.role = 'primary') của
+// từng lớp trong classIDs, một truy vấn cho cả danh sách. Nhiều giảng viên chính thì lấy người được gán sớm
+// nhất. Lớp không có giảng viên chính (hoặc tài khoản đã xoá mềm) không có khoá trong map.
+func (r *ScheduleRepository) GetClassMainTeacherNames(ctx context.Context, classIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	out := make(map[uuid.UUID]string, len(classIDs))
+	if len(classIDs) == 0 {
+		return out, nil
+	}
+	var rows []struct {
+		ClassID  uuid.UUID
+		FullName *string
+		UserName string
+	}
+	err := r.db.WithContext(ctx).
+		Table("teacher_classes AS tc").
+		Select("DISTINCT ON (tc.class_id) tc.class_id, u.full_name, u.user_name").
+		Joins("JOIN users u ON u.id = tc.teacher_id AND u.deleted_at IS NULL").
+		Where("tc.class_id IN ? AND tc.role = ?", classIDs, "primary").
+		Order("tc.class_id, tc.assigned_at ASC, tc.id ASC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		name := row.UserName
+		if row.FullName != nil && strings.TrimSpace(*row.FullName) != "" {
+			name = *row.FullName
+		}
+		out[row.ClassID] = name
 	}
 	return out, nil
 }
