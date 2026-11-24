@@ -20,6 +20,8 @@ type SubmissionRepositoryInterface interface {
 	ListStudentClassAssignments(ctx context.Context, studentID uuid.UUID, page, pageSize int) ([]model.Assignment, int64, error)
 	ListUserSubmissionsForAssignments(ctx context.Context, userID uuid.UUID, assignmentIDs []uuid.UUID) ([]model.Submission, error)
 	StudentClassAssignmentStats(ctx context.Context, studentID uuid.UUID, now time.Time) (StudentAssignmentStats, error)
+	// ListMySubmissionSummaries (QA5 S5-02, contract C1): bài nộp mới nhất + điểm của người gọi cho mỗi bài tập.
+	ListMySubmissionSummaries(ctx context.Context, userID uuid.UUID, assignmentIDs []uuid.UUID) (map[uuid.UUID]MySubmissionSummary, error)
 	GetByAssignmentAndUser(ctx context.Context, assignmentID, userID uuid.UUID) ([]model.Submission, error)
 	GetLatestByAssignmentAndUser(ctx context.Context, assignmentID, userID uuid.UUID) (*model.Submission, error)
 	Update(ctx context.Context, submission *model.Submission) error

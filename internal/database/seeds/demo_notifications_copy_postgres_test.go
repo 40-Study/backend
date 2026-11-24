@@ -16,8 +16,10 @@ import (
 )
 
 const (
-	parentPromoTitle  = "Ưu đãi gia đình: giảm 50.000đ"
-	parentDigestTitle = "Tiến độ tuần này của Lê Văn C"
+	parentPromoTitle = "Ưu đãi gia đình: giảm 50.000 ₫"
+	// parentPromoLegacyTitle: tiêu đề kiểu cũ ("50.000đ") của DB đã seed trước QA5 S5-15.
+	parentPromoLegacyTitle = "Ưu đãi gia đình: giảm 50.000đ"
+	parentDigestTitle      = "Tiến độ tuần này của Lê Văn C"
 )
 
 func TestSeedDemoNotifications_Postgres_ParentCopyKhopDuLieu(t *testing.T) {
@@ -55,12 +57,29 @@ func TestSeedDemoNotifications_Postgres_ParentCopyKhopDuLieu(t *testing.T) {
 		return n.Content
 	}
 
+	// DB đã seed trước bản sửa chữ: dòng mang tiêu đề cũ, đã đọc. Seed phải đổi tên TẠI CHỖ (không đẻ dòng thứ hai).
+	if err := s.SeedDemoEngagement(users, courses); err != nil {
+		t.Fatalf("seed lần đầu: %v", err)
+	}
+	parentID := users["parent1@demo.com"].ID
+	if err := db.Model(&model.Notification{}).Where("user_id = ? AND title = ?", parentID, parentPromoTitle).
+		Updates(map[string]interface{}{"title": parentPromoLegacyTitle, "is_read": true}).Error; err != nil {
+		t.Fatalf("dựng dòng tiêu đề cũ: %v", err)
+	}
+
 	for run := 1; run <= 2; run++ {
 		if err := s.SeedDemoEngagement(users, courses); err != nil {
 			t.Fatalf("lần %d: SeedDemoEngagement: %v", run, err)
 		}
 		if got := parentContent(parentDigestTitle); !strings.Contains(got, "đạt khoảng "+wantPct) {
 			t.Errorf("lần %d: thông báo tiến độ %q không chứa %q lấy từ enrollment (progress=%s)", run, got, wantPct, enr.ProgressPercent)
+		}
+		var promo []model.Notification
+		if err := db.Where("user_id = ? AND title IN ?", parentID, []string{parentPromoTitle, parentPromoLegacyTitle}).Find(&promo).Error; err != nil {
+			t.Fatalf("lần %d: đọc thông báo khuyến mãi: %v", run, err)
+		}
+		if len(promo) != 1 || promo[0].Title != parentPromoTitle || !promo[0].IsRead {
+			t.Errorf("lần %d: khuyến mãi phụ huynh = %+v, muốn đúng 1 dòng tiêu đề mới \"50.000 ₫\" giữ trạng thái đã đọc", run, promo)
 		}
 		if got := parentContent(parentPromoTitle); strings.Contains(got, "cho con") {
 			t.Errorf("lần %d: khuyến mãi phụ huynh còn hứa mua khoá học cho con: %q", run, got)

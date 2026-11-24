@@ -254,6 +254,9 @@ func (s *ParentDashboardService) GetChildGrades(ctx context.Context, parentID, c
 	}, nil
 }
 
+// childUpcomingSessionsCap: số buổi sắp tới tối đa trả về (và tối đa lấy từ mỗi lớp) ở lịch của con.
+const childUpcomingSessionsCap = 20
+
 func (s *ParentDashboardService) GetChildSchedule(ctx context.Context, parentID, childID uuid.UUID) (*dto.ChildScheduleResponseDto, error) {
 	_, err := s.verifyParentChildRelation(ctx, parentID, childID)
 	if err != nil {
@@ -295,7 +298,7 @@ func (s *ParentDashboardService) GetChildSchedule(ctx context.Context, parentID,
 		}
 
 		for _, classID := range classIDs {
-			sessions, err := s.scheduleRepo.GetUpcomingSessions(ctx, classID, 5)
+			sessions, err := s.scheduleRepo.GetUpcomingSessions(ctx, classID, childUpcomingSessionsCap)
 			if err != nil {
 				continue
 			}
@@ -324,6 +327,19 @@ func (s *ParentDashboardService) GetChildSchedule(ctx context.Context, parentID,
 				})
 			}
 		}
+	}
+
+	// QA5 Q5-PG-02: sắp theo ngày + giờ bắt đầu trên TOÀN BỘ các lớp, rồi cắt còn childUpcomingSessionsCap buổi
+	// (trước đây nối từng lớp, mỗi lớp 5 buổi, không thứ tự chung).
+	sort.SliceStable(upcomingSessions, func(i, j int) bool {
+		a, b := upcomingSessions[i], upcomingSessions[j]
+		if !a.Date.Equal(b.Date) {
+			return a.Date.Before(b.Date)
+		}
+		return a.StartTime < b.StartTime
+	})
+	if len(upcomingSessions) > childUpcomingSessionsCap {
+		upcomingSessions = upcomingSessions[:childUpcomingSessionsCap]
 	}
 
 	return &dto.ChildScheduleResponseDto{
@@ -445,7 +461,6 @@ func (s *ParentDashboardService) GetChildAttendance(ctx context.Context, parentI
 	}
 
 	attendanceDtos := make([]dto.ChildAttendanceDto, len(records))
-	stats := dto.ChildAttendanceStatsDto{}
 
 	for i, r := range records {
 		sessionNum := r.Session.SessionNumber
@@ -470,22 +485,14 @@ func (s *ParentDashboardService) GetChildAttendance(ctx context.Context, parentI
 			LateMinutes: r.LateMinutes,
 		}
 
-		stats.TotalSessions++
-		switch r.Status {
-		case model.AttendancePresent:
-			stats.PresentCount++
-		case model.AttendanceAbsent:
-			stats.AbsentCount++
-		case model.AttendanceLate:
-			stats.LateCount++
-		case model.AttendanceExcused:
-			stats.ExcusedCount++
-		}
 	}
 
-	if stats.TotalSessions > 0 {
-		stats.AttendanceRate = float64(stats.PresentCount+stats.LateCount) / float64(stats.TotalSessions) * 100
+	// QA5 Q5-PG-01 (contract C3): thống kê trên TOÀN BỘ bản ghi của con, không chỉ trang đang xem.
+	counts, err := s.scheduleRepo.CountStudentAttendanceByStatus(ctx, childID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get attendance stats: %w", err)
 	}
+	stats := attendanceStatsFromCounts(counts)
 
 	return &dto.ChildAttendanceResponseDto{
 		Records:  attendanceDtos,
@@ -494,6 +501,24 @@ func (s *ParentDashboardService) GetChildAttendance(ctx context.Context, parentI
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
+}
+
+// attendanceStatsFromCounts dựng thống kê điểm danh từ số bản ghi theo trạng thái. Trạng thái lạ vẫn tính vào tổng
+// (giống cách đếm theo trang trước đây không bao giờ bỏ sót bản ghi).
+func attendanceStatsFromCounts(counts map[model.AttendanceStatus]int) dto.ChildAttendanceStatsDto {
+	stats := dto.ChildAttendanceStatsDto{
+		PresentCount: counts[model.AttendancePresent],
+		AbsentCount:  counts[model.AttendanceAbsent],
+		LateCount:    counts[model.AttendanceLate],
+		ExcusedCount: counts[model.AttendanceExcused],
+	}
+	for _, n := range counts {
+		stats.TotalSessions += n
+	}
+	if stats.TotalSessions > 0 {
+		stats.AttendanceRate = float64(stats.PresentCount+stats.LateCount) / float64(stats.TotalSessions) * 100
+	}
+	return stats
 }
 
 func (s *ParentDashboardService) GetChildAssignments(ctx context.Context, parentID, childID uuid.UUID, page, pageSize int) (*dto.ChildAssignmentsResponseDto, error) {
@@ -550,6 +575,8 @@ func (s *ParentDashboardService) GetChildAssignments(ctx context.Context, parent
 			TotalAssignments: int(counts.Total),
 			Completed:        int(counts.Completed),
 			InProgress:       int(counts.InProgress),
+			PendingReview:    int(counts.PendingReview),
+			NeedsRetry:       int(counts.NeedsRetry),
 			NotStarted:       int(counts.NotStarted),
 			Overdue:          int(counts.Overdue),
 		},

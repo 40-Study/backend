@@ -137,6 +137,19 @@ func reactClassSpec() classSpec {
 					{StudentEmail: "student1@demo.com", Verdict: model.VerdictAccepted, Passed: 3, DaysBeforeDue: 1, Score: 9, Feedback: "Đã nhớ clearTimeout trong cleanup. Có thể thêm test cho delay = 0."},
 				},
 			},
+			// QA5 N-04: một bài ĐÃ QUÁ HẠN mà con nộp chưa đạt, để tab Bài tập của phụ huynh có dòng "Cần chú ý" (hạn là độ lệch
+			// so với hôm nay nên luôn quá hạn, không trôi thành "sắp hạn").
+			{
+				Title:       "Lọc danh sách khoá học theo từ khoá",
+				Description: "Viết hàm filterCourses(courses, keyword) trả về các khoá có tiêu đề chứa keyword (không phân biệt hoa thường). Keyword rỗng trả về toàn bộ danh sách.",
+				Type:        "homework", Difficulty: model.DifficultyEasy, LiveIndex: 1, DueOffsetDays: -3, Published: true,
+				StarterCode: "function filterCourses(courses, keyword) {\n  // TODO\n}\n",
+				Solution:    "function filterCourses(courses, keyword) {\n  const k = keyword.trim().toLowerCase();\n  return k ? courses.filter((c) => c.title.toLowerCase().includes(k)) : courses;\n}\n",
+				TestCases:   [][2]string{{`["React","Next"] re`, `["React"]`}, {`["React"] ""`, `["React"]`}, {`["Git"] GIT`, `["Git"]`}},
+				Results: []submissionSpec{
+					{StudentEmail: "student1@demo.com", Verdict: model.VerdictWrongAnswer, Passed: 1, DaysBeforeDue: 1},
+				},
+			},
 			{
 				Title:       "Mini project: Trang danh sách khoá học",
 				Description: "Xây trang /courses bằng Next.js App Router: lấy danh sách khoá học từ API, có ô tìm kiếm dùng useDebounce và phân trang.",

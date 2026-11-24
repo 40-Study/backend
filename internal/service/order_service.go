@@ -61,17 +61,33 @@ var (
 )
 
 // ErrPreviousOrderVerifying (review #76 vòng 4): CreateOrder bị chặn vì một đơn trước cho khoá này
-// đã cấp mã chuyển khoản và đang được đối chiếu (xem paymentVerificationHoldExists). errors.Is với
+// đã cấp mã chuyển khoản và đang được đối chiếu (xem paymentVerificationHold). errors.Is với
 // ErrPaymentVerificationPending → handler trả 409 ERR_PAYMENT_VERIFYING; câu riêng cho việc mua lại.
 var ErrPreviousOrderVerifying error = previousOrderVerifyingError{}
 
-type previousOrderVerifyingError struct{}
+// previousOrderVerifyingError: RetryAfterAt != nil khi chặn chỉ do đơn ĐÃ HUỶ (hết chặn đúng mốc đó,
+// QA5 S5-03, contract C2); nil khi còn đơn processing đang đối chiếu (không có mốc, hết khi đối chiếu xong).
+type previousOrderVerifyingError struct{ RetryAfterAt *time.Time }
 
 func (previousOrderVerifyingError) Error() string {
 	return "Đơn trước của bạn cho khoá học này đã được cấp mã chuyển khoản và đang được đối chiếu với ngân hàng. Nếu bạn đã chuyển khoản, đừng chuyển lại; xem kết quả tại Đơn hàng của tôi."
 }
 
 func (previousOrderVerifyingError) Unwrap() error { return ErrPaymentVerificationPending }
+
+// Is: mọi previousOrderVerifyingError (có hay không có mốc) đều khớp sentinel ErrPreviousOrderVerifying.
+func (previousOrderVerifyingError) Is(target error) bool {
+	_, ok := target.(previousOrderVerifyingError)
+	return ok
+}
+
+// RetryAfter trả mốc được mua lại (RFC3339 ở handler); ok=false khi không có mốc cụ thể.
+func (e previousOrderVerifyingError) RetryAfter() (time.Time, bool) {
+	if e.RetryAfterAt == nil {
+		return time.Time{}, false
+	}
+	return *e.RetryAfterAt, true
+}
 
 type OrderServiceInterface interface {
 	CreateOrder(ctx context.Context, userID uuid.UUID, req dto.CreateOrderRequest) (*dto.OrderResponse, error)
@@ -902,7 +918,7 @@ func (s *OrderService) sweepExpiredHeldOrders(ctx context.Context, userID uuid.U
 		// trả TRONG hạn mà chưa ai đối chiếu. OrderService không có gRPC ngân hàng nên KHÔNG tự chốt
 		// expired ở đây (trước đây chốt im lặng, rồi nút "Tạo đơn mới" dẫn tới trả lần 2). Đơn này
 		// được chốt qua PaymentService.CheckAndProcessPayment (đối chiếu lần cuối). Trong lúc chờ, nó
-		// CHẶN tạo đơn mới cùng khoá (paymentVerificationHoldExists, review vòng 4).
+		// CHẶN tạo đơn mới cùng khoá (paymentVerificationHold, review vòng 4).
 		if order.Status == "processing" && order.PaymentTransactionID != nil && *order.PaymentTransactionID != "" {
 			continue
 		}
@@ -1029,8 +1045,8 @@ func orderHoldExpiresAt(order *model.Order) *time.Time {
 // chủ dự án): đơn "processing" đã có mã chuyển khoản vẫn tính dù mã đã hết hạn, vì nó CHƯA được đối
 // chiếu ngân hàng (sweep bỏ qua nó) và có thể đã được trả tiền. Tạo đơn mới cùng khoá lúc này dẫn
 // tới trả lần 2 (qua "Mua ngay"/checkout). Vòng 4: đơn này (và đơn có mã vừa huỷ) bị
-// paymentVerificationHoldExists chặn trước với ErrPreviousOrderVerifying (409 ERR_PAYMENT_VERIFYING);
-// hết chặn khi đối chiếu xong (completed/expired) hoặc hết 30 phút sau khi huỷ.
+// paymentVerificationHold chặn trước với ErrPreviousOrderVerifying (409 ERR_PAYMENT_VERIFYING);
+// hết chặn khi đối chiếu xong (completed/expired) hoặc hết 30 phút sau khi huỷ (QA5 S5-03: tính từ lúc huỷ).
 // openOrderConflict trả đúng lỗi mà bước dùng-lại-đơn-đang-mở của CreateOrder sẽ trả (ErrOrderInProgress,
 // ErrPreviousOrderVerifying) cho yêu cầu này, nil nếu không có đơn đang mở nào cản đường.
 func (s *OrderService) openOrderConflict(userID uuid.UUID, courseIDs []uuid.UUID, couponCode string) error {
@@ -1047,10 +1063,10 @@ func (s *OrderService) openOrderConflict(userID uuid.UUID, courseIDs []uuid.UUID
 
 func findReusableOpenOrder(txDB *gorm.DB, userID uuid.UUID, courseIDs []uuid.UUID, couponCode string, totalAmount, discountAmount decimal.Decimal) (uuid.UUID, *model.Order, error) {
 	now := time.Now()
-	if held, err := paymentVerificationHoldExists(txDB, userID, courseIDs, now); err != nil {
+	if held, err := paymentVerificationHold(txDB, userID, courseIDs, now); err != nil {
 		return uuid.Nil, nil, err
-	} else if held {
-		return uuid.Nil, nil, ErrPreviousOrderVerifying
+	} else if held != nil {
+		return uuid.Nil, nil, held
 	}
 	var open []model.Order
 	err := txDB.
@@ -1087,25 +1103,45 @@ func findReusableOpenOrder(txDB *gorm.DB, userID uuid.UUID, courseIDs []uuid.UUI
 	return order.ID, nil, nil
 }
 
-// paymentVerificationHoldExists (review #76 vòng 4, quyết định chủ dự án) — user có đơn ĐÃ CẤP MÃ
-// chứa một trong các khoá này mà chưa được coi là "chắc chắn không có tiền":
+// paymentVerificationHold (review #76 vòng 4, quyết định chủ dự án; QA5 S5-03 đổi mốc huỷ) — user có đơn
+// ĐÃ CẤP MÃ chứa một trong các khoá này mà chưa được coi là "chắc chắn không có tiền":
 //   - processing có mã đã hết hạn (đang đối chiếu: ân hạn 30 phút, hoặc ngân hàng lỗi tới khi
 //     reconcileIssuedOrder chốt expired sau unverifiedExpiryAfter);
-//   - cancelled có mã, còn trong paymentReconcileGracePeriod tính từ mốc MUỘN HƠN giữa lúc huỷ và
-//     hạn mã (phương án b: được huỷ, nhưng tiền chuyển ngay trước khi huỷ có thể chưa ghi có).
+//   - cancelled có mã, còn trong paymentReconcileGracePeriod TÍNH TỪ LÚC HUỶ (không tính từ hạn mã:
+//     mã sống 24 giờ nên trước đây đơn huỷ chặn mua lại ~24,5 giờ, trái comment "30 phút sau khi huỷ").
 // Tạo đơn mới cùng khoá lúc này dẫn tới trả lần 2, nên CreateOrder trả 409 ERR_PAYMENT_VERIFYING.
 // Mốc huỷ lấy từ history to_status='cancelled' (bảng orders không có cột riêng), thiếu thì updated_at.
-func paymentVerificationHoldExists(txDB *gorm.DB, userID uuid.UUID, courseIDs []uuid.UUID, now time.Time) (bool, error) {
-	var n int64
-	err := txDB.Model(&model.Order{}).
-		Where("user_id = ? AND payment_transaction_id IS NOT NULL AND payment_transaction_id <> ''", userID).
-		Where(`(status = 'processing' AND (payment_code_expired_at IS NULL OR payment_code_expired_at < ?))
-			OR (status = 'cancelled' AND payment_code_expired_at IS NOT NULL AND GREATEST(payment_code_expired_at,
-				COALESCE((SELECT MAX(h.created_at) FROM order_status_histories h WHERE h.order_id = orders.id AND h.to_status = 'cancelled'), orders.updated_at)) > ?)`,
-			now, now.Add(-paymentReconcileGracePeriod)).
-		Where("EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND oi.course_id IN ?)", courseIDs).
-		Count(&n).Error
-	return n > 0, err
+// Trả nil khi không bị chặn; lỗi trả về mang RetryAfterAt khi CHỈ có đơn huỷ chặn (contract C2).
+func paymentVerificationHold(txDB *gorm.DB, userID uuid.UUID, courseIDs []uuid.UUID, now time.Time) (*previousOrderVerifyingError, error) {
+	withCode := func() *gorm.DB {
+		return txDB.Model(&model.Order{}).
+			Where("user_id = ? AND payment_transaction_id IS NOT NULL AND payment_transaction_id <> ''", userID).
+			Where("EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = orders.id AND oi.course_id IN ?)", courseIDs)
+	}
+	var processing int64
+	if err := withCode().
+		Where("status = 'processing' AND (payment_code_expired_at IS NULL OR payment_code_expired_at < ?)", now).
+		Count(&processing).Error; err != nil {
+		return nil, err
+	}
+	if processing > 0 {
+		return &previousOrderVerifyingError{}, nil
+	}
+
+	var latestCancel struct{ At *time.Time }
+	if err := withCode().
+		Where("status = 'cancelled'").
+		Where("COALESCE((SELECT MAX(h.created_at) FROM order_status_histories h WHERE h.order_id = orders.id AND h.to_status = 'cancelled'), orders.updated_at) > ?",
+			now.Add(-paymentReconcileGracePeriod)).
+		Select("MAX(COALESCE((SELECT MAX(h.created_at) FROM order_status_histories h WHERE h.order_id = orders.id AND h.to_status = 'cancelled'), orders.updated_at)) AS at").
+		Scan(&latestCancel).Error; err != nil {
+		return nil, err
+	}
+	if latestCancel.At == nil {
+		return nil, nil
+	}
+	retryAfter := latestCancel.At.Add(paymentReconcileGracePeriod)
+	return &previousOrderVerifyingError{RetryAfterAt: &retryAfter}, nil
 }
 
 func sameCourseSet(a, b []uuid.UUID) bool {

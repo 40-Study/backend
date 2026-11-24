@@ -58,6 +58,19 @@ type AssignmentResponseDTO struct {
 	MaxLateDays         int  `json:"max_late_days"`
 	GracePeriodMinutes  int  `json:"grace_period_minutes"`
 	CreatedAt           string `json:"created_at"`
+	// MySubmission (QA5 S5-02, contract C1): bài nộp mới nhất của NGƯỜI GỌI; null = chưa nộp. Chỉ được điền ở danh sách
+	// theo phiên/lớp.
+	MySubmission *MySubmissionDTO `json:"my_submission"`
+}
+
+// MySubmissionDTO: trạng thái bài nộp của người gọi. Status: "graded" khi đã có điểm (Score/MaxScore có giá trị),
+// "submitted" khi đã nộp mà chưa có điểm (Score/MaxScore null).
+type MySubmissionDTO struct {
+	ID          uuid.UUID `json:"id"`
+	Status      string    `json:"status"`
+	Score       *float64  `json:"score"`
+	MaxScore    *float64  `json:"max_score"`
+	SubmittedAt string    `json:"submitted_at"`
 }
 
 type AssignmentListDTO struct {

@@ -28,6 +28,9 @@ type notificationSpec struct {
 	// Chuỗi bằng 0 thì dùng NoStreakContent (không in "chuỗi 0 ngày").
 	StreakOf        string
 	NoStreakContent string
+	// LegacyTitle: tiêu đề cũ của dòng này ở DB đã seed trước khi đổi chữ. Tiêu đề là khoá tự nhiên (user_id, title)
+	// nên seed đổi tên dòng cũ tại chỗ (giữ is_read/read_at/created_at), không tạo bản mới cạnh nó.
+	LegacyTitle string
 }
 
 // streakPlaceholder trong Content được thay bằng chuỗi ngày học thật của StreakOf (QA4 N-13: thông báo "giữ chuỗi 12 ngày"
@@ -70,7 +73,7 @@ var demoNotifications = map[string][]notificationSpec{
 		{Title: "Con bạn sắp mất chuỗi học tập", Content: "Lê Văn C đang có chuỗi {streak} ngày học liên tiếp. Một lời nhắc nhỏ mỗi tối giúp con không bỏ lỡ ngày nào.",
 			NoStreakContent: "Mấy hôm nay Lê Văn C chưa học bài nào. Một lời nhắc nhỏ có thể giúp con bắt đầu lại chuỗi học tập.",
 			Type:            "streak", HoursAgo: 3, StreakOf: "student1@demo.com"},
-		{Title: "Ưu đãi gia đình: giảm 50.000đ", Content: "Mã SUMMER50K áp dụng cho đơn từ 300.000đ khi bạn mua khoá học bằng tài khoản phụ huynh của mình.", Type: "promotion", HoursAgo: 30},
+		{Title: "Ưu đãi gia đình: giảm 50.000 ₫", LegacyTitle: "Ưu đãi gia đình: giảm 50.000đ", Content: "Mã SUMMER50K áp dụng cho đơn từ 300.000 ₫ khi bạn mua khoá học bằng tài khoản phụ huynh của mình.", Type: "promotion", HoursAgo: 30},
 	},
 }
 
@@ -108,6 +111,14 @@ func (s *Seeder) SeedDemoNotifications(users map[string]model.User, courses map[
 				}
 				n.ReferenceType = ptr("course")
 				n.ReferenceID = ptr(course.ID)
+			}
+			if spec.LegacyTitle != "" {
+				// Chỉ đổi khi tiêu đề mới chưa có dòng nào (chạy lại là no-op, không đẻ trùng).
+				if err := s.db.Exec(`UPDATE notifications SET title = ? WHERE user_id = ? AND title = ?
+					AND NOT EXISTS (SELECT 1 FROM notifications WHERE user_id = ? AND title = ?)`,
+					spec.Title, user.ID, spec.LegacyTitle, user.ID, spec.Title).Error; err != nil {
+					return fmt.Errorf("failed to rename legacy notification %q for %s: %w", spec.LegacyTitle, email, err)
+				}
 			}
 			// Assign: dòng đã seed từ trước (DB đang chạy) được sửa nội dung; is_read/read_at giữ nguyên.
 			if err := s.db.Where("user_id = ? AND title = ?", user.ID, spec.Title).

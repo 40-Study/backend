@@ -292,7 +292,7 @@ func (s *ScheduleService) CreateSchedule(ctx context.Context, classID, actorID u
 	}
 
 	s.invalidateScheduleCache(ctx, classID)
-	return s.mapScheduleToDTO(schedule), nil
+	return s.scheduleDTOWithWarnings(ctx, schedule), nil
 }
 
 func (s *ScheduleService) GetSchedulesByClass(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool) ([]dto.ClassScheduleResponseDTO, error) {
@@ -394,7 +394,29 @@ func (s *ScheduleService) UpdateSchedule(ctx context.Context, id, actorID uuid.U
 	}
 
 	s.invalidateScheduleCache(ctx, schedule.ClassID)
-	return s.mapScheduleToDTO(schedule), nil
+	return s.scheduleDTOWithWarnings(ctx, schedule), nil
+}
+
+// scheduleDTOWithWarnings (QA5 Q5-T14, contract C5) gắn cảnh báo trùng giờ với lịch tuần của các lớp active khác mà
+// giảng viên cũng dạy. Chỉ cảnh báo, không bao giờ chặn: lịch đã lưu rồi. Tra cứu lỗi chỉ log lớn tiếng (cảnh báo
+// là thông tin phụ, không được biến một thao tác đã commit thành lỗi).
+func (s *ScheduleService) scheduleDTOWithWarnings(ctx context.Context, sch *model.ClassSchedule) *dto.ClassScheduleResponseDTO {
+	out := s.mapScheduleToDTO(sch)
+	if !sch.IsActive {
+		return out
+	}
+	overlaps, err := s.repo.FindTeacherScheduleOverlaps(ctx, sch)
+	if err != nil {
+		log.Printf("[Schedule] KHÔNG tra được lịch trùng của lịch %s (lớp %s): %v", sch.ID, sch.ClassID, err)
+		return out
+	}
+	for _, o := range overlaps {
+		out.Warnings = append(out.Warnings, dto.ScheduleOverlapWarningDTO{
+			ClassID: o.ClassID, ClassName: o.ClassName, Weekday: o.DayOfWeek,
+			StartTime: o.StartTime.String(), EndTime: o.EndTime.String(),
+		})
+	}
+	return out
 }
 
 func (s *ScheduleService) DeleteSchedule(ctx context.Context, id, actorID uuid.UUID, isAdmin bool) error {
@@ -1339,6 +1361,7 @@ func (s *ScheduleService) mapScheduleToDTO(sch *model.ClassSchedule) *dto.ClassS
 		EffectiveFrom:  sch.EffectiveFrom,
 		EffectiveUntil: sch.EffectiveUntil,
 		CreatedAt:      sch.CreatedAt,
+		Warnings:       []dto.ScheduleOverlapWarningDTO{},
 	}
 }
 

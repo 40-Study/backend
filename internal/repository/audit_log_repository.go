@@ -30,6 +30,41 @@ type AuditLogRow struct {
 type AuditLogRepositoryInterface interface {
 	Create(ctx context.Context, log *model.AuditLog) error
 	List(ctx context.Context, f AuditLogFilter) ([]AuditLogRow, int64, error)
+	// TargetName (QA5-A02, contract C4): tên người đọc được của đối tượng đích, kể cả đã xoá mềm; "" khi loại đối
+	// tượng chưa có tên (hoặc không tìm thấy).
+	TargetName(ctx context.Context, targetType string, id uuid.UUID) (string, error)
+}
+
+// auditTargetNameSQL: loại đối tượng -> truy vấn tên theo id. Chuỗi cố định trong mã (không bao giờ từ input);
+// SQL thô nên KHÔNG bị lọc xoá mềm: dòng nhật ký "xoá" vẫn tra được tên đối tượng vừa xoá.
+var auditTargetNameSQL = map[string]string{
+	"category":     "SELECT name FROM categories WHERE id = ?",
+	"tag":          "SELECT name FROM tags WHERE id = ?",
+	"system_role":  "SELECT name FROM system_roles WHERE id = ?",
+	"org_role":     "SELECT name FROM roles WHERE id = ?",
+	"permission":   "SELECT name FROM permissions WHERE id = ?",
+	"voucher":      "SELECT COALESCE(NULLIF(name, ''), code) FROM vouchers WHERE id = ?",
+	"course":       "SELECT title FROM courses WHERE id = ?",
+	"contest":      "SELECT title FROM contests WHERE id = ?",
+	"organization": "SELECT name FROM organizations WHERE id = ?",
+	"report":       "SELECT 'Báo cáo của ' || COALESCE(NULLIF(u.full_name, ''), u.user_name) FROM reports r JOIN users u ON u.id = r.reporter_id WHERE r.id = ?",
+	"order":        "SELECT order_number FROM orders WHERE id = ?",
+	"user":         "SELECT COALESCE(NULLIF(full_name, ''), user_name) FROM users WHERE id = ?",
+}
+
+func (r *AuditLogRepository) TargetName(ctx context.Context, targetType string, id uuid.UUID) (string, error) {
+	query, ok := auditTargetNameSQL[targetType]
+	if !ok {
+		return "", nil
+	}
+	var names []string
+	if err := r.db.WithContext(ctx).Raw(query, id).Scan(&names).Error; err != nil {
+		return "", err
+	}
+	if len(names) == 0 {
+		return "", nil
+	}
+	return names[0], nil
 }
 
 type AuditLogRepository struct {

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -241,5 +242,45 @@ func TestCreateOrder_OrderInProgressIsConflict(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&body)
 	if body["code"] != "ERR_ORDER_IN_PROGRESS" || body["message"] != service.ErrOrderInProgress.Error() {
 		t.Fatalf("body = %v", body)
+	}
+}
+
+// QA5 S5-03 (contract C2): hold do đơn đã huỷ mang retry_after_at (RFC3339) trong body 409.
+type retryAfterErr struct{ at time.Time }
+
+func (retryAfterErr) Error() string                      { return "đang đối chiếu" }
+func (retryAfterErr) Unwrap() error                      { return service.ErrPaymentVerificationPending }
+func (e retryAfterErr) RetryAfter() (time.Time, bool) { return e.at, true }
+
+func TestCreateOrder_PreviousOrderVerifyingCarriesRetryAfterAt(t *testing.T) {
+	at := time.Date(2026, 11, 24, 10, 30, 0, 0, time.UTC)
+	h := NewOrderHandler(fakeOrderServiceCreateErr{err: retryAfterErr{at: at}}, nil, nil)
+	app := fiber.New()
+	app.Post("/orders", func(c *fiber.Ctx) error {
+		c.Locals("user_id", uuid.New())
+		return h.CreateOrder(c)
+	})
+	req := httptest.NewRequest("POST", "/orders", strings.NewReader(`{"source":"buy_now","course_ids":["`+uuid.NewString()+`"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 10_000)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	var body map[string]interface{}
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if resp.StatusCode != fiber.StatusConflict || body["code"] != "ERR_PAYMENT_VERIFYING" || body["retry_after_at"] != "2026-11-24T10:30:00Z" {
+		t.Fatalf("status=%d body=%v", resp.StatusCode, body)
+	}
+	// Không mốc (đơn processing): không có khoá retry_after_at.
+	h2 := NewOrderHandler(fakeOrderServiceCreateErr{err: service.ErrPreviousOrderVerifying}, nil, nil)
+	app2 := fiber.New()
+	app2.Post("/orders", func(c *fiber.Ctx) error { c.Locals("user_id", uuid.New()); return h2.CreateOrder(c) })
+	req2 := httptest.NewRequest("POST", "/orders", strings.NewReader(`{"source":"buy_now","course_ids":["`+uuid.NewString()+`"]}`))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, _ := app2.Test(req2, 10_000)
+	var body2 map[string]interface{}
+	_ = json.NewDecoder(resp2.Body).Decode(&body2)
+	if _, has := body2["retry_after_at"]; has {
+		t.Fatalf("hold không mốc không được có retry_after_at: %v", body2)
 	}
 }

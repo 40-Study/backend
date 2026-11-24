@@ -306,9 +306,9 @@ func (s *AssignmentService) GetBySession(ctx context.Context, actorID uuid.UUID,
 		return nil, err
 	}
 
-	data := make([]dto.AssignmentResponseDTO, 0, len(assignments))
-	for _, a := range assignments {
-		data = append(data, s.toResponseDTO(a))
+	data, err := s.toResponseDTOsWithMySubmission(ctx, actorID, assignments)
+	if err != nil {
+		return nil, err
 	}
 
 	return &dto.AssignmentListDTO{
@@ -336,9 +336,9 @@ func (s *AssignmentService) GetByClass(ctx context.Context, actorID uuid.UUID, i
 	if err != nil {
 		return nil, err
 	}
-	data := make([]dto.AssignmentResponseDTO, 0, len(assignments))
-	for _, a := range assignments {
-		data = append(data, s.toResponseDTO(a))
+	data, err := s.toResponseDTOsWithMySubmission(ctx, actorID, assignments)
+	if err != nil {
+		return nil, err
 	}
 	return &dto.AssignmentListDTO{Data: data, Total: total, Page: page, PageSize: pageSize}, nil
 }
@@ -616,6 +616,42 @@ func (s *AssignmentService) GetTestCases(ctx context.Context, assignmentID uuid.
 		return s.testCaseRepo.GetByAssignment(ctx, assignmentID)
 	}
 	return s.testCaseRepo.GetNonHiddenByAssignment(ctx, assignmentID)
+}
+
+// toResponseDTOsWithMySubmission (QA5 S5-02, contract C1) dựng danh sách DTO và gắn my_submission của actor cho từng
+// bài (một truy vấn cho cả trang). submissionRepo nil (test không dựng) = không bài nào có my_submission.
+func (s *AssignmentService) toResponseDTOsWithMySubmission(ctx context.Context, actorID uuid.UUID, assignments []model.Assignment) ([]dto.AssignmentResponseDTO, error) {
+	data := make([]dto.AssignmentResponseDTO, 0, len(assignments))
+	for _, a := range assignments {
+		data = append(data, s.toResponseDTO(a))
+	}
+	if s.submissionRepo == nil || len(data) == 0 {
+		return data, nil
+	}
+	ids := make([]uuid.UUID, len(data))
+	for i, d := range data {
+		ids[i] = d.ID
+	}
+	mine, err := s.submissionRepo.ListMySubmissionSummaries(ctx, actorID, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range data {
+		if sub, ok := mine[data[i].ID]; ok {
+			data[i].MySubmission = toMySubmissionDTO(sub)
+		}
+	}
+	return data, nil
+}
+
+func toMySubmissionDTO(sub repository.MySubmissionSummary) *dto.MySubmissionDTO {
+	out := &dto.MySubmissionDTO{ID: sub.ID, Status: "submitted", SubmittedAt: sub.SubmittedAt.Format(time.RFC3339)}
+	if sub.Score != nil && sub.MaxScore != nil {
+		score, _ := sub.Score.Float64()
+		maxScore, _ := sub.MaxScore.Float64()
+		out.Status, out.Score, out.MaxScore = "graded", &score, &maxScore
+	}
+	return out
 }
 
 func (s *AssignmentService) toResponseDTO(a model.Assignment) dto.AssignmentResponseDTO {

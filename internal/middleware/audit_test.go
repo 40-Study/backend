@@ -230,3 +230,98 @@ func TestAudit_RecordOnFailureOnlyWhenHandlerOptsIn(t *testing.T) {
 		t.Errorf("Go error không bao giờ được ghi dù đã opt-in, có %d dòng", len(spy.entries))
 	}
 }
+
+// ---- QA5-A02 (contract C4): metadata.target_name ----
+
+type namerSpy struct {
+	auditSpy
+	names     map[string]string // "type/id" -> tên hiện tại (đổi được giữa các lần tra)
+	calls     []string
+	failNamer bool
+}
+
+func (s *namerSpy) AuditTargetName(_ context.Context, targetType, id string) (string, error) {
+	s.calls = append(s.calls, targetType+"/"+id)
+	if s.failNamer {
+		return "", errors.New("db down")
+	}
+	return s.names[targetType+"/"+id], nil
+}
+
+func nameOf(e model.AuditEntry) any { return e.Metadata[AuditTargetNameKey] }
+
+func TestAuditTargetName_RecordsNameForParamTarget(t *testing.T) {
+	spy := &namerSpy{names: map[string]string{"thing/abc-123": "Tag Toán"}}
+	auditCall(t, auditApp(spy, uuid.New(), respond(200)))
+	if len(spy.entries) != 1 || nameOf(spy.entries[0]) != "Tag Toán" {
+		t.Fatalf("entries = %+v, muốn target_name = Tag Toán", spy.entries)
+	}
+}
+
+// Đối tượng bị xoá cứng bởi handler: tên tra TRƯỚC handler vẫn được ghi.
+func TestAuditTargetName_FallsBackToNameResolvedBeforeHandler(t *testing.T) {
+	spy := &namerSpy{names: map[string]string{"thing/abc-123": "Danh mục cũ"}}
+	deleteRow := func(c *fiber.Ctx) error {
+		delete(spy.names, "thing/abc-123")
+		return c.SendStatus(200)
+	}
+	auditCall(t, auditApp(spy, uuid.New(), deleteRow))
+	if nameOf(spy.entries[0]) != "Danh mục cũ" {
+		t.Fatalf("entries = %+v, muốn tên tra trước handler", spy.entries)
+	}
+}
+
+// Sửa tên: dòng nhật ký mang tên SAU khi sửa (tra lại sau handler thắng tên tra trước).
+func TestAuditTargetName_PrefersNameAfterHandler(t *testing.T) {
+	spy := &namerSpy{names: map[string]string{"thing/abc-123": "Tên cũ"}}
+	rename := func(c *fiber.Ctx) error {
+		spy.names["thing/abc-123"] = "Tên mới"
+		return c.SendStatus(200)
+	}
+	auditCall(t, auditApp(spy, uuid.New(), rename))
+	if nameOf(spy.entries[0]) != "Tên mới" {
+		t.Fatalf("entries = %+v, muốn Tên mới", spy.entries)
+	}
+}
+
+func TestAuditTargetName_HandlerProvidedNameWins(t *testing.T) {
+	spy := &namerSpy{names: map[string]string{"thing/abc-123": "Từ DB"}}
+	h := func(c *fiber.Ctx) error {
+		SetAuditMeta(c, map[string]any{AuditTargetNameKey: "Từ handler"})
+		return c.SendStatus(200)
+	}
+	auditCall(t, auditApp(spy, uuid.New(), h))
+	if nameOf(spy.entries[0]) != "Từ handler" {
+		t.Fatalf("entries = %+v, muốn tên handler đặt", spy.entries)
+	}
+}
+
+// Route tạo mới (không có id trên URL): lấy id từ response để tra tên.
+func TestAuditTargetName_CreateRouteUsesIDFromResponse(t *testing.T) {
+	spy := &namerSpy{names: map[string]string{"thing/11111111-1111-1111-1111-111111111111": "Voucher mới"}}
+	app := fiber.New()
+	app.Post("/things", func(c *fiber.Ctx) error { c.Locals("user_id", uuid.New()); return c.Next() },
+		Audit(spy, "thing.create", "thing", ""),
+		func(c *fiber.Ctx) error {
+			return c.Status(201).JSON(fiber.Map{"data": fiber.Map{"id": "11111111-1111-1111-1111-111111111111"}})
+		})
+	resp, err := app.Test(httptest.NewRequest("POST", "/things", nil), -1)
+	if err != nil || resp.StatusCode != 201 {
+		t.Fatalf("resp=%v err=%v", resp, err)
+	}
+	if len(spy.entries) != 1 || nameOf(spy.entries[0]) != "Voucher mới" || spy.entries[0].TargetID != "" {
+		t.Fatalf("entries = %+v, muốn target_name Voucher mới và target_id vẫn rỗng", spy.entries)
+	}
+}
+
+// Recorder không hỗ trợ tra tên, hoặc tra lỗi: dòng nhật ký vẫn được ghi, không có target_name, response không đổi.
+func TestAuditTargetName_AbsentOrFailingNamerNeverBreaksRecording(t *testing.T) {
+	plain := &auditSpy{}
+	if code, _ := auditCall(t, auditApp(plain, uuid.New(), respond(200))); code != 200 || len(plain.entries) != 1 || nameOf(plain.entries[0]) != nil {
+		t.Fatalf("recorder không namer: code=%d entries=%+v", code, plain.entries)
+	}
+	failing := &namerSpy{failNamer: true}
+	if code, _ := auditCall(t, auditApp(failing, uuid.New(), respond(200))); code != 200 || len(failing.entries) != 1 || nameOf(failing.entries[0]) != nil {
+		t.Fatalf("namer lỗi: code=%d entries=%+v", code, failing.entries)
+	}
+}

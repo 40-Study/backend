@@ -178,7 +178,7 @@ func TestCancelledOrder_LateCreditIsFlaggedOnce(t *testing.T) {
 	}
 }
 
-// C: đơn có mã bị huỷ chặn tạo đơn trùng tới 30 phút sau mốc MUỘN HƠN giữa lúc huỷ và hạn mã.
+// C: đơn có mã bị huỷ chặn tạo đơn trùng 30 phút TÍNH TỪ LÚC HUỶ (QA5 S5-03: không còn tính từ hạn mã 24 giờ).
 func TestCreateOrder_CancelledIssuedOrderHold(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -188,8 +188,9 @@ func TestCreateOrder_CancelledIssuedOrderHold(t *testing.T) {
 	}{
 		{"huỷ 10 phút trước, mã đã hết hạn → chặn", -2 * time.Hour, 10 * time.Minute, true},
 		{"huỷ 31 phút trước, mã đã hết hạn → hết chặn", -2 * time.Hour, 31 * time.Minute, false},
-		{"huỷ 2 giờ trước nhưng mã còn hạn → chặn tới hạn mã + 30 phút", time.Hour, 2 * time.Hour, true},
-		{"huỷ lâu, mã hết hạn 29 phút trước → vẫn chặn", -29 * time.Minute, 5 * time.Hour, true},
+		{"huỷ 2 giờ trước dù mã còn hạn → hết chặn (QA5 S5-03)", time.Hour, 2 * time.Hour, false},
+		{"huỷ 29 phút trước, mã còn hạn → chặn", time.Hour, 29 * time.Minute, true},
+		{"huỷ lâu, mã hết hạn 29 phút trước → hết chặn (hold tính từ lúc huỷ)", -29 * time.Minute, 5 * time.Hour, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

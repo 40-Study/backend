@@ -128,22 +128,35 @@ func (s *LessonReminderService) deliver(ctx context.Context, occurrence reminder
 			continue
 		}
 		referenceType := occurrence.ReferenceType
+		recipientContent := content
+		var isTeacher int64
+		if err := s.db.WithContext(ctx).Model(&model.TeacherClass{}).Where("class_id = ? AND teacher_id = ?", occurrence.ClassID, userID).Count(&isTeacher).Error; err != nil {
+			return err
+		}
+		if isTeacher > 0 {
+			// QA5 Q5-T07: giảng viên nhận câu theo giọng người dạy, không phải "vào lớp đúng giờ" của học viên.
+			recipientContent = teacherReminderContent(occurrence.Title, when, mins)
+		}
 		if referenceType != "livestream" || mins > 0 || occurrence.Status != "live" {
 			referenceType = "student_schedule"
-			var isTeacher int64
-			if err := s.db.WithContext(ctx).Model(&model.TeacherClass{}).Where("class_id = ? AND teacher_id = ?", occurrence.ClassID, userID).Count(&isTeacher).Error; err != nil {
-				return err
-			}
 			if isTeacher > 0 {
 				referenceType = "teacher_schedule"
 			}
 		}
 		key := fmt.Sprintf("%s:%s:%d", baseKey, userID, mins)
-		if err := s.save(ctx, key, userID, title, content, referenceType, occurrence.ID, now); err != nil {
+		if err := s.save(ctx, key, userID, title, recipientContent, referenceType, occurrence.ID, now); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// teacherReminderContent: câu nhắc dành cho giảng viên của lớp (mins>0: báo trước 15 phút).
+func teacherReminderContent(title, when string, mins int) string {
+	if mins > 0 {
+		return fmt.Sprintf("%s · %s. Buổi dạy sắp bắt đầu, hãy chuẩn bị bài giảng.", title, when)
+	}
+	return fmt.Sprintf("Buổi dạy %s bắt đầu lúc %s. Hãy vào lớp để bắt đầu buổi học.", title, when)
 }
 
 type reminderChild struct {

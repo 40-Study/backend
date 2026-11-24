@@ -40,6 +40,18 @@ type ClassScheduleResponseDTO struct {
 	EffectiveFrom  time.Time  `json:"effective_from"`
 	EffectiveUntil *time.Time `json:"effective_until,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
+	// Warnings (QA5 Q5-T14, contract C5): chỉ có ý nghĩa ở phản hồi tạo/sửa lịch — lịch này trùng lịch tuần đang hoạt
+	// động của lớp khác mà giảng viên cũng dạy. Luôn là mảng (rỗng khi không trùng), không bao giờ chặn thao tác.
+	Warnings []ScheduleOverlapWarningDTO `json:"warnings"`
+}
+
+// ScheduleOverlapWarningDTO: một lịch tuần của lớp khác trùng giờ (contract C5).
+type ScheduleOverlapWarningDTO struct {
+	ClassID   uuid.UUID `json:"class_id"`
+	ClassName string    `json:"class_name"`
+	Weekday   int       `json:"weekday"` // 0=Chủ nhật ... 6=Thứ bảy, cùng quy ước day_of_week
+	StartTime string    `json:"start_time"`
+	EndTime   string    `json:"end_time"`
 }
 
 // ============================================================================
