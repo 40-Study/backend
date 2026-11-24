@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"study.com/v1/internal/database/seeds"
+)
 
 func TestValidateSeedTargetRejectsProductionByDefault(t *testing.T) {
 	if err := validateSeedTarget("prod", "full", false); err == nil {
@@ -25,5 +30,11 @@ func TestValidateSeedTargetAllowsDevelopmentModes(t *testing.T) {
 		if err := validateSeedTarget("dev", mode, false); err != nil {
 			t.Fatalf("mode %s o dev bi tu choi: %v", mode, err)
 		}
+	}
+}
+
+func TestSeedDoneMessageDoesNotPrintDemoPassword(t *testing.T) {
+	if strings.Contains(seedDoneMessage, seeds.DemoPassword) {
+		t.Fatal("dòng log cuối của seed không được in mật khẩu demo")
 	}
 }

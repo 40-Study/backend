@@ -16,6 +16,9 @@ import (
 	"study.com/v1/internal/database/seeds"
 )
 
+// seedDoneMessage: dòng log cuối của seed. Không in mật khẩu demo (log chạy trên máy chung/CI).
+const seedDoneMessage = "Done. Tài khoản demo dùng mật khẩu chung: xem hằng seeds.DemoPassword."
+
 func validateSeedTarget(environment, mode string, allowProduction bool) error {
 	switch mode {
 	case "base", "full":
@@ -71,5 +74,5 @@ func main() {
 		log.Fatalf("Failed to seed demo data: %v", err)
 	}
 
-	log.Printf("Done. Tài khoản demo dùng mật khẩu: %s", seeds.DemoPassword)
+	log.Println(seedDoneMessage)
 }

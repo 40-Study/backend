@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -92,7 +93,12 @@ func (s *Seeder) SeedDemoUsers() (map[string]model.User, error) {
 		result[spec.Email] = user
 	}
 
-	log.Printf("Seeded %d demo users (password: %s)\n", len(result), DemoPassword)
+	// Không in mật khẩu ra log (log seed chạy trên máy chung/CI): chỉ in email, mật khẩu xem hằng DemoPassword.
+	emails := make([]string, 0, len(demoUsers))
+	for _, spec := range demoUsers {
+		emails = append(emails, spec.Email)
+	}
+	log.Printf("Seeded %d demo users (%s; password: see DemoPassword constant)\n", len(result), strings.Join(emails, ", "))
 	return result, nil
 }
 
