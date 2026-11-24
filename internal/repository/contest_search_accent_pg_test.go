@@ -25,7 +25,7 @@ func TestContestList_Keyword_BoQuaDauTiengViet(t *testing.T) {
 	now := time.Now()
 
 	titles := map[string]string{
-		"vong-loai": token + " Python cho người mới: vòng loại",
+		"vong-loai": token + " vòng loại Python cho người mới",
 		"lap-trinh": token + " Lập trình thi đấu",
 	}
 	ids := map[uuid.UUID]string{}
