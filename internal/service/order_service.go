@@ -606,6 +606,9 @@ func (s *OrderService) GetOrderByID(ctx context.Context, orderID, actorUserID uu
 	if !isAdmin {
 		hideInternalRefundFields(resp)
 	}
+	if resp.Buyer, err = orderBuyerOf(ctx, s.orderRepo.TxDB(), order.UserID); err != nil {
+		return nil, err
+	}
 	return resp, nil
 }
 
