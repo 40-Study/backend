@@ -87,24 +87,33 @@ func (s *Seeder) SeedDemoContests(users map[string]model.User) error {
 	if err := s.SeedDemoCodingContest(users); err != nil {
 		return err
 	}
-	if err := s.attachQuizToEndedQuizContests(now); err != nil {
+	ownSlugs := make([]string, 0, len(bySlug))
+	for slug := range bySlug {
+		ownSlugs = append(ownSlugs, slug)
+	}
+	if err := s.attachQuizToEndedQuizContests(now, ownSlugs); err != nil {
 		return err
 	}
 	log.Printf("Seeded %d demo contests\n", len(bySlug))
 	return nil
 }
 
-// attachQuizToEndedQuizContests (QA5 A17): cuộc thi QUIZ đã công khai, đã kết thúc mà không có đề (quiz_id NULL, dữ liệu cũ
-// không do seed này tạo) hiện "—" ở cột đề của admin. Gắn cho mỗi cuộc thi một quiz standalone riêng, tên theo tiêu đề cuộc
-// thi (quiz_id unique). Chạy lại là no-op: chỉ chạm cuộc thi còn thiếu đề; quiz và câu hỏi tra theo tiêu đề/thứ tự.
-func (s *Seeder) attachQuizToEndedQuizContests(now time.Time) error {
+// attachQuizToEndedQuizContests (QA5 A17): cuộc thi QUIZ demo đã công khai, đã kết thúc mà mất đề (quiz_id NULL, vd dòng
+// seed từ phiên bản cũ) hiện "—" ở cột đề của admin. Chỉ chạm cuộc thi có slug trong ownSlugs, tức do CHÍNH seed này tạo:
+// cuộc thi do admin/QA tạo trên DB dev dùng chung không bị đụng tới (dọn dữ liệu đó là việc của lead). Quiz đặt tên theo
+// slug (duy nhất) chứ không theo tiêu đề, nên hai cuộc thi trùng tiêu đề không cùng trỏ vào một quiz và không đụng
+// idx_contests_quiz_id (unique). Chạy lại là no-op: chỉ chạm cuộc thi còn thiếu đề.
+func (s *Seeder) attachQuizToEndedQuizContests(now time.Time, ownSlugs []string) error {
+	if len(ownSlugs) == 0 {
+		return nil
+	}
 	var ended []model.Contest
-	if err := s.db.Where("type = ? AND status = ? AND quiz_id IS NULL AND end_time < ?",
-		model.ContestTypeQuiz, model.ContestStatusPublished, now).Find(&ended).Error; err != nil {
-		return fmt.Errorf("find ended quiz contests without quiz: %w", err)
+	if err := s.db.Where("slug IN ? AND type = ? AND status = ? AND quiz_id IS NULL AND end_time < ?",
+		ownSlugs, model.ContestTypeQuiz, model.ContestStatusPublished, now).Find(&ended).Error; err != nil {
+		return fmt.Errorf("find ended demo quiz contests without quiz: %w", err)
 	}
 	for _, c := range ended {
-		quizID, err := s.seedContestQuiz("Đề thi: "+c.Title, c.CreatedBy, demoQuizQuestions)
+		quizID, err := s.seedContestQuiz(fmt.Sprintf("Đề thi: %s (%s)", c.Title, c.Slug), c.CreatedBy, demoQuizQuestions)
 		if err != nil {
 			return err
 		}
