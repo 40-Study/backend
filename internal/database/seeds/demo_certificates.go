@@ -69,7 +69,7 @@ func (s *Seeder) SeedDemoUserVouchers(users map[string]model.User) error {
 	expired := model.Voucher{
 		Code:                    demoExpiredVoucherCode,
 		Name:                    "Mùa tựu trường - giảm 30%",
-		Description:             "Giảm 30% tối đa 150.000đ cho khoá học bất kỳ, áp dụng đến hết đợt tựu trường.",
+		Description:             "Giảm 30% tối đa 150.000 ₫ cho khoá học bất kỳ, áp dụng đến hết đợt tựu trường.",
 		DiscountUnit:            model.DiscountUnitMoney,
 		DiscountMethod:          model.DiscountMethodPercent,
 		DiscountPercent:         ptr(rating(30)),
@@ -82,7 +82,10 @@ func (s *Seeder) SeedDemoUserVouchers(users map[string]model.User) error {
 		EndDate:                 &end,
 		IsActive:                true,
 	}
-	if err := s.db.Where("code = ?", expired.Code).Attrs(expired).FirstOrCreate(&expired).Error; err != nil {
+	// Assign (QA5 S5-15): sửa mô tả cũ ("150.000đ") đã seed sang kiểu "150.000 ₫".
+	if err := s.db.Where("code = ?", expired.Code).Attrs(expired).
+		Assign(map[string]interface{}{"name": expired.Name, "description": expired.Description}).
+		FirstOrCreate(&expired).Error; err != nil {
 		return fmt.Errorf("failed to seed voucher %s: %w", expired.Code, err)
 	}
 

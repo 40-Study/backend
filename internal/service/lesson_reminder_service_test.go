@@ -72,7 +72,12 @@ func TestLessonReminder_AudienceRetryRescheduleCancel_Postgres(t *testing.T) {
 			}
 			continue
 		}
-		if n.Content != "Python · 10:15 · 15/10. Chuẩn bị vào lớp nhé." {
+		want := "Python · 10:15 · 15/10. Chuẩn bị vào lớp nhé."
+		if n.UserID == host.ID || n.UserID == teacher.ID {
+			// QA5 Q5-T07: giảng viên nhận giọng người dạy, không phải câu của học viên.
+			want = "Python · 10:15 · 15/10. Buổi dạy sắp bắt đầu, hãy chuẩn bị bài giảng."
+		}
+		if n.Content != want {
 			t.Fatalf("VN time incorrect: %s", n.Content)
 		}
 	}

@@ -70,7 +70,7 @@ var demoNotifications = map[string][]notificationSpec{
 		{Title: "Con bạn sắp mất chuỗi học tập", Content: "Lê Văn C đang có chuỗi {streak} ngày học liên tiếp. Một lời nhắc nhỏ mỗi tối giúp con không bỏ lỡ ngày nào.",
 			NoStreakContent: "Mấy hôm nay Lê Văn C chưa học bài nào. Một lời nhắc nhỏ có thể giúp con bắt đầu lại chuỗi học tập.",
 			Type:            "streak", HoursAgo: 3, StreakOf: "student1@demo.com"},
-		{Title: "Ưu đãi gia đình: giảm 50.000đ", Content: "Mã SUMMER50K áp dụng cho đơn từ 300.000đ khi bạn mua khoá học bằng tài khoản phụ huynh của mình.", Type: "promotion", HoursAgo: 30},
+		{Title: "Ưu đãi gia đình: giảm 50.000đ", Content: "Mã SUMMER50K áp dụng cho đơn từ 300.000 ₫ khi bạn mua khoá học bằng tài khoản phụ huynh của mình.", Type: "promotion", HoursAgo: 30},
 	},
 }
 

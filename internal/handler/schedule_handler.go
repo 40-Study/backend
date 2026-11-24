@@ -103,6 +103,8 @@ func (h *ScheduleHandler) CreateSchedule(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message": "Schedule created successfully",
 		"data":    schedule,
+		// Contract C5: cùng mảng ở cấp ngoài để web đọc được ở cả hai chỗ (data.warnings và warnings).
+		"warnings": schedule.Warnings,
 	})
 }
 
@@ -209,6 +211,8 @@ func (h *ScheduleHandler) UpdateSchedule(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Schedule updated successfully",
 		"data":    schedule,
+		// Contract C5: cùng mảng ở cấp ngoài để web đọc được ở cả hai chỗ (data.warnings và warnings).
+		"warnings": schedule.Warnings,
 	})
 }
 

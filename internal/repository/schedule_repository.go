@@ -43,6 +43,12 @@ type ScheduleRepositoryInterface interface {
 	GetAttendancesBySessionID(ctx context.Context, sessionID uuid.UUID) ([]model.SessionAttendance, error)
 	UpdateAttendance(ctx context.Context, attendance *model.SessionAttendance) error
 	GetStudentAttendanceHistory(ctx context.Context, studentID uuid.UUID, page, pageSize int) ([]model.SessionAttendance, int64, error)
+	// CountStudentAttendanceByStatus (QA5 Q5-PG-01): số bản ghi điểm danh của học sinh theo trạng thái, trên TOÀN BỘ
+	// bản ghi (không theo trang).
+	CountStudentAttendanceByStatus(ctx context.Context, studentID uuid.UUID) (map[model.AttendanceStatus]int, error)
+	// FindTeacherScheduleOverlaps (QA5 Q5-T14, contract C5): lịch tuần đang hoạt động của các lớp active KHÁC mà
+	// giảng viên của lớp này cũng dạy, trùng thứ + giờ + khoảng hiệu lực với sch.
+	FindTeacherScheduleOverlaps(ctx context.Context, sch *model.ClassSchedule) ([]TeacherScheduleOverlap, error)
 	GetAttendanceBySessionAndStudent(ctx context.Context, sessionID, studentID uuid.UUID) (*model.SessionAttendance, error)
 	TeacherCanManageSession(ctx context.Context, sessionID, teacherID uuid.UUID) (bool, error)
 	StudentCanAttendSession(ctx context.Context, sessionID, studentID uuid.UUID) (bool, error)
@@ -297,6 +303,59 @@ func (r *ScheduleRepository) GetStudentAttendanceHistory(ctx context.Context, st
 		Limit(pageSize).
 		Find(&atts).Error
 	return atts, total, err
+}
+
+func (r *ScheduleRepository) CountStudentAttendanceByStatus(ctx context.Context, studentID uuid.UUID) (map[model.AttendanceStatus]int, error) {
+	var rows []struct {
+		Status model.AttendanceStatus
+		N      int
+	}
+	err := r.db.WithContext(ctx).Model(&model.SessionAttendance{}).
+		Select("status, COUNT(*) AS n").
+		Where("student_id = ?", studentID).
+		Group("status").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[model.AttendanceStatus]int, len(rows))
+	for _, row := range rows {
+		out[row.Status] = row.N
+	}
+	return out, nil
+}
+
+// TeacherScheduleOverlap: một lịch tuần của lớp khác trùng với lịch đang tạo/sửa.
+type TeacherScheduleOverlap struct {
+	ClassID   uuid.UUID
+	ClassName string
+	DayOfWeek int
+	StartTime model.TimeOfDay
+	EndTime   model.TimeOfDay
+}
+
+func (r *ScheduleRepository) FindTeacherScheduleOverlaps(ctx context.Context, sch *model.ClassSchedule) ([]TeacherScheduleOverlap, error) {
+	q := r.db.WithContext(ctx).
+		Table("class_schedules AS cs").
+		Select("cs.class_id AS class_id, c.name AS class_name, cs.day_of_week AS day_of_week, cs.start_time AS start_time, cs.end_time AS end_time").
+		Joins("JOIN classes c ON c.id = cs.class_id AND c.deleted_at IS NULL AND c.status = 'active'").
+		Where("cs.deleted_at IS NULL AND cs.is_active = TRUE AND cs.class_id <> ? AND cs.day_of_week = ?", sch.ClassID, sch.DayOfWeek).
+		// Giao khoảng nửa mở: 19:00-20:00 và 20:00-21:00 liền nhau không trùng (cùng quy ước HasOverlappingSession).
+		Where("cs.start_time < ?::time AND cs.end_time > ?::time", string(sch.EndTime), string(sch.StartTime)).
+		// Khoảng hiệu lực [from, until] của hai lịch phải giao nhau (until NULL = không giới hạn).
+		Where("(cs.effective_until IS NULL OR cs.effective_until >= ?::date)", sch.EffectiveFrom.Format("2006-01-02")).
+		Where(`cs.class_id IN (
+			SELECT tc2.class_id FROM teacher_classes tc2
+			WHERE tc2.teacher_id IN (SELECT tc1.teacher_id FROM teacher_classes tc1 WHERE tc1.class_id = ?))`, sch.ClassID).
+		Order("c.name, cs.start_time")
+	if sch.EffectiveUntil != nil {
+		q = q.Where("cs.effective_from <= ?::date", sch.EffectiveUntil.Format("2006-01-02"))
+	}
+	var out []TeacherScheduleOverlap
+	if err := q.Scan(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *ScheduleRepository) GetAttendanceBySessionAndStudent(ctx context.Context, sessionID, studentID uuid.UUID) (*model.SessionAttendance, error) {

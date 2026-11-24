@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 
 	"github.com/gofiber/fiber/v2"
@@ -13,6 +14,15 @@ import (
 type AuditRecorder interface {
 	Record(ctx context.Context, entry model.AuditEntry) error
 }
+
+// AuditTargetNamer là phần TUỲ CHỌN của recorder (service.AuditLogService thoả mãn): tra tên người đọc được của đối tượng
+// đích để ghi metadata `target_name` (QA5-A02, contract C4). Recorder không có thì dòng nhật ký không có target_name.
+type AuditTargetNamer interface {
+	AuditTargetName(ctx context.Context, targetType, targetID string) (string, error)
+}
+
+// AuditTargetNameKey: khoá metadata chứa tên đối tượng đích.
+const AuditTargetNameKey = "target_name"
 
 type auditLocalsKey struct{}
 
@@ -47,6 +57,13 @@ func Audit(rec AuditRecorder, action, targetType, targetParam string) fiber.Hand
 		st := &auditState{action: action}
 		c.Locals(auditLocalsKey{}, st)
 
+		// Tra tên TRƯỚC khi handler chạy: đối tượng bị xoá cứng bởi handler thì sau đó không tra được nữa.
+		// Sau handler tra lại (tên mới sau khi sửa); nếu không ra thì dùng tên đã tra trước.
+		var preName string
+		if targetParam != "" {
+			preName = lookupAuditTargetName(c.UserContext(), rec, targetType, c.Params(targetParam))
+		}
+
 		if err := c.Next(); err != nil {
 			return err
 		}
@@ -68,6 +85,22 @@ func Audit(rec AuditRecorder, action, targetType, targetParam string) fiber.Hand
 		if targetID == "" && targetParam != "" {
 			targetID = c.Params(targetParam)
 		}
+		meta := st.meta
+		if name, _ := meta[AuditTargetNameKey].(string); name == "" {
+			lookupID := targetID
+			if lookupID == "" {
+				// Route tạo mới không có id trên URL: lấy id từ response ({"id"} hoặc {"data":{"id"}}) chỉ để tra tên.
+				lookupID = responseEntityID(c.Response().Body())
+			}
+			name = lookupAuditTargetName(c.UserContext(), rec, targetType, lookupID)
+			if name == "" {
+				name = preName
+			}
+			if name != "" {
+				meta = copyMeta(meta)
+				meta[AuditTargetNameKey] = name
+			}
+		}
 		entry := model.AuditEntry{
 			ActorID:    actor,
 			Action:     st.action,
@@ -75,11 +108,57 @@ func Audit(rec AuditRecorder, action, targetType, targetParam string) fiber.Hand
 			TargetID:   targetID,
 			StatusCode: status,
 			IP:         c.IP(),
-			Metadata:   st.meta,
+			Metadata:   meta,
 		}
 		recordAudit(c.UserContext(), rec, entry)
 		return nil
 	}
+}
+
+func copyMeta(src map[string]any) map[string]any {
+	out := make(map[string]any, len(src)+1)
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
+}
+
+// lookupAuditTargetName tra tên đối tượng qua recorder (nếu hỗ trợ). Mọi lỗi/panic chỉ log: thiếu tên thì web rơi về id,
+// không bao giờ làm hỏng response của hành động quản trị đã commit (D5).
+func lookupAuditTargetName(ctx context.Context, rec AuditRecorder, targetType, id string) (name string) {
+	namer, ok := rec.(AuditTargetNamer)
+	if !ok || targetType == "" || id == "" {
+		return ""
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[Audit] PANIC khi tra tên đối tượng %s/%s: %v", targetType, id, r)
+			name = ""
+		}
+	}()
+	name, err := namer.AuditTargetName(ctx, targetType, id)
+	if err != nil {
+		log.Printf("[Audit] KHÔNG tra được tên đối tượng %s/%s: %v", targetType, id, err)
+		return ""
+	}
+	return name
+}
+
+// responseEntityID đọc id đối tượng từ body JSON của response tạo mới: {"id":...} hoặc {"data":{"id":...}}.
+func responseEntityID(body []byte) string {
+	var env struct {
+		ID   string `json:"id"`
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if len(body) == 0 || json.Unmarshal(body, &env) != nil {
+		return ""
+	}
+	if env.Data.ID != "" {
+		return env.Data.ID
+	}
+	return env.ID
 }
 
 // recordAudit gọi recorder và nuốt (có log) mọi lỗi/panic — xem D5.

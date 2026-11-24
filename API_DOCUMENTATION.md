@@ -961,6 +961,15 @@ mức mua tối thiểu và phương thức thanh toán không nằm trong `elig
 
 Cả hai lỗi trả `{ "code": ..., "message": <câu tiếng Việt> }`.
 
+### QA5 contract notes (backend-qa5)
+
+- **C1** `GET /api/assignments?session_id=` và `GET /api/classes/:classId/assignments`: mỗi bài có `my_submission: null | { id, status, score, max_score, submitted_at }` (bài nộp mới nhất của người gọi). `status` = `graded` khi đã có điểm (`score`/`max_score` là số), `submitted` khi đã nộp mà chưa chấm (`score`/`max_score` null).
+- **C2** `POST /api/orders` → `409 ERR_PAYMENT_VERIFYING` kèm `retry_after_at` (RFC3339) khi chỉ có đơn đã huỷ chặn mua lại: hết chặn 30 phút sau lúc huỷ. Đơn `processing` đang đối chiếu không có `retry_after_at`.
+- **C3** `GET /api/parent/children/:id/attendance`: `stats` tính trên toàn bộ bản ghi của con; `records` vẫn phân trang (`total`, `page`, `page_size`).
+- `GET /api/parent/children/:id/schedule`: `upcoming_sessions` sắp theo ngày + giờ, tối đa 20. `GET /api/parent/children/:id/assignments`: `stats` thêm `pending_review` (bài nộp tốt nhất còn `pending`) và `needs_retry` (đã nộp chưa đạt); `pending_review + needs_retry = in_progress`.
+- **C4** Dòng nhật ký admin: `metadata.target_name` (tên đối tượng, kể cả đã xoá) với user, course, contest, voucher, category, tag, system_role, org_role, permission, organization, order, report. Loại chưa có tên (withdrawal, setting, broadcast) không có khoá này.
+- **C5** `POST /api/classes/:id/schedules`, `PUT .../:scheduleId`: phản hồi có `data.warnings` (và bản sao `warnings` ở cấp ngoài): `[{ class_id, class_name, weekday, start_time, end_time }]` cho lịch tuần đang hoạt động của lớp active khác mà giảng viên của lớp cũng dạy, trùng thứ + giờ + khoảng hiệu lực; mảng rỗng khi không trùng; không bao giờ chặn.
+
 ### Tạo/sửa khoá có phí và gửi duyệt (Q3-09)
 
 - `POST /api/courses`, `PUT /api/courses/:id`: khoá có phí (`is_free` bỏ trống hoặc `false`) phải có `price > 0` (sau làm

@@ -18,7 +18,7 @@ func (s *Seeder) SeedDemoVouchers() error {
 		{
 			Code:                    model.SeededFirstOrderVoucherCode,
 			Name:                    "Chào mừng học viên mới - giảm 20%",
-			Description:             "Giảm 20% cho đơn hàng đầu tiên, tối đa 200.000đ.",
+			Description:             "Giảm 20% cho đơn hàng đầu tiên, tối đa 200.000 ₫.",
 			DiscountUnit:            model.DiscountUnitMoney,
 			DiscountMethod:          model.DiscountMethodPercent,
 			DiscountPercent:         ptr(rating(20)),
@@ -34,8 +34,8 @@ func (s *Seeder) SeedDemoVouchers() error {
 		},
 		{
 			Code:                    "SUMMER50K",
-			Name:                    "Ưu đãi hè - giảm 50.000đ",
-			Description:             "Giảm thẳng 50.000đ cho đơn từ 300.000đ.",
+			Name:                    "Ưu đãi hè - giảm 50.000 ₫",
+			Description:             "Giảm thẳng 50.000 ₫ cho đơn từ 300.000 ₫.",
 			DiscountUnit:            model.DiscountUnitMoney,
 			DiscountMethod:          model.DiscountMethodFixed,
 			DiscountAmountMoney:     ptr(money(50000)),
@@ -49,8 +49,8 @@ func (s *Seeder) SeedDemoVouchers() error {
 		},
 		{
 			Code:                    "VIP100",
-			Name:                    "Ưu đãi VIP - giảm 100.000đ",
-			Description:             "Giảm 100.000đ cho đơn từ 500.000đ, số lượng giới hạn.",
+			Name:                    "Ưu đãi VIP - giảm 100.000 ₫",
+			Description:             "Giảm 100.000 ₫ cho đơn từ 500.000 ₫, số lượng giới hạn.",
 			DiscountUnit:            model.DiscountUnitMoney,
 			DiscountMethod:          model.DiscountMethodFixed,
 			DiscountAmountMoney:     ptr(money(100000)),
@@ -66,8 +66,10 @@ func (s *Seeder) SeedDemoVouchers() error {
 
 	for _, v := range vouchers {
 		record := v
+		// Assign (QA5 S5-15): DB đã seed bằng chữ cũ ("50.000đ") được sửa tên/mô tả cho cùng kiểu "50.000 ₫".
 		if err := s.db.Where("code = ?", v.Code).
 			Attrs(record).
+			Assign(map[string]interface{}{"name": v.Name, "description": v.Description}).
 			FirstOrCreate(&record).Error; err != nil {
 			return fmt.Errorf("failed to seed voucher %s: %w", v.Code, err)
 		}

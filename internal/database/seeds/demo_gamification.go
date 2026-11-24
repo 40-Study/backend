@@ -49,7 +49,7 @@ var demoLearnerStats = []demoLearnerStat{
 
 var demoRewards = []model.Reward{
 	{Name: "Giảm 10% một khoá học", Description: "Mã giảm 10% áp dụng cho một khoá học bất kỳ.", PointsCost: 500, RewardType: "course_discount", RewardValue: ptr("10%")},
-	{Name: "Giảm 25% một khoá học", Description: "Mã giảm 25% cho khoá học từ 500.000đ.", PointsCost: 1200, RewardType: "course_discount", RewardValue: ptr("25%"), Stock: ptr(50)},
+	{Name: "Giảm 25% một khoá học", Description: "Mã giảm 25% cho khoá học từ 500.000 ₫.", PointsCost: 1200, RewardType: "course_discount", RewardValue: ptr("25%"), Stock: ptr(50)},
 	{Name: "Mở khoá miễn phí Git & GitHub", Description: "Đổi điểm lấy khoá Git & GitHub cho người mới bắt đầu.", PointsCost: 800, RewardType: "free_course", RewardValue: ptr("git-github-cho-nguoi-moi-bat-dau")},
 	{Name: "Khung huy hiệu Vàng", Description: "Khung viền vàng cho huy hiệu trên hồ sơ công khai.", PointsCost: 300, RewardType: "certificate_badge", RewardValue: ptr("gold-frame")},
 }
@@ -104,7 +104,8 @@ func (s *Seeder) SeedDemoGamification(users map[string]model.User) error {
 	for _, r := range demoRewards {
 		record := r
 		record.IsActive = true
-		if err := s.db.Where("name = ?", r.Name).Attrs(record).FirstOrCreate(&record).Error; err != nil {
+		if err := s.db.Where("name = ?", r.Name).Attrs(record).
+			Assign(map[string]interface{}{"description": r.Description}).FirstOrCreate(&record).Error; err != nil {
 			return fmt.Errorf("failed to seed reward %s: %w", r.Name, err)
 		}
 	}

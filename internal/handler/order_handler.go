@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -35,7 +36,15 @@ func paymentStateConflict(err error) (fiber.Map, bool) {
 	case errors.Is(err, service.ErrPaymentAlreadyDone):
 		return fiber.Map{"code": "ERR_ORDER_ALREADY_PAID", "message": "Đơn hàng đã được thanh toán, khoá học đã được thêm vào tài khoản của bạn."}, true
 	case errors.Is(err, service.ErrPaymentVerificationPending):
-		return fiber.Map{"code": "ERR_PAYMENT_VERIFYING", "message": err.Error()}, true
+		body := fiber.Map{"code": "ERR_PAYMENT_VERIFYING", "message": err.Error()}
+		// QA5 S5-03 (contract C2): hold do đơn đã huỷ có mốc hết chặn; web hiện "Có thể mua lại sau HH:mm".
+		var withRetry interface{ RetryAfter() (time.Time, bool) }
+		if errors.As(err, &withRetry) {
+			if at, ok := withRetry.RetryAfter(); ok {
+				body["retry_after_at"] = at.Format(time.RFC3339)
+			}
+		}
+		return body, true
 	// Review QA2 H2: khoa ngung ban (archived) -> 409 COURSE_NOT_FOR_SALE (cart/buy_now va mo phien thanh toan cua don cu).
 	case errors.Is(err, service.ErrCourseNotForSale):
 		return fiber.Map{"code": "COURSE_NOT_FOR_SALE", "message": service.ErrCourseNotForSale.Message}, true

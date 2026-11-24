@@ -169,6 +169,9 @@ type AssignmentStatsDto struct {
 	TotalAssignments int `json:"total_assignments"`
 	Completed        int `json:"completed"`
 	InProgress       int `json:"in_progress"`
+	// PendingReview/NeedsRetry (QA5 Q5-PG-13): InProgress tách đôi, PendingReview + NeedsRetry == InProgress.
+	PendingReview int `json:"pending_review"`
+	NeedsRetry    int `json:"needs_retry"`
 	NotStarted       int `json:"not_started"`
 	Overdue          int `json:"overdue"`
 }

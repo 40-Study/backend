@@ -23,6 +23,8 @@ const (
 	auditMaxTargetTypeLen = 40
 	auditMaxTargetIDLen   = 64
 	auditMaxIPLen         = 45
+	// auditMaxTargetNameLen: tên đối tượng lưu trong metadata (target_name) bị cắt ở độ dài này.
+	auditMaxTargetNameLen = 255
 )
 
 // auditSensitiveKey: khoá metadata bị loại (không phân biệt hoa thường) — nhật ký không bao giờ
@@ -54,6 +56,20 @@ type AuditLogService struct {
 
 func NewAuditLogService(repo repository.AuditLogRepositoryInterface) *AuditLogService {
 	return &AuditLogService{repo: repo}
+}
+
+// AuditTargetName (QA5-A02, contract C4) cho middleware.Audit: tên người đọc được của đối tượng đích. id không phải UUID
+// hay loại chưa có tên trả "" (không lỗi): đó là "không biết tên", web rơi về id.
+func (s *AuditLogService) AuditTargetName(ctx context.Context, targetType, targetID string) (string, error) {
+	id, err := uuid.Parse(targetID)
+	if err != nil {
+		return "", nil
+	}
+	name, err := s.repo.TargetName(ctx, targetType, id)
+	if err != nil {
+		return "", err
+	}
+	return truncateRunes(strings.TrimSpace(name), auditMaxTargetNameLen), nil
 }
 
 // Actions trả bản sao SSOT model.AuditActions (caller sửa không ảnh hưởng SSOT).

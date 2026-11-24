@@ -87,7 +87,31 @@ func (s *Seeder) SeedDemoContests(users map[string]model.User) error {
 	if err := s.SeedDemoCodingContest(users); err != nil {
 		return err
 	}
+	if err := s.attachQuizToEndedQuizContests(now); err != nil {
+		return err
+	}
 	log.Printf("Seeded %d demo contests\n", len(bySlug))
+	return nil
+}
+
+// attachQuizToEndedQuizContests (QA5 A17): cuộc thi QUIZ đã công khai, đã kết thúc mà không có đề (quiz_id NULL, dữ liệu cũ
+// không do seed này tạo) hiện "—" ở cột đề của admin. Gắn cho mỗi cuộc thi một quiz standalone riêng, tên theo tiêu đề cuộc
+// thi (quiz_id unique). Chạy lại là no-op: chỉ chạm cuộc thi còn thiếu đề; quiz và câu hỏi tra theo tiêu đề/thứ tự.
+func (s *Seeder) attachQuizToEndedQuizContests(now time.Time) error {
+	var ended []model.Contest
+	if err := s.db.Where("type = ? AND status = ? AND quiz_id IS NULL AND end_time < ?",
+		model.ContestTypeQuiz, model.ContestStatusPublished, now).Find(&ended).Error; err != nil {
+		return fmt.Errorf("find ended quiz contests without quiz: %w", err)
+	}
+	for _, c := range ended {
+		quizID, err := s.seedContestQuiz("Đề thi: "+c.Title, c.CreatedBy, demoQuizQuestions)
+		if err != nil {
+			return err
+		}
+		if err := s.db.Model(&model.Contest{}).Where("id = ? AND quiz_id IS NULL", c.ID).Update("quiz_id", quizID).Error; err != nil {
+			return fmt.Errorf("attach quiz to contest %s: %w", c.Slug, err)
+		}
+	}
 	return nil
 }
 
