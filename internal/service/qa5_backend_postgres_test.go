@@ -188,6 +188,38 @@ func TestQA5_AssignmentList_MySubmissionLatestAndGrade(t *testing.T) {
 	}
 }
 
+// system_error (Judge0 không chấm được) không phải bài nộp được tính: my_submission lấy bài được tính mới nhất,
+// hoặc null khi chỉ có system_error.
+func TestQA5_AssignmentList_MySubmissionIgnoresSystemError(t *testing.T) {
+	f := newS2Fixture(t)
+	me := f.user("s502-syserr-me")
+	af := &assignmentsFx{t: t, db: f.db, child: me}
+	class := af.class("QA5 S502 system_error", "active")
+	future := time.Now().Add(48 * time.Hour)
+	counted := af.assignment(class, "counted-then-system-error", &future, true)
+	only := af.assignment(class, "only-system-error", &future, true)
+	af.submit(me.ID, counted, model.VerdictWrongAnswer, 1, 4)
+	time.Sleep(10 * time.Millisecond)
+	af.submit(me.ID, counted, VerdictJudgeUnavailable, 0, 0)
+	af.submit(me.ID, only, VerdictJudgeUnavailable, 0, 0)
+
+	svc := &AssignmentService{submissionRepo: repository.NewSubmissionRepository(f.db)}
+	data, err := svc.toResponseDTOsWithMySubmission(context.Background(), me.ID, []model.Assignment{counted, only})
+	qa5Must(t, err)
+	by := map[string]*dto.MySubmissionDTO{}
+	for _, d := range data {
+		by[d.Title] = d.MySubmission
+	}
+	var wrong model.Submission
+	qa5Must(t, f.db.Where("user_id = ? AND assignment_id = ? AND verdict = ?", me.ID, counted.ID, model.VerdictWrongAnswer).First(&wrong).Error)
+	if s := by["counted-then-system-error"]; s == nil || s.ID != wrong.ID {
+		t.Fatalf("my_submission = %+v, muốn bài được tính mới nhất %s (bỏ qua system_error mới hơn)", s, wrong.ID)
+	}
+	if by["only-system-error"] != nil {
+		t.Fatalf("bài chỉ có system_error phải có my_submission null: %+v", by["only-system-error"])
+	}
+}
+
 // ---- C5 / Q5-T14: cảnh báo trùng lịch của giảng viên ----
 
 func TestQA5_Schedule_OverlapWarningsForTeacherOtherActiveClasses(t *testing.T) {

@@ -98,8 +98,9 @@ func (r *SubmissionRepository) StudentClassAssignmentStats(ctx context.Context, 
 	return out, err
 }
 
-// MySubmissionSummary: bài nộp MỚI NHẤT của người gọi cho một bài tập, kèm điểm của lần chấm mới nhất (nếu đã chấm).
-// Score/MaxScore nil = chưa có điểm (contract C1).
+// MySubmissionSummary: bài nộp MỚI NHẤT (được tính) của người gọi cho một bài tập, kèm điểm của lần chấm mới nhất (nếu
+// đã chấm). Bài nộp `system_error` (Judge0 không chấm được, không phải kết luận về code) không được tính: chọn bài
+// được tính mới nhất, không có thì bài tập không có khoá. Score/MaxScore nil = chưa có điểm (contract C1).
 type MySubmissionSummary struct {
 	AssignmentID uuid.UUID
 	ID           uuid.UUID
@@ -108,8 +109,8 @@ type MySubmissionSummary struct {
 	MaxScore     *decimal.Decimal
 }
 
-// ListMySubmissionSummaries trả, theo assignment_id, bài nộp mới nhất của userID trong số assignmentIDs (bài nào
-// chưa nộp thì không có khoá). Một truy vấn cho cả trang, không N+1.
+// ListMySubmissionSummaries trả, theo assignment_id, bài nộp mới nhất được tính (bỏ `system_error`) của userID trong số
+// assignmentIDs (bài nào chưa nộp thì không có khoá). Một truy vấn cho cả trang, không N+1.
 func (r *SubmissionRepository) ListMySubmissionSummaries(ctx context.Context, userID uuid.UUID, assignmentIDs []uuid.UUID) (map[uuid.UUID]MySubmissionSummary, error) {
 	out := make(map[uuid.UUID]MySubmissionSummary, len(assignmentIDs))
 	if len(assignmentIDs) == 0 {
@@ -124,7 +125,7 @@ func (r *SubmissionRepository) ListMySubmissionSummaries(ctx context.Context, us
 			WHERE student_id = s.user_id AND assignment_id = s.assignment_id AND deleted_at IS NULL
 			ORDER BY graded_at DESC, created_at DESC LIMIT 1
 		) g ON TRUE
-		WHERE s.user_id = ? AND s.assignment_id IN ? AND s.deleted_at IS NULL
+		WHERE s.user_id = ? AND s.assignment_id IN ? AND s.deleted_at IS NULL AND s.verdict IS DISTINCT FROM 'system_error'
 		ORDER BY s.assignment_id, s.created_at DESC`, userID, assignmentIDs).Scan(&rows).Error
 	if err != nil {
 		return nil, err
