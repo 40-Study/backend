@@ -1,7 +1,7 @@
 package router
 
 // QA6-PG-01 (C6): phụ huynh (vai đang chọn) bị 403 ERR_PARENT_CANNOT_PURCHASE ở ROUTER thật khi đăng ký khoá học,
-// thêm giỏ hàng, tạo đơn. Gỡ parentCannotPurchase() khỏi một trong ba route thì ca PARENT của route đó ĐỎ (rơi về handler:
+// thêm giỏ hàng, tạo đơn, và (L3) tạo payment-intent / check-payment. Gỡ parentCannotPurchase() khỏi một trong ba route thì ca PARENT của route đó ĐỎ (rơi về handler:
 // 400/500, không còn 403); chặn theo mọi vai người dùng giữ thì ca STUDENT ĐỎ (403 sai).
 
 import (
@@ -66,6 +66,9 @@ func TestQA6_PhuHuynhKhongMuaKhoaHoc_QuaRouterThat(t *testing.T) {
 		{"POST", "/api/courses/" + uuid.NewString() + "/enroll", `{}`},
 		{"POST", "/api/cart/", `{"course_id":"` + uuid.NewString() + `"}`},
 		{"POST", "/api/orders/", `{}`},
+		// QA6 review L3: đơn tạo trước khi chặn cũng không thanh toán được bằng vai phụ huynh.
+		{"POST", "/api/orders/" + uuid.NewString() + "/payment-intent", `{}`},
+		{"POST", "/api/orders/" + uuid.NewString() + "/check-payment", `{}`},
 	}
 	parent, student := token("PARENT"), token("STUDENT")
 	for _, r := range routes {

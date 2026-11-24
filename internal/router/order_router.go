@@ -39,9 +39,9 @@ func SetupOrderRoutes(api fiber.Router,
 	orders.Get("/me", authMiddleware, orderHandler.GetUserOrders)
 	orders.Get("/:id", authMiddleware, orderHandler.GetOrder)
 	orders.Post("/:id/cancel", authMiddleware, orderHandler.CancelOrder)
-	orders.Post("/:id/payment-intent", authMiddleware, orderHandler.CreatePaymentIntent)
+	orders.Post("/:id/payment-intent", authMiddleware, parentCannotPurchase(), orderHandler.CreatePaymentIntent)
 	orders.Get("/:id/payment-status", authMiddleware, orderHandler.GetPaymentStatus)
-	orders.Post("/:id/check-payment", authMiddleware, orderHandler.CheckPayment)
+	orders.Post("/:id/check-payment", authMiddleware, parentCannotPurchase(), orderHandler.CheckPayment)
 
 	// Báo cáo doanh thu nền tảng thật (DASHBOARD_VIEW_GLOBAL) + cấu hình % phí nền tảng
 	// (SYSTEM_SETTINGS_MANAGE, quyết định #2) — cùng nhóm "/admin" gốc (không phải "/orders").
