@@ -99,28 +99,36 @@ func (s *LessonReminderService) deliver(ctx context.Context, occurrence reminder
 	if err != nil {
 		return fmt.Errorf("read reminder recipients: %w", err)
 	}
-	loc := time.FixedZone("ICT", 7*60*60)
+	when := occurrence.StartsAt.In(sessionDayZone).Format("15:04 · 02/01")
 	title := "Đến giờ vào học"
-	content := fmt.Sprintf("%s bắt đầu lúc %s. Hãy vào lớp đúng giờ.", occurrence.Title, occurrence.StartsAt.In(loc).Format("15:04 · 02/01"))
+	content := fmt.Sprintf("%s bắt đầu lúc %s. Hãy vào lớp đúng giờ.", occurrence.Title, when)
 	if mins > 0 {
 		title = "Lớp học bắt đầu sau 15 phút"
-		content = fmt.Sprintf("%s · %s. Chuẩn bị vào lớp nhé.", occurrence.Title, occurrence.StartsAt.In(loc).Format("15:04 · 02/01"))
+		content = fmt.Sprintf("%s · %s. Chuẩn bị vào lớp nhé.", occurrence.Title, when)
 	}
+	baseKey := fmt.Sprintf("lesson-reminder:%s:%s:%d", occurrence.ReferenceType, occurrence.ID, occurrence.StartsAt.UnixNano())
 	for _, userID := range recipients {
-		referenceType := occurrence.ReferenceType
-		// Parents get their child's detail screen; they do not receive a room join permission.
-		var child struct{ StudentUserID uuid.UUID }
-		if err := s.db.WithContext(ctx).Raw(`SELECT p.student_user_id FROM parent_student_relations p
-   JOIN student_classes sc ON sc.student_id = p.student_user_id AND sc.status = 'active'
-   WHERE p.parent_user_id = ? AND p.status = 'active' AND p.can_view_attendance AND sc.class_id = ? LIMIT 1`, userID, occurrence.ClassID).Scan(&child).Error; err != nil {
+		// QA4-N10: phụ huynh nhận MỘT nhắc nhở cho MỖI con trong lớp, ghi tên con (2 con cùng lớp thì vẫn phân
+		// biệt được), mở màn chi tiết của con; không nhận quyền vào phòng.
+		children, err := s.parentChildrenInClass(ctx, userID, occurrence.ClassID)
+		if err != nil {
 			return err
 		}
-		referenceID := occurrence.ID
-		if child.StudentUserID != uuid.Nil {
-			referenceType = "child_schedule"
-			referenceID = child.StudentUserID
+		for _, child := range children {
+			childContent := fmt.Sprintf("%s có buổi %s bắt đầu lúc %s.", child.Name, occurrence.Title, when)
+			if mins > 0 {
+				childContent = fmt.Sprintf("%s có buổi %s lúc %s.", child.Name, occurrence.Title, when)
+			}
+			key := fmt.Sprintf("%s:%s:%d:child:%s", baseKey, userID, mins, child.ID)
+			if err := s.save(ctx, key, userID, title, childContent, "child_schedule", child.ID, now); err != nil {
+				return err
+			}
 		}
-		if referenceType != "child_schedule" && (referenceType != "livestream" || mins > 0 || occurrence.Status != "live") {
+		if len(children) > 0 {
+			continue
+		}
+		referenceType := occurrence.ReferenceType
+		if referenceType != "livestream" || mins > 0 || occurrence.Status != "live" {
 			referenceType = "student_schedule"
 			var isTeacher int64
 			if err := s.db.WithContext(ctx).Model(&model.TeacherClass{}).Where("class_id = ? AND teacher_id = ?", occurrence.ClassID, userID).Count(&isTeacher).Error; err != nil {
@@ -130,16 +138,41 @@ func (s *LessonReminderService) deliver(ctx context.Context, occurrence reminder
 				referenceType = "teacher_schedule"
 			}
 		}
-		key := fmt.Sprintf("lesson-reminder:%s:%s:%d:%s:%d", occurrence.ReferenceType, occurrence.ID, occurrence.StartsAt.UnixNano(), userID, mins)
-		notice := model.Notification{ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(key)), CreatedAt: now.UTC(), UserID: userID,
-			Title: title, Content: content, NotificationType: "lesson_reminder", ReferenceType: &referenceType, ReferenceID: &referenceID}
-		result := s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&notice)
-		if result.Error != nil {
-			return result.Error
+		key := fmt.Sprintf("%s:%s:%d", baseKey, userID, mins)
+		if err := s.save(ctx, key, userID, title, content, referenceType, occurrence.ID, now); err != nil {
+			return err
 		}
-		if result.RowsAffected == 1 && s.notifier != nil {
-			s.notifier.NotifyNewNotification(userID, notice.ID, title, content, notice.NotificationType, notice.ReferenceType, notice.ReferenceID)
-		}
+	}
+	return nil
+}
+
+type reminderChild struct {
+	ID   uuid.UUID
+	Name string
+}
+
+// parentChildrenInClass: các con (liên kết active, được xem điểm danh) của userID đang học lớp classID.
+func (s *LessonReminderService) parentChildrenInClass(ctx context.Context, userID, classID uuid.UUID) ([]reminderChild, error) {
+	var children []reminderChild
+	err := s.db.WithContext(ctx).Raw(`SELECT DISTINCT u.id, COALESCE(NULLIF(u.full_name, ''), u.user_name) AS name
+   FROM parent_student_relations p
+   JOIN student_classes sc ON sc.student_id = p.student_user_id AND sc.status = 'active'
+   JOIN users u ON u.id = p.student_user_id
+   WHERE p.parent_user_id = ? AND p.status = 'active' AND p.can_view_attendance AND sc.class_id = ?
+   ORDER BY name`, userID, classID).Scan(&children).Error
+	return children, err
+}
+
+// save ghi thông báo với id tất định từ key (worker chạy song song / thử lại không tạo bản trùng).
+func (s *LessonReminderService) save(ctx context.Context, key string, userID uuid.UUID, title, content, referenceType string, referenceID uuid.UUID, now time.Time) error {
+	notice := model.Notification{ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(key)), CreatedAt: now.UTC(), UserID: userID,
+		Title: title, Content: content, NotificationType: "lesson_reminder", ReferenceType: &referenceType, ReferenceID: &referenceID}
+	result := s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&notice)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 1 && s.notifier != nil {
+		s.notifier.NotifyNewNotification(userID, notice.ID, title, content, notice.NotificationType, notice.ReferenceType, notice.ReferenceID)
 	}
 	return nil
 }
