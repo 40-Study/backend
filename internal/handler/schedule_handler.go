@@ -51,6 +51,10 @@ func scheduleFail(c *fiber.Ctx, err error, message string, fallback int) error {
 	if status == 0 && errors.Is(err, service.ErrSessionNotStarted) {
 		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"code": "ERR_SESSION_NOT_STARTED", "message": err.Error(), "error": err.Error()})
 	}
+	// QA5 R4: huỷ buổi đã bắt đầu: 422 + mã ổn định ERR_SESSION_ALREADY_STARTED.
+	if status == 0 && errors.Is(err, service.ErrSessionAlreadyStarted) {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"code": "ERR_SESSION_ALREADY_STARTED", "message": err.Error(), "error": err.Error()})
+	}
 	if status == 0 && errors.Is(err, service.ErrSessionOverlap) {
 		status = fiber.StatusConflict
 	}

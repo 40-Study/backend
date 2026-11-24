@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -110,7 +111,30 @@ var (
 	ErrSessionOverlap = errors.New("buổi học trùng giờ với một buổi khác của lớp này hoặc của giảng viên lớp")
 	// ErrSessionNotStarted (QA4-T07): giảng viên điểm danh một buổi có ngày sau hôm nay (giờ Việt Nam). 422.
 	ErrSessionNotStarted = errors.New("Buổi học chưa diễn ra nên chưa thể điểm danh.")
+	// ErrSessionAlreadyStarted (QA5 R4): huỷ một buổi đã tới giờ bắt đầu (giờ Việt Nam). 422.
+	ErrSessionAlreadyStarted = errors.New("Buổi học đã bắt đầu hoặc đã diễn ra nên không thể huỷ.")
 )
+
+// requireSessionNotStarted (QA5 R4): chỉ huỷ được buổi còn TRƯỚC giờ bắt đầu (date + start_time, giờ Việt Nam).
+// Khác requireSessionStarted (so theo ngày): huỷ cần chính xác tới giờ, buổi 08:00 hôm nay không huỷ được lúc 09:00.
+func requireSessionNotStarted(session *model.ClassSession, now time.Time) error {
+	start, err := session.StartTime.On(session.Date, sessionDayZone)
+	if err != nil {
+		return err
+	}
+	if !now.Before(start) {
+		return ErrSessionAlreadyStarted
+	}
+	return nil
+}
+
+// attendanceSessionTitle: tên buổi cho dòng điểm danh — chủ đề nếu có, không thì "Buổi N".
+func attendanceSessionTitle(session *model.ClassSession) string {
+	if session.Topic != nil && strings.TrimSpace(*session.Topic) != "" {
+		return *session.Topic
+	}
+	return fmt.Sprintf("Buổi %d", session.SessionNumber)
+}
 
 // requireSessionStarted (QA4-T07): chỉ ghi điểm danh từ NGÀY của buổi trở đi (theo giờ Việt Nam). Cột date không có
 // giờ nên so theo ngày lịch, cùng cách requireCheckInOpen.
@@ -597,6 +621,9 @@ func (s *ScheduleService) CancelSession(ctx context.Context, id, actorID uuid.UU
 	}
 
 	now := time.Now()
+	if err := requireSessionNotStarted(session, now); err != nil {
+		return err
+	}
 	session.Status = model.SessionCancelled
 	session.CancelledAt = &now
 	if reason != "" {
@@ -1043,6 +1070,9 @@ func (s *ScheduleService) GetMyAttendances(ctx context.Context, studentID uuid.U
 	result := make([]dto.SessionAttendanceResponseDTO, len(atts))
 	for i, att := range atts {
 		result[i] = *s.mapAttendanceToDTO(&att)
+		// QA5 R2: GetStudentAttendanceHistory preload Session + Session.Class, đủ để nói dòng này của lớp nào, buổi nào.
+		result[i].ClassName = att.Session.Class.Name
+		result[i].SessionTitle = attendanceSessionTitle(&att.Session)
 	}
 	return result, total, nil
 }
@@ -1085,7 +1115,7 @@ func (s *ScheduleService) GetClassTimetable(ctx context.Context, classID, actorI
 		}
 		entries = append(entries, entry)
 	}
-	if err := annotateTimetableOrganizations(ctx, s.repo, entries); err != nil {
+	if err := annotateTimetableClassInfo(ctx, s.repo, entries); err != nil {
 		return nil, err
 	}
 
@@ -1099,7 +1129,7 @@ func (s *ScheduleService) GetMyTimetable(ctx context.Context, userID uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
-	if err := annotateTimetableOrganizations(ctx, s.repo, result.Entries); err != nil {
+	if err := annotateTimetableClassInfo(ctx, s.repo, result.Entries); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -1213,7 +1243,7 @@ func (s *ScheduleService) GetMyTimetableWithSessions(ctx context.Context, userID
 		return nil, err
 	}
 	if len(classIDs) == 0 {
-		if err := annotateTimetableOrganizations(ctx, s.repo, base.Entries); err != nil {
+		if err := annotateTimetableClassInfo(ctx, s.repo, base.Entries); err != nil {
 			return nil, err
 		}
 		return base, nil
@@ -1248,7 +1278,7 @@ func (s *ScheduleService) GetMyTimetableWithSessions(ctx context.Context, userID
 	for _, sess := range cancelled {
 		occurrences = append(occurrences, dto.TimetableOccurrenceDTO{ScheduleID: *sess.ScheduleID, Date: sess.Date.Format("2006-01-02")})
 	}
-	if err := annotateTimetableOrganizations(ctx, s.repo, entries); err != nil {
+	if err := annotateTimetableClassInfo(ctx, s.repo, entries); err != nil {
 		return nil, err
 	}
 	return &dto.TimetableResponseDTO{Entries: entries, Week: base.Week, CancelledOccurrences: occurrences}, nil

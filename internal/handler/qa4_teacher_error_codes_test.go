@@ -29,6 +29,9 @@ func TestQA4_TeacherErrorCodes(t *testing.T) {
 		{"T07 buổi chưa tới ngày", func(c *fiber.Ctx) error {
 			return scheduleFail(c, service.ErrSessionNotStarted, "Failed to mark attendance", fiber.StatusBadRequest)
 		}, fiber.StatusUnprocessableEntity, "ERR_SESSION_NOT_STARTED"},
+		{"QA5 R4 huỷ buổi đã bắt đầu", func(c *fiber.Ctx) error {
+			return scheduleFail(c, service.ErrSessionAlreadyStarted, "Failed to cancel session", fiber.StatusBadRequest)
+		}, fiber.StatusUnprocessableEntity, "ERR_SESSION_ALREADY_STARTED"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
