@@ -205,7 +205,10 @@ func (r *ScheduleRepository) GetNextSessionNumber(ctx context.Context, classID u
 
 func (r *ScheduleRepository) GetUpcomingSessions(ctx context.Context, classID uuid.UUID, limit int) ([]model.ClassSession, error) {
 	var sessions []model.ClassSession
+	// QA4-N12: caller (lịch con của phụ huynh) đọc sess.Class.Name và sess.Schedule.Room; thiếu Preload
+	// thì class_name/room luôn rỗng.
 	err := r.db.WithContext(ctx).
+		Preload("Class").Preload("Schedule").
 		Where("class_id = ? AND status = 'scheduled' AND date >= CURRENT_DATE", classID).
 		Order("date ASC, start_time ASC").
 		Limit(limit).
