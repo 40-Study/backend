@@ -28,7 +28,13 @@ type RoleSeed struct {
 
 type Seeder struct {
 	db *gorm.DB
+	// demoTimestampRepair: cho phép SeedDemoData sửa mốc thời gian sai của dữ liệu demo (repairDemoTimestamps). Mặc định
+	// tắt; cmd/seed chỉ bật ở ENVIRONMENT dev/test và không bao giờ khi có -allow-production.
+	demoTimestampRepair bool
 }
+
+// EnableDemoTimestampRepair bật bước sửa mốc thời gian demo (xem demoTimestampRepair).
+func (s *Seeder) EnableDemoTimestampRepair() { s.demoTimestampRepair = true }
 
 func NewSeeder(db *gorm.DB) *Seeder {
 	return &Seeder{db: db}

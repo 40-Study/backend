@@ -41,15 +41,20 @@ var demoOrgMemberships = []demoOrgMembership{
 func (s *Seeder) SeedDemoOrgMembers() error {
 	granted := 0
 	for _, m := range demoOrgMemberships {
-		var org model.Organization
-		err := s.db.Where("name = ?", m.Org).First(&org).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) && !m.Required {
-			log.Printf("Demo org members: bỏ qua %q (tổ chức chưa có trong DB)\n", m.Org)
-			continue
-		}
-		if err != nil {
+		var orgs []model.Organization
+		if err := s.db.Where("name = ?", m.Org).Limit(2).Find(&orgs).Error; err != nil {
 			return fmt.Errorf("demo org %q: %w", m.Org, err)
 		}
+		// Phòng thủ: không bao giờ đoán tổ chức nào là của seed khi tên khớp hơn một dòng (không cấp chủ). Hiện
+		// organizations.name có unique index nên nhánh này chỉ chạy nếu index đó bị bỏ. Tổ chức bắt buộc thì là lỗi.
+		if len(orgs) != 1 {
+			if m.Required {
+				return fmt.Errorf("demo org %q: tìm thấy %d tổ chức cùng tên, muốn đúng 1", m.Org, len(orgs))
+			}
+			log.Printf("Demo org members: bỏ qua %q (%d tổ chức cùng tên, cần đúng 1)\n", m.Org, len(orgs))
+			continue
+		}
+		org := orgs[0]
 		if _, err := repository.EnsureDefaultOrgRoles(s.db, org.ID); err != nil {
 			return fmt.Errorf("demo org %q roles: %w", m.Org, err)
 		}
@@ -107,11 +112,12 @@ func (s *Seeder) grantDemoOrgRole(org model.Organization, roleName, email string
 	return 1, nil
 }
 
-// repairDemoTimestamps (QA4 A17): tài khoản/đơn hàng của bộ dữ liệu demo (demo.com, fortex.local) có last_login_at trước
-// created_at và paid_at trước created_at. Suy lại từ created_at: lần đăng nhập cuối = created_at + khoảng lệch cũ (không quá
-// hiện tại), thanh toán = 5 phút sau khi tạo đơn. Chỉ sửa dòng sai, nên chạy lại là no-op. Trả số dòng đã sửa.
+// repairDemoTimestamps (QA4 A17): tài khoản demo (@demo.com, do repo này seed) và đơn hàng của họ có last_login_at trước
+// created_at hoặc paid_at trước created_at. Suy lại từ created_at: lần đăng nhập cuối = created_at + khoảng lệch cũ (không
+// quá hiện tại), thanh toán = 5 phút sau khi tạo đơn. Chỉ sửa dòng sai, nên chạy lại là no-op. Trả số dòng đã sửa.
+// KHÔNG đụng dữ liệu fortex.local: bộ dữ liệu đó do một seeder ngoài repo tạo, phải sửa ở chính seeder đó.
 func (s *Seeder) repairDemoTimestamps() (users, orders int64, err error) {
-	const demoAccounts = "(email LIKE '%@demo.com' OR email LIKE '%@fortex.local')"
+	const demoAccounts = "email LIKE '%@demo.com'"
 	res := s.db.Exec(`UPDATE users SET last_login_at = LEAST(now(), created_at + (created_at - last_login_at))
 		WHERE last_login_at < created_at AND ` + demoAccounts)
 	if res.Error != nil {

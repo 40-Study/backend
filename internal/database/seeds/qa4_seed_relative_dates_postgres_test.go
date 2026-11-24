@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"study.com/v1/internal/database"
 	"study.com/v1/internal/model"
@@ -185,33 +186,73 @@ func TestQA4_SeedDemoGamification_WeeklyPointsNeedRecentActivity(t *testing.T) {
 	}
 }
 
-func TestQA4_RepairDemoTimestamps_DerivesFromCreatedAt(t *testing.T) {
+func TestQA4_RepairDemoTimestamps_OnlyDemoAccountsThisRepoSeeds(t *testing.T) {
 	db := pgtest.IsolatedSchema(t, database.Migrate)
 	s := NewSeeder(db)
-	users := laneADemoUsers(t, db, "student1@demo.com", "real@example.com")
-	created := time.Now().AddDate(0, 0, -10)
-	for _, u := range users {
-		if err := db.Exec("UPDATE users SET created_at = ?, last_login_at = ? WHERE id = ?", created, created.AddDate(0, 0, -3), u.ID).Error; err != nil {
+	// @demo.com: do repo này seed, được sửa. fortex.local (seeder ngoài repo) và tài khoản thật: không được đụng.
+	users := laneADemoUsers(t, db, "student1@demo.com", "teacher1@fortex.local", "real@example.com")
+	created := time.Now().AddDate(0, 0, -10).Truncate(time.Second)
+	badLogin, badPaid := created.AddDate(0, 0, -3), created.Add(-time.Hour)
+	orders := map[string]uuid.UUID{}
+	for email, u := range users {
+		if err := db.Exec("UPDATE users SET created_at = ?, last_login_at = ? WHERE id = ?", created, badLogin, u.ID).Error; err != nil {
 			t.Fatal(err)
 		}
+		o := model.Order{UserID: u.ID, OrderNumber: "QA4-TS-" + uuid.NewString()[:12], Subtotal: money(1000), TotalAmount: money(1000),
+			Status: "completed", CreatedAt: created, PaidAt: &badPaid}
+		if err := db.Create(&o).Error; err != nil {
+			t.Fatal(err)
+		}
+		orders[email] = o.ID
 	}
-	fixed, _, err := s.repairDemoTimestamps()
+
+	fixedUsers, fixedOrders, err := s.repairDemoTimestamps()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fixed != 1 {
-		t.Errorf("sửa %d tài khoản, muốn đúng 1 (chỉ tài khoản demo)", fixed)
+	if fixedUsers != 1 || fixedOrders != 1 {
+		t.Errorf("sửa %d tài khoản, %d đơn; muốn đúng 1 và 1 (chỉ @demo.com)", fixedUsers, fixedOrders)
 	}
-	var demo, real model.User
-	db.First(&demo, "id = ?", users["student1@demo.com"].ID)
-	db.First(&real, "id = ?", users["real@example.com"].ID)
-	if demo.LastLoginAt == nil || demo.LastLoginAt.Before(demo.CreatedAt) {
-		t.Errorf("demo: last_login_at=%v vẫn trước created_at=%v", demo.LastLoginAt, demo.CreatedAt)
+	for email, u := range users {
+		var got model.User
+		var order model.Order
+		db.First(&got, "id = ?", u.ID)
+		db.First(&order, "id = ?", orders[email])
+		demo := email == "student1@demo.com"
+		loginFixed := got.LastLoginAt != nil && !got.LastLoginAt.Before(got.CreatedAt)
+		paidFixed := order.PaidAt != nil && !order.PaidAt.Before(order.CreatedAt)
+		if loginFixed != demo || paidFixed != demo {
+			t.Errorf("%s: last_login sửa=%v, paid_at sửa=%v; muốn %v (chỉ tài khoản @demo.com)", email, loginFixed, paidFixed, demo)
+		}
+		if !demo && (!order.PaidAt.Equal(badPaid) || !got.LastLoginAt.Equal(badLogin)) {
+			t.Errorf("%s: dữ liệu không phải demo bị đổi: paid_at=%v last_login=%v", email, order.PaidAt, got.LastLoginAt)
+		}
 	}
-	if real.LastLoginAt == nil || !real.LastLoginAt.Before(real.CreatedAt) {
-		t.Errorf("tài khoản không phải demo bị sửa: %v", real.LastLoginAt)
+	if u, o, _ := s.repairDemoTimestamps(); u != 0 || o != 0 {
+		t.Errorf("chạy lại sửa thêm %d tài khoản, %d đơn; muốn 0", u, o)
 	}
-	if again, _, _ := s.repairDemoTimestamps(); again != 0 {
-		t.Errorf("chạy lại sửa thêm %d dòng, muốn 0", again)
+}
+
+// Không bật EnableDemoTimestampRepair (mặc định, như production): SeedDemoData không sửa mốc nào.
+func TestQA4_SeedDemoData_TimestampRepairOffByDefault(t *testing.T) {
+	db := pgtest.IsolatedSchema(t, database.Migrate)
+	s := NewSeeder(db)
+	if err := s.SeedAll(s2DataDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SeedDemoData(); err != nil {
+		t.Fatal(err)
+	}
+	created := time.Now().AddDate(0, 0, -10).Truncate(time.Second)
+	if err := db.Exec("UPDATE users SET created_at = ?, last_login_at = ? WHERE email = 'student1@demo.com'", created, created.AddDate(0, 0, -3)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SeedDemoData(); err != nil {
+		t.Fatal(err)
+	}
+	var bad int64
+	db.Model(&model.User{}).Where("email = 'student1@demo.com' AND last_login_at < created_at").Count(&bad)
+	if bad != 1 {
+		t.Errorf("SeedDemoData sửa mốc thời gian dù chưa bật EnableDemoTimestampRepair")
 	}
 }

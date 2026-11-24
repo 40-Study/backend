@@ -84,11 +84,15 @@ func (s *Seeder) SeedDemoData() error {
 	if err := s.SeedDemoOrgMembers(); err != nil {
 		return fmt.Errorf("demo org members: %w", err)
 	}
-	fixedUsers, fixedOrders, err := s.repairDemoTimestamps()
-	if err != nil {
-		return fmt.Errorf("demo timestamps: %w", err)
+	if s.demoTimestampRepair {
+		fixedUsers, fixedOrders, err := s.repairDemoTimestamps()
+		if err != nil {
+			return fmt.Errorf("demo timestamps: %w", err)
+		}
+		log.Printf("Repaired demo timestamps: %d users (last login), %d orders (paid_at)\n", fixedUsers, fixedOrders)
+	} else {
+		log.Println("Demo timestamp repair skipped (only enabled for ENVIRONMENT dev/test without -allow-production)")
 	}
-	log.Printf("Repaired demo timestamps: %d users (last login), %d orders (paid_at)\n", fixedUsers, fixedOrders)
 
 	log.Println("=== Demo data seeded successfully ===")
 	return nil

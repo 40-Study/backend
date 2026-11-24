@@ -38,3 +38,19 @@ func TestSeedDoneMessageDoesNotPrintDemoPassword(t *testing.T) {
 		t.Fatal("dòng log cuối của seed không được in mật khẩu demo")
 	}
 }
+
+func TestDemoTimestampRepairOnlyInDevAndTest(t *testing.T) {
+	cases := []struct {
+		env       string
+		allowProd bool
+		want      bool
+	}{
+		{"dev", false, true}, {"test", false, true}, {" DEV ", false, true},
+		{"dev", true, false}, {"prod", false, false}, {"prod", true, false}, {"staging", false, false}, {"", false, false},
+	}
+	for _, c := range cases {
+		if got := demoTimestampRepairAllowed(c.env, c.allowProd); got != c.want {
+			t.Errorf("env=%q allowProduction=%v: %v, muốn %v", c.env, c.allowProd, got, c.want)
+		}
+	}
+}
