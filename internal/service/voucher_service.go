@@ -391,6 +391,13 @@ func (vs *VoucherService) UpdateVoucher(ctx context.Context, voucherID uuid.UUID
 	}
 
 	if req.Name != nil {
+		// QA6 review L4: đổi sang tên đã có ở voucher KHÁC -> ErrVoucherNameExists (handler trả 409), giống lúc tạo. Giữ nguyên
+		// tên cũ của chính nó thì không tính là trùng.
+		if *req.Name != voucher.Name {
+			if other, _ := vs.vr.GetVoucherByName(ctx, *req.Name); other != nil && other.ID != voucher.ID {
+				return nil, ErrVoucherNameExists
+			}
+		}
 		voucher.Name = *req.Name
 	}
 	if req.Description != nil {

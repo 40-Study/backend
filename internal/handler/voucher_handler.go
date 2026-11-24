@@ -185,6 +185,10 @@ func (h *VoucherHandler) UpdateVoucher(c *fiber.Ctx) error {
 	}
 
 	voucher, err := h.voucherService.UpdateVoucher(c.Context(), voucherID, &req)
+	// QA6 review L4: đổi tên trùng là xung đột (409), cùng mã với lúc tạo.
+	if errors.Is(err, service.ErrVoucherNameExists) {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"code": "ERR_VOUCHER_NAME_EXISTS", "message": err.Error()})
+	}
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"code":    "ERR_UPDATE_VOUCHER",
