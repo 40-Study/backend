@@ -291,7 +291,10 @@ func (r *ScheduleRepository) GetStudentAttendanceHistory(ctx context.Context, st
 	var atts []model.SessionAttendance
 	var total int64
 
-	query := r.db.WithContext(ctx).Model(&model.SessionAttendance{}).Where("student_id = ?", studentID)
+	// QA6 review L5: tổng và trang dùng CÙNG phép JOIN (trước đây tổng đếm trước JOIN nên lệch khi dòng class_sessions không còn).
+	query := r.db.WithContext(ctx).Model(&model.SessionAttendance{}).
+		Joins("JOIN class_sessions cs ON cs.id = session_attendances.session_id").
+		Where("session_attendances.student_id = ?", studentID)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -302,7 +305,6 @@ func (r *ScheduleRepository) GetStudentAttendanceHistory(ctx context.Context, st
 	unscoped := func(db *gorm.DB) *gorm.DB { return db.Unscoped() }
 	offset := (page - 1) * pageSize
 	err := query.
-		Joins("JOIN class_sessions cs ON cs.id = session_attendances.session_id").
 		Preload("Session", unscoped).
 		Preload("Session.Class", unscoped).
 		Order("cs.date DESC, cs.start_time DESC, session_attendances.id DESC").
