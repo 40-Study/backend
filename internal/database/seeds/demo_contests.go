@@ -137,7 +137,12 @@ func (s *Seeder) upsertDemoContest(spec contestSeedSpec, users map[string]model.
 	case model.ContestStatusPublished:
 		c.SubmittedAt, c.ReviewedBy, c.ReviewedAt = ptr(startAt.Add(-48*time.Hour)), &adminID, ptr(startAt.Add(-24*time.Hour))
 	case model.ContestStatusPendingReview:
-		c.SubmittedAt = ptr(now.Add(-2 * time.Hour))
+		// Gửi duyệt luôn trước giờ bắt đầu (cuộc thi chờ duyệt đã quá giờ: gửi từ 2 ngày trước giờ đó).
+		submitted := now.Add(-2 * time.Hour)
+		if startAt.Before(submitted) {
+			submitted = startAt.Add(-48 * time.Hour)
+		}
+		c.SubmittedAt = &submitted
 	}
 	q := s.db.Where("slug = ?", spec.Slug)
 	if spec.ReassignWindow {

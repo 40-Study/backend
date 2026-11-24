@@ -110,6 +110,8 @@ func reactClassSpec() classSpec {
 			{Title: "Live chữa bài: Props và danh sách", Description: "Chữa bài tập tuần 2, giải đáp lỗi key trong list.", OffsetDays: -12, Hour: 20, Min: 0},
 			{Title: "Live chữa bài: useEffect và gọi API", Description: "Review code bài tập custom hook, hướng dẫn xử lý race condition khi fetch.", OffsetDays: -4, Hour: 20, Min: 0},
 			{Title: "Live hỏi đáp: chuẩn bị đồ án Next.js", Description: "Giới thiệu đề đồ án cuối khoá, chia nhóm và hỏi đáp.", OffsetDays: 3, Hour: 20, Min: 30},
+			// QA4: giảng viên luôn có một buổi live tuần sau trên lịch dạy.
+			{Title: "Live ôn tập: Server Components và triển khai", Description: "Ôn tập App Router, Server Components và cách deploy đồ án lên Vercel.", OffsetDays: 9, Hour: 20, Min: 0},
 		},
 		Assignments: []assignmentSpec{
 			{

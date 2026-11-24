@@ -51,7 +51,7 @@ func TestSchedule_GioHHMM_TaoVaDocLai(t *testing.T) {
 	}
 
 	// Sinh buổi từ lịch lặp: 2030-01-01 là thứ Ba (day_of_week 2), giờ chép từ lịch.
-	if _, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: "2030-01-01", EndDate: "2030-01-07"}); err != nil {
+	if _, _, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: "2030-01-01", EndDate: "2030-01-07"}); err != nil {
 		t.Fatalf("GenerateSessions: %v", err)
 	}
 	var gen model.ClassSession

@@ -49,7 +49,8 @@ func flutterClassSpec() classSpec {
 			{
 				Title:       "Màn hình danh sách khoá học",
 				Description: "Dựng màn hình ListView hiển thị khoá học (ảnh, tên, giá) từ dữ liệu JSON mẫu, bấm vào mở trang chi tiết.",
-				Type:        "homework", Difficulty: model.DifficultyMedium, LiveIndex: 0, DueOffsetDays: 2, Published: true,
+				// Hạn ngày mai 23:59: luôn trong 48 giờ tới, để mục "sắp hạn" của học viên và phụ huynh có bài (QA4 N-13).
+				Type: "homework", Difficulty: model.DifficultyMedium, LiveIndex: 0, DueOffsetDays: 1, Published: true,
 				StarterCode: "class CourseListScreen extends StatelessWidget {\n  // TODO\n}\n",
 				Solution:    "class CourseListScreen extends StatelessWidget {\n  const CourseListScreen({super.key});\n  @override\n  Widget build(BuildContext context) => const Placeholder();\n}\n",
 				TestCases:   [][2]string{{"3 khoá", "hiển thị 3 item"}, {"0 khoá", "hiển thị trạng thái trống"}, {"tap item 1", "mở trang chi tiết"}},

@@ -149,10 +149,17 @@ func (s *Seeder) seedLearnerPointsAndStreak(user model.User, st demoLearnerStat,
 // repository.CurrentPeriod — cùng hàm API dùng). Trang web hiện luôn xếp all_time (lỗi tham số
 // period_type/period phía handler), nhưng dữ liệu này sẵn sàng khi nút Tuần/Tháng được sửa.
 func (s *Seeder) seedDemoLeaderboardEntries(users map[string]model.User, facts map[string]demoLearnerFacts) error {
+	now := time.Now()
 	for _, periodType := range []string{"weekly", "monthly"} {
 		period := repository.CurrentPeriod(periodType)
 		ranked := append([]demoLearnerStat(nil), demoLearnerStats...)
+		// QA4 S20: điểm kỳ chỉ có khi học viên thật sự học trong kỳ (bài hoàn thành trong cửa sổ), không thì 0 —
+		// không còn "260 điểm tuần" cạnh 0 hoạt động 7 ngày.
+		since := demoPeriodWindowStart(now, periodType)
 		pointsOf := func(st demoLearnerStat) int {
+			if demoCountSince(facts[st.Email].Lessons, since) == 0 {
+				return 0
+			}
 			if periodType == "weekly" {
 				return st.WeeklyPoints
 			}
@@ -175,15 +182,36 @@ func (s *Seeder) seedDemoLeaderboardEntries(users map[string]model.User, facts m
 				PeriodType:       periodType,
 				Points:           pointsOf(st),
 				Rank:             i + 1,
-				LessonsCompleted: min(len(facts[st.Email].Lessons), 2*scale),
+				LessonsCompleted: demoCountSince(facts[st.Email].Lessons, since),
 				QuizzesCompleted: min(st.Quizzes, scale),
 				StudyMinutes:     st.StudyMinutes * scale / 8,
 			}
+			// Assign: số dẫn xuất từ hoạt động, phải khớp lại mỗi lần seed (cùng lý do seedLearnerPointsAndStreak).
 			if err := s.db.Where("user_id = ? AND period = ? AND period_type = ?", user.ID, period, periodType).
-				Attrs(entry).FirstOrCreate(&entry).Error; err != nil {
+				Attrs(entry).Assign(map[string]interface{}{"points": entry.Points, "rank": entry.Rank,
+				"lessons_completed": entry.LessonsCompleted}).FirstOrCreate(&entry).Error; err != nil {
 				return fmt.Errorf("failed to seed leaderboard %s %s for %s: %w", periodType, period, st.Email, err)
 			}
 		}
 	}
 	return nil
+}
+
+// demoPeriodWindowStart: đầu cửa sổ hoạt động của bảng xếp hạng kỳ (7 ngày cho tuần, 30 ngày cho tháng).
+func demoPeriodWindowStart(now time.Time, periodType string) time.Time {
+	if periodType == "weekly" {
+		return now.AddDate(0, 0, -7)
+	}
+	return now.AddDate(0, 0, -30)
+}
+
+// demoCountSince: số mốc (đã sắp hoặc không) từ since trở đi.
+func demoCountSince(times []time.Time, since time.Time) int {
+	n := 0
+	for _, t := range times {
+		if !t.Before(since) {
+			n++
+		}
+	}
+	return n
 }

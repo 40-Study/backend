@@ -47,6 +47,10 @@ func scheduleFail(c *fiber.Ctx, err error, message string, fallback int) error {
 		status = fiber.StatusConflict
 	}
 	// B-10: trùng giờ là 409, giờ kết thúc không sau giờ bắt đầu là 400 (chặn cả khi fallback của route khác 400).
+	// QA4-T07: điểm danh buổi chưa tới ngày: 422 kèm mã ổn định để web hiện câu tiếng Việt.
+	if status == 0 && errors.Is(err, service.ErrSessionNotStarted) {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"code": "ERR_SESSION_NOT_STARTED", "message": err.Error(), "error": err.Error()})
+	}
 	if status == 0 && errors.Is(err, service.ErrSessionOverlap) {
 		status = fiber.StatusConflict
 	}
@@ -487,7 +491,13 @@ func (h *ScheduleHandler) GenerateSessions(c *fiber.Ctx) error {
 		return scheduleUnauthorized(c)
 	}
 
-	sessions, err := h.service.GenerateSessions(c.Context(), classID, actor, isAdmin, req)
+	sessions, skipped, err := h.service.GenerateSessions(c.Context(), classID, actor, isAdmin, req)
+	// QA4-T06: mọi ngày đều bị bỏ qua -> 409 nhưng vẫn kèm skipped[] để web nói rõ vì sao (đã tồn tại, đã huỷ, trùng giờ).
+	if errors.Is(err, service.ErrSessionOverlap) && skipped != nil {
+		body := classErrorBody(err)
+		body["skipped"] = skipped
+		return c.Status(fiber.StatusConflict).JSON(body)
+	}
 	if err != nil {
 		return scheduleFail(c, err, "Failed to generate sessions", fiber.StatusBadRequest)
 	}
@@ -495,6 +505,7 @@ func (h *ScheduleHandler) GenerateSessions(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message": "Sessions generated successfully",
 		"data":    sessions,
+		"skipped": skipped,
 	})
 }
 

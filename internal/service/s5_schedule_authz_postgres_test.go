@@ -129,7 +129,7 @@ func TestS5_Schedule_GhiLichVaBuoiChiNguoiQuanLyLop(t *testing.T) {
 		// Mỗi actor một tuần riêng: GenerateSessions bỏ qua buổi trùng giờ (W2-B), nên actor sau sinh lại đúng
 		// tuần của actor trước sẽ nhận 409 thay vì kết quả quyền cần kiểm.
 		weekStart := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 7*i)
-		_, err = svc.GenerateSessions(ctx, e.class.ID, a.user.ID, a.isAdmin, dto.GenerateSessionsDTO{
+		_, _, err = svc.GenerateSessions(ctx, e.class.ID, a.user.ID, a.isAdmin, dto.GenerateSessionsDTO{
 			StartDate: weekStart.Format("2006-01-02"), EndDate: weekStart.AddDate(0, 0, 6).Format("2006-01-02")})
 		s5WantWrite(t, "GenerateSessions", a, err)
 	}
@@ -218,6 +218,10 @@ func TestS5_SessionAttendance_QuyenGhiDocVaHocVienTrongLop(t *testing.T) {
 	outsider := e.f.user("outsider")
 	own := model.SessionAttendance{}
 	ses := s5MakeSession(t, e, e.class.ID, 1)
+	// QA4-T07: chỉ điểm danh được từ ngày của buổi; test này về quyền nên đặt buổi vào hôm nay.
+	if err := e.f.db.Model(&model.ClassSession{}).Where("id = ?", ses.ID).Update("date", time.Now().In(sessionDayZone).Format("2006-01-02")).Error; err != nil {
+		t.Fatal(err)
+	}
 	own = model.SessionAttendance{SessionID: ses.ID, StudentID: e.student.ID, Status: model.AttendancePresent}
 	if err := e.f.db.Create(&own).Error; err != nil {
 		t.Fatal(err)

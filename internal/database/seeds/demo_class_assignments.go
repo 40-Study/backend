@@ -38,7 +38,11 @@ func (s *Seeder) upsertDemoLivestreams(spec classSpec, class model.Class, teache
 			live.StartedAt = &scheduled
 			live.EndedAt = &ended
 		}
-		if err := s.db.Where("room_name = ?", live.RoomName).Attrs(live).FirstOrCreate(&live).Error; err != nil {
+		// QA4 N-13: lịch là độ lệch so với HÔM NAY nên phải ghi lại mỗi lần seed (Assign). Chỉ đặt lúc tạo (Attrs) thì DB
+		// seed từ tháng trước giữ nguyên ngày cũ: "sắp tới" thành quá khứ, giảng viên không có buổi live nào sắp diễn ra.
+		window := map[string]interface{}{"scheduled_at": live.ScheduledAt, "status": live.Status,
+			"started_at": live.StartedAt, "ended_at": live.EndedAt}
+		if err := s.db.Where("room_name = ?", live.RoomName).Attrs(live).Assign(window).FirstOrCreate(&live).Error; err != nil {
 			return nil, fmt.Errorf("failed to seed livestream %s: %w", live.RoomName, err)
 		}
 		lives = append(lives, live)
@@ -76,8 +80,10 @@ func (s *Seeder) seedDemoAssignments(spec classSpec, class model.Class, teacher 
 		} else {
 			assignment.StartTime = live.ScheduledAt // hẹn giờ publish vào buổi live
 		}
+		// QA4 N-13: hạn nộp tương đối với hôm nay, ghi lại mỗi lần seed (xem upsertDemoLivestreams).
+		schedule := map[string]interface{}{"end_time": assignment.EndTime, "published_at": assignment.PublishedAt, "start_time": assignment.StartTime}
 		if err := s.db.Where("class_id = ? AND title = ?", class.ID, as.Title).
-			Attrs(assignment).FirstOrCreate(&assignment).Error; err != nil {
+			Attrs(assignment).Assign(schedule).FirstOrCreate(&assignment).Error; err != nil {
 			return fmt.Errorf("failed to seed assignment %q: %w", as.Title, err)
 		}
 
@@ -98,7 +104,7 @@ func (s *Seeder) seedDemoAssignments(spec classSpec, class model.Class, teacher 
 					gradeType = model.GradeProject
 				}
 				g := demoGrade{Student: student, Class: class, Teacher: teacher, AssignmentID: &assignment.ID, Type: gradeType,
-					Title: "Bài tập: " + as.Title, Score: sub.Score, Weight: 0.2, GradedAt: due.AddDate(0, 0, 1), Feedback: sub.Feedback}
+					Title: "Bài tập: " + as.Title, Score: sub.Score, Weight: 0.2, GradedAt: notAfterNow(due.AddDate(0, 0, 1)), Feedback: sub.Feedback}
 				if err := s.upsertDemoGrade(g); err != nil {
 					return err
 				}
@@ -148,9 +154,11 @@ func (s *Seeder) upsertDemoSubmission(spec classSpec, as assignmentSpec, assignm
 		row.ExecutionTime = 40 + 15*sub.Passed
 		row.MemoryUsed = 2048
 	}
-	row.CreatedAt = due.AddDate(0, 0, -sub.DaysBeforeDue).Add(-3 * time.Hour)
+	// Hạn nộp trượt theo hôm nay nên giờ nộp cũng phải trượt theo (Assign), và không bao giờ ở tương lai: bài nộp của
+	// bài còn hạn 6 ngày, "nộp sớm 4 ngày" là nộp 2 ngày nữa, vô lý (QA4 N-13: "chờ chấm 40 ngày").
+	row.CreatedAt = notAfterNow(due.AddDate(0, 0, -sub.DaysBeforeDue).Add(-3 * time.Hour))
 	if err := s.db.Where("assignment_id = ? AND user_id = ?", assignment.ID, student.ID).
-		Attrs(row).FirstOrCreate(&row).Error; err != nil {
+		Attrs(row).Assign(map[string]interface{}{"created_at": row.CreatedAt}).FirstOrCreate(&row).Error; err != nil {
 		return fmt.Errorf("failed to seed submission: %w", err)
 	}
 	return nil
@@ -187,8 +195,19 @@ func (s *Seeder) upsertDemoGrade(g demoGrade) error {
 		Feedback:     ptr(g.Feedback),
 	}
 	if err := s.db.Where("student_id = ? AND class_id = ? AND title = ?", g.Student.ID, g.Class.ID, g.Title).
-		Attrs(row).FirstOrCreate(&row).Error; err != nil {
+		Attrs(row).Assign(map[string]interface{}{"graded_at": row.GradedAt}).FirstOrCreate(&row).Error; err != nil {
 		return fmt.Errorf("failed to seed grade %q: %w", g.Title, err)
 	}
 	return nil
+}
+
+// demoPastMargin: mốc "đã xảy ra" suy từ hạn nộp được kẹp về ít nhất chừng này trước lúc seed.
+const demoPastMargin = time.Hour
+
+// notAfterNow kẹp một mốc dẫn xuất (giờ nộp, giờ chấm) về quá khứ: dữ liệu demo không có sự kiện đã xảy ra ở tương lai.
+func notAfterNow(t time.Time) time.Time {
+	if latest := time.Now().Add(-demoPastMargin); t.After(latest) {
+		return latest
+	}
+	return t
 }

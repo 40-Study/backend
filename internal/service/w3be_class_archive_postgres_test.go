@@ -129,7 +129,7 @@ func TestW3BE_LopLuuTru_ChiDoc_Postgres(t *testing.T) {
 			return err
 		}},
 		{"sinh buổi", false, func(a model.User) error {
-			_, err := e.schedule.GenerateSessions(ctx, class.ID, a.ID, false, dto.GenerateSessionsDTO{StartDate: "2032-01-05", EndDate: "2032-01-12"})
+			_, _, err := e.schedule.GenerateSessions(ctx, class.ID, a.ID, false, dto.GenerateSessionsDTO{StartDate: "2032-01-05", EndDate: "2032-01-12"})
 			return err
 		}},
 		{"điểm danh lớp", false, func(a model.User) error {
@@ -471,7 +471,7 @@ func TestW3BE_GenerateSessions_KhongSinhLaiBuoiDaHuy_Postgres(t *testing.T) {
 		DayOfWeek: 1, StartTime: "19:00", EndTime: "21:00", EffectiveFrom: "2031-01-01", EffectiveUntil: "2031-12-31"}); err != nil {
 		t.Fatal(err)
 	}
-	out, err := e.schedule.GenerateSessions(ctx, class.ID, e.ownerA.ID, false, dto.GenerateSessionsDTO{StartDate: "2031-03-03", EndDate: "2031-03-17"})
+	out, _, err := e.schedule.GenerateSessions(ctx, class.ID, e.ownerA.ID, false, dto.GenerateSessionsDTO{StartDate: "2031-03-03", EndDate: "2031-03-17"})
 	if err != nil || len(out) != 3 {
 		t.Fatalf("sinh lần đầu: %d buổi err=%v, muốn 3 (03, 10, 17/03)", len(out), err)
 	}
@@ -486,7 +486,7 @@ func TestW3BE_GenerateSessions_KhongSinhLaiBuoiDaHuy_Postgres(t *testing.T) {
 	}
 
 	// Sinh lại đúng khoảng cũ: không còn gì mới (buổi huỷ cũng không quay lại) -> ErrSessionOverlap, không thêm hàng.
-	if _, err := e.schedule.GenerateSessions(ctx, class.ID, e.ownerA.ID, false, dto.GenerateSessionsDTO{StartDate: "2031-03-03", EndDate: "2031-03-17"}); !errors.Is(err, ErrSessionOverlap) {
+	if _, _, err := e.schedule.GenerateSessions(ctx, class.ID, e.ownerA.ID, false, dto.GenerateSessionsDTO{StartDate: "2031-03-03", EndDate: "2031-03-17"}); !errors.Is(err, ErrSessionOverlap) {
 		t.Fatalf("sinh lại khoảng đã sinh: err=%v, muốn ErrSessionOverlap", err)
 	}
 	if live, cancelled := count("2031-03-10"); live != 0 || cancelled != 1 {
@@ -494,7 +494,7 @@ func TestW3BE_GenerateSessions_KhongSinhLaiBuoiDaHuy_Postgres(t *testing.T) {
 	}
 
 	// Kéo dài khoảng: chỉ sinh tuần mới 24/03, buổi huỷ 10/03 vẫn nằm yên.
-	more, err := e.schedule.GenerateSessions(ctx, class.ID, e.ownerA.ID, false, dto.GenerateSessionsDTO{StartDate: "2031-03-03", EndDate: "2031-03-24"})
+	more, _, err := e.schedule.GenerateSessions(ctx, class.ID, e.ownerA.ID, false, dto.GenerateSessionsDTO{StartDate: "2031-03-03", EndDate: "2031-03-24"})
 	if err != nil || len(more) != 1 || more[0].Date != "2031-03-24" {
 		t.Fatalf("kéo dài tới 24/03: %+v err=%v, muốn đúng một buổi 2031-03-24", more, err)
 	}

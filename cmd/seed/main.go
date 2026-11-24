@@ -16,6 +16,15 @@ import (
 	"study.com/v1/internal/database/seeds"
 )
 
+// seedDoneMessage: dòng log cuối của seed. Không in mật khẩu demo (log chạy trên máy chung/CI).
+const seedDoneMessage = "Done. Tài khoản demo dùng mật khẩu chung: xem hằng seeds.DemoPassword."
+
+// demoTimestampRepairAllowed: sửa mốc thời gian dữ liệu demo chỉ ở dev/test, không bao giờ khi đã cho phép production.
+func demoTimestampRepairAllowed(environment string, allowProduction bool) bool {
+	env := strings.ToLower(strings.TrimSpace(environment))
+	return !allowProduction && (env == "dev" || env == "test")
+}
+
 func validateSeedTarget(environment, mode string, allowProduction bool) error {
 	switch mode {
 	case "base", "full":
@@ -57,6 +66,9 @@ func main() {
 	}
 
 	seeder := seeds.NewSeeder(db)
+	if demoTimestampRepairAllowed(cfg.Environment, *allowProduction) {
+		seeder.EnableDemoTimestampRepair()
+	}
 
 	if err := seeder.SeedAll(*dataDir); err != nil {
 		log.Fatalf("Failed to seed roles/permissions: %v", err)
@@ -71,5 +83,5 @@ func main() {
 		log.Fatalf("Failed to seed demo data: %v", err)
 	}
 
-	log.Printf("Done. Tài khoản demo dùng mật khẩu: %s", seeds.DemoPassword)
+	log.Println(seedDoneMessage)
 }

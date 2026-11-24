@@ -153,16 +153,16 @@ func TestSeedDemoClasses_Postgres_IdempotentVaHienDungNguoi(t *testing.T) {
 		}
 	}
 
-	// teacher/schedule + teacher/assignments: /livestream?host_id=teacher1 (React 3 + Flutter 2).
+	// teacher/schedule + teacher/assignments: /livestream?host_id=teacher1 (React 4 + Flutter 2; QA4 thêm buổi tuần sau).
 	liveRepo := repository.NewLivestreamRepository(db)
 	lives, _, err := liveRepo.GetAll(ctx, teacher1.ID, false, 1, 100, "", &teacher1.ID, nil)
-	if err != nil || len(lives) != 5 {
-		t.Errorf("teacher1 thấy %d phiên livestream, muốn 5 (err %v)", len(lives), err)
+	if err != nil || len(lives) != 6 {
+		t.Errorf("teacher1 thấy %d phiên livestream, muốn 6 (err %v)", len(lives), err)
 	}
-	// (app)/my-assignments: student2 chỉ thấy phiên của lớp mình học (React 3 + Python 2).
+	// (app)/my-assignments: student2 chỉ thấy phiên của lớp mình học (React 4 + Python 2).
 	studentLives, _, err := liveRepo.GetAll(ctx, student2.ID, false, 1, 100, "", nil, nil)
-	if err != nil || len(studentLives) != 5 {
-		t.Errorf("student2 thấy %d phiên livestream, muốn 5 (err %v)", len(studentLives), err)
+	if err != nil || len(studentLives) != 6 {
+		t.Errorf("student2 thấy %d phiên livestream, muốn 6 (err %v)", len(studentLives), err)
 	}
 	assignRepo := repository.NewAssignmentRepository(db)
 	publishedVisible := 0
