@@ -66,6 +66,22 @@ func TestQA4_GenerateSessions_ReportsSkippedDates(t *testing.T) {
 		{Date: "2031-03-10", Reason: dto.SkippedSessionOverlap},
 		{Date: "2031-03-17", Reason: dto.SkippedSessionDuplicate},
 	})
+
+	// Mọi ngày đều bị bỏ qua: vẫn 409 nhưng danh sách lý do đi kèm. Buổi 2031-03-24 bị huỷ thì báo "cancelled".
+	if err := e.f.db.Model(&model.ClassSession{}).Where("class_id = ? AND date = ?", e.class.ID, "2031-03-24").
+		Update("status", model.SessionCancelled).Error; err != nil {
+		t.Fatal(err)
+	}
+	out, skipped, err = svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: "2031-03-03", EndDate: "2031-03-24"})
+	if !errors.Is(err, ErrSessionOverlap) || out != nil {
+		t.Fatalf("sinh lại khoảng đã sinh hết: out=%v err=%v, muốn ErrSessionOverlap", out, err)
+	}
+	assertSkipped(t, "lần 3 (409)", skipped, []dto.SkippedSessionDTO{
+		{Date: "2031-03-03", Reason: dto.SkippedSessionDuplicate},
+		{Date: "2031-03-10", Reason: dto.SkippedSessionOverlap},
+		{Date: "2031-03-17", Reason: dto.SkippedSessionDuplicate},
+		{Date: "2031-03-24", Reason: dto.SkippedSessionCancelled},
+	})
 }
 
 func assertSkipped(t *testing.T, label string, got, want []dto.SkippedSessionDTO) {

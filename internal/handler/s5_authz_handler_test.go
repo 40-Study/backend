@@ -21,6 +21,7 @@ type s5ScheduleSvc struct {
 	service.ScheduleServiceInterface
 	err      error
 	gotActor uuid.UUID
+	skipped  []dto.SkippedSessionDTO // QA4-T06: ngày bị bỏ qua mà GenerateSessions trả về
 }
 
 func (s *s5ScheduleSvc) rec(actor uuid.UUID) { s.gotActor = actor }
@@ -71,7 +72,7 @@ func (s *s5ScheduleSvc) CancelSession(_ context.Context, _, actor uuid.UUID, _ b
 }
 func (s *s5ScheduleSvc) GenerateSessions(_ context.Context, _, actor uuid.UUID, _ bool, _ dto.GenerateSessionsDTO) ([]dto.ClassSessionResponseDTO, []dto.SkippedSessionDTO, error) {
 	s.rec(actor)
-	return nil, nil, s.err
+	return nil, s.skipped, s.err
 }
 func (s *s5ScheduleSvc) GetSessionAttendances(_ context.Context, _, actor uuid.UUID, _ bool) ([]dto.SessionAttendanceResponseDTO, error) {
 	s.rec(actor)

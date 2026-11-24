@@ -492,6 +492,12 @@ func (h *ScheduleHandler) GenerateSessions(c *fiber.Ctx) error {
 	}
 
 	sessions, skipped, err := h.service.GenerateSessions(c.Context(), classID, actor, isAdmin, req)
+	// QA4-T06: mọi ngày đều bị bỏ qua -> 409 nhưng vẫn kèm skipped[] để web nói rõ vì sao (đã tồn tại, đã huỷ, trùng giờ).
+	if errors.Is(err, service.ErrSessionOverlap) && skipped != nil {
+		body := classErrorBody(err)
+		body["skipped"] = skipped
+		return c.Status(fiber.StatusConflict).JSON(body)
+	}
 	if err != nil {
 		return scheduleFail(c, err, "Failed to generate sessions", fiber.StatusBadRequest)
 	}

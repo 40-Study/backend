@@ -626,7 +626,8 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 			wasCancelled[c.ScheduleID.String()+"|"+c.Date.Format("2006-01-02")] = struct{}{}
 		}
 	}
-	skippedCancelled := 0
+	// QA4-T06: mọi ngày không sinh được đều báo về (kể cả khi tất cả bị bỏ qua, trả kèm lỗi 409).
+	skipped := make([]dto.SkippedSessionDTO, 0)
 
 	var sessions []model.ClassSession
 	for d := startDate; !d.After(endDate); d = d.AddDate(0, 0, 1) {
@@ -642,7 +643,7 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 				continue
 			}
 			if _, gone := wasCancelled[sch.ID.String()+"|"+d.Format("2006-01-02")]; gone {
-				skippedCancelled++
+				skipped = append(skipped, dto.SkippedSessionDTO{Date: d.Format("2006-01-02"), Reason: dto.SkippedSessionCancelled})
 				continue
 			}
 
@@ -658,9 +659,9 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 	}
 
 	if len(sessions) == 0 {
-		if skippedCancelled > 0 {
+		if len(skipped) > 0 {
 			// Mọi ngày còn lại đều là buổi đã huỷ: không có gì mới để sinh (cùng nghĩa với sinh lại khoảng đã sinh).
-			return nil, nil, ErrSessionOverlap
+			return nil, sortSkippedSessions(skipped), ErrSessionOverlap
 		}
 		return nil, nil, errors.New("no sessions generated for the given date range")
 	}
@@ -688,7 +689,6 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 		}
 	}
 	created := make([]model.ClassSession, 0, len(sessions))
-	skipped := make([]dto.SkippedSessionDTO, 0)
 	for i := range sessions {
 		err := s.ensureSessionSlotFree(ctx, classID, sessions[i].Date, sessions[i].StartTime, sessions[i].EndTime, nil)
 		if errors.Is(err, ErrSessionOverlap) || errors.Is(err, ErrSessionTimeOrder) {
@@ -715,9 +715,9 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 	if len(skipped) > 0 {
 		log.Printf("GenerateSessions: lớp %s bỏ qua %d/%d buổi trùng giờ", classID, len(skipped), len(sessions))
 	}
-	// Mọi buổi đều trùng: báo 409 thay vì trả danh sách rỗng như thể thành công.
+	// Mọi buổi đều trùng: báo 409 thay vì trả danh sách rỗng như thể thành công, kèm danh sách ngày bị bỏ qua.
 	if len(created) == 0 {
-		return nil, nil, ErrSessionOverlap
+		return nil, sortSkippedSessions(skipped), ErrSessionOverlap
 	}
 
 	s.invalidateSessionCache(ctx, classID)
@@ -726,7 +726,13 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 	for i := range created {
 		result[i] = *s.mapSessionToDTO(&created[i])
 	}
-	return result, skipped, nil
+	return result, sortSkippedSessions(skipped), nil
+}
+
+// sortSkippedSessions: theo ngày tăng dần (buổi đã huỷ được ghi nhận trước các buổi trùng giờ trong vòng lặp).
+func sortSkippedSessions(skipped []dto.SkippedSessionDTO) []dto.SkippedSessionDTO {
+	sort.SliceStable(skipped, func(i, j int) bool { return skipped[i].Date < skipped[j].Date })
+	return skipped
 }
 
 // sessionSlotKey: ngày + khung giờ của một buổi, để nhận ra buổi lớp đã có đúng khung đó.
