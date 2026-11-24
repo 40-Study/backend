@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -277,7 +278,7 @@ func InvalidateCertificateVerifyCache(ctx context.Context, rdb *redis.Client, nu
 	}
 	keys := make([]string, len(numbers))
 	for i, n := range numbers {
-		keys[i] = certVerifyCachePrefix + n
+		keys[i] = certVerifyCachePrefix + strings.ToLower(n)
 	}
 	if err := rdb.Del(ctx, keys...).Err(); err != nil {
 		log.Printf("[certificate] không xoá được cache tra cứu của %d chứng chỉ vừa thu hồi: %v", len(keys), err)
@@ -338,9 +339,11 @@ func (s *CertificateService) canViewCertificate(ctx context.Context, ownerID, vi
 }
 
 func (s *CertificateService) VerifyCertificate(ctx context.Context, number string) (*dto.VerifyCertificateResponseDTO, error) {
+	// QA6-PG-05: bỏ khoảng trắng và gộp kiểu chữ để mọi cách gõ cùng một số dùng chung một khoá cache.
+	number = strings.TrimSpace(number)
 	// Check cache
 	if s.redis != nil {
-		cacheKey := certVerifyCachePrefix + number
+		cacheKey := certVerifyCachePrefix + strings.ToLower(number)
 		cached, err := s.redis.Get(ctx, cacheKey).Result()
 		if err == nil {
 			var result dto.VerifyCertificateResponseDTO
@@ -382,7 +385,7 @@ func (s *CertificateService) VerifyCertificate(ctx context.Context, number strin
 	// Cache
 	if s.redis != nil {
 		if data, err := json.Marshal(result); err == nil {
-			s.redis.Set(ctx, certVerifyCachePrefix+number, data, certCacheTTL)
+			s.redis.Set(ctx, certVerifyCachePrefix+strings.ToLower(number), data, certCacheTTL)
 		}
 	}
 

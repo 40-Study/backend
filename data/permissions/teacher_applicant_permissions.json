@@ -1,10 +1,10 @@
 [
   {
     "name": "APPLICATION_VIEW_STATUS",
-    "description": "Xem trạng thái hiện tại của hồ sơ đăng ký giáo viên (Pending, Approved, Rejected)"
+    "description": "Xem trạng thái hiện tại của hồ sơ đăng ký giảng viên (đang chờ, đã duyệt, bị từ chối)"
   },
   {
      "name": "TEACHER_PROFILE_UPDATE",
-     "description": "Cập nhật hồ sơ năng lực để Admin xét duyệt (Dùng chung quyền với Teacher)"
+     "description": "Cập nhật hồ sơ năng lực để quản trị viên xét duyệt (dùng chung quyền với giảng viên)"
   }
 ]

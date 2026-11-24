@@ -1,43 +1,43 @@
 [
   {
     "name": "DASHBOARD_VIEW_GLOBAL",
-    "description": "Xem Dashboard thống kê toàn bộ hệ thống (User, Traffic, Revenue)"
+    "description": "Xem bảng thống kê toàn hệ thống (người dùng, lượt truy cập, doanh thu)"
   },
   {
     "name": "USERS_VIEW_ALL",
-    "description": "Xem danh sách và thông tin chi tiết của mọi user trên hệ thống"
+    "description": "Xem danh sách và thông tin chi tiết của mọi người dùng trên hệ thống"
   },
   {
     "name": "USERS_BAN",
-    "description": "Khóa (Ban) hoặc mở khóa tài khoản người dùng vi phạm"
+    "description": "Khoá hoặc mở khoá tài khoản người dùng vi phạm"
   },
   {
     "name": "ROLES_MANAGE_SYSTEM",
-    "description": "Tạo, sửa đổi cấu trúc Role và Permission của hệ thống"
+    "description": "Tạo, sửa cấu trúc vai trò và quyền hạn của hệ thống"
   },
   {
     "name": "ORG_CREATE",
-    "description": "Cấp phép tạo mới một Tổ chức (Organization) trên hệ thống"
+    "description": "Cấp phép tạo mới một tổ chức trên hệ thống"
   },
   {
     "name": "ORG_DELETE",
-    "description": "Xóa hoặc đình chỉ hoạt động của một Tổ chức"
+    "description": "Xoá hoặc đình chỉ hoạt động của một tổ chức"
   },
   {
     "name": "CATEGORIES_SYSTEM_MANAGE",
-    "description": "Thêm, sửa, xóa danh mục khóa học gốc (System Categories)"
+    "description": "Thêm, sửa, xoá danh mục khoá học gốc (danh mục hệ thống)"
   },
   {
     "name": "COURSES_DELETE_ALL",
-    "description": "Xóa bất kỳ khóa học nào trên hệ thống (Dùng để xử lý vi phạm nội dung)"
+    "description": "Xoá bất kỳ khoá học nào trên hệ thống (dùng để xử lý vi phạm nội dung)"
   },
   {
     "name": "COURSES_APPROVE_ALL",
-    "description": "Duyệt các khóa học của Giáo viên tự do để cho phép hiển thị lên sàn"
+    "description": "Duyệt các khoá học của giảng viên tự do để cho phép hiển thị lên sàn"
   },
   {
     "name": "SYSTEM_SETTINGS_MANAGE",
-    "description": "Cấu hình tham số hệ thống (Cổng thanh toán, Email server, Storage)"
+    "description": "Quản trị nền tảng: chỉnh phí nền tảng, quản lý gói xu và điều chỉnh xu; quyền này cũng nhận diện quản trị viên hệ thống"
   },
   {
     "name": "PAYMENTS_MANAGE",
@@ -45,7 +45,7 @@
   },
   {
     "name": "REPORTS_MODERATE",
-    "description": "Kiểm duyệt report vi phạm: xem toàn bộ danh sách, đổi trạng thái, xoá report"
+    "description": "Kiểm duyệt báo cáo vi phạm: xem toàn bộ danh sách, đổi trạng thái, xoá báo cáo"
   },
   {
     "name": "WALLET_WITHDRAWALS_MANAGE",

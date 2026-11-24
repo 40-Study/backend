@@ -680,6 +680,7 @@ func (s *AssignmentService) toResponseDTO(a model.Assignment) dto.AssignmentResp
 		Description:         a.Description,
 		Difficulty:          string(a.Difficulty),
 		Language:            []string(a.Language),
+		AutoGrade:           assignmentAutoGrade([]string(a.Language)),
 		StarterCode:         a.StarterCode,
 		TimeLimit:           a.TimeLimit,
 		MemoryLimit:         a.MemoryLimit,

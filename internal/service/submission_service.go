@@ -302,6 +302,10 @@ func (s *SubmissionService) Submit(ctx context.Context, isAdmin bool, req dto.Cr
 
 	// M-05 (audit 260909): bọc bằng SafeGo — panic khi chấm bài (vd lỗi parse JSON, Judge0
 	// timeout) không được recover trước đây có thể làm sập cả server.
+	// QA6 S6-01 (C11): ngôn ngữ máy chấm không chạy được -> giữ bài ở "pending" chờ giảng viên chấm tay, không chấm.
+	if !isNonJudgeSubmissionLanguage(submission.Language) && !codeLanguageJudgeable(submission.Language) {
+		return submission, nil
+	}
 	utils.SafeGo(func() {
 		_ = s.ProcessSubmission(context.Background(), submission.ID)
 	})
@@ -334,6 +338,11 @@ func (s *SubmissionService) ProcessSubmission(ctx context.Context, submissionID 
 	// Handle essay assignments (no auto-grading)
 	if submission.Language == "text" {
 		return s.repo.UpdateVerdict(ctx, submissionID, model.VerdictAccepted, 0, 0, 0, 0)
+	}
+
+	// QA6 S6-01 (C11): không chấm được thì để nguyên "pending" (chấm tay), không ghi runtime_error.
+	if !codeLanguageJudgeable(submission.Language) {
+		return nil
 	}
 
 	testCases, err := s.testCaseRepo.GetByAssignment(ctx, assignment.ID)
@@ -373,7 +382,10 @@ func (s *SubmissionService) gradeAssignmentCode(ctx context.Context, code, langu
 	}
 	ctx, cancel := context.WithTimeout(ctx, judgeBudget(len(testCases), assignment.TimeLimit))
 	defer cancel()
-	languageID := s.getLanguageID(language)
+	languageID, ok := CodeLanguageID(language)
+	if !ok {
+		return nil, errLanguageUnsupported(language)
+	}
 	totalTime, totalMemory := 0, 0
 	for _, tc := range testCases {
 		result, err := judgeOneTest(ctx, s.judge0Client, createJudge0Request(code, languageID, tc.Input, tc.ExpectedOutput, assignment.TimeLimit, assignment.MemoryLimit*1024))
@@ -607,7 +619,10 @@ func (s *SubmissionService) RunCode(ctx context.Context, requesterID uuid.UUID, 
 	}
 
 	tc := testCases[0]
-	languageID := s.getLanguageID(req.Language)
+	languageID, ok := CodeLanguageID(req.Language)
+	if !ok {
+		return nil, errLanguageUnsupported(req.Language)
+	}
 
 	judgeReq := createJudge0Request(
 		req.Code,
@@ -646,34 +661,6 @@ func (s *SubmissionService) RunCode(ctx context.Context, requesterID uuid.UUID, 
 	response.MemUsed = result.Memory
 
 	return response, nil
-}
-
-func (s *SubmissionService) getLanguageID(language string) int {
-	languageMap := map[string]int{
-		"c":          50,
-		"c++":        54,
-		"cpp":        54,
-		"java":       62,
-		"python":     71,
-		"python3":    71,
-		"javascript": 63,
-		"js":         63,
-		"typescript": 74,
-		"ts":         74,
-		"go":         60,
-		"rust":       73,
-		"ruby":       72,
-		"php":        68,
-		"c#":         51,
-		"cs":         51,
-		"swift":      83,
-		"kotlin":     78,
-	}
-
-	if id, ok := languageMap[language]; ok {
-		return id
-	}
-	return 71
 }
 
 func (s *SubmissionService) mapJudge0Status(statusID int) model.SubmissionVerdict {
@@ -748,7 +735,10 @@ func (s *SubmissionService) RunCustomCode(ctx context.Context, requesterID uuid.
 		return nil, errors.New("assignment not found")
 	}
 
-	languageID := s.getLanguageID(req.Language)
+	languageID, ok := CodeLanguageID(req.Language)
+	if !ok {
+		return nil, errLanguageUnsupported(req.Language)
+	}
 
 	judgeReq := createJudge0Request(
 		req.Code,

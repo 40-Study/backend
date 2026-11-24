@@ -43,6 +43,9 @@ type AssignmentResponseDTO struct {
 	Description  string     `json:"description"`
 	Difficulty   string     `json:"difficulty"`
 	Language     []string   `json:"language"`
+	// AutoGrade (QA6 S6-01, contract C11): false khi mọi ngôn ngữ của bài đều máy chấm không chạy được (vd Dart): không có
+	// "Chạy thử" và bài nộp ở "pending" chờ giảng viên chấm tay.
+	AutoGrade    bool       `json:"auto_grade"`
 	StarterCode  string     `json:"starter_code"`
 	TimeLimit    int        `json:"time_limit"`
 	MemoryLimit  int        `json:"memory_limit"`

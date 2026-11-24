@@ -1502,6 +1502,13 @@ func (s *QuizService) GetAttemptByID(ctx context.Context, attemptID, userID uuid
 	// đang làm dở thì cũng phá gate y hệt explanation).
 	submitted := attempt.CompletedAt != nil
 
+	// QA6 (round 3, C10): quiz tắt show_correct_answers thì người xem không phải người quản lý quiz (học viên làm bài, phụ
+	// huynh) không nhận đáp án đúng/giải thích. Người quản lý (chủ quiz, giảng viên chủ khoá, admin) giữ nguyên.
+	hideAnswers, err := s.answersHiddenFrom(ctx, attempt.QuizID, userID, isAdmin)
+	if err != nil {
+		return nil, err
+	}
+
 	answers := make([]dto.QuizAttemptAnswerDTO, len(attempt.Answers))
 	for i, aa := range attempt.Answers {
 		answers[i] = dto.QuizAttemptAnswerDTO{
@@ -1513,7 +1520,8 @@ func (s *QuizService) GetAttemptByID(ctx context.Context, attemptID, userID uuid
 			IsCorrect:         aa.IsCorrect,
 			PointsEarned:      aa.PointsEarned,
 		}
-		if submitted {
+		answers[i].AnswersHidden = hideAnswers
+		if submitted && !hideAnswers {
 			answers[i].Explanation = aa.Question.Explanation
 			var correctIDs []string
 			for _, qa := range aa.Question.Answers {
@@ -1528,7 +1536,7 @@ func (s *QuizService) GetAttemptByID(ctx context.Context, attemptID, userID uuid
 	if submitted {
 		// R1 (QA5 S5-11): câu bỏ trống không có dòng quiz_attempt_answers nên trước đây biến mất khỏi
 		// bài chữa; bổ sung đủ đề, mỗi câu kèm đáp án đúng như câu đã trả lời.
-		if answers, err = s.withUnansweredQuestions(ctx, attempt.QuizID, answers); err != nil {
+		if answers, err = s.withUnansweredQuestions(ctx, attempt.QuizID, answers, hideAnswers); err != nil {
 			return nil, err
 		}
 	}
@@ -1536,7 +1544,31 @@ func (s *QuizService) GetAttemptByID(ctx context.Context, attemptID, userID uuid
 	return &dto.QuizAttemptDetailDTO{
 		QuizAttemptResponseDTO: *s.mapAttemptToDTO(attempt),
 		Answers:                answers,
+		AnswersHidden:          hideAnswers,
 	}, nil
+}
+
+// answersHiddenFrom: true khi quiz tắt show_correct_answers và người xem không quản lý quiz. Không đọc được quiz hay quyền
+// thì trả lỗi (không âm thầm lộ đáp án).
+func (s *QuizService) answersHiddenFrom(ctx context.Context, quizID, viewerID uuid.UUID, isAdmin bool) (bool, error) {
+	quiz, err := s.repo.GetQuizByID(ctx, quizID)
+	if err != nil {
+		return false, err
+	}
+	if quiz == nil {
+		return false, ErrQuizNotFound
+	}
+	if quiz.ShowCorrectAnswers {
+		return false, nil
+	}
+	switch err := s.checkQuizOwner(ctx, quizID, viewerID, isAdmin); {
+	case err == nil:
+		return false, nil
+	case errors.Is(err, ErrQuizNotOwner):
+		return true, nil
+	default:
+		return false, err
+	}
 }
 
 func (s *QuizService) GetQuizResults(ctx context.Context, quizID, userID uuid.UUID, isAdmin bool) (*dto.QuizResultsDTO, error) {

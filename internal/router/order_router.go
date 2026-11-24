@@ -35,7 +35,7 @@ func SetupOrderRoutes(api fiber.Router,
 	// Đánh dấu "đã hoàn tiền xong" cho khoản tiền về muộn của đơn đã đóng (cờ refund_needed).
 	adminOrders.Post("/:id/late-refund", middleware.Audit(auditRec, model.AuditActionOrderLateRefund, "order", "id"), adminOrderHandler.MarkLatePaymentRefunded)
 
-	orders.Post("/", authMiddleware, orderHandler.CreateOrder)
+	orders.Post("/", authMiddleware, parentCannotPurchase(), orderHandler.CreateOrder)
 	orders.Get("/me", authMiddleware, orderHandler.GetUserOrders)
 	orders.Get("/:id", authMiddleware, orderHandler.GetOrder)
 	orders.Post("/:id/cancel", authMiddleware, orderHandler.CancelOrder)

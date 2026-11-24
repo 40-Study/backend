@@ -1,10 +1,13 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/service"
 )
 
 // Route của người tạo cuộc thi (quyền CONTESTS_MANAGE_OWN gắn ở router) — contract #3–#6, #8–#11.
@@ -40,18 +43,26 @@ func (h *ContestHandler) QuizOptions(c *fiber.Ctx) error {
 }
 
 // GetManage — #5 GET /contests/manage/:id.
+//
+// QA6-A06 (C8): id sai định dạng -> 400 ERR_INVALID_ID, id không có (hoặc không thuộc người gọi) -> 404 ERR_NOT_FOUND, cùng
+// bộ mã với đơn hàng và người dùng để màn admin dựng một trạng thái "Không tìm thấy".
 func (h *ContestHandler) GetManage(c *fiber.Ctx) error {
-	return withContestID(c, func(id uuid.UUID) error {
-		actor, err := h.requireActor(c)
-		if err != nil {
-			return respondContestError(c, err)
-		}
-		res, err := h.svc.GetManage(c.Context(), id, actor)
-		if err != nil {
-			return respondContestError(c, err)
-		}
-		return contestOK(c, "Success", res)
-	})
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_INVALID_ID", "message": "Mã cuộc thi không hợp lệ."})
+	}
+	actor, err := h.requireActor(c)
+	if err != nil {
+		return respondContestError(c, err)
+	}
+	res, err := h.svc.GetManage(c.Context(), id, actor)
+	if errors.Is(err, service.ErrContestNotFound) {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"code": "ERR_NOT_FOUND", "message": "Không tìm thấy cuộc thi."})
+	}
+	if err != nil {
+		return respondContestError(c, err)
+	}
+	return contestOK(c, "Success", res)
 }
 
 // ListParticipants — #6 GET /contests/manage/:id/participants.
