@@ -22,6 +22,9 @@ type AssignmentRepositoryInterface interface {
 	GetPublishedBySession(ctx context.Context, sessionID uuid.UUID) ([]model.Assignment, error)
 	Update(ctx context.Context, assignment *model.Assignment) error
 	Delete(ctx context.Context, id uuid.UUID) error
+	// DeleteIfNoSubmissions (QA4-T01): xoá mềm assignment chỉ khi chưa có bài nộp nào, trong MỘT câu lệnh (không có cửa
+	// sổ giữa kiểm và xoá cho một bài nộp chen vào). deleted=false: không có dòng nào bị xoá (có bài nộp, hoặc không tồn tại).
+	DeleteIfNoSubmissions(ctx context.Context, id uuid.UUID) (deleted bool, err error)
 	Publish(ctx context.Context, id uuid.UUID) error
 	Unpublish(ctx context.Context, id uuid.UUID) error
 	CanManage(ctx context.Context, assignmentID, userID uuid.UUID) (bool, error)
@@ -136,6 +139,16 @@ func (r *AssignmentRepository) Update(ctx context.Context, assignment *model.Ass
 
 func (r *AssignmentRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).Delete(&model.Assignment{}, "id = ?", id).Error
+}
+
+func (r *AssignmentRepository) DeleteIfNoSubmissions(ctx context.Context, id uuid.UUID) (bool, error) {
+	res := r.db.WithContext(ctx).Exec(`UPDATE assignments SET deleted_at = now()
+		WHERE id = ? AND deleted_at IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM submissions WHERE assignment_id = ? AND deleted_at IS NULL)`, id, id)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
 }
 
 func (r *AssignmentRepository) Publish(ctx context.Context, id uuid.UUID) error {

@@ -392,7 +392,8 @@ func (s *AssignmentService) Update(ctx context.Context, id uuid.UUID, req dto.Up
 		if t, err := time.Parse(time.RFC3339, *req.EndTime); err == nil {
 			// QA4-T08: chỉ kiểm khi hạn nộp THAY ĐỔI — sửa tiêu đề một bài đã quá hạn (web gửi lại end_time cũ)
 			// không bị chặn, nhưng đặt một hạn mới đã qua thì bị chặn.
-			if assignment.EndTime == nil || !assignment.EndTime.Equal(t) {
+			// So tới giây: API trả end_time dạng RFC3339 (giây), còn dòng đã lưu có thể có micro giây.
+			if assignment.EndTime == nil || !assignment.EndTime.Truncate(time.Second).Equal(t.Truncate(time.Second)) {
 				if err := ensureDueInFuture(&t, time.Now()); err != nil {
 					return nil, err
 				}
@@ -412,18 +413,20 @@ func (s *AssignmentService) Delete(ctx context.Context, id uuid.UUID) error {
 	if err := s.requireClassWritableFor(ctx, id); err != nil {
 		return err
 	}
-	// QA4-T01: xoá bài đã có bài nộp sẽ mất bài nộp/điểm của học viên — từ chối thay vì xoá.
-	if s.submissionRepo == nil {
-		return errors.New("assignment delete: submission repository not configured")
+	// QA4-T01: xoá bài đã có bài nộp sẽ làm mất bài nộp/điểm của học viên — từ chối thay vì xoá. Kiểm và xoá trong một
+	// câu lệnh; không xoá được mà assignment vẫn còn thì là vì có bài nộp.
+	deleted, err := s.repo.DeleteIfNoSubmissions(ctx, id)
+	if err != nil || deleted {
+		return err
 	}
-	_, submitted, err := s.submissionRepo.GetByAssignment(ctx, id, 1, 1)
+	existing, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	if submitted > 0 {
+	if existing != nil {
 		return ErrAssignmentHasSubmissions
 	}
-	return s.repo.Delete(ctx, id)
+	return nil // không tồn tại (hoặc đã xoá): như repo.Delete trước đây, không lỗi
 }
 
 func (s *AssignmentService) Publish(ctx context.Context, id uuid.UUID, livekitSvc LivekitServiceInterface) (*model.Assignment, error) {

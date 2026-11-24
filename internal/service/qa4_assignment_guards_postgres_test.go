@@ -88,7 +88,8 @@ func TestQA4_AssignmentDueDate_MustBeInFuture(t *testing.T) {
 	}
 
 	// Bài đã quá hạn từ trước (dữ liệu cũ): sửa tiêu đề kèm end_time cũ không bị chặn, nhưng không công bố được.
-	old := time.Now().AddDate(0, 0, -2).Truncate(time.Second)
+	// Lưu có micro giây (như dữ liệu seed), gửi lại dạng RFC3339 tới giây (như API trả về): vẫn là "không đổi hạn".
+	old := time.Now().AddDate(0, 0, -2).Truncate(time.Second).Add(123456 * time.Microsecond)
 	overdue := model.Assignment{ClassID: &class.ID, Type: "homework", Title: "đã quá hạn", Description: "d", Language: []string{"go"}, EndTime: &old}
 	if err := f.db.Create(&overdue).Error; err != nil {
 		t.Fatal(err)
