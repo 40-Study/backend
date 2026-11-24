@@ -58,6 +58,15 @@ func (s voucherCreateStub) CreateVoucher(context.Context, *dto.CreateVoucherRequ
 	return &model.Voucher{ID: s.id}, nil
 }
 
+type tagCreateStub struct {
+	service.TagServiceInterface
+	id uuid.UUID
+}
+
+func (s tagCreateStub) CreateTag(context.Context, dto.CreateTagDTO) (*dto.TagResponseDTO, error) {
+	return &dto.TagResponseDTO{ID: s.id, Name: "x"}, nil
+}
+
 type roleCreateStub struct {
 	service.RoleServiceInterface
 	id uuid.UUID
@@ -83,6 +92,9 @@ func TestAuditTarget_CreateHandlersReportNewObjectID(t *testing.T) {
 			NewVoucherHandler(voucherCreateStub{id: newID}).CreateVoucher, func() string { return newID.String() }},
 		{"org_role", model.AuditActionOrgRoleCreate, "org_role", `{"name":"Vai trò mới","organization_id":"` + uuid.NewString() + `"}`,
 			NewRoleHandler(roleCreateStub{id: newID}, nil).CreateRole, func() string { return newID.String() }},
+		// QA4-A09
+		{"tag", model.AuditActionTagCreate, "tag", `{"name":"Thẻ mới"}`,
+			NewTagHandler(tagCreateStub{id: newID}).CreateTag, func() string { return newID.String() }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

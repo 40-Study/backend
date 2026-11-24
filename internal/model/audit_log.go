@@ -60,6 +60,11 @@ const (
 	AuditActionContestCancel       = "contest.cancel"
 	AuditActionContestPrizesUpdate = "contest.prizes_update"
 	AuditActionContestFinalize     = "contest.finalize"
+	// QA4-A09
+	AuditActionTagCreate    = "tag.create"
+	AuditActionTagUpdate    = "tag.update"
+	AuditActionTagDelete    = "tag.delete"
+	AuditActionCourseDelete = "course.delete"
 )
 
 // AuditActions: toàn bộ mã hành động hợp lệ, theo thứ tự nhóm trong bảng của phase 8.
@@ -84,6 +89,7 @@ var AuditActions = []string{
 	AuditActionUserOrgRoleAssign, AuditActionUserOrgRoleRevoke,
 	AuditActionContestApprove, AuditActionContestReject, AuditActionContestCancel,
 	AuditActionContestPrizesUpdate, AuditActionContestFinalize,
+	AuditActionTagCreate, AuditActionTagUpdate, AuditActionTagDelete, AuditActionCourseDelete,
 }
 
 // AuditLog là một dòng nhật ký hoạt động quản trị. Chỉ-thêm (append-only): không có đường update

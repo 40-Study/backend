@@ -302,7 +302,7 @@ func newApvEnv(t *testing.T) *apvEnv {
 	api := app.Group("/api")
 	SetupApprovalRoutes(api, cfg, approvalH, rdb, pc, &auditSpyRouter{})
 	SetupAuthRoutes(api, cfg, handler.NewAuthHandler(authSvc), nil, rdb, nil)
-	SetupCourseRoutes(api, cfg, courseH, nil, nil, nil, nil, nil, nil, nil, rdb)
+	SetupCourseRoutes(api, cfg, courseH, nil, nil, nil, nil, nil, nil, nil, rdb, nil)
 	e.app = app
 	return e
 }

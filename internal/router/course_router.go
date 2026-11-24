@@ -6,6 +6,7 @@ import (
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/handler"
 	"study.com/v1/internal/middleware"
+	"study.com/v1/internal/model"
 )
 
 func SetupCourseRoutes(
@@ -20,6 +21,7 @@ func SetupCourseRoutes(
 	classLessonContentHandler *handler.ClassLessonContentHandler,
 	attendanceHandler *handler.AttendanceHandler,
 	redis *redis.Client,
+	auditRec middleware.AuditRecorder,
 ) {
 	auth := middleware.AuthMiddleware(cfg, redis)
 
@@ -41,7 +43,9 @@ func SetupCourseRoutes(
 		// Protected routes - require authentication
 		courses.Post("/", auth, courseHandler.CreateCourse)
 		courses.Put("/:id", auth, courseHandler.UpdateCourse)
-		courses.Delete("/:id", auth, courseHandler.DeleteCourse)
+		// QA4-A09: admin xoá khoá học được ghi nhật ký quản trị; giảng viên tự xoá khoá của mình thì
+		// handler gọi middleware.SkipAudit (không phải hành động quản trị).
+		courses.Delete("/:id", auth, middleware.Audit(auditRec, model.AuditActionCourseDelete, "course", "id"), courseHandler.DeleteCourse)
 
 		// Classes under courses
 		classes := courses.Group("/:course_id/classes", auth)

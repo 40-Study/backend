@@ -340,6 +340,9 @@ func (h *CourseHandler) DeleteCourse(c *fiber.Ctx) error {
 	}
 
 	isAdmin := isAdminActor(c, h.permChecker, userID)
+	if !isAdmin {
+		middleware.SkipAudit(c) // QA4-A09: chỉ admin xoá mới là hành động quản trị
+	}
 	if err := h.service.DeleteCourse(c.Context(), id, userID, isAdmin); err != nil {
 		if writeCourseLocked(c, err) || writeCourseHasEnrollments(c, err) {
 			return nil

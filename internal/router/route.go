@@ -105,7 +105,7 @@ func SetupAllRoutes(
 	SetupClassRoutes(api, cfg, classHandler, attendanceHandler, redis, permChecker)
 	SetupCategoryRoutes(api, cfg, categoryHandler, tagHandler, redis, permChecker, auditRec)
 	SetupCartRoutes(api, cfg, cartHandler, redis)
-	SetupCourseRoutes(api, cfg, courseHandler, sectionHandler, lessonHandler, lessonContentHandler, lessonPreviewHandler, classHandler, classLessonContentHandler, attendanceHandler, redis)
+	SetupCourseRoutes(api, cfg, courseHandler, sectionHandler, lessonHandler, lessonContentHandler, lessonPreviewHandler, classHandler, classLessonContentHandler, attendanceHandler, redis, auditRec)
 	SetupEnrollmentRoutes(api, cfg, enrollmentHandler, redis)
 	SetupUploadRoutes(api, cfg, uploadHandler, redis, permChecker)
 	SetupVideoUploadRoutes(api, videoHandler, cfg, redis)
