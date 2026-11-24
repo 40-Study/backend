@@ -234,9 +234,18 @@ func (s *CoinService) VerifyPurchase(ctx context.Context, userID, purchaseID uui
 
 	toTime := time.Now()
 	fromTime := purchase.CreatedAt.Add(-time.Minute)
-	result, err := s.transactionService.CheckTransaction(ctx, *purchase.PaymentReference, fromTime, toTime)
+	// Có hạn như đơn hàng (bankLookupTimeout): gRPC treo thì trả 503, không treo request.
+	lookupCtx, cancel := context.WithTimeout(ctx, bankLookupTimeout)
+	result, err := s.transactionService.CheckTransaction(lookupCtx, *purchase.PaymentReference, fromTime, toTime)
+	cancel()
 	if err != nil {
 		log.Printf("[Coin] verify %s: tra cứu ngân hàng lỗi: %v", purchaseID, err)
+		return nil, ErrCoinBankUnavailable
+	}
+	// Dịch vụ ngân hàng báo lỗi upstream ngay trong kết quả (Found=false, Status="error"; xem
+	// payment_reconcile.go): chưa biết tiền đã về hay chưa, không được trả "chưa thanh toán".
+	if result.Status == "error" {
+		log.Printf("[Coin] verify %s: ngân hàng trả lỗi: %s", purchaseID, result.ErrorMessage)
 		return nil, ErrCoinBankUnavailable
 	}
 	if !result.Found {
