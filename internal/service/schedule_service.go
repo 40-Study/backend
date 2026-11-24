@@ -32,7 +32,8 @@ type ScheduleServiceInterface interface {
 	GetSessionByID(ctx context.Context, id, actorID uuid.UUID, isAdmin bool) (*dto.ClassSessionResponseDTO, error)
 	UpdateSession(ctx context.Context, id, actorID uuid.UUID, isAdmin bool, req dto.UpdateClassSessionDTO) (*dto.ClassSessionResponseDTO, error)
 	CancelSession(ctx context.Context, id, actorID uuid.UUID, isAdmin bool, reason string) error
-	GenerateSessions(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, req dto.GenerateSessionsDTO) ([]dto.ClassSessionResponseDTO, error)
+	// GenerateSessions trả thêm các ngày bị bỏ qua (QA4-T06) để giảng viên biết buổi nào không được sinh và vì sao.
+	GenerateSessions(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, req dto.GenerateSessionsDTO) ([]dto.ClassSessionResponseDTO, []dto.SkippedSessionDTO, error)
 
 	// SessionAttendance
 	GetSessionAttendances(ctx context.Context, sessionID, requesterID uuid.UUID, isAdmin bool) ([]dto.SessionAttendanceResponseDTO, error)
@@ -107,7 +108,31 @@ var (
 	// ErrSessionOverlap (B-10): buổi trùng giờ với buổi khác của cùng lớp hoặc của một giảng viên
 	// của lớp. 409 (đúng người, xung đột lịch).
 	ErrSessionOverlap = errors.New("buổi học trùng giờ với một buổi khác của lớp này hoặc của giảng viên lớp")
+	// ErrSessionNotStarted (QA4-T07): giảng viên điểm danh một buổi có ngày sau hôm nay (giờ Việt Nam). 422.
+	ErrSessionNotStarted = errors.New("Buổi học chưa diễn ra nên chưa thể điểm danh.")
 )
+
+// requireSessionStarted (QA4-T07): chỉ ghi điểm danh từ NGÀY của buổi trở đi (theo giờ Việt Nam). Cột date không có
+// giờ nên so theo ngày lịch, cùng cách requireCheckInOpen.
+func requireSessionStarted(session *model.ClassSession, now time.Time) error {
+	sy, sm, sd := session.Date.Date()
+	ny, nm, nd := now.In(sessionDayZone).Date()
+	sessionDay := time.Date(sy, sm, sd, 0, 0, 0, 0, time.UTC)
+	today := time.Date(ny, nm, nd, 0, 0, 0, 0, time.UTC)
+	if sessionDay.After(today) {
+		return ErrSessionNotStarted
+	}
+	return nil
+}
+
+// requireSessionStartedByID: requireSessionStarted cho buổi theo id (gọi SAU kiểm quyền).
+func (s *ScheduleService) requireSessionStartedByID(ctx context.Context, sessionID uuid.UUID) error {
+	session, err := s.sessionClass(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	return requireSessionStarted(session, time.Now())
+}
 
 // ensureSessionSlotFree kiểm giờ của một buổi: kết thúc phải sau bắt đầu và không trùng buổi nào
 // khác (cùng lớp, hoặc lớp khác có chung giảng viên). Buổi đã huỷ không tính là chiếm giờ.
@@ -564,36 +589,36 @@ func (s *ScheduleService) CancelSession(ctx context.Context, id, actorID uuid.UU
 	return nil
 }
 
-func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, req dto.GenerateSessionsDTO) ([]dto.ClassSessionResponseDTO, error) {
+func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, req dto.GenerateSessionsDTO) ([]dto.ClassSessionResponseDTO, []dto.SkippedSessionDTO, error) {
 	if err := s.requireClassWrite(ctx, actorID, isAdmin, classID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	startDate, err := time.Parse("2006-01-02", req.StartDate)
 	if err != nil {
-		return nil, errors.New("invalid start_date format")
+		return nil, nil, errors.New("invalid start_date format")
 	}
 	endDate, err := time.Parse("2006-01-02", req.EndDate)
 	if err != nil {
-		return nil, errors.New("invalid end_date format")
+		return nil, nil, errors.New("invalid end_date format")
 	}
 	if endDate.Sub(startDate) > maxGenerateSessionDays*24*time.Hour {
-		return nil, ErrGenerateRangeTooLong
+		return nil, nil, ErrGenerateRangeTooLong
 	}
 
 	schedules, err := s.repo.GetSchedulesByClassID(ctx, classID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if len(schedules) == 0 {
-		return nil, errors.New("no recurring schedules found for this class")
+		return nil, nil, errors.New("no recurring schedules found for this class")
 	}
 
 	// W3-BE: buổi đã HUỶ của một lịch lặp không được sinh lại (huỷ có chủ ý, vd nghỉ lễ). Buổi huỷ không chiếm giờ
 	// (HasOverlappingSession bỏ qua), nên không có bước kiểm này thì chạy lại 'sinh buổi' làm buổi huỷ quay về.
 	cancelled, err := s.repo.GetCancelledScheduledSessions(ctx, []uuid.UUID{classID}, req.StartDate, req.EndDate)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	wasCancelled := make(map[string]struct{}, len(cancelled))
 	for _, c := range cancelled {
@@ -635,14 +660,14 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 	if len(sessions) == 0 {
 		if skippedCancelled > 0 {
 			// Mọi ngày còn lại đều là buổi đã huỷ: không có gì mới để sinh (cùng nghĩa với sinh lại khoảng đã sinh).
-			return nil, ErrSessionOverlap
+			return nil, nil, ErrSessionOverlap
 		}
-		return nil, errors.New("no sessions generated for the given date range")
+		return nil, nil, errors.New("no sessions generated for the given date range")
 	}
 
 	nextNum, err := s.repo.GetNextSessionNumber(ctx, classID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Sinh hàng loạt cũng qua cùng luật giờ với CreateSession (review R3 MINOR 4). Buổi trùng giờ với một buổi
@@ -650,32 +675,49 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 	// khoảng ngày đã sinh trước đó phải idempotent (không nhân đôi buổi, cũng không 409 vì chính các buổi
 	// mình đã sinh). Kiểm tuần tự ngay trước khi tạo từng buổi nên hai lịch lặp trùng giờ nhau trong cùng
 	// lô cũng chỉ sinh được một. Số buổi gán lúc tạo để buổi bị bỏ qua không để lại lỗ hổng số thứ tự.
+	// QA4-T06: buổi lớp đã có sẵn đúng khung giờ (chạy lại "sinh buổi") là "duplicate"; mọi trùng giờ khác (lớp/giảng
+	// viên khác, hoặc hai lịch lặp giao nhau) là "overlap". Danh sách trả về cho web thay vì chỉ log.
+	existing, err := s.repo.GetSessionsByDateRange(ctx, classID, req.StartDate, req.EndDate)
+	if err != nil {
+		return nil, nil, err
+	}
+	ownSlots := make(map[string]struct{}, len(existing))
+	for _, e := range existing {
+		if e.Status != model.SessionCancelled {
+			ownSlots[sessionSlotKey(e)] = struct{}{}
+		}
+	}
 	created := make([]model.ClassSession, 0, len(sessions))
-	skipped := 0
+	skipped := make([]dto.SkippedSessionDTO, 0)
 	for i := range sessions {
 		err := s.ensureSessionSlotFree(ctx, classID, sessions[i].Date, sessions[i].StartTime, sessions[i].EndTime, nil)
 		if errors.Is(err, ErrSessionOverlap) || errors.Is(err, ErrSessionTimeOrder) {
-			skipped++
+			reason := dto.SkippedSessionOverlap
+			if _, dup := ownSlots[sessionSlotKey(sessions[i])]; dup {
+				reason = dto.SkippedSessionDuplicate
+			}
+			skipped = append(skipped, dto.SkippedSessionDTO{Date: sessions[i].Date.Format("2006-01-02"), Reason: reason})
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		sessions[i].SessionNumber = nextNum
 		if err := s.repo.CreateSession(ctx, &sessions[i]); err != nil {
-			return nil, fmt.Errorf("failed to create session #%d: %w", sessions[i].SessionNumber, err)
+			return nil, nil, fmt.Errorf("failed to create session #%d: %w", sessions[i].SessionNumber, err)
 		}
 		nextNum++
 		// Schedule Asynq reminders for each generated session
 		s.scheduleSessionReminder(ctx, &sessions[i], classID)
 		created = append(created, sessions[i])
+		ownSlots[sessionSlotKey(sessions[i])] = struct{}{}
 	}
-	if skipped > 0 {
-		log.Printf("GenerateSessions: lớp %s bỏ qua %d/%d buổi trùng giờ", classID, skipped, len(sessions))
+	if len(skipped) > 0 {
+		log.Printf("GenerateSessions: lớp %s bỏ qua %d/%d buổi trùng giờ", classID, len(skipped), len(sessions))
 	}
 	// Mọi buổi đều trùng: báo 409 thay vì trả danh sách rỗng như thể thành công.
 	if len(created) == 0 {
-		return nil, ErrSessionOverlap
+		return nil, nil, ErrSessionOverlap
 	}
 
 	s.invalidateSessionCache(ctx, classID)
@@ -684,7 +726,12 @@ func (s *ScheduleService) GenerateSessions(ctx context.Context, classID, actorID
 	for i := range created {
 		result[i] = *s.mapSessionToDTO(&created[i])
 	}
-	return result, nil
+	return result, skipped, nil
+}
+
+// sessionSlotKey: ngày + khung giờ của một buổi, để nhận ra buổi lớp đã có đúng khung đó.
+func sessionSlotKey(cs model.ClassSession) string {
+	return cs.Date.Format("2006-01-02") + "|" + string(cs.StartTime) + "|" + string(cs.EndTime)
 }
 
 // ============================================================================
@@ -756,6 +803,9 @@ func (s *ScheduleService) MarkAttendance(ctx context.Context, sessionID uuid.UUI
 	if err := s.requireSessionManage(ctx, sessionID, verifiedBy, isAdmin, false); err != nil {
 		return nil, err
 	}
+	if err := s.requireSessionStartedByID(ctx, sessionID); err != nil {
+		return nil, err
+	}
 	studentID, err := uuid.Parse(req.StudentID)
 	if err != nil {
 		return nil, errors.New("invalid student_id")
@@ -795,6 +845,9 @@ func (s *ScheduleService) MarkAttendance(ctx context.Context, sessionID uuid.UUI
 
 func (s *ScheduleService) BulkMarkAttendance(ctx context.Context, sessionID uuid.UUID, req dto.BulkMarkAttendanceDTO, verifiedBy uuid.UUID, isAdmin bool) ([]dto.SessionAttendanceResponseDTO, error) {
 	if err := s.requireSessionManage(ctx, sessionID, verifiedBy, isAdmin, false); err != nil {
+		return nil, err
+	}
+	if err := s.requireSessionStartedByID(ctx, sessionID); err != nil {
 		return nil, err
 	}
 	attendances := make([]model.SessionAttendance, 0, len(req.Attendances))
@@ -845,6 +898,9 @@ func (s *ScheduleService) BulkMarkAttendance(ctx context.Context, sessionID uuid
 
 func (s *ScheduleService) UpdateAttendance(ctx context.Context, sessionID, id uuid.UUID, req dto.UpdateSessionAttendanceDTO, verifiedBy uuid.UUID, isAdmin bool) (*dto.SessionAttendanceResponseDTO, error) {
 	if err := s.requireSessionManage(ctx, sessionID, verifiedBy, isAdmin, false); err != nil {
+		return nil, err
+	}
+	if err := s.requireSessionStartedByID(ctx, sessionID); err != nil {
 		return nil, err
 	}
 	att, err := s.repo.GetAttendanceByID(ctx, id)

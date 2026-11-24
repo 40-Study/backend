@@ -69,9 +69,9 @@ func (s *s5ScheduleSvc) CancelSession(_ context.Context, _, actor uuid.UUID, _ b
 	s.rec(actor)
 	return s.err
 }
-func (s *s5ScheduleSvc) GenerateSessions(_ context.Context, _, actor uuid.UUID, _ bool, _ dto.GenerateSessionsDTO) ([]dto.ClassSessionResponseDTO, error) {
+func (s *s5ScheduleSvc) GenerateSessions(_ context.Context, _, actor uuid.UUID, _ bool, _ dto.GenerateSessionsDTO) ([]dto.ClassSessionResponseDTO, []dto.SkippedSessionDTO, error) {
 	s.rec(actor)
-	return nil, s.err
+	return nil, nil, s.err
 }
 func (s *s5ScheduleSvc) GetSessionAttendances(_ context.Context, _, actor uuid.UUID, _ bool) ([]dto.SessionAttendanceResponseDTO, error) {
 	s.rec(actor)

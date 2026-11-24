@@ -69,6 +69,18 @@ type GenerateSessionsDTO struct {
 	EndDate   string `json:"end_date" validate:"required"`
 }
 
+// Lý do một ngày bị bỏ qua khi sinh buổi (QA4-T06): trùng với buổi của lớp/giảng viên khác, hoặc lớp đã có đúng buổi đó.
+const (
+	SkippedSessionOverlap   = "overlap"
+	SkippedSessionDuplicate = "duplicate"
+)
+
+// SkippedSessionDTO (QA4-T06): một buổi không sinh được, trả về để web báo "bỏ qua 1 buổi trùng lịch (30/11)".
+type SkippedSessionDTO struct {
+	Date   string `json:"date"` // YYYY-MM-DD
+	Reason string `json:"reason"`
+}
+
 type ClassSessionResponseDTO struct {
 	ID                  uuid.UUID  `json:"id"`
 	ClassID             uuid.UUID  `json:"class_id"`

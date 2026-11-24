@@ -147,7 +147,7 @@ func TestW2B_Timetable_ReportsCancelledGeneratedSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: "2031-03-03", EndDate: "2031-03-17"})
+	out, _, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: "2031-03-03", EndDate: "2031-03-17"})
 	if err != nil || len(out) != 3 {
 		t.Fatalf("sinh buổi: %d err=%v", len(out), err)
 	}
@@ -194,7 +194,7 @@ func TestW2B_GenerateSessions_SkipsOverlapAndIsIdempotent(t *testing.T) {
 	}
 
 	gen := dto.GenerateSessionsDTO{StartDate: "2031-03-03", EndDate: "2031-03-24"} // 4 thứ Hai: 3, 10, 17, 24
-	out, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, gen)
+	out, _, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, gen)
 	if err != nil {
 		t.Fatalf("sinh buổi: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestW2B_GenerateSessions_SkipsOverlapAndIsIdempotent(t *testing.T) {
 	}
 
 	// Chạy lại đúng khoảng đó: mọi buổi đã có -> 409, không nhân đôi.
-	if _, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, gen); !errors.Is(err, ErrSessionOverlap) {
+	if _, _, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, gen); !errors.Is(err, ErrSessionOverlap) {
 		t.Fatalf("sinh lại khoảng đã sinh: err=%v, muốn ErrSessionOverlap", err)
 	}
 	var n int64
@@ -220,7 +220,7 @@ func TestW2B_GenerateSessions_SkipsOverlapAndIsIdempotent(t *testing.T) {
 	}
 
 	// Kéo dài khoảng ngày: chỉ sinh thêm các tuần mới.
-	more, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: "2031-03-03", EndDate: "2031-04-07"})
+	more, _, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: "2031-03-03", EndDate: "2031-04-07"})
 	if err != nil || len(more) != 2 {
 		t.Fatalf("kéo dài tới 07/04: %d buổi err=%v, muốn 2 (31/03 và 07/04)", len(more), err)
 	}

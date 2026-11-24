@@ -118,7 +118,7 @@ func TestGenerateSessions_RejectsRangeOverOneYear(t *testing.T) {
 	tomorrow := time.Now().AddDate(0, 0, 1)
 	day := func(t time.Time) string { return t.Format("2006-01-02") }
 
-	_, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: day(tomorrow), EndDate: day(tomorrow.AddDate(4, 0, 0))})
+	_, _, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: day(tomorrow), EndDate: day(tomorrow.AddDate(4, 0, 0))})
 	if !errors.Is(err, ErrGenerateRangeTooLong) {
 		t.Fatalf("khoảng 4 năm: err=%v, muốn ErrGenerateRangeTooLong", err)
 	}
@@ -129,7 +129,7 @@ func TestGenerateSessions_RejectsRangeOverOneYear(t *testing.T) {
 	}
 
 	// Khoảng vài tuần vẫn sinh buổi bình thường (trần chỉ chặn khoảng quá một năm).
-	if _, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: day(tomorrow), EndDate: day(tomorrow.AddDate(0, 0, 27))}); err != nil {
+	if _, _, err := svc.GenerateSessions(ctx, e.class.ID, e.owner.ID, false, dto.GenerateSessionsDTO{StartDate: day(tomorrow), EndDate: day(tomorrow.AddDate(0, 0, 27))}); err != nil {
 		t.Fatalf("khoảng 4 tuần bị chặn nhầm: %v", err)
 	}
 }
