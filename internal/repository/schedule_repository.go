@@ -291,16 +291,23 @@ func (r *ScheduleRepository) GetStudentAttendanceHistory(ctx context.Context, st
 	var atts []model.SessionAttendance
 	var total int64
 
-	query := r.db.WithContext(ctx).Model(&model.SessionAttendance{}).Where("student_id = ?", studentID)
+	// QA6 review L5: tổng và trang dùng CÙNG phép JOIN (trước đây tổng đếm trước JOIN nên lệch khi dòng class_sessions không còn).
+	query := r.db.WithContext(ctx).Model(&model.SessionAttendance{}).
+		Joins("JOIN class_sessions cs ON cs.id = session_attendances.session_id").
+		Where("session_attendances.student_id = ?", studentID)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
+	// QA6-PG-07: mới nhất theo NGÀY BUỔI HỌC (không phải lúc ghi điểm danh), cùng ngày thì theo giờ bắt đầu, rồi id để trang
+	// offset không xáo trộn khi trùng khoá. JOIN thô nên buổi đã xoá mềm vẫn có ngày để xếp.
+	// QA6-L5: preload Unscoped để buổi/lớp đã xoá mềm vẫn trả "Buổi N" và tên lớp thay vì "Buổi 0" rỗng.
+	unscoped := func(db *gorm.DB) *gorm.DB { return db.Unscoped() }
 	offset := (page - 1) * pageSize
 	err := query.
-		Preload("Session").
-		Preload("Session.Class").
-		Order("created_at DESC").
+		Preload("Session", unscoped).
+		Preload("Session.Class", unscoped).
+		Order("cs.date DESC, cs.start_time DESC, session_attendances.id DESC").
 		Offset(offset).
 		Limit(pageSize).
 		Find(&atts).Error

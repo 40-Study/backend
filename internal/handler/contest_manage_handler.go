@@ -40,6 +40,9 @@ func (h *ContestHandler) QuizOptions(c *fiber.Ctx) error {
 }
 
 // GetManage — #5 GET /contests/manage/:id.
+//
+// Mã lỗi giữ nguyên CONTEST_NOT_FOUND / INVALID_ID (QA6 review M1/M2): trang giảng viên trên web map đúng hai mã này, và
+// /contests/manage/:id/participants cũng trả CONTEST_NOT_FOUND. Chỉ chi tiết đơn hàng/người dùng của admin dùng bộ mã C8.
 func (h *ContestHandler) GetManage(c *fiber.Ctx) error {
 	return withContestID(c, func(id uuid.UUID) error {
 		actor, err := h.requireActor(c)

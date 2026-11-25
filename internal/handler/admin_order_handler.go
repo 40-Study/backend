@@ -113,7 +113,8 @@ func (h *AdminOrderHandler) GetOrder(c *fiber.Ctx) error {
 	orderID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid order ID",
+			"code":    "ERR_INVALID_ID",
+			"message": "Mã đơn hàng không hợp lệ.",
 			"error":   "invalid_id",
 		})
 	}
@@ -122,9 +123,18 @@ func (h *AdminOrderHandler) GetOrder(c *fiber.Ctx) error {
 	// uuid.Nil an toàn (GetOrderByID chỉ so sánh order.UserID != actorUserID KHI !isAdmin).
 	order, err := h.orderService.GetOrderByID(c.Context(), orderID, uuid.Nil, true)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Order not found",
-			"error":   "not_found",
+		// QA6-A06 (C8): chỉ ErrOrderNotFound là 404; lỗi khác (DB...) là 500 để admin không tưởng đơn không tồn tại.
+		if errors.Is(err, service.ErrOrderNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"code":    "ERR_NOT_FOUND",
+				"message": "Không tìm thấy đơn hàng.",
+				"error":   "not_found",
+			})
+		}
+		log.Printf("[AdminOrder] GetOrder %s: %v", orderID, err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"code":    "ERR_INTERNAL",
+			"message": "Không tải được đơn hàng. Vui lòng thử lại.",
 		})
 	}
 

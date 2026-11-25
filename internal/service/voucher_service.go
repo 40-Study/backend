@@ -21,6 +21,12 @@ import (
 var voucherCodePattern = regexp.MustCompile(`^[A-Z0-9_-]+$`)
 
 // ErrVoucherCodeInvalid hiện thẳng cho quản trị viên (handler trả 400 ERR_INVALID_VOUCHER_CODE).
+// QA6-A05 (C9): trùng mã/tên khi tạo voucher. Handler trả 409 ERR_VOUCHER_CODE_EXISTS / ERR_VOUCHER_NAME_EXISTS.
+var (
+	ErrVoucherCodeExists = errors.New("Mã voucher này đã tồn tại. Hãy dùng mã khác.")
+	ErrVoucherNameExists = errors.New("Tên voucher này đã tồn tại. Hãy dùng tên khác.")
+)
+
 var ErrVoucherCodeInvalid = errors.New("Mã voucher chỉ được gồm chữ cái không dấu, số, dấu gạch ngang (-) và gạch dưới (_), không có khoảng trắng hay ký tự đặc biệt")
 
 var (
@@ -164,12 +170,12 @@ func NewVoucherService(vr *repository.VoucherRepository, ur *repository.UserRepo
 func (vs *VoucherService) validateVoucherRequest(req *dto.CreateVoucherRequest) error {
 	if req.StartDate != nil && req.EndDate != nil {
 		if req.EndDate.Before(*req.StartDate) {
-			return errors.New("end_date must be after start_date")
+			return errors.New("Ngày kết thúc phải sau ngày bắt đầu.")
 		}
 	}
 
 	if req.DiscountPercent != nil && (*req.DiscountPercent < 0 || *req.DiscountPercent > 100) {
-		return errors.New("discount_percent must be between 0 and 100")
+		return errors.New("Phần trăm giảm phải nằm trong khoảng từ 0 đến 100.")
 	}
 
 	return nil
@@ -183,12 +189,12 @@ func (vs *VoucherService) CreateVoucher(ctx context.Context, req *dto.CreateVouc
 
 	// Check code exists
 	if existingVoucher, _ := vs.vr.GetVoucherByCode(ctx, req.Code); existingVoucher != nil {
-		return nil, errors.New("voucher code already exists")
+		return nil, ErrVoucherCodeExists
 	}
 
 	// Check name exists
 	if existingVoucher, _ := vs.vr.GetVoucherByName(ctx, req.Name); existingVoucher != nil {
-		return nil, errors.New("voucher name already exists")
+		return nil, ErrVoucherNameExists
 	}
 
 	if err := vs.validateVoucherRequest(req); err != nil {
@@ -213,14 +219,14 @@ func (vs *VoucherService) CreateVoucher(ctx context.Context, req *dto.CreateVouc
 		switch model.DiscountMethod(req.DiscountMethod) {
 		case model.DiscountMethodFixed:
 			if req.DiscountAmountMoney == nil {
-				return nil, errors.New("discount_amount_money is required for MONEY + FIXED")
+				return nil, errors.New("Vui lòng nhập số tiền giảm (giảm tiền cố định).")
 			}
 			d := decimal.NewFromFloat(*req.DiscountAmountMoney)
 			voucher.DiscountAmountMoney = &d
 
 		case model.DiscountMethodPercent:
 			if req.DiscountPercent == nil {
-				return nil, errors.New("discount_percent is required for MONEY + PERCENT")
+				return nil, errors.New("Vui lòng nhập phần trăm giảm.")
 			}
 			d := decimal.NewFromFloat(*req.DiscountPercent)
 			voucher.DiscountPercent = &d
@@ -234,13 +240,13 @@ func (vs *VoucherService) CreateVoucher(ctx context.Context, req *dto.CreateVouc
 		switch model.DiscountMethod(req.DiscountMethod) {
 		case model.DiscountMethodFixed:
 			if req.DiscountAmountPoints == nil {
-				return nil, errors.New("discount_amount_points is required for POINT + FIXED")
+				return nil, errors.New("Vui lòng nhập số điểm giảm (giảm điểm cố định).")
 			}
 			voucher.DiscountAmountPoints = *req.DiscountAmountPoints
 
 		case model.DiscountMethodPercent:
 			if req.DiscountPercent == nil {
-				return nil, errors.New("discount_percent is required for POINT + PERCENT")
+				return nil, errors.New("Vui lòng nhập phần trăm giảm.")
 			}
 			d := decimal.NewFromFloat(*req.DiscountPercent)
 			voucher.DiscountPercent = &d
@@ -385,6 +391,13 @@ func (vs *VoucherService) UpdateVoucher(ctx context.Context, voucherID uuid.UUID
 	}
 
 	if req.Name != nil {
+		// QA6 review L4: đổi sang tên đã có ở voucher KHÁC -> ErrVoucherNameExists (handler trả 409), giống lúc tạo. Giữ nguyên
+		// tên cũ của chính nó thì không tính là trùng.
+		if *req.Name != voucher.Name {
+			if other, _ := vs.vr.GetVoucherByName(ctx, *req.Name); other != nil && other.ID != voucher.ID {
+				return nil, ErrVoucherNameExists
+			}
+		}
 		voucher.Name = *req.Name
 	}
 	if req.Description != nil {
@@ -450,7 +463,7 @@ func (vs *VoucherService) UpdateVoucher(ctx context.Context, voucherID uuid.UUID
 	}
 	if voucher.StartDate != nil && voucher.EndDate != nil {
 		if !voucher.StartDate.Before(*voucher.EndDate) {
-			return nil, errors.New("start_date must be before end_date")
+			return nil, errors.New("Ngày bắt đầu phải trước ngày kết thúc.")
 		}
 	}
 

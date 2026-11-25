@@ -19,7 +19,7 @@ func SetupCartRoutes(
 	cart := api.Group("/cart", auth)
 	{
 		cart.Get("/", cartHandler.GetCart)
-		cart.Post("/", cartHandler.AddToCart)
+		cart.Post("/", parentCannotPurchase(), cartHandler.AddToCart)
 		cart.Delete("/", cartHandler.RemoveFromCart)
 		cart.Delete("/clear", cartHandler.ClearCart)
 		cart.Get("/check/:courseID", cartHandler.CheckCourseInCart)

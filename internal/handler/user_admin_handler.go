@@ -69,7 +69,8 @@ func (h *UserAdminHandler) GetUser(c *fiber.Ctx) error {
 	userID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid user ID format",
+			"code":    "ERR_INVALID_ID",
+			"message": "Mã người dùng không hợp lệ.",
 		})
 	}
 
@@ -77,7 +78,8 @@ func (h *UserAdminHandler) GetUser(c *fiber.Ctx) error {
 	if err != nil {
 		if errors.Is(err, repository.ErrAdminUserNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"message": "User not found",
+				"code":    "ERR_NOT_FOUND",
+				"message": "Không tìm thấy người dùng.",
 			})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{

@@ -49,7 +49,9 @@ var auditTargetNameSQL = map[string]string{
 	"organization": "SELECT name FROM organizations WHERE id = ?",
 	"report":       "SELECT 'Báo cáo của ' || COALESCE(NULLIF(u.full_name, ''), u.user_name) FROM reports r JOIN users u ON u.id = r.reporter_id WHERE r.id = ?",
 	"order":        "SELECT order_number FROM orders WHERE id = ?",
-	"user":         "SELECT COALESCE(NULLIF(full_name, ''), user_name) FROM users WHERE id = ?",
+	// QA6-A10: yêu cầu rút tiền (bảng instructor_payouts) gọi bằng tên giảng viên rút, cùng kiểu với "report".
+	"withdrawal": "SELECT 'Yêu cầu rút tiền của ' || COALESCE(NULLIF(u.full_name, ''), u.user_name) FROM instructor_payouts p JOIN users u ON u.id = p.instructor_id WHERE p.id = ?",
+	"user":       "SELECT COALESCE(NULLIF(full_name, ''), user_name) FROM users WHERE id = ?",
 }
 
 func (r *AuditLogRepository) TargetName(ctx context.Context, targetType string, id uuid.UUID) (string, error) {

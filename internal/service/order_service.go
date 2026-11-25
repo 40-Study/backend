@@ -605,7 +605,11 @@ func (s *OrderService) CreateOrder(ctx context.Context, userID uuid.UUID, req dt
 func (s *OrderService) GetOrderByID(ctx context.Context, orderID, actorUserID uuid.UUID, isAdmin bool) (*dto.OrderResponse, error) {
 	order, err := s.orderRepo.GetByID(orderID)
 	if err != nil {
-		return nil, ErrOrderNotFound
+		// QA6-A06: chỉ "không có dòng" mới là ErrOrderNotFound; lỗi DB phải lộ ra (admin trả 500) thay vì giả làm 404.
+		if errors.Is(err, repository.ErrOrderNotFound) {
+			return nil, ErrOrderNotFound
+		}
+		return nil, err
 	}
 	// H-06: chỉ chủ đơn hàng hoặc admin mới xem được — đơn hàng chứa thông tin nhạy cảm
 	// (giá, mã giảm giá, phương thức thanh toán).

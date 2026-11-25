@@ -79,6 +79,11 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	}
 
 	response, err := h.authService.Register(c.Context(), req)
+	if errors.Is(err, service.ErrRegistrationNotPending) {
+		// QA6-PG-02 (C7): đăng ký chờ OTP đã hết hạn/không còn: 410 như resend-otp, để web dọn phiên và quay về form.
+		// Không đặt cờ AuthCredentialRejected: chưa hề so sánh OTP nên không tính vào bộ đếm khoá.
+		return c.Status(fiber.StatusGone).JSON(fiber.Map{"code": "ERR_REGISTRATION_EXPIRED", "message": err.Error()})
+	}
 	if err != nil {
 		// Review vòng 4 (PR #69): request đã qua ValidateStruct (otp đủ 6 số) — lỗi ở đây là
 		// service thực sự so sánh OTP thật và từ chối (sai mã/hết hạn/không có phiên chờ), không

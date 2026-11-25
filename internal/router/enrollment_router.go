@@ -25,7 +25,7 @@ func SetupEnrollmentRoutes(
 	// Enroll/Unenroll under courses
 	courses := api.Group("/courses")
 	{
-		courses.Post("/:courseId/enroll", auth, enrollmentHandler.Enroll)
+		courses.Post("/:courseId/enroll", auth, parentCannotPurchase(), enrollmentHandler.Enroll)
 		courses.Delete("/:courseId/enroll", auth, enrollmentHandler.Unenroll)
 		courses.Get("/:courseId/enrollments", auth, enrollmentHandler.GetCourseEnrollments)
 		// L-04 (audit 260909): endpoint debug (lộ enrollment đã soft-delete + PII, không giới

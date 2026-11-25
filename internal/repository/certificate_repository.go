@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,12 +48,14 @@ func (r *CertificateRepository) GetCertificateByID(ctx context.Context, id uuid.
 	return &cert, nil
 }
 
+// GetCertificateByNumber tra theo số chứng chỉ KHÔNG phân biệt hoa/thường và bỏ khoảng trắng hai đầu (QA6-PG-05): số
+// được đọc từ bản PDF in (tiền tố hoa, phần hex thường) nên gõ lệch kiểu chữ rất dễ; cả hai vế đều hạ chữ thường.
 func (r *CertificateRepository) GetCertificateByNumber(ctx context.Context, number string) (*model.Certificate, error) {
 	var cert model.Certificate
 	err := r.db.WithContext(ctx).
 		Preload("User").
 		Preload("Course").
-		First(&cert, "certificate_number = ?", number).Error
+		First(&cert, "LOWER(certificate_number) = LOWER(?)", strings.TrimSpace(number)).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

@@ -248,7 +248,8 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 	pendingKey := constants.KeyRegisterOTP(req.Email)
 	pendingData, err := s.redisClient.Get(ctx, pendingKey).Result()
 	if err == redis.Nil {
-		return nil, errors.New("registration request not found or expired, please request again")
+		// QA6-PG-02 (C7): cùng sentinel với ResendRegisterOTP để handler trả 410 ERR_REGISTRATION_EXPIRED.
+		return nil, ErrRegistrationNotPending
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pending registration: %w", err)

@@ -566,6 +566,17 @@ func (s *ScheduleService) UpdateSession(ctx context.Context, id, actorID uuid.UU
 		return nil, err
 	}
 
+	// QA6 (round 3, M1): huỷ qua PUT cũng phải qua luật R4 như CancelSession (không huỷ buổi đã tới giờ bắt đầu) và ghi
+	// CancelledAt. Kiểm theo ngày/giờ ĐÃ LƯU, trước khi áp bất kỳ chỉnh sửa nào, để không né luật bằng cách vừa dời
+	// buổi sang tương lai vừa huỷ.
+	cancelling := req.Status != nil && model.ClassSessionStatus(*req.Status) == model.SessionCancelled && session.Status != model.SessionCancelled
+	cancelNow := time.Now()
+	if cancelling {
+		if err := requireSessionNotStarted(session, cancelNow); err != nil {
+			return nil, err
+		}
+	}
+
 	if req.Date != nil {
 		date, err := time.Parse("2006-01-02", *req.Date)
 		if err != nil {
@@ -586,6 +597,9 @@ func (s *ScheduleService) UpdateSession(ctx context.Context, id, actorID uuid.UU
 	wasCancelled := session.Status == model.SessionCancelled
 	if req.Status != nil {
 		session.Status = model.ClassSessionStatus(*req.Status)
+	}
+	if cancelling {
+		session.CancelledAt = &cancelNow
 	}
 	// B-10: chỉ kiểm giờ khi sửa ngày/giờ của buổi còn hiệu lực — đổi ghi chú hay huỷ buổi không bị
 	// chặn vì một buổi cũ đã lỡ trùng giờ từ trước. Buổi huỷ không chiếm giờ, nên khi mở lại (huỷ -> còn hiệu

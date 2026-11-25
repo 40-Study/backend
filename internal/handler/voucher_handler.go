@@ -27,10 +27,7 @@ func NewVoucherHandler(voucherService service.VoucherServiceInterface) *VoucherH
 func (h *VoucherHandler) CreateVoucher(c *fiber.Ctx) error {
 	var req dto.CreateVoucherRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_REQUEST",
-			"message": "Invalid request body",
-		})
+		return voucherInvalidBody(c, err)
 	}
 
 	// Chuẩn hoá mã TRƯỚC validate độ dài (xem dto.NormalizeVoucherCode).
@@ -39,12 +36,10 @@ func (h *VoucherHandler) CreateVoucher(c *fiber.Ctx) error {
 	// M-01 (audit 260909 vòng 2): DTO đã có validate tag đầy đủ (required/oneof/min/max)
 	// nhưng handler trước đây không gọi ValidateStruct — mọi tag đều vô tác dụng, user có
 	// thể tạo voucher discount_percent > 100, usage_limit âm, v.v.
-	if errs := utils.ValidateStruct(req); len(errs) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_VALIDATION",
-			"message": "Validation failed",
-			"errors":  errs,
-		})
+	errs := utils.ValidateStruct(req)
+	errs = append(errs, voucherWholeMoneyErrors(voucherCreateMoney(&req))...)
+	if len(errs) > 0 {
+		return voucherValidationFailed(c, errs)
 	}
 
 	voucher, err := h.voucherService.CreateVoucher(c.Context(), &req)
@@ -53,6 +48,13 @@ func (h *VoucherHandler) CreateVoucher(c *fiber.Ctx) error {
 			"code":    "ERR_INVALID_VOUCHER_CODE",
 			"message": err.Error(),
 		})
+	}
+	// QA6-A05 (C9): trùng mã/tên là xung đột (409) với mã riêng, không còn lẫn vào ERR_CREATE_VOUCHER chung.
+	if errors.Is(err, service.ErrVoucherCodeExists) {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"code": "ERR_VOUCHER_CODE_EXISTS", "message": err.Error()})
+	}
+	if errors.Is(err, service.ErrVoucherNameExists) {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"code": "ERR_VOUCHER_NAME_EXISTS", "message": err.Error()})
 	}
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -172,22 +174,21 @@ func (h *VoucherHandler) UpdateVoucher(c *fiber.Ctx) error {
 
 	var req dto.UpdateVoucherRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_REQUEST",
-			"message": "Invalid request body",
-		})
+		return voucherInvalidBody(c, err)
 	}
 
 	// M-01 (audit 260909 vòng 2): xem ghi chú ở CreateVoucher.
-	if errs := utils.ValidateStruct(req); len(errs) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_VALIDATION",
-			"message": "Validation failed",
-			"errors":  errs,
-		})
+	errs := utils.ValidateStruct(req)
+	errs = append(errs, voucherWholeMoneyErrors(voucherUpdateMoney(&req))...)
+	if len(errs) > 0 {
+		return voucherValidationFailed(c, errs)
 	}
 
 	voucher, err := h.voucherService.UpdateVoucher(c.Context(), voucherID, &req)
+	// QA6 review L4: đổi tên trùng là xung đột (409), cùng mã với lúc tạo.
+	if errors.Is(err, service.ErrVoucherNameExists) {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"code": "ERR_VOUCHER_NAME_EXISTS", "message": err.Error()})
+	}
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"code":    "ERR_UPDATE_VOUCHER",

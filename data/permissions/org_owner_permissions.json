@@ -1,23 +1,23 @@
 [
   {
     "name": "ORG_MEMBERS_MANAGE",
-    "description": "Mời giáo viên/học sinh vào tổ chức hoặc xóa họ khỏi tổ chức"
+    "description": "Mời giảng viên/học viên vào tổ chức hoặc xoá họ khỏi tổ chức"
   },
   {
     "name": "ORG_ROLES_MANAGE",
-    "description": "Tạo và phân quyền các vai trò nội bộ (VD: Trợ giảng, Quản lý lớp)"
+    "description": "Tạo và phân quyền các vai trò nội bộ (ví dụ: trợ giảng, quản lý lớp)"
   },
   {
     "name": "ORG_CATEGORIES_MANAGE",
-    "description": "Tạo, sửa, xóa các danh mục khóa học nội bộ của tổ chức"
+    "description": "Tạo, sửa, xoá các danh mục khoá học nội bộ của tổ chức"
   },
   {
     "name": "COURSES_APPROVE_OWN_ORG",
-    "description": "Duyệt các khóa học do giáo viên trong tổ chức tạo ra trước khi public"
+    "description": "Duyệt các khoá học do giảng viên trong tổ chức tạo ra trước khi công khai"
   },
   {
     "name": "COURSES_DELETE_ORG",
-    "description": "Quyền xóa hoặc lưu trữ các khóa học thuộc sở hữu của tổ chức"
+    "description": "Quyền xoá hoặc lưu trữ các khoá học thuộc sở hữu của tổ chức"
   },
   {
     "name": "REPORTS_VIEW_ORG",
@@ -25,6 +25,6 @@
   },
   {
     "name": "TRACKING_VIEW_ORG_STUDENTS",
-    "description": "Xem tiến độ học tập của toàn bộ học sinh thuộc tổ chức"
+    "description": "Xem tiến độ học tập của toàn bộ học viên thuộc tổ chức"
   }
 ]
