@@ -67,6 +67,9 @@ func (r *DiscussionRepository) GetPostByID(ctx context.Context, id uuid.UUID) (*
 	return &post, nil
 }
 
+// ForumCategoryGeneral: giá trị `?category=` cũng bao gồm bài không có category (xem ListForumPosts).
+const ForumCategoryGeneral = "general"
+
 func (r *DiscussionRepository) ListForumPosts(ctx context.Context, category string, page, pageSize int) ([]model.Discussion, int64, error) {
 	var posts []model.Discussion
 	var total int64
@@ -74,7 +77,13 @@ func (r *DiscussionRepository) ListForumPosts(ctx context.Context, category stri
 	query := r.db.WithContext(ctx).Model(&model.Discussion{}).
 		Where("lesson_id IS NULL AND parent_id IS NULL AND is_hidden = false")
 
-	if category != "" {
+	switch category {
+	case "":
+	case ForumCategoryGeneral:
+		// QA6 M3: chip "Chung" gom bài `general` VÀ bài chưa phân loại (NULL/rỗng); trước đây chỉ `= 'general'`
+		// nên số đếm của chip (tổng - các mục có tên) lệch với danh sách bấm vào.
+		query = query.Where("(category = ? OR category IS NULL OR category = '')", ForumCategoryGeneral)
+	default:
 		query = query.Where("category = ?", category)
 	}
 

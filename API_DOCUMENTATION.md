@@ -868,7 +868,7 @@ path/body field nào — chỉ thêm kiểm quyền.
 
 | Method | Path | Handler | Mô tả |
 |--------|------|---------|-------|
-| GET | `/api/discussions` | ListPosts | Lấy posts (public) |
+| GET | `/api/discussions` | ListPosts | Lấy posts (public) — `?category=` lọc theo chuyên mục; `category=general` gồm cả bài `general` và bài chưa phân loại (category NULL/rỗng), khớp số đếm chip "Chung" của web |
 | GET | `/api/discussions/:slug` | GetPostBySlug | Post theo slug |
 | POST | `/api/discussions` | CreatePost | Tạo post — nhận thêm `lesson_id` (optional, Phase 1 §5) |
 | GET | `/api/lessons/:lessonId/discussions` | ListByLesson | Hỏi đáp theo bài (Phase 1 §5) — `?page=&limit=`, cùng shape `ListPosts`, **yêu cầu đăng nhập (xem CAO-5 dưới)** |
