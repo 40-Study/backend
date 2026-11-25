@@ -242,7 +242,7 @@ func (r *UserOrganizationRoleRepository) FindByOrganizationID(ctx context.Contex
 		Preload("Granter").
 		Offset(offset).
 		Limit(pageSize).
-		Order("granted_at DESC").
+		Order("granted_at DESC, id ASC").
 		Find(&userOrgRoles).Error
 	if err != nil {
 		return nil, 0, err
