@@ -27,7 +27,7 @@ type ScheduleRepositoryInterface interface {
 	// ClassSession
 	CreateSession(ctx context.Context, session *model.ClassSession) error
 	GetSessionByID(ctx context.Context, id uuid.UUID) (*model.ClassSession, error)
-	GetSessionsByClassID(ctx context.Context, classID uuid.UUID, page, pageSize int) ([]model.ClassSession, int64, error)
+	GetSessionsByClassID(ctx context.Context, classID uuid.UUID, page, pageSize int, opts SessionListOptions) ([]model.ClassSession, int64, int, error)
 	GetSessionsByDateRange(ctx context.Context, classID uuid.UUID, startDate, endDate string) ([]model.ClassSession, error)
 	UpdateSession(ctx context.Context, session *model.ClassSession) error
 	DeleteSession(ctx context.Context, id uuid.UUID) error
@@ -136,22 +136,53 @@ func (r *ScheduleRepository) GetSessionByID(ctx context.Context, id uuid.UUID) (
 	return &session, nil
 }
 
-func (r *ScheduleRepository) GetSessionsByClassID(ctx context.Context, classID uuid.UUID, page, pageSize int) ([]model.ClassSession, int64, error) {
+// SessionListOptions (QA8 T06, C21): cách sắp xếp/chọn trang của danh sách buổi học một lớp. Mặc định (zero value) giữ nguyên
+// hành vi cũ: ngày tăng dần, đúng trang `page` được hỏi.
+type SessionListOptions struct {
+	Desc        bool // ngày giảm dần (buổi gần nhất trước)
+	AroundToday bool // bỏ qua `page`, trả trang chứa buổi đầu tiên không nằm trước hôm nay theo thứ tự đang chọn
+}
+
+// sessionListTimezone: hôm nay tính theo giờ Việt Nam, cùng múi giờ DSN và cột `date` của buổi học.
+const sessionListTimezone = "Asia/Ho_Chi_Minh"
+
+// GetSessionsByClassID trả (buổi học của trang, tổng số, trang thực sự trả). Trang thực trả khác `page` chỉ khi AroundToday.
+func (r *ScheduleRepository) GetSessionsByClassID(ctx context.Context, classID uuid.UUID, page, pageSize int, opts SessionListOptions) ([]model.ClassSession, int64, int, error) {
 	var sessions []model.ClassSession
 	var total int64
 
 	query := r.db.WithContext(ctx).Model(&model.ClassSession{}).Where("class_id = ?", classID)
 	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
-	offset := (page - 1) * pageSize
+	if opts.AroundToday {
+		// Số buổi đứng TRƯỚC mốc hôm nay theo thứ tự đang chọn = vị trí buổi đầu tiên không nằm trước hôm nay.
+		cmp := "date < (now() AT TIME ZONE ?)::date"
+		if opts.Desc {
+			cmp = "date > (now() AT TIME ZONE ?)::date"
+		}
+		var before int64
+		if err := r.db.WithContext(ctx).Model(&model.ClassSession{}).
+			Where("class_id = ?", classID).Where(cmp, sessionListTimezone).Count(&before).Error; err != nil {
+			return nil, 0, 0, err
+		}
+		page = int(before)/pageSize + 1
+		if last := int((total + int64(pageSize) - 1) / int64(pageSize)); last >= 1 && page > last {
+			page = last // mọi buổi đã qua: trang cuối
+		}
+	}
+
+	order := "date ASC, start_time ASC"
+	if opts.Desc {
+		order = "date DESC, start_time DESC"
+	}
 	err := query.
-		Order("date ASC, start_time ASC").
-		Offset(offset).
+		Order(order).
+		Offset((page - 1) * pageSize).
 		Limit(pageSize).
 		Find(&sessions).Error
-	return sessions, total, err
+	return sessions, total, page, err
 }
 
 func (r *ScheduleRepository) GetSessionsByDateRange(ctx context.Context, classID uuid.UUID, startDate, endDate string) ([]model.ClassSession, error) {

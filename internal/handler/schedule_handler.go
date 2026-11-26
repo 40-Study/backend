@@ -331,13 +331,17 @@ func (h *ScheduleHandler) GetSessionsByClass(c *fiber.Ctx) error {
 
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 20)
+	opts, optErrs := sessionListOptions(c.Query("order"), c.Query("around"))
+	if len(optErrs) > 0 {
+		return fieldValidationFailed(c, optErrs...)
+	}
 
 	actor, isAdmin, ok := h.scheduleActor(c)
 	if !ok {
 		return scheduleUnauthorized(c)
 	}
 
-	sessions, err := h.service.GetSessionsByClass(c.Context(), classID, actor, isAdmin, page, pageSize)
+	sessions, err := h.service.GetSessionsByClass(c.Context(), classID, actor, isAdmin, page, pageSize, opts)
 	if err != nil {
 		return scheduleFail(c, err, "Failed to retrieve sessions", fiber.StatusInternalServerError)
 	}

@@ -145,7 +145,7 @@ func TestS5_Schedule_DocLichBuoiVaThoiKhoaBieu(t *testing.T) {
 	for _, a := range s5Actors(e) {
 		list, err := svc.GetSchedulesByClass(ctx, e.class.ID, a.user.ID, a.isAdmin)
 		one, err2 := svc.GetScheduleByID(ctx, sch.ID, a.user.ID, a.isAdmin)
-		sl, err3 := svc.GetSessionsByClass(ctx, e.class.ID, a.user.ID, a.isAdmin, 1, 20)
+		sl, err3 := svc.GetSessionsByClass(ctx, e.class.ID, a.user.ID, a.isAdmin, 1, 20, repository.SessionListOptions{})
 		so, err4 := svc.GetSessionByID(ctx, ses.ID, a.user.ID, a.isAdmin)
 		tt, err5 := svc.GetClassTimetable(ctx, e.class.ID, a.user.ID, a.isAdmin)
 		if a.member {

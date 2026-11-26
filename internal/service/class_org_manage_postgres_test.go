@@ -109,7 +109,7 @@ func TestR5_OrgOwner_QuanLyLopCuaToChuc_Postgres(t *testing.T) {
 				check("GET học viên", err)
 				_, err = e.classes.GetTeachersByClass(ctx, c.ID, a.user.ID, false, 1, 20)
 				check("GET giảng viên", err)
-				_, err = e.schedule.GetSessionsByClass(ctx, c.ID, a.user.ID, false, 1, 20)
+				_, err = e.schedule.GetSessionsByClass(ctx, c.ID, a.user.ID, false, 1, 20, repository.SessionListOptions{})
 				check("GET buổi học", err)
 				_, err = e.schedule.GetClassTimetable(ctx, c.ID, a.user.ID, false)
 				check("GET thời khoá biểu", err)

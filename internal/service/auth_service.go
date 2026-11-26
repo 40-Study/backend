@@ -68,6 +68,7 @@ type AuthService struct {
 	redisClient        *redis.Client
 
 	parentInvitationSvc ParentInvitationServiceInterface
+	teacherMoney        TeacherMoneyReader
 }
 
 // Sentinel lỗi của luồng chọn/đổi tổ chức. Handler dùng errors.Is để map sang đúng HTTP status
@@ -118,6 +119,11 @@ func NewAuthService(
 
 func (s *AuthService) SetParentInvitationService(svc ParentInvitationServiceInterface) {
 	s.parentInvitationSvc = svc
+}
+
+// SetTeacherMoneyReader inject nguồn số dư ví giảng viên cho DeleteAccount (QA8 T10, C22).
+func (s *AuthService) SetTeacherMoneyReader(r TeacherMoneyReader) {
+	s.teacherMoney = r
 }
 
 // ==================== LOGIN ATTEMPT TRACKING ====================
@@ -177,6 +183,8 @@ type PendingRegistration struct {
 const registerOTPTTL = 5 * time.Minute
 
 func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterRequestDto) error {
+	// QA8 PG-01 (C18): email chuẩn hoá (trim + chữ thường) ngay từ đầu: khoá Redis, muối OTP và email lưu đều dùng bản này.
+	req.Email = utils.NormalizeEmail(req.Email)
 	existingUser, err := s.userRepo.FindUserByEmail(ctx, req.Email)
 	if err != nil {
 		return fmt.Errorf("failed to check email: %w", err)
@@ -192,6 +200,16 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 		// User đã xóa tài khoản → cho phép tái kích hoạt
 		isReactivation = true
 		existingUserID = existingUser.ID.String()
+	}
+
+	// QA8 PG-02 (C19): tên đăng nhập duy nhất không phân biệt hoa thường và không dùng tên dành riêng.
+	// Tái kích hoạt được giữ lại đúng tên cũ của chính tài khoản đó.
+	var ownUserName string
+	if existingUser != nil {
+		ownUserName = existingUser.UserName
+	}
+	if err := s.ensureUserNameAvailable(ctx, req.UserName, ownUserName); err != nil {
+		return err
 	}
 
 	// ===== 5. Hash password =====
@@ -244,6 +262,7 @@ func (s *AuthService) RequestRegister(ctx context.Context, req dto.RegisterReque
 }
 
 func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto) (*dto.RegisterResponseDto, error) {
+	req.Email = utils.NormalizeEmail(req.Email)
 	// ===== 2. Get pending registration from Redis =====
 	pendingKey := constants.KeyRegisterOTP(req.Email)
 	pendingData, err := s.redisClient.Get(ctx, pendingKey).Result()
@@ -300,6 +319,9 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 			return nil, errors.New("existing user not found")
 		}
 
+		if err := s.ensureUserNameAvailable(ctx, pending.UserName, user.UserName); err != nil {
+			return nil, err
+		}
 		// Update user info với data mới
 		user.PasswordHash = pending.PasswordHash
 		user.UserName = pending.UserName
@@ -311,6 +333,10 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 			return nil, fmt.Errorf("failed to reactivate user: %w", err)
 		}
 	} else {
+		// Hai người đăng ký cùng tên gần như đồng thời đều qua bước xin OTP: người xác thực sau gặp tên đã bị lấy (QA8 PG-02).
+		if err := s.ensureUserNameAvailable(ctx, pending.UserName, ""); err != nil {
+			return nil, err
+		}
 		// Tạo user mới
 		user = &model.User{
 			Email:        pending.Email,
@@ -381,6 +407,7 @@ func (s *AuthService) Login(
 ) (*dto.LoginResponseDto, error) {
 
 	// ===== 1. Check if account is locked due to failed attempts =====
+	req.Email = utils.NormalizeEmail(req.Email)
 	lockKey := constants.KeyLoginLocked(req.Email)
 	if locked, _ := s.redisClient.Exists(ctx, lockKey).Result(); locked > 0 {
 		ttl, _ := s.redisClient.TTL(ctx, lockKey).Result()
@@ -1200,6 +1227,17 @@ func (s *AuthService) UpdateMe(ctx context.Context, userID uuid.UUID, req dto.Up
 	updates := make(map[string]interface{})
 
 	if req.Username != nil {
+		// QA8 PG-02 (C19): tên mới không được trùng (không phân biệt hoa thường) hay dành riêng; giữ nguyên tên hiện tại thì qua.
+		current, err := s.userRepo.FindUserByID(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user: %w", err)
+		}
+		if current == nil {
+			return nil, errors.New("user not found")
+		}
+		if err := s.ensureUserNameAvailable(ctx, *req.Username, current.UserName); err != nil {
+			return nil, err
+		}
 		updates["user_name"] = *req.Username
 	}
 
@@ -1384,6 +1422,7 @@ const (
 )
 
 func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) error {
+	email = utils.NormalizeEmail(email)
 	// ===== 1. Find user by email (don't reveal if user exists) =====
 	user, err := s.userRepo.FindUserByEmail(ctx, email)
 	if err != nil {
@@ -1436,6 +1475,7 @@ func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) er
 }
 
 func (s *AuthService) ResetPassword(ctx context.Context, req dto.ResetPasswordRequestDto) error {
+	req.Email = utils.NormalizeEmail(req.Email)
 	// ===== 1. Find user by email =====
 	user, err := s.userRepo.FindUserByEmail(ctx, req.Email)
 	if err != nil {

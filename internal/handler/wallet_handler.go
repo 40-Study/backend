@@ -115,18 +115,13 @@ func (h *WalletHandler) UpdateBankInfo(c *fiber.Ctx) error {
 		})
 	}
 
-	if req.BankName == "" || req.BankAccountNumber == "" || req.BankAccountName == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_VALIDATION",
-			"message": "bank_name, bank_account_number, and bank_account_name are required",
-		})
+	normalizeBankInfo(&req)
+	if errs := bankInfoErrors(req); len(errs) > 0 {
+		return fieldValidationFailed(c, errs...)
 	}
 
 	if err := h.walletService.UpdateBankInfo(c.Context(), userID, req); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"code":    "ERR_UPDATE_BANK_INFO",
-			"message": err.Error(),
-		})
+		return RespondServiceError(c, err, "Không lưu được tài khoản nhận tiền. Vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{"message": "Bank info updated"})

@@ -33,6 +33,21 @@ func RespondServiceError(c *fiber.Ctx, err error, genericMessage string) error {
 	})
 }
 
+// respondIfKnownError: lỗi nghiệp vụ đã biết (apperr.KnownError) -> trả đúng status/code/message của nó và báo handled=true;
+// mọi lỗi khác trả handled=false để handler giữ nguyên cách trả cũ (nhánh lỗi chung của nó). Dùng cho handler auth, nơi các
+// lỗi cũ vẫn có dạng {message, error} mà web đang đọc nên chưa thể chuyển hết sang RespondServiceError.
+func respondIfKnownError(c *fiber.Ctx, err error) (handled bool, sendErr error) {
+	var known *apperr.KnownError
+	if !errors.As(err, &known) {
+		return false, nil
+	}
+	body := fiber.Map{"message": known.Message}
+	if known.Code != "" {
+		body["code"] = known.Code
+	}
+	return true, c.Status(known.Status).JSON(body)
+}
+
 // invalidIDResponse: 400 {code: ERR_INVALID_ID, message} cho id trên URL/query sai định dạng; message tiếng Việt nêu đối tượng,
 // không bao giờ chứa lỗi parse của Go (vd "invalid UUID length: 14").
 func invalidIDResponse(c *fiber.Ctx, message string) error {

@@ -312,6 +312,7 @@ func InitServices(resources *Resources, repos *Repositories, notifier *socket.No
 
 	// Inject vào AuthService và OAuthService để gọi LinkInvitationToNewUser khi register
 	authSvc.SetParentInvitationService(parentInvitationSvc)
+	authSvc.SetTeacherMoneyReader(repos.Wallet) // DeleteAccount chặn khi ví giảng viên còn tiền (QA8 T10)
 
 	oauthSvc := service.NewOAuthService(
 		resources.Config,

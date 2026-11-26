@@ -39,7 +39,11 @@ func (h *AuthHandler) DeleteAccount(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.authService.DeleteAccount(c.Context(), userID, req); err != nil {
+	err := h.authService.DeleteAccount(c.Context(), userID, req)
+	if handled, sendErr := respondIfKnownError(c, err); handled {
+		return sendErr
+	}
+	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": err.Error(),
 		})

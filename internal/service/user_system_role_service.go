@@ -7,10 +7,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"study.com/v1/internal/apperr"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 )
+
+// ErrSystemRoleNotAssignable: vai trò gán theo tổ chức (xem model.OrgScopedSystemRoleNames) bị gán như vai hệ thống.
+var ErrSystemRoleNotAssignable = apperr.BadRequestCode("ERR_ROLE_NOT_ASSIGNABLE", "Vai trò Chủ tổ chức được gán trong từng tổ chức, không gán được như vai trò hệ thống.")
 
 type UserSystemRoleServiceInterface interface {
 	GetMySystemRoles(ctx context.Context, userID uuid.UUID) ([]dto.UserSystemRoleResponseDTO, error)
@@ -85,6 +89,12 @@ func (s *UserSystemRoleService) AssignSystemRolesToUser(
 	for _, role := range validRoles {
 		if role.Status != "active" {
 			return nil, errors.New("system role is not active: " + role.Name)
+		}
+	}
+	// QA8 A04 (C23): vai gán theo tổ chức không gán được như vai hệ thống.
+	for _, role := range validRoles {
+		if model.IsOrgScopedSystemRole(role.Name) {
+			return nil, ErrSystemRoleNotAssignable
 		}
 	}
 

@@ -84,6 +84,10 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 		// Không đặt cờ AuthCredentialRejected: chưa hề so sánh OTP nên không tính vào bộ đếm khoá.
 		return c.Status(fiber.StatusGone).JSON(fiber.Map{"code": "ERR_REGISTRATION_EXPIRED", "message": err.Error()})
 	}
+	if handled, sendErr := respondIfKnownError(c, err); handled {
+		// Tên đăng nhập bị người khác lấy trong lúc chờ OTP (QA8 PG-02): lỗi nghiệp vụ, không tính vào bộ đếm khoá.
+		return sendErr
+	}
 	if err != nil {
 		// Review vòng 4 (PR #69): request đã qua ValidateStruct (otp đủ 6 số) — lỗi ở đây là
 		// service thực sự so sánh OTP thật và từ chối (sai mã/hết hạn/không có phiên chờ), không
@@ -128,6 +132,9 @@ func (h *AuthHandler) RequestRegister(c *fiber.Ctx) error {
 	}
 
 	err := h.authService.RequestRegister(c.Context(), req)
+	if handled, sendErr := respondIfKnownError(c, err); handled {
+		return sendErr
+	}
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Request register failed",
@@ -487,6 +494,9 @@ func (h *AuthHandler) UpdateMe(c *fiber.Ctx) error {
 
 	// ===== 4. Call service =====
 	user, err := h.authService.UpdateMe(c.Context(), uid, req)
+	if handled, sendErr := respondIfKnownError(c, err); handled {
+		return sendErr
+	}
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Update user info failed",

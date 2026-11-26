@@ -67,13 +67,18 @@ func NewUserRepository(db *gorm.DB) *UserRepository {
 	return &UserRepository{db: db}
 }
 
+// CreateUser luôn lưu email đã chuẩn hoá (trim + chữ thường): mọi đường tạo tài khoản (đăng ký, OAuth) đi qua đây nên không
+// có đường nào ghi được "Parent1@Demo.com" bên cạnh "parent1@demo.com" (QA8 PG-01, C18).
 func (r *UserRepository) CreateUser(ctx context.Context, user *model.User) error {
+	user.Email = utils.NormalizeEmail(user.Email)
 	return r.db.WithContext(ctx).Create(user).Error
 }
 
+// FindUserByEmail khớp email KHÔNG phân biệt hoa thường (QA8 PG-01, C18): lower(email) = <email đã chuẩn hoá>, khớp index
+// uq_users_email_ci. Hàng cũ lưu chữ hoa vẫn tìm thấy.
 func (r *UserRepository) FindUserByEmail(ctx context.Context, email string) (*model.User, error) {
 	var user model.User
-	err := r.db.WithContext(ctx).Where("email = ?", email).First(&user).Error
+	err := r.db.WithContext(ctx).Where("lower(email) = ?", utils.NormalizeEmail(email)).First(&user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

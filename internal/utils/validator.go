@@ -80,6 +80,10 @@ func ValidateStruct(s interface{}) []ValidationError {
 func getErrorMessage(err validator.FieldError) string {
 	field := toSnakeCase(err.Field())
 
+	if msg, ok := vietnameseFieldMessage(field, err); ok {
+		return msg
+	}
+
 	switch err.Tag() {
 	case "required":
 		return field + " is required"
@@ -125,6 +129,30 @@ func getErrorMessage(err validator.FieldError) string {
 	default:
 		return field + " is invalid"
 	}
+}
+
+// vietnameseFieldLabels: trường người dùng tự gõ ở form có lỗi hiện thẳng cho họ (QA8 PG-07), nên message của riêng các trường
+// này là tiếng Việt, nêu đúng giới hạn. Trường khác giữ câu tiếng Anh cũ (nhiều client/test đang khớp câu đó). Thêm trường:
+// thêm một dòng ở đây.
+var vietnameseFieldLabels = map[string]string{
+	"full_name": "Họ và tên",
+}
+
+// vietnameseFieldMessage trả câu tiếng Việt cho required/min/max của trường có nhãn ở vietnameseFieldLabels.
+func vietnameseFieldMessage(field string, err validator.FieldError) (string, bool) {
+	label, ok := vietnameseFieldLabels[field]
+	if !ok {
+		return "", false
+	}
+	switch err.Tag() {
+	case "required":
+		return label + " không được để trống.", true
+	case "min":
+		return label + " tối thiểu " + err.Param() + " ký tự.", true
+	case "max":
+		return label + " tối đa " + err.Param() + " ký tự.", true
+	}
+	return "", false
 }
 
 // sizeBound dựng vế sau của thông báo min/max theo kiểu dữ liệu: "characters" chỉ đúng với chuỗi.

@@ -54,8 +54,32 @@ func NewVoucherRepository(db *gorm.DB) *VoucherRepository {
 }
 
 // CreateVoucher - Create new voucher
+// CreateVoucher (QA8 A01): GORM thay giá trị zero `false` của cột có tag `default:true` bằng default của cột khi INSERT, nên
+// voucher tạo với is_active=false (hoặc accept_all_payment_methods=false) vẫn thành bật và học viên dùng được mã ngay. Insert
+// bằng default rồi ghi lại đúng các cờ `false` đã định trong cùng một transaction (bỏ tag default sẽ đổi default của cột cho
+// seed/INSERT thô; Select("*") thì chèn cả id zero). Cờ đọc từ `voucher` TRƯỚC khi Create vì GORM ghi default ngược vào struct.
 func (r *VoucherRepository) CreateVoucher(ctx context.Context, voucher *model.Voucher) error {
-	return r.db.WithContext(ctx).Create(voucher).Error
+	wantActive, wantAllMethods := voucher.IsActive, voucher.AcceptAllPaymentMethods
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(voucher).Error; err != nil {
+			return err
+		}
+		fix := map[string]interface{}{}
+		if !wantActive {
+			fix["is_active"] = false
+		}
+		if !wantAllMethods {
+			fix["accept_all_payment_methods"] = false
+		}
+		if len(fix) == 0 {
+			return nil
+		}
+		if err := tx.Model(&model.Voucher{}).Where("id = ?", voucher.ID).Updates(fix).Error; err != nil {
+			return err
+		}
+		voucher.IsActive, voucher.AcceptAllPaymentMethods = wantActive, wantAllMethods
+		return nil
+	})
 }
 
 // IncrementUsedCount (item 24/M-07, review web + review vòng 1): tăng used_count một cách an

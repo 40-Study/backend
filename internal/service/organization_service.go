@@ -7,11 +7,15 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"study.com/v1/internal/apperr"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/utils"
 )
+
+// ErrOrgNameExists (QA8): tên tổ chức đã dùng (không phân biệt hoa thường). Mã ổn định để web hiện dưới ô tên.
+var ErrOrgNameExists = apperr.ConflictCode("ERR_ORG_NAME_EXISTS", "Tên tổ chức đã tồn tại. Vui lòng chọn tên khác.")
 
 type OrganizationServiceInterface interface {
 	CreateOrganization(ctx context.Context, creatorUserID uuid.UUID, req dto.CreateOrganizationDTO) (*dto.OrganizationResponseDTO, error)
@@ -49,7 +53,7 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, creatorUse
 		return nil, err
 	}
 	if existing != nil {
-		return nil, errors.New("organization with this name already exists")
+		return nil, ErrOrgNameExists
 	}
 
 	org := &model.Organization{
@@ -87,6 +91,9 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, creatorUse
 		return tx.Create(uor).Error
 	})
 	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrOrgNameExists // hai request đồng thời cùng tên
+		}
 		return nil, err
 	}
 
@@ -146,7 +153,7 @@ func (s *OrganizationService) UpdateOrganization(ctx context.Context, id uuid.UU
 			return nil, err
 		}
 		if existing != nil && existing.ID != id {
-			return nil, errors.New("organization with this name already exists")
+			return nil, ErrOrgNameExists
 		}
 		org.Name = *req.Name
 	}
@@ -157,6 +164,9 @@ func (s *OrganizationService) UpdateOrganization(ctx context.Context, id uuid.UU
 	}
 
 	if err := s.repo.UpdateOrganization(ctx, org); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrOrgNameExists
+		}
 		return nil, err
 	}
 
