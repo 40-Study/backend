@@ -150,6 +150,9 @@ type SessionAttendanceResponseDTO struct {
 	// (nơi buổi học được preload); các endpoint điểm danh khác để vắng.
 	ClassName         string     `json:"class_name,omitempty"`
 	SessionTitle      string     `json:"session_title,omitempty"`
+	// SessionStartTime (QA7-S7-01, C15): giờ bắt đầu theo lịch của buổi (RFC3339, múi giờ Việt Nam), chỉ điền ở GET /me/attendances.
+	// Cột "Thời gian" của học viên là lúc BUỔI HỌC diễn ra, không phải lúc giáo viên ghi điểm danh (created_at).
+	SessionStartTime  *time.Time `json:"session_start_time,omitempty"`
 	Status            string     `json:"status"`
 	CheckInTime       *time.Time `json:"check_in_time,omitempty"`
 	CheckOutTime      *time.Time `json:"check_out_time,omitempty"`

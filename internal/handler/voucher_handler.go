@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -32,6 +33,8 @@ func (h *VoucherHandler) CreateVoucher(c *fiber.Ctx) error {
 
 	// Chuẩn hoá mã TRƯỚC validate độ dài (xem dto.NormalizeVoucherCode).
 	req.Code = dto.NormalizeVoucherCode(req.Code)
+	// QA7-A03: tên cũng cắt khoảng trắng hai đầu trước validate: "   " thành rỗng và bị `required` chặn, " ab " không qua min=3.
+	req.Name = strings.TrimSpace(req.Name)
 
 	// M-01 (audit 260909 vòng 2): DTO đã có validate tag đầy đủ (required/oneof/min/max)
 	// nhưng handler trước đây không gọi ValidateStruct — mọi tag đều vô tác dụng, user có
@@ -57,10 +60,7 @@ func (h *VoucherHandler) CreateVoucher(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"code": "ERR_VOUCHER_NAME_EXISTS", "message": err.Error()})
 	}
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_CREATE_VOUCHER",
-			"message": err.Error(),
-		})
+		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_CREATE_VOUCHER", "Không tạo được voucher, vui lòng thử lại.")
 	}
 
 	// Id nằm trong response chứ không ở URL: đặt đích cho middleware Audit.
@@ -73,18 +73,12 @@ func (h *VoucherHandler) CreateVoucher(c *fiber.Ctx) error {
 func (h *VoucherHandler) GetVoucher(c *fiber.Ctx) error {
 	voucherID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_ID",
-			"message": "Invalid voucher ID",
-		})
+		return voucherInvalidID(c)
 	}
 
 	voucher, err := h.voucherService.GetVoucherByID(c.Context(), voucherID)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"code":    "ERR_NOT_FOUND",
-			"message": "Voucher not found",
-		})
+		return voucherNotFound(c)
 	}
 
 	return c.JSON(voucher)
@@ -108,7 +102,7 @@ func (h *VoucherHandler) GetVoucherByCode(c *fiber.Ctx) error {
 	if code == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"code":    "ERR_MISSING_CODE",
-			"message": "Voucher code is required",
+			"message": "Vui lòng nhập mã voucher.",
 		})
 	}
 
@@ -121,10 +115,7 @@ func (h *VoucherHandler) GetVoucherByCode(c *fiber.Ctx) error {
 		if writeVoucherFirstOrderOnly(c, err) {
 			return nil
 		}
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"code":    "ERR_NOT_FOUND",
-			"message": "Voucher not found",
-		})
+		return voucherNotFound(c)
 	}
 
 	return c.JSON(voucher)
@@ -146,10 +137,7 @@ func (h *VoucherHandler) GetAllVouchers(c *fiber.Ctx) error {
 
 	vouchers, total, err := h.voucherService.GetAllVouchers(c.Context(), req)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"code":    "ERR_GET_VOUCHERS",
-			"message": err.Error(),
-		})
+		return voucherActionFailed(c, err, fiber.StatusInternalServerError, "ERR_GET_VOUCHERS", "Không tải được danh sách voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
@@ -166,15 +154,18 @@ func (h *VoucherHandler) GetAllVouchers(c *fiber.Ctx) error {
 func (h *VoucherHandler) UpdateVoucher(c *fiber.Ctx) error {
 	voucherID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_ID",
-			"message": "Invalid voucher ID",
-		})
+		return voucherInvalidID(c)
 	}
 
 	var req dto.UpdateVoucherRequest
 	if err := c.BodyParser(&req); err != nil {
 		return voucherInvalidBody(c, err)
+	}
+
+	// QA7-A03: cắt khoảng trắng hai đầu của tên trước validate (xem CreateVoucher).
+	if req.Name != nil {
+		trimmed := strings.TrimSpace(*req.Name)
+		req.Name = &trimmed
 	}
 
 	// M-01 (audit 260909 vòng 2): xem ghi chú ở CreateVoucher.
@@ -190,10 +181,7 @@ func (h *VoucherHandler) UpdateVoucher(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"code": "ERR_VOUCHER_NAME_EXISTS", "message": err.Error()})
 	}
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_UPDATE_VOUCHER",
-			"message": err.Error(),
-		})
+		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_UPDATE_VOUCHER", "Không cập nhật được voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(voucher)
@@ -203,22 +191,16 @@ func (h *VoucherHandler) UpdateVoucher(c *fiber.Ctx) error {
 func (h *VoucherHandler) DeleteVoucher(c *fiber.Ctx) error {
 	voucherID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_ID",
-			"message": "Invalid voucher ID",
-		})
+		return voucherInvalidID(c)
 	}
 
 	err = h.voucherService.DeleteVoucher(c.Context(), voucherID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_DELETE_VOUCHER",
-			"message": err.Error(),
-		})
+		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_DELETE_VOUCHER", "Không xoá được voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
-		"message": "Voucher deleted successfully",
+		"message": "Đã xoá voucher.",
 	})
 }
 
@@ -226,22 +208,16 @@ func (h *VoucherHandler) DeleteVoucher(c *fiber.Ctx) error {
 func (h *VoucherHandler) RestoreVoucher(c *fiber.Ctx) error {
 	voucherID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_ID",
-			"message": "Invalid voucher ID",
-		})
+		return voucherInvalidID(c)
 	}
 
 	err = h.voucherService.RestoreVoucher(c.Context(), voucherID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_RESTORE_VOUCHER",
-			"message": err.Error(),
-		})
+		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_RESTORE_VOUCHER", "Không khôi phục được voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
-		"message": "Voucher restored successfully",
+		"message": "Đã khôi phục voucher.",
 	})
 }
 
@@ -249,22 +225,16 @@ func (h *VoucherHandler) RestoreVoucher(c *fiber.Ctx) error {
 func (h *VoucherHandler) ActivateVoucher(c *fiber.Ctx) error {
 	voucherID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_ID",
-			"message": "Invalid voucher ID",
-		})
+		return voucherInvalidID(c)
 	}
 
 	err = h.voucherService.ActivateVoucher(c.Context(), voucherID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_ACTIVATE_VOUCHER",
-			"message": err.Error(),
-		})
+		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_ACTIVATE_VOUCHER", "Không bật được voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
-		"message": "Voucher activated successfully",
+		"message": "Đã bật voucher.",
 	})
 }
 
@@ -272,22 +242,16 @@ func (h *VoucherHandler) ActivateVoucher(c *fiber.Ctx) error {
 func (h *VoucherHandler) DeactivateVoucher(c *fiber.Ctx) error {
 	voucherID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_ID",
-			"message": "Invalid voucher ID",
-		})
+		return voucherInvalidID(c)
 	}
 
 	err = h.voucherService.DeactivateVoucher(c.Context(), voucherID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_DEACTIVATE_VOUCHER",
-			"message": err.Error(),
-		})
+		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_DEACTIVATE_VOUCHER", "Không tắt được voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
-		"message": "Voucher deactivated successfully",
+		"message": "Đã tắt voucher.",
 	})
 }
 
@@ -305,25 +269,19 @@ func (h *VoucherHandler) SaveVoucher(c *fiber.Ctx) error {
 	if !ok {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
-			"message": "Unauthorized",
+			"message": "Vui lòng đăng nhập để tiếp tục.",
 		})
 	}
 
 	voucherID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_ID",
-			"message": "Invalid voucher ID",
-		})
+		return voucherInvalidID(c)
 	}
 
 	// Get voucher by ID to get code
 	voucher, err := h.voucherService.GetVoucherByID(c.Context(), voucherID)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"code":    "ERR_NOT_FOUND",
-			"message": "Voucher not found",
-		})
+		return voucherNotFound(c)
 	}
 
 	var req dto.SaveVoucherRequest
@@ -344,16 +302,10 @@ func (h *VoucherHandler) SaveVoucher(c *fiber.Ctx) error {
 	if errors.Is(err, repository.ErrVoucherNotFound) {
 		// Voucher holders_only mà user chưa giữ: cùng 404 với voucher không tồn tại (đã trả ở bước
 		// tra theo ID phía trên), không lộ mã có thật.
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"code":    "ERR_NOT_FOUND",
-			"message": "Voucher not found",
-		})
+		return voucherNotFound(c)
 	}
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_SAVE_VOUCHER",
-			"message": err.Error(),
-		})
+		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_SAVE_VOUCHER", "Không lưu được voucher, vui lòng thử lại.")
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(savedVoucher)
@@ -368,16 +320,13 @@ func (h *VoucherHandler) UnsaveVoucher(c *fiber.Ctx) error {
 	if !ok {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
-			"message": "Unauthorized",
+			"message": "Vui lòng đăng nhập để tiếp tục.",
 		})
 	}
 
 	voucherID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_ID",
-			"message": "Invalid voucher ID",
-		})
+		return voucherInvalidID(c)
 	}
 
 	err = h.voucherService.UnsaveVoucher(c.Context(), userID, voucherID)
@@ -385,7 +334,7 @@ func (h *VoucherHandler) UnsaveVoucher(c *fiber.Ctx) error {
 		// Không giữ voucher này (hoặc voucher không tồn tại): 404 như nhau để không lộ voucher dành riêng qua UUID.
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"code":    "ERR_VOUCHER_NOT_FOUND",
-			"message": "Voucher not found",
+			"message": voucherNotFoundMessage,
 		})
 	}
 	if errors.Is(err, service.ErrHoldersOnlyVoucherNotRemovable) {
@@ -393,18 +342,15 @@ func (h *VoucherHandler) UnsaveVoucher(c *fiber.Ctx) error {
 		// hiện câu giải thích thay vì lỗi chung.
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"code":    "VOUCHER_HOLDERS_ONLY_NOT_REMOVABLE",
-			"message": "This voucher was granted to you and cannot be removed",
+			"message": "Voucher này được cấp riêng cho bạn nên không thể bỏ lưu.",
 		})
 	}
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_UNSAVE_VOUCHER",
-			"message": err.Error(),
-		})
+		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_UNSAVE_VOUCHER", "Không bỏ lưu được voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
-		"message": "Voucher unsaved successfully",
+		"message": "Đã bỏ lưu voucher.",
 	})
 }
 
@@ -417,7 +363,7 @@ func (h *VoucherHandler) GetUserSavedVouchers(c *fiber.Ctx) error {
 	if !ok {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"code":    "ERR_UNAUTHORIZED",
-			"message": "Unauthorized",
+			"message": "Vui lòng đăng nhập để tiếp tục.",
 		})
 	}
 
@@ -426,10 +372,7 @@ func (h *VoucherHandler) GetUserSavedVouchers(c *fiber.Ctx) error {
 
 	vouchers, total, err := h.voucherService.GetUserSavedVouchers(c.Context(), userID, limit, offset)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"code":    "ERR_GET_SAVED_VOUCHERS",
-			"message": err.Error(),
-		})
+		return voucherActionFailed(c, err, fiber.StatusInternalServerError, "ERR_GET_SAVED_VOUCHERS", "Không tải được voucher đã lưu, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
@@ -447,10 +390,7 @@ func (h *VoucherHandler) GetPublicVouchers(c *fiber.Ctx) error {
 
 	vouchers, total, err := h.voucherService.GetPublicVouchers(c.Context(), limit, offset)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"code":    "ERR_GET_PUBLIC_VOUCHERS",
-			"message": err.Error(),
-		})
+		return voucherActionFailed(c, err, fiber.StatusInternalServerError, "ERR_GET_PUBLIC_VOUCHERS", "Không tải được danh sách voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
@@ -465,18 +405,12 @@ func (h *VoucherHandler) GetPublicVouchers(c *fiber.Ctx) error {
 func (h *VoucherHandler) GetVoucherStats(c *fiber.Ctx) error {
 	voucherID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code":    "ERR_INVALID_ID",
-			"message": "Invalid voucher ID",
-		})
+		return voucherInvalidID(c)
 	}
 
 	stats, err := h.voucherService.GetVoucherStats(c.Context(), voucherID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"code":    "ERR_GET_STATS",
-			"message": err.Error(),
-		})
+		return voucherActionFailed(c, err, fiber.StatusInternalServerError, "ERR_GET_STATS", "Không tải được thống kê voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(stats)

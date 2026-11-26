@@ -12,6 +12,14 @@ import (
 	"study.com/v1/internal/utils"
 )
 
+const courseNotFoundMessage = "Không tìm thấy khoá học."
+
+// courseBodyFieldMessages: trường khoá học có kiểu sai khi giải mã JSON -> câu tiếng Việt nêu đúng trường (C13).
+var courseBodyFieldMessages = map[string]string{
+	"price":          "Giá bán phải là số nguyên đồng (VND không có phần thập phân).",
+	"discount_price": "Giá khuyến mãi phải là số nguyên đồng (VND không có phần thập phân).",
+}
+
 type CourseHandler struct {
 	service     service.CourseServiceInterface
 	permChecker *middleware.PermissionChecker
@@ -24,10 +32,7 @@ func NewCourseHandler(service service.CourseServiceInterface, permChecker *middl
 func (h *CourseHandler) CreateCourse(c *fiber.Ctx) error {
 	var req dto.CreateCourseDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
+		return invalidBodyResponse(c, err, courseBodyFieldMessages)
 	}
 
 	// Override instructor_id with authenticated user's ID (don't trust client)
@@ -73,15 +78,17 @@ func (h *CourseHandler) CreateCourse(c *fiber.Ctx) error {
 		})
 	}
 
+	// QA7-T02/T03 (C13): giá là số nguyên đồng trong 0..1.000.000.000, chặn TRƯỚC khi chạm DB (numeric overflow lộ lỗi SQL).
+	if errs := append(courseMoneyError("price", &req.Price), courseMoneyError("discount_price", req.DiscountPrice)...); len(errs) > 0 {
+		return fieldValidationFailed(c, errs...)
+	}
+
 	course, err := h.service.CreateCourse(c.Context(), req)
 	if err != nil {
 		if writeDiscountPriceInvalid(c, err) || writePaidCoursePriceInvalid(c, err) {
 			return nil
 		}
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to create course",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -147,10 +154,7 @@ func (h *CourseHandler) GetAllCourses(c *fiber.Ctx) error {
 
 	courses, err := h.service.GetAllCourses(c.Context(), params)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to retrieve courses",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -182,10 +186,7 @@ func (h *CourseHandler) GetMyCourses(c *fiber.Ctx) error {
 
 	courses, err := h.service.GetAllCourses(c.Context(), params)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to retrieve courses",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -198,10 +199,7 @@ func (h *CourseHandler) GetCourseByID(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		// QA T13: id không phải UUID thì không thể trỏ tới khoá nào => 404 như id hợp lệ nhưng không có.
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Course not found",
-			"error":   err.Error(),
-		})
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"code": "ERR_NOT_FOUND", "message": courseNotFoundMessage})
 	}
 
 	// C-1 (review vòng 2): route nằm sau middleware.AuthMiddleware (course_router.go) nên user_id
@@ -217,10 +215,11 @@ func (h *CourseHandler) GetCourseByID(c *fiber.Ctx) error {
 
 	course, err := h.service.GetCourseByID(c.Context(), id, userID, isAdmin)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Course not found",
-			"error":   err.Error(),
-		})
+		// 404 chỉ cho "không có / chưa xuất bản"; lỗi hạ tầng là 500 (không đưa err.Error() ra body).
+		if errors.Is(err, service.ErrCourseHidden) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"code": "ERR_NOT_FOUND", "message": courseNotFoundMessage})
+		}
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -247,12 +246,9 @@ func (h *CourseHandler) GetCourseBySlug(c *fiber.Ctx) error {
 		// Review web #1: 404 CHỈ cho "không có / chưa xuất bản"; lỗi khác (DB, timeout) là 500 để web probe và crawler
 		// không coi cả catalog là biến mất khi hạ tầng chập chờn.
 		if errors.Is(err, service.ErrCourseHidden) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"message": "Course not found",
-				"error":   err.Error(),
-			})
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"code": "ERR_NOT_FOUND", "message": courseNotFoundMessage})
 		}
-		return RespondServiceError(c, err, "Failed to get course")
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -264,10 +260,7 @@ func (h *CourseHandler) GetCourseBySlug(c *fiber.Ctx) error {
 func (h *CourseHandler) UpdateCourse(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid course ID",
-			"error":   err.Error(),
-		})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_INVALID_ID", "message": "ID khoá học không hợp lệ."})
 	}
 
 	// C-12: chỉ giảng viên sở hữu khóa học (hoặc sẽ được service từ chối) mới sửa được.
@@ -280,10 +273,7 @@ func (h *CourseHandler) UpdateCourse(c *fiber.Ctx) error {
 
 	var req dto.UpdateCourseDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
+		return invalidBodyResponse(c, err, courseBodyFieldMessages)
 	}
 
 	if errors := utils.ValidateStruct(req); len(errors) > 0 {
@@ -291,6 +281,10 @@ func (h *CourseHandler) UpdateCourse(c *fiber.Ctx) error {
 			"message": "Validation failed",
 			"errors":  errors,
 		})
+	}
+
+	if errs := append(courseMoneyError("price", req.Price), courseMoneyError("discount_price", req.DiscountPrice)...); len(errs) > 0 {
+		return fieldValidationFailed(c, errs...)
 	}
 
 	isAdmin := isAdminActor(c, h.permChecker, userID)
@@ -310,10 +304,7 @@ func (h *CourseHandler) UpdateCourse(c *fiber.Ctx) error {
 				"code":    "COURSE_STATUS_CHANGE_NOT_ALLOWED",
 			})
 		}
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to update course",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -325,10 +316,7 @@ func (h *CourseHandler) UpdateCourse(c *fiber.Ctx) error {
 func (h *CourseHandler) DeleteCourse(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid course ID",
-			"error":   err.Error(),
-		})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_INVALID_ID", "message": "ID khoá học không hợp lệ."})
 	}
 
 	// C-12: chỉ giảng viên sở hữu khóa học mới xóa được.
@@ -352,10 +340,7 @@ func (h *CourseHandler) DeleteCourse(c *fiber.Ctx) error {
 				"message": "You are not the instructor of this course",
 			})
 		}
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to delete course",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

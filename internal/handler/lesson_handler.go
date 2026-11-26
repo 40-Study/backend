@@ -11,6 +11,21 @@ import (
 	"study.com/v1/internal/utils"
 )
 
+// lessonBodyFieldMessages: duration_minutes có kiểu sai (2.5, "abc") -> ERR_VALIDATION nêu đúng trường (C12).
+var lessonBodyFieldMessages = map[string]string{"duration_minutes": lessonDurationMessage}
+
+// lessonValidationFailed: 400 ERR_VALIDATION; thời lượng có câu tiếng Việt riêng, trường khác giữ câu validate chung.
+func lessonValidationFailed(c *fiber.Ctx, errs []utils.ValidationError) error {
+	msg := "Dữ liệu bài học không hợp lệ."
+	for _, e := range errs {
+		if e.Field == "duration_minutes" {
+			msg = e.Message
+			break
+		}
+	}
+	return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_VALIDATION", "message": msg, "errors": errs})
+}
+
 type LessonHandler struct {
 	service     service.LessonServiceInterface
 	permChecker *middleware.PermissionChecker
@@ -52,17 +67,11 @@ func (h *LessonHandler) CreateLesson(c *fiber.Ctx) error {
 
 	var req dto.CreateLessonDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
+		return invalidBodyResponse(c, err, lessonBodyFieldMessages)
 	}
 
-	if errors := utils.ValidateStruct(req); len(errors) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
+	if errs := append(utils.ValidateStruct(req), lessonDurationError(req.DurationMins)...); len(errs) > 0 {
+		return lessonValidationFailed(c, errs)
 	}
 
 	lesson, err := h.service.CreateLesson(c.Context(), sectionID, userID, req)
@@ -70,10 +79,7 @@ func (h *LessonHandler) CreateLesson(c *fiber.Ctx) error {
 		if lessonForbiddenResponse(c, err) {
 			return nil
 		}
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to create lesson",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -172,17 +178,11 @@ func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
 
 	var req dto.UpdateLessonDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
+		return invalidBodyResponse(c, err, lessonBodyFieldMessages)
 	}
 
-	if errors := utils.ValidateStruct(req); len(errors) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
+	if errs := append(utils.ValidateStruct(req), lessonDurationError(req.DurationMins)...); len(errs) > 0 {
+		return lessonValidationFailed(c, errs)
 	}
 
 	isAdmin := isAdminActor(c, h.permChecker, userID)
@@ -202,10 +202,7 @@ func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
 				"message": "LESSON_HAS_NO_VIDEO",
 			})
 		}
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to update lesson",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -235,10 +232,7 @@ func (h *LessonHandler) DeleteLesson(c *fiber.Ctx) error {
 		if lessonForbiddenResponse(c, err) {
 			return nil
 		}
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to delete lesson",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

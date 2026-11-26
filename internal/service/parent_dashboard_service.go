@@ -2,13 +2,13 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"sort"
 	"time"
 
 	"github.com/google/uuid"
+	"study.com/v1/internal/apperr"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -54,16 +54,32 @@ func NewParentDashboardService(
 	}
 }
 
+// QA7-PG-03 (C17): lỗi nghiệp vụ của /parent/children/:id/* là *apperr.KnownError (handler dùng RespondServiceError): chưa liên kết
+// -> 403 ERR_CHILD_NOT_LINKED; liên kết đang hoạt động nhưng phụ huynh bị tắt quyền xem mục đó -> 403 ERR_CHILD_PERMISSION_DENIED.
+// Mọi lỗi khác (DB, ...) là 500 ERR_INTERNAL chung và chỉ vào log, không còn bị đọc nhầm thành "không có quyền".
+const (
+	childNotLinkedCode        = "ERR_CHILD_NOT_LINKED"
+	childPermissionDeniedCode = "ERR_CHILD_PERMISSION_DENIED"
+)
+
+func childNotLinked(message string) error {
+	return &apperr.KnownError{Status: 403, Code: childNotLinkedCode, Message: message}
+}
+
+func childPermissionDenied(message string) error {
+	return &apperr.KnownError{Status: 403, Code: childPermissionDeniedCode, Message: message}
+}
+
 func (s *ParentDashboardService) verifyParentChildRelation(ctx context.Context, parentID, childID uuid.UUID) (*model.ParentStudentRelation, error) {
 	relation, err := s.parentStudentRepo.FindByParentAndStudent(ctx, parentID, childID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify relation: %w", err)
 	}
 	if relation == nil {
-		return nil, errors.New("không có quyền xem thông tin học sinh này")
+		return nil, childNotLinked("Không có quyền xem thông tin học sinh này.")
 	}
 	if relation.Status != model.ParentStudentStatusActive {
-		return nil, errors.New("liên kết chưa được kích hoạt")
+		return nil, childNotLinked("Liên kết với học sinh này chưa được kích hoạt.")
 	}
 	return relation, nil
 }
@@ -79,7 +95,7 @@ func (s *ParentDashboardService) GetChildOverview(ctx context.Context, parentID,
 		return nil, fmt.Errorf("failed to get child info: %w", err)
 	}
 	if child == nil {
-		return nil, errors.New("không tìm thấy học sinh")
+		return nil, apperr.NotFound("Không tìm thấy học sinh.")
 	}
 
 	enrollments, totalEnrolled, err := s.enrollmentRepo.GetByUserID(ctx, childID, 1, 1000)
@@ -154,7 +170,7 @@ func (s *ParentDashboardService) GetChildCourses(ctx context.Context, parentID, 
 		return nil, err
 	}
 	if !relation.CanViewProgress {
-		return nil, errors.New("không có quyền xem tiến độ học tập")
+		return nil, childPermissionDenied("Không có quyền xem tiến độ học tập.")
 	}
 
 	if page < 1 {
@@ -211,7 +227,7 @@ func (s *ParentDashboardService) GetChildGrades(ctx context.Context, parentID, c
 		return nil, err
 	}
 	if !relation.CanViewGrades {
-		return nil, errors.New("không có quyền xem điểm số")
+		return nil, childPermissionDenied("Không có quyền xem điểm số.")
 	}
 
 	grades, err := s.gradeRepo.GetGradesByStudentID(ctx, childID)
@@ -355,7 +371,7 @@ func (s *ParentDashboardService) GetChildTimetable(ctx context.Context, parentID
 	}
 
 	if !relation.CanViewAttendance {
-		return nil, errors.New("không có quyền xem lịch học của học sinh này")
+		return nil, childPermissionDenied("Không có quyền xem lịch học của học sinh này.")
 	}
 
 	classIDs, err := s.scheduleRepo.GetStudentClassIDs(ctx, childID)
@@ -445,7 +461,7 @@ func (s *ParentDashboardService) GetChildAttendance(ctx context.Context, parentI
 		return nil, err
 	}
 	if !relation.CanViewAttendance {
-		return nil, errors.New("không có quyền xem điểm danh")
+		return nil, childPermissionDenied("Không có quyền xem điểm danh.")
 	}
 
 	if page < 1 {
@@ -527,7 +543,7 @@ func (s *ParentDashboardService) GetChildAssignments(ctx context.Context, parent
 		return nil, err
 	}
 	if !relation.CanViewProgress {
-		return nil, errors.New("không có quyền xem bài tập")
+		return nil, childPermissionDenied("Không có quyền xem bài tập.")
 	}
 
 	if page < 1 {

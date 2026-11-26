@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"study.com/v1/internal/apperr"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -80,14 +81,14 @@ func (s *LessonService) checkSectionCourseOwnership(ctx context.Context, section
 		return nil, err
 	}
 	if section == nil {
-		return nil, errors.New("section not found")
+		return nil, apperr.NotFound("Không tìm thấy chương.")
 	}
 	course, err := s.courseRepo.GetByID(ctx, section.CourseID)
 	if err != nil {
 		return nil, err
 	}
 	if course == nil {
-		return nil, errors.New("course not found")
+		return nil, apperr.NotFound("Không tìm thấy khoá học.")
 	}
 	if course.InstructorID != actorUserID && !isAdmin {
 		return nil, ErrNotLessonCourseOwner
@@ -115,14 +116,14 @@ func requireLessonCourseOwnerOrAdmin(ctx context.Context, sectionRepo repository
 		return err
 	}
 	if section == nil {
-		return errors.New("section not found")
+		return apperr.NotFound("Không tìm thấy chương.")
 	}
 	course, err := courseRepo.GetByID(ctx, section.CourseID)
 	if err != nil {
 		return err
 	}
 	if course == nil {
-		return errors.New("course not found")
+		return apperr.NotFound("Không tìm thấy khoá học.")
 	}
 	if course.InstructorID != actorUserID && !isAdmin {
 		return ErrNotLessonCourseOwner
@@ -322,7 +323,7 @@ func (s *LessonService) UpdateLesson(ctx context.Context, lessonID, actorUserID 
 		return nil, err
 	}
 	if lesson == nil {
-		return nil, errors.New("lesson not found")
+		return nil, apperr.NotFound("Không tìm thấy bài học.")
 	}
 	if err := s.checkLessonCourseOwnership(ctx, lesson, actorUserID, isAdmin); err != nil {
 		return nil, err
@@ -436,7 +437,7 @@ func (s *LessonService) DeleteLesson(ctx context.Context, lessonID, actorUserID 
 		return err
 	}
 	if lesson == nil {
-		return errors.New("lesson not found")
+		return apperr.NotFound("Không tìm thấy bài học.")
 	}
 	if err := s.checkLessonCourseOwnership(ctx, lesson, actorUserID, isAdmin); err != nil {
 		return err

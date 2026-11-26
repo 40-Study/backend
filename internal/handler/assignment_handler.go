@@ -15,6 +15,7 @@ type AssignmentHandlerInterface interface {
 	GetByID(c *fiber.Ctx) error
 	GetBySession(c *fiber.Ctx) error
 	GetByClass(c *fiber.Ctx) error
+	GetMine(c *fiber.Ctx) error
 	Update(c *fiber.Ctx) error
 	Delete(c *fiber.Ctx) error
 	Publish(c *fiber.Ctx) error
@@ -193,6 +194,20 @@ func (h *AssignmentHandler) GetByClass(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "class not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(result)
+}
+
+// GetMine: GET /api/me/assignments (QA7-S7-09, C16). Một request thay cho N request theo phiên: mọi bài tập đã công bố
+// của các lớp/phiên người gọi đang học, cùng envelope và dạng phần tử (kèm my_submission) với GET /assignments?session_id=.
+func (h *AssignmentHandler) GetMine(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uuid.UUID)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"code": "ERR_UNAUTHORIZED", "message": "Vui lòng đăng nhập để tiếp tục."})
+	}
+	result, err := h.svc.GetMine(c.Context(), userID, c.QueryInt("page", 1), c.QueryInt("page_size", 20))
+	if err != nil {
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 	return c.JSON(result)
 }

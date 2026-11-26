@@ -28,6 +28,7 @@ func RespondServiceError(c *fiber.Ctx, err error, genericMessage string) error {
 
 	log.Printf("[ERROR] %s %s: %v", c.Method(), c.Path(), err)
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		"code":    "ERR_INTERNAL",
 		"message": genericMessage,
 	})
 }

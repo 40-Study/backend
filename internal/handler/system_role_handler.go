@@ -74,10 +74,7 @@ func (h *SystemRoleHandler) CreateSystemRole(c *fiber.Ctx) error {
 
 	role, err := h.service.CreateSystemRole(c.Context(), req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to create system role",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	// Id nằm trong response chứ không ở URL: đặt đích cho middleware Audit.
@@ -170,10 +167,7 @@ func (h *SystemRoleHandler) UpdateSystemRole(c *fiber.Ctx) error {
 
 	role, err := h.service.UpdateSystemRole(c.Context(), id, req)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to update system role",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"study.com/v1/internal/apperr"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -29,6 +30,10 @@ type SystemRoleServiceInterface interface {
 // được xoá qua API quản trị. Handler trả 409 SYSTEM_ROLE_PROTECTED.
 var ErrSystemRoleProtected = errors.New("built-in system role cannot be deleted")
 
+// ErrSystemRoleNameExists (QA7-A02, C14): tạo/đổi tên vai trò hệ thống trùng tên đã có (kể cả vai đã xoá mềm: unique index vẫn
+// giữ chỗ) hoặc trùng tên vai dựng sẵn (so không phân biệt hoa thường, như tên org role). Handler trả 409 ERR_ROLE_NAME_EXISTS.
+var ErrSystemRoleNameExists = apperr.ConflictCode("ERR_ROLE_NAME_EXISTS", "Tên vai trò đã tồn tại (kể cả vai trò đã xoá hoặc tên hệ thống dành riêng). Hãy chọn tên khác.")
+
 type SystemRoleService struct {
 	repo           repository.SystemRoleRepositoryInterface
 	permissionRepo repository.PermissionRepositoryInterface
@@ -39,6 +44,9 @@ func NewSystemRoleService(repo repository.SystemRoleRepositoryInterface, permiss
 }
 
 func (s *SystemRoleService) CreateSystemRole(ctx context.Context, req dto.CreateSystemRoleDTO) (*dto.SystemRoleResponseDTO, error) {
+	if model.OrgRoleNameReserved(req.Name) {
+		return nil, ErrSystemRoleNameExists
+	}
 	role := &model.SystemRole{
 		Name: req.Name,
 	}
@@ -48,6 +56,9 @@ func (s *SystemRoleService) CreateSystemRole(ctx context.Context, req dto.Create
 	}
 
 	if err := s.repo.CreateSystemRole(ctx, role); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrSystemRoleNameExists
+		}
 		return nil, err
 	}
 
@@ -98,10 +109,14 @@ func (s *SystemRoleService) UpdateSystemRole(ctx context.Context, id uuid.UUID, 
 		return nil, err
 	}
 	if role == nil {
-		return nil, errors.New("system role not found")
+		return nil, apperr.NotFound("Không tìm thấy vai trò.")
 	}
 
 	if req.Name != nil {
+		// Giữ nguyên tên hiện tại là hợp lệ (kể cả vai dựng sẵn); đổi sang tên dành riêng thì bị chặn như lúc tạo.
+		if *req.Name != role.Name && model.OrgRoleNameReserved(*req.Name) {
+			return nil, ErrSystemRoleNameExists
+		}
 		role.Name = *req.Name
 	}
 	if req.Description != nil {
@@ -110,6 +125,9 @@ func (s *SystemRoleService) UpdateSystemRole(ctx context.Context, id uuid.UUID, 
 	}
 
 	if err := s.repo.UpdateSystemRole(ctx, role); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrSystemRoleNameExists
+		}
 		return nil, err
 	}
 

@@ -20,6 +20,8 @@ type AssignmentRepositoryInterface interface {
 	GetBySession(ctx context.Context, sessionID uuid.UUID, page, pageSize int, publishedOnly bool) ([]model.Assignment, int64, error)
 	GetByClass(ctx context.Context, classID uuid.UUID, page, pageSize int, publishedOnly bool) ([]model.Assignment, int64, error)
 	GetPublishedBySession(ctx context.Context, sessionID uuid.UUID) ([]model.Assignment, error)
+	// GetVisibleToStudent (QA7-S7-09, C16): bài tập ĐÃ công bố mà học viên thấy được qua MỌI lớp đang học và MỌI phiên của các lớp đó.
+	GetVisibleToStudent(ctx context.Context, studentID uuid.UUID, page, pageSize int) ([]model.Assignment, int64, error)
 	Update(ctx context.Context, assignment *model.Assignment) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	// DeleteIfNoSubmissions (QA4-T01): xoá mềm assignment chỉ khi chưa có bài nộp nào, trong MỘT câu lệnh (không có cửa
@@ -120,6 +122,35 @@ func (r *AssignmentRepository) GetByClass(ctx context.Context, classID uuid.UUID
 	}
 	err := utils.ApplyPagination(query, page, pageSize).
 		Order("created_at DESC").
+		Find(&assignments).Error
+	return assignments, total, err
+}
+
+// buildStudentVisibleAssignmentsQuery (QA7-S7-09, C16): cùng định nghĩa "thành viên lớp" với LivestreamRepository.GetAll và
+// ClassRepository.IsUserRelatedToClass (StudentClassActiveCondition), nên một học viên đã nghỉ lớp không còn thấy bài của lớp đó.
+// Bài của PHIÊN: phiên thuộc lớp đang học và người này chưa bị đuổi khỏi phiên (như EnsureSessionMember). Bài của LỚP: class_id
+// là lớp đang học. Bản nháp không bao giờ lộ. Tách khỏi phần đếm/phân trang để test DryRun gọi đúng hàm sản xuất.
+func buildStudentVisibleAssignmentsQuery(db *gorm.DB, studentID uuid.UUID) *gorm.DB {
+	activeClasses := "SELECT class_id FROM student_classes WHERE student_id = ? AND " + StudentClassActiveCondition
+	return db.Model(&model.Assignment{}).
+		Where("assignments.is_published = ?", true).
+		Where("(assignments.class_id IN ("+activeClasses+") OR assignments.session_id IN ("+
+			"SELECT s.id FROM livestream_sessions s WHERE s.deleted_at IS NULL AND s.class_id IN ("+activeClasses+") "+
+			"AND NOT EXISTS (SELECT 1 FROM participants p WHERE p.session_id = s.id AND p.user_id = ? AND p.is_kicked = true AND p.deleted_at IS NULL)))",
+			studentID, studentID, studentID)
+}
+
+func (r *AssignmentRepository) GetVisibleToStudent(ctx context.Context, studentID uuid.UUID, page, pageSize int) ([]model.Assignment, int64, error) {
+	var assignments []model.Assignment
+	var total int64
+
+	query := buildStudentVisibleAssignmentsQuery(r.db.WithContext(ctx), studentID)
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	// id làm tie-breaker: bài cùng created_at không được nhảy trang giữa hai lần gọi.
+	err := utils.ApplyPagination(query, page, pageSize).
+		Order("assignments.created_at DESC, assignments.id DESC").
 		Find(&assignments).Error
 	return assignments, total, err
 }

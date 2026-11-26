@@ -101,8 +101,8 @@ func TestSaveVoucher_HoldersOnlyStrangerGets404NotBadRequest(t *testing.T) {
 	}
 	var out map[string]string
 	_ = json.Unmarshal([]byte(body), &out)
-	if out["code"] != "ERR_NOT_FOUND" || out["message"] != "Voucher not found" {
-		t.Fatalf("body = %s, muốn ERR_NOT_FOUND / Voucher not found", body)
+	if out["code"] != "ERR_NOT_FOUND" || out["message"] != "Không tìm thấy voucher." {
+		t.Fatalf("body = %s, muốn ERR_NOT_FOUND / Không tìm thấy voucher.", body)
 	}
 }
 

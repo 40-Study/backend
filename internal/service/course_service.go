@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"study.com/v1/internal/apperr"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -163,7 +164,7 @@ func (s *CourseService) CreateCourse(ctx context.Context, req dto.CreateCourseDT
 			return nil, err
 		}
 		if !exists {
-			return nil, errors.New("category not found")
+			return nil, apperr.BadRequest("Danh mục không tồn tại.")
 		}
 	}
 
@@ -279,7 +280,7 @@ func (s *CourseService) GetCourseByID(ctx context.Context, id, userID uuid.UUID,
 		return nil, err
 	}
 	if course == nil {
-		return nil, errors.New("course not found")
+		return nil, apperr.NotFound("Không tìm thấy khoá học.")
 	}
 
 	// Một lần cho CẢ khoá học, không phải mỗi bài một lần: enrollment/thứ tự bài/progress là dữ
@@ -398,7 +399,7 @@ func (s *CourseService) UpdateCourse(ctx context.Context, id, actorUserID uuid.U
 		return nil, err
 	}
 	if course == nil {
-		return nil, errors.New("course not found")
+		return nil, apperr.NotFound("Không tìm thấy khoá học.")
 	}
 	// C-12 (audit 260909): trước đây bất kỳ user đăng nhập nào cũng UpdateCourse được khóa
 	// học của người khác vì service không nhận/so sánh userID với course.InstructorID.
@@ -447,7 +448,7 @@ func (s *CourseService) UpdateCourse(ctx context.Context, id, actorUserID uuid.U
 			return nil, err
 		}
 		if !exists {
-			return nil, errors.New("category not found")
+			return nil, apperr.BadRequest("Danh mục không tồn tại.")
 		}
 		course.CategoryID = req.CategoryID
 	}
@@ -552,7 +553,7 @@ func (s *CourseService) DeleteCourse(ctx context.Context, id, actorUserID uuid.U
 		return err
 	}
 	if course == nil {
-		return errors.New("course not found")
+		return apperr.NotFound("Không tìm thấy khoá học.")
 	}
 	// C-12 (audit 260909): tương tự UpdateCourse — chỉ giảng viên tạo khóa học hoặc
 	// SYSTEM_ADMIN (vòng 2) mới được xóa.
