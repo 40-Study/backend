@@ -200,7 +200,8 @@ func (r *VoucherRepository) RestoreVoucher(ctx context.Context, id uuid.UUID) er
 	return nil
 }
 
-// HardDeleteVoucherCascade - Hard delete voucher and all related data
+// HardDeleteVoucherCascade - Hard delete voucher and all related data. Tìm cả dòng đã xoá mềm (Unscoped); id không tồn tại thì
+// trả ErrVoucherNotFound và hoàn tác transaction (không xoá dữ liệu liên quan của một id lạ).
 func (r *VoucherRepository) HardDeleteVoucherCascade(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Delete related records first
@@ -214,7 +215,14 @@ func (r *VoucherRepository) HardDeleteVoucherCascade(ctx context.Context, id uui
 			return err
 		}
 		// Delete voucher
-		return tx.Unscoped().Delete(&model.Voucher{}, "id = ?", id).Error
+		res := tx.Unscoped().Delete(&model.Voucher{}, "id = ?", id)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrVoucherNotFound
+		}
+		return nil
 	})
 }
 
