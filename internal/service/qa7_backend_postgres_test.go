@@ -192,6 +192,14 @@ func TestQA7_C16_GetMineAssignments_HocVienThayMoiLopVaPhienDangHoc_Postgres(t *
 		t.Error("bài chưa nộp phải có my_submission null")
 	}
 
+	// L1: page_size vượt trần bị kẹp về 100 (không rơi về 20); thiếu hoặc < 1 mới về mặc định 20.
+	for _, tc := range []struct{ asked, want int }{{500, 100}, {101, 100}, {100, 100}, {0, 20}, {-3, 20}} {
+		p, err := svc.GetMine(ctx, me.ID, 1, tc.asked)
+		if err != nil || p.PageSize != tc.want {
+			t.Errorf("page_size=%d: PageSize=%v err=%v, muốn %d", tc.asked, p, err, tc.want)
+		}
+	}
+
 	// Người khác (không học lớp nào) không thấy gì.
 	if none, err := svc.GetMine(ctx, host.ID, 1, 100); err != nil || len(none.Data) != 0 || none.Total != 0 {
 		t.Errorf("người không học lớp nào: %+v err=%v, muốn rỗng", none, err)

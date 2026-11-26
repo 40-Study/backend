@@ -62,7 +62,7 @@ func classErrorStatus(err error) int {
 }
 
 // assignmentWriteFail: lỗi của thao tác ghi bài tập. Lớp đã lưu trữ là 409 CLASS_ARCHIVED (cùng hợp đồng với các
-// route ghi khác của lớp); lỗi khác giữ 500 như trước.
+// route ghi khác của lớp); lỗi khác là 500 ERR_INTERNAL chung.
 func assignmentWriteFail(c *fiber.Ctx, err error) error {
 	if errors.Is(err, service.ErrClassArchived) {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"code": "CLASS_ARCHIVED", "message": err.Error(), "error": err.Error()})
@@ -73,7 +73,8 @@ func assignmentWriteFail(c *fiber.Ctx, err error) error {
 	if errors.Is(err, service.ErrDueDateInPast) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_DUE_DATE_IN_PAST", "message": err.Error(), "error": err.Error()})
 	}
-	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	// QA7 review M2: lỗi không xác định (DB, ...) log phía server + 500 ERR_INTERNAL chung, không đưa err.Error() ra body.
+	return RespondServiceError(c, err, internalErrorMessage)
 }
 
 // classErrorBody: thân JSON của lỗi đã ánh xạ. Hai lỗi nghiệp vụ mới mang mã ổn định để web hiện câu tiếng Việt

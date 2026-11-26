@@ -196,7 +196,7 @@ func (s *LessonService) GetAllLessons(ctx context.Context, sectionID, userID uui
 		return nil, err
 	}
 	if section == nil {
-		return nil, errors.New("section not found")
+		return nil, apperr.NotFound("Không tìm thấy chương.")
 	}
 
 	course, err := s.courseRepo.GetByID(ctx, section.CourseID)
@@ -250,7 +250,7 @@ func (s *LessonService) GetLessonByID(ctx context.Context, lessonID, userID uuid
 		return nil, err
 	}
 	if lesson == nil {
-		return nil, errors.New("lesson not found")
+		return nil, apperr.NotFound("Không tìm thấy bài học.")
 	}
 
 	// B-2 (review vòng 2): tính khoá TRƯỚC khi quyết định có nạp contents hay không — bài bị
@@ -490,7 +490,7 @@ func (s *LessonService) ReorderLessons(ctx context.Context, sectionID, actorUser
 		return err
 	}
 	if count != int64(len(ids)) {
-		return errors.New("one or more lessons do not belong to this section")
+		return apperr.BadRequest("Một hoặc nhiều bài học không thuộc chương này.")
 	}
 
 	return s.lessonRepo.Reorder(ctx, items)

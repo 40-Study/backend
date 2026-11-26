@@ -62,14 +62,14 @@ func (h *AssignmentHandler) requireAssignmentManager(c *fiber.Ctx, assignmentID 
 	isAdmin := isAdminActor(c, h.permChecker, userID)
 	manage, err := h.svc.CanManage(c.Context(), assignmentID, userID, isAdmin)
 	if err != nil {
-		return false, c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return false, RespondServiceError(c, err, internalErrorMessage)
 	}
 	if manage {
 		return true, nil
 	}
 	view, err := h.svc.CanView(c.Context(), assignmentID, userID, isAdmin)
 	if err != nil {
-		return false, c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return false, RespondServiceError(c, err, internalErrorMessage)
 	}
 	if !view {
 		return false, c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assignment not found"})
@@ -85,7 +85,7 @@ func (h *AssignmentHandler) requireAssignmentViewer(c *fiber.Ctx, assignmentID u
 	}
 	view, err := h.svc.CanView(c.Context(), assignmentID, userID, isAdminActor(c, h.permChecker, userID))
 	if err != nil {
-		return false, c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return false, RespondServiceError(c, err, internalErrorMessage)
 	}
 	if !view {
 		return false, c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assignment not found"})
@@ -96,7 +96,7 @@ func (h *AssignmentHandler) requireAssignmentViewer(c *fiber.Ctx, assignmentID u
 func (h *AssignmentHandler) Create(c *fiber.Ctx) error {
 	var req dto.CreateAssignmentDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return invalidBodyResponse(c, err, nil)
 	}
 
 	userID, ok := c.Locals("user_id").(uuid.UUID)
@@ -108,9 +108,9 @@ func (h *AssignmentHandler) Create(c *fiber.Ctx) error {
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrAssignmentForbidden):
-			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": service.ErrAssignmentForbidden.Error()})
 		case errors.Is(err, service.ErrAssignmentTargetRequired):
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": service.ErrAssignmentTargetRequired.Error()})
 		}
 		return assignmentWriteFail(c, err)
 	}
@@ -138,7 +138,7 @@ func (h *AssignmentHandler) GetByID(c *fiber.Ctx) error {
 
 	assignment, err := h.svc.GetByID(c.Context(), id, includeHidden)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 	if assignment == nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assignment not found"})
@@ -170,7 +170,7 @@ func (h *AssignmentHandler) GetBySession(c *fiber.Ctx) error {
 		if errors.Is(err, service.ErrAssignmentNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "session not found"})
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.JSON(result)
@@ -193,7 +193,7 @@ func (h *AssignmentHandler) GetByClass(c *fiber.Ctx) error {
 		if errors.Is(err, service.ErrClassNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "class not found"})
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 	return c.JSON(result)
 }
@@ -224,7 +224,7 @@ func (h *AssignmentHandler) Update(c *fiber.Ctx) error {
 
 	var req dto.UpdateAssignmentDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return invalidBodyResponse(c, err, nil)
 	}
 
 	assignment, err := h.svc.Update(c.Context(), id, req)
@@ -300,7 +300,7 @@ func (h *AssignmentHandler) AddTestCase(c *fiber.Ctx) error {
 
 	var req dto.CreateTestCaseDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return invalidBodyResponse(c, err, nil)
 	}
 
 	testCase, err := h.svc.AddTestCase(c.Context(), id, req)
@@ -346,7 +346,7 @@ func (h *AssignmentHandler) ImportTestCases(c *fiber.Ctx) error {
 
 	var req dto.ImportTestCasesDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return invalidBodyResponse(c, err, nil)
 	}
 
 	testCases, err := h.svc.ImportTestCases(c.Context(), id, req)
@@ -375,7 +375,7 @@ func (h *AssignmentHandler) GetTestCases(c *fiber.Ctx) error {
 
 	testCases, err := h.svc.GetTestCases(c.Context(), id, includeHidden)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.JSON(fiber.Map{"data": testCases})
@@ -399,7 +399,7 @@ func (h *AssignmentHandler) GetSandbox(c *fiber.Ctx) error {
 
 	result, err := h.svc.GetSandbox(c.Context(), id, userID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.JSON(result)

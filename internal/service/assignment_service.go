@@ -349,8 +349,13 @@ func (s *AssignmentService) GetMine(ctx context.Context, actorID uuid.UUID, page
 	if page < 1 {
 		page = 1
 	}
-	if pageSize < 1 || pageSize > 100 {
+	// QA7 review L1: page_size > 100 bị kẹp về 100 (không rơi về 20): client xin 200 mà nhận 20 thì vòng duyệt
+	// "items.length < PAGE_SIZE" của web dừng sau trang 1. Thiếu/<1 mới về mặc định 20.
+	if pageSize < 1 {
 		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
 	}
 	assignments, total, err := s.repo.GetVisibleToStudent(ctx, actorID, page, pageSize)
 	if err != nil {

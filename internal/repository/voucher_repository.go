@@ -186,9 +186,18 @@ func (r *VoucherRepository) DeleteVoucher(ctx context.Context, id uuid.UUID) err
 	return r.db.WithContext(ctx).Delete(&model.Voucher{}, "id = ?", id).Error
 }
 
-// RestoreVoucher - Restore soft deleted voucher
+// RestoreVoucher - Restore soft deleted voucher. Chỉ khôi phục dòng ĐANG bị xoá mềm; không có dòng nào (id không tồn tại hoặc
+// voucher chưa xoá) thì trả ErrVoucherNotFound.
 func (r *VoucherRepository) RestoreVoucher(ctx context.Context, id uuid.UUID) error {
-	return r.db.WithContext(ctx).Unscoped().Model(&model.Voucher{}).Where("id = ?", id).Update("deleted_at", nil).Error
+	res := r.db.WithContext(ctx).Unscoped().Model(&model.Voucher{}).
+		Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrVoucherNotFound
+	}
+	return nil
 }
 
 // HardDeleteVoucherCascade - Hard delete voucher and all related data

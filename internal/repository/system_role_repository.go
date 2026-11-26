@@ -15,6 +15,8 @@ type SystemRoleRepositoryInterface interface {
 	GetSystemRoleByID(ctx context.Context, id uuid.UUID) (*model.SystemRole, error)
 	GetSystemRoleByIDs(ctx context.Context, ids []uuid.UUID) ([]model.SystemRole, error)
 	GetSystemRoleByName(ctx context.Context, name string) (*model.SystemRole, error)
+	// SystemRoleNameTakenFold: có vai trò nào (kể cả đã xoá mềm) trùng tên không phân biệt hoa thường; excludeID (nếu khác Nil) bị bỏ qua.
+	SystemRoleNameTakenFold(ctx context.Context, name string, excludeID uuid.UUID) (bool, error)
 	GetAllSystemRoles(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.SystemRole, int64, error)
 	UpdateSystemRole(ctx context.Context, role *model.SystemRole) error
 	DeleteSystemRole(ctx context.Context, id uuid.UUID, hardDelete bool) error
@@ -75,6 +77,18 @@ func (r *SystemRoleRepository) GetSystemRoleByName(ctx context.Context, name str
 		return nil, err
 	}
 	return &role, nil
+}
+
+func (r *SystemRoleRepository) SystemRoleNameTakenFold(ctx context.Context, name string, excludeID uuid.UUID) (bool, error) {
+	q := r.db.WithContext(ctx).Unscoped().Model(&model.SystemRole{}).Where("lower(name) = lower(?)", name)
+	if excludeID != uuid.Nil {
+		q = q.Where("id <> ?", excludeID)
+	}
+	var n int64
+	if err := q.Count(&n).Error; err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (r *SystemRoleRepository) GetAllSystemRoles(ctx context.Context, page, pageSize int, keyword string, status string) ([]model.SystemRole, int64, error) {

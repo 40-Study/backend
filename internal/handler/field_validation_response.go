@@ -71,11 +71,17 @@ func courseMoneyError(field string, v *decimal.Decimal) []utils.ValidationError 
 		return nil
 	}
 	label := courseMoneyLabels[field]
-	if !v.IsInteger() {
+	rangeErr := []utils.ValidationError{{Field: field, Tag: "range", Message: label + " phải từ 0 đến 1.000.000.000 đ."}}
+	// QA7 review M1: số mũ nằm ngoài biên (1e20000000, 1e-20000000) bị loại TRƯỚC mọi phép so sánh/làm tròn,
+	// xem utils.DecimalExponentWithinBounds. Số mũ dương quá lớn là "vượt 1 tỷ"; số mũ âm quá sâu là phần thập phân.
+	if v.Exponent() > utils.DecimalExponentMax {
+		return rangeErr
+	}
+	if !utils.DecimalExponentWithinBounds(*v) || !v.IsInteger() {
 		return []utils.ValidationError{{Field: field, Tag: "whole", Message: label + " phải là số nguyên đồng (VND không có phần thập phân)."}}
 	}
 	if v.IsNegative() || v.GreaterThan(decimal.NewFromInt(coursePriceMax)) {
-		return []utils.ValidationError{{Field: field, Tag: "range", Message: label + " phải từ 0 đến 1.000.000.000 đ."}}
+		return rangeErr
 	}
 	return nil
 }

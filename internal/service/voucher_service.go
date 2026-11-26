@@ -491,10 +491,10 @@ func (vs *VoucherService) DeleteVoucher(ctx context.Context, voucherID uuid.UUID
 	return vs.vr.DeleteVoucher(ctx, voucherID)
 }
 
+// RestoreVoucher khôi phục voucher ĐÃ XOÁ MỀM. Không tra trước bằng GetVoucherByID (lookup có scope, không thấy dòng đã xoá nên
+// restore không bao giờ thành công, QA7 review M3): repository tự lọc `deleted_at IS NOT NULL` và trả ErrVoucherNotFound
+// khi không có dòng nào để khôi phục (id không tồn tại, hoặc voucher chưa bị xoá).
 func (vs *VoucherService) RestoreVoucher(ctx context.Context, voucherID uuid.UUID) error {
-	if _, err := vs.vr.GetVoucherByID(ctx, voucherID); err != nil {
-		return err
-	}
 	return vs.vr.RestoreVoucher(ctx, voucherID)
 }
 

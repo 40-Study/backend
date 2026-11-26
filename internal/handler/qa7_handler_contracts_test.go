@@ -405,9 +405,9 @@ func TestQA7_A09_Voucher_ThongBaoTiengViet_KhongLoLoiNoiBo(t *testing.T) {
 
 	infra := qa7VoucherApp(&qa7VoucherSvc{err: errors.New("pq: connection refused")})
 	code, out, raw = qa7Do(t, infra, "DELETE", "/v/"+uuid.NewString(), "")
-	check("delete lỗi DB", code, "ERR_DELETE_VOUCHER", 400, out, raw)
+	check("delete lỗi DB", code, "ERR_INTERNAL", 500, out, raw)
 	code, out, raw = qa7Do(t, infra, "POST", "/v", `{`+qa7VoucherBase+`,"name":"Voucher QA7"}`)
-	check("create lỗi DB", code, "ERR_CREATE_VOUCHER", 400, out, raw)
+	check("create lỗi DB", code, "ERR_INTERNAL", 500, out, raw)
 
 	// Lỗi nghiệp vụ đã biết của service (câu tiếng Việt) vẫn hiện nguyên văn.
 	known := qa7VoucherApp(&qa7VoucherSvc{err: apperr.BadRequest("Ngày bắt đầu phải trước ngày kết thúc.")})

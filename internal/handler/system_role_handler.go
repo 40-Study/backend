@@ -33,6 +33,8 @@ func systemRoleInvalid(c *fiber.Ctx, errs []utils.ValidationError) error {
 	})
 }
 
+const systemRoleInvalidIDMessage = "ID vai trò không hợp lệ."
+
 type SystemRoleHandlerInterface interface {
 	CreateSystemRole(c *fiber.Ctx) error
 	GetSystemRole(c *fiber.Ctx) error
@@ -58,10 +60,7 @@ func NewSystemRoleHandler(service service.SystemRoleServiceInterface) *SystemRol
 func (h *SystemRoleHandler) CreateSystemRole(c *fiber.Ctx) error {
 	var req dto.CreateSystemRoleDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
+		return invalidBodyResponse(c, err, nil)
 	}
 
 	// QA3-03: handler không từng gọi ValidateStruct nên tạo được vai trò tên rỗng/"   "/1 ký tự (tag min=2 của DTO vô
@@ -90,18 +89,12 @@ func (h *SystemRoleHandler) GetSystemRole(c *fiber.Ctx) error {
 	idStr := c.Params("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid system role ID",
-			"error":   err.Error(),
-		})
+		return invalidIDResponse(c, systemRoleInvalidIDMessage)
 	}
 
 	role, err := h.service.GetSystemRoleByID(c.Context(), id)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "System role not found",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -118,10 +111,7 @@ func (h *SystemRoleHandler) GetAllSystemRoles(c *fiber.Ctx) error {
 
 	roles, err := h.service.GetAllSystemRoles(c.Context(), page, pageSize, keyword, status)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to retrieve system roles",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -134,18 +124,12 @@ func (h *SystemRoleHandler) UpdateSystemRole(c *fiber.Ctx) error {
 	idStr := c.Params("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid system role ID",
-			"error":   err.Error(),
-		})
+		return invalidIDResponse(c, systemRoleInvalidIDMessage)
 	}
 
 	var req dto.UpdateSystemRoleDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
+		return invalidBodyResponse(c, err, nil)
 	}
 
 	// QA3-03: như CreateSystemRole. Tên gửi lên (kể cả rỗng) vẫn phải qua luật tên của DTO tạo (SSOT): tag `omitempty`
@@ -180,10 +164,7 @@ func (h *SystemRoleHandler) DeleteSystemRole(c *fiber.Ctx) error {
 	idStr := c.Params("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid system role ID",
-			"error":   err.Error(),
-		})
+		return invalidIDResponse(c, systemRoleInvalidIDMessage)
 	}
 
 	hardDelete := c.QueryBool("hard_delete", false)
@@ -192,14 +173,10 @@ func (h *SystemRoleHandler) DeleteSystemRole(c *fiber.Ctx) error {
 		if errors.Is(err, service.ErrSystemRoleProtected) {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 				"message": "Không thể xoá vai trò hệ thống dựng sẵn",
-				"error":   err.Error(),
 				"code":    "SYSTEM_ROLE_PROTECTED",
 			})
 		}
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to delete system role",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -210,17 +187,11 @@ func (h *SystemRoleHandler) DeleteSystemRole(c *fiber.Ctx) error {
 func (h *SystemRoleHandler) RestoreSystemRole(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid system role ID",
-			"error":   err.Error(),
-		})
+		return invalidIDResponse(c, systemRoleInvalidIDMessage)
 	}
 
 	if err := h.service.RestoreSystemRole(c.Context(), id); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to restore system role",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -234,25 +205,16 @@ func (h *SystemRoleHandler) AddPermissionsToSystemRole(c *fiber.Ctx) error {
 	idStr := c.Params("id")
 	roleID, err := uuid.Parse(idStr)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid system role ID",
-			"error":   err.Error(),
-		})
+		return invalidIDResponse(c, systemRoleInvalidIDMessage)
 	}
 
 	var req dto.AddPermissionsToSystemRoleDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
+		return invalidBodyResponse(c, err, nil)
 	}
 
 	if err := h.service.AddPermissionsToSystemRole(c.Context(), roleID, req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to add permissions to system role",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -264,25 +226,16 @@ func (h *SystemRoleHandler) RemovePermissionsFromSystemRole(c *fiber.Ctx) error 
 	idStr := c.Params("id")
 	roleID, err := uuid.Parse(idStr)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid system role ID",
-			"error":   err.Error(),
-		})
+		return invalidIDResponse(c, systemRoleInvalidIDMessage)
 	}
 
 	var req dto.RemovePermissionsFromSystemRoleDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
+		return invalidBodyResponse(c, err, nil)
 	}
 
 	if err := h.service.RemovePermissionsFromSystemRole(c.Context(), roleID, req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to remove permissions from system role",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -294,25 +247,16 @@ func (h *SystemRoleHandler) SetSystemRolePermissions(c *fiber.Ctx) error {
 	idStr := c.Params("id")
 	roleID, err := uuid.Parse(idStr)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid system role ID",
-			"error":   err.Error(),
-		})
+		return invalidIDResponse(c, systemRoleInvalidIDMessage)
 	}
 
 	var req dto.AddPermissionsToSystemRoleDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
+		return invalidBodyResponse(c, err, nil)
 	}
 
 	if err := h.service.SetSystemRolePermissions(c.Context(), roleID, req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to set system role permissions",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -324,18 +268,12 @@ func (h *SystemRoleHandler) GetSystemRolePermissions(c *fiber.Ctx) error {
 	idStr := c.Params("id")
 	roleID, err := uuid.Parse(idStr)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid system role ID",
-			"error":   err.Error(),
-		})
+		return invalidIDResponse(c, systemRoleInvalidIDMessage)
 	}
 
 	permissions, err := h.service.GetSystemRolePermissions(c.Context(), roleID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to get system role permissions",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

@@ -29,8 +29,13 @@ var ErrDiscountPriceInvalid = errors.New("discount_price must be greater than 0 
 var ErrPaidCoursePriceInvalid = errors.New("Khoá học có phí phải có giá lớn hơn 0. Nhập giá bán hoặc chọn miễn phí.")
 
 // validatePaidCoursePrice: khoá có phí thì giá (sau làm tròn 2 chữ số như cột decimal(12,2)) phải > 0.
+//
+// QA7 review M1: số mũ ngoài biên bị từ chối TRƯỚC Round (Round rescale về 10^|exp|, 1e20000000 tốn ~2 s CPU).
 func validatePaidCoursePrice(isFree bool, price decimal.Decimal) error {
-	if !isFree && !price.Round(2).IsPositive() {
+	if isFree {
+		return nil
+	}
+	if !utils.DecimalExponentWithinBounds(price) || !price.Round(2).IsPositive() {
 		return ErrPaidCoursePriceInvalid
 	}
 	return nil
@@ -42,7 +47,12 @@ func validatePaidCoursePrice(isFree bool, price decimal.Decimal) error {
 // half-away-from-zero, giống decimal.Round): 99.999 so với giá 100 sẽ được DB lưu thành 100.00 =
 // giá gốc, tức khuyến mãi vô hiệu mà EffectivePrice âm thầm bỏ qua. Nếu so trước khi làm tròn thì
 // 99.999 < 100 lọt qua validate (L1 MINOR 1).
+//
+// QA7 review M1: số mũ ngoài biên bị từ chối TRƯỚC Round/so sánh (cùng lý do validatePaidCoursePrice).
 func validateDiscountPrice(price, discount decimal.Decimal) error {
+	if !utils.DecimalExponentWithinBounds(price) || !utils.DecimalExponentWithinBounds(discount) {
+		return ErrDiscountPriceInvalid
+	}
 	price, discount = price.Round(2), discount.Round(2)
 	if !discount.IsPositive() || !discount.LessThan(price) {
 		return ErrDiscountPriceInvalid

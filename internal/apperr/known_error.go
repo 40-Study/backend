@@ -24,9 +24,12 @@ type KnownError struct {
 
 func (e *KnownError) Error() string { return e.Message }
 
-// NotFound: không tìm thấy đối tượng (khoá học, review, ...). HTTP 404.
+// NotFoundCode: mã ổn định của mọi 404 "không tìm thấy" (cùng mã order/user/voucher/course handler đã dùng); web dịch theo mã này.
+const NotFoundCode = "ERR_NOT_FOUND"
+
+// NotFound: không tìm thấy đối tượng (khoá học, review, ...). HTTP 404 kèm code ERR_NOT_FOUND (QA7 review L2).
 func NotFound(message string) *KnownError {
-	return &KnownError{Status: http.StatusNotFound, Message: message}
+	return &KnownError{Status: http.StatusNotFound, Message: message, Code: NotFoundCode}
 }
 
 // Conflict: trạng thái nghiệp vụ đã tồn tại/xung đột (đã có trong giỏ hàng, đã đăng ký, đã

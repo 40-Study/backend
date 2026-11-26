@@ -60,7 +60,7 @@ func (h *VoucherHandler) CreateVoucher(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"code": "ERR_VOUCHER_NAME_EXISTS", "message": err.Error()})
 	}
 	if err != nil {
-		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_CREATE_VOUCHER", "Không tạo được voucher, vui lòng thử lại.")
+		return voucherActionFailed(c, err, "ERR_CREATE_VOUCHER", "Không tạo được voucher, vui lòng thử lại.")
 	}
 
 	// Id nằm trong response chứ không ở URL: đặt đích cho middleware Audit.
@@ -78,7 +78,7 @@ func (h *VoucherHandler) GetVoucher(c *fiber.Ctx) error {
 
 	voucher, err := h.voucherService.GetVoucherByID(c.Context(), voucherID)
 	if err != nil {
-		return voucherNotFound(c)
+		return voucherLookupFailed(c, err)
 	}
 
 	return c.JSON(voucher)
@@ -115,7 +115,7 @@ func (h *VoucherHandler) GetVoucherByCode(c *fiber.Ctx) error {
 		if writeVoucherFirstOrderOnly(c, err) {
 			return nil
 		}
-		return voucherNotFound(c)
+		return voucherLookupFailed(c, err)
 	}
 
 	return c.JSON(voucher)
@@ -137,7 +137,7 @@ func (h *VoucherHandler) GetAllVouchers(c *fiber.Ctx) error {
 
 	vouchers, total, err := h.voucherService.GetAllVouchers(c.Context(), req)
 	if err != nil {
-		return voucherActionFailed(c, err, fiber.StatusInternalServerError, "ERR_GET_VOUCHERS", "Không tải được danh sách voucher, vui lòng thử lại.")
+		return voucherActionFailed(c, err, "ERR_GET_VOUCHERS", "Không tải được danh sách voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
@@ -181,7 +181,7 @@ func (h *VoucherHandler) UpdateVoucher(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"code": "ERR_VOUCHER_NAME_EXISTS", "message": err.Error()})
 	}
 	if err != nil {
-		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_UPDATE_VOUCHER", "Không cập nhật được voucher, vui lòng thử lại.")
+		return voucherActionFailed(c, err, "ERR_UPDATE_VOUCHER", "Không cập nhật được voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(voucher)
@@ -196,7 +196,7 @@ func (h *VoucherHandler) DeleteVoucher(c *fiber.Ctx) error {
 
 	err = h.voucherService.DeleteVoucher(c.Context(), voucherID)
 	if err != nil {
-		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_DELETE_VOUCHER", "Không xoá được voucher, vui lòng thử lại.")
+		return voucherActionFailed(c, err, "ERR_DELETE_VOUCHER", "Không xoá được voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
@@ -213,7 +213,7 @@ func (h *VoucherHandler) RestoreVoucher(c *fiber.Ctx) error {
 
 	err = h.voucherService.RestoreVoucher(c.Context(), voucherID)
 	if err != nil {
-		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_RESTORE_VOUCHER", "Không khôi phục được voucher, vui lòng thử lại.")
+		return voucherActionFailed(c, err, "ERR_RESTORE_VOUCHER", "Không khôi phục được voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
@@ -230,7 +230,7 @@ func (h *VoucherHandler) ActivateVoucher(c *fiber.Ctx) error {
 
 	err = h.voucherService.ActivateVoucher(c.Context(), voucherID)
 	if err != nil {
-		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_ACTIVATE_VOUCHER", "Không bật được voucher, vui lòng thử lại.")
+		return voucherActionFailed(c, err, "ERR_ACTIVATE_VOUCHER", "Không bật được voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
@@ -247,7 +247,7 @@ func (h *VoucherHandler) DeactivateVoucher(c *fiber.Ctx) error {
 
 	err = h.voucherService.DeactivateVoucher(c.Context(), voucherID)
 	if err != nil {
-		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_DEACTIVATE_VOUCHER", "Không tắt được voucher, vui lòng thử lại.")
+		return voucherActionFailed(c, err, "ERR_DEACTIVATE_VOUCHER", "Không tắt được voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
@@ -281,7 +281,7 @@ func (h *VoucherHandler) SaveVoucher(c *fiber.Ctx) error {
 	// Get voucher by ID to get code
 	voucher, err := h.voucherService.GetVoucherByID(c.Context(), voucherID)
 	if err != nil {
-		return voucherNotFound(c)
+		return voucherLookupFailed(c, err)
 	}
 
 	var req dto.SaveVoucherRequest
@@ -305,7 +305,7 @@ func (h *VoucherHandler) SaveVoucher(c *fiber.Ctx) error {
 		return voucherNotFound(c)
 	}
 	if err != nil {
-		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_SAVE_VOUCHER", "Không lưu được voucher, vui lòng thử lại.")
+		return voucherActionFailed(c, err, "ERR_SAVE_VOUCHER", "Không lưu được voucher, vui lòng thử lại.")
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(savedVoucher)
@@ -346,7 +346,7 @@ func (h *VoucherHandler) UnsaveVoucher(c *fiber.Ctx) error {
 		})
 	}
 	if err != nil {
-		return voucherActionFailed(c, err, fiber.StatusBadRequest, "ERR_UNSAVE_VOUCHER", "Không bỏ lưu được voucher, vui lòng thử lại.")
+		return voucherActionFailed(c, err, "ERR_UNSAVE_VOUCHER", "Không bỏ lưu được voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
@@ -372,7 +372,7 @@ func (h *VoucherHandler) GetUserSavedVouchers(c *fiber.Ctx) error {
 
 	vouchers, total, err := h.voucherService.GetUserSavedVouchers(c.Context(), userID, limit, offset)
 	if err != nil {
-		return voucherActionFailed(c, err, fiber.StatusInternalServerError, "ERR_GET_SAVED_VOUCHERS", "Không tải được voucher đã lưu, vui lòng thử lại.")
+		return voucherActionFailed(c, err, "ERR_GET_SAVED_VOUCHERS", "Không tải được voucher đã lưu, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
@@ -390,7 +390,7 @@ func (h *VoucherHandler) GetPublicVouchers(c *fiber.Ctx) error {
 
 	vouchers, total, err := h.voucherService.GetPublicVouchers(c.Context(), limit, offset)
 	if err != nil {
-		return voucherActionFailed(c, err, fiber.StatusInternalServerError, "ERR_GET_PUBLIC_VOUCHERS", "Không tải được danh sách voucher, vui lòng thử lại.")
+		return voucherActionFailed(c, err, "ERR_GET_PUBLIC_VOUCHERS", "Không tải được danh sách voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(fiber.Map{
@@ -410,7 +410,7 @@ func (h *VoucherHandler) GetVoucherStats(c *fiber.Ctx) error {
 
 	stats, err := h.voucherService.GetVoucherStats(c.Context(), voucherID)
 	if err != nil {
-		return voucherActionFailed(c, err, fiber.StatusInternalServerError, "ERR_GET_STATS", "Không tải được thống kê voucher, vui lòng thử lại.")
+		return voucherActionFailed(c, err, "ERR_GET_STATS", "Không tải được thống kê voucher, vui lòng thử lại.")
 	}
 
 	return c.JSON(stats)
