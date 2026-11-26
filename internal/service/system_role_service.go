@@ -79,8 +79,9 @@ func (s *SystemRoleService) CreateSystemRole(ctx context.Context, req dto.Create
 
 // ensureNameFree (QA7 review M4): tên vai tự tạo duy nhất KHÔNG phân biệt hoa thường ("Moderator" và "moderator" là một), kể cả vai đã
 // xoá mềm (unique index vẫn giữ chỗ). excludeID bỏ qua chính vai đang đổi tên để đổi hoa/thường tên của mình vẫn được.
-// Kiểm trước khi ghi nên hai request đồng thời khác hoa/thường vẫn có thể cùng lọt qua; unique index theo lower(name)
-// (cần migration) mới đóng hẳn khe đó, chưa làm ở vòng này. Trùng ĐÚNG chữ vẫn do unique index hiện có chặn (isUniqueViolation).
+// Kiểm trước khi ghi nên hai request đồng thời khác hoa/thường vẫn có thể cùng lọt qua; khe đó do unique index
+// uq_system_roles_name_ci (theo lower(name), database/system_role_name_ci_unique.go) đóng ở tầng DB, vi phạm trả về 409 qua
+// isUniqueViolation. Trùng ĐÚNG chữ vẫn do unique index theo name chặn cùng đường đó.
 func (s *SystemRoleService) ensureNameFree(ctx context.Context, name string, excludeID uuid.UUID) error {
 	taken, err := s.repo.SystemRoleNameTakenFold(ctx, name, excludeID)
 	if err != nil {

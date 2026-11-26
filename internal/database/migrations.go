@@ -490,6 +490,12 @@ func RunPostMigrations(db *gorm.DB) error {
 		return err
 	}
 
+	// Unique index theo lower(name) cho system_roles (QA7 backlog #155): dò tên trùng trước, trùng thì dừng với lỗi rõ ràng,
+	// xem system_role_name_ci_unique.go.
+	if err := runSystemRoleNameCIUnique(db); err != nil {
+		return err
+	}
+
 	logNotValidCheckConstraints(db)
 
 	log.Printf("Post-migrations applied: %d statement group(s)\n", len(statements))

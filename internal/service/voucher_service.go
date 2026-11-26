@@ -498,10 +498,10 @@ func (vs *VoucherService) RestoreVoucher(ctx context.Context, voucherID uuid.UUI
 	return vs.vr.RestoreVoucher(ctx, voucherID)
 }
 
+// HardDeleteVoucher xoá hẳn voucher, KỂ CẢ voucher đã xoá mềm (xoá mềm rồi mới xoá hẳn là luồng dọn dẹp bình thường). Không tra
+// trước bằng GetVoucherByID (lookup có scope không thấy dòng đã xoá nên luôn ErrVoucherNotFound, QA7 backlog #155): repository
+// xoá Unscoped và trả ErrVoucherNotFound khi không có dòng nào, cả transaction (kể cả bản ghi liên quan) được hoàn tác.
 func (vs *VoucherService) HardDeleteVoucher(ctx context.Context, voucherID uuid.UUID) error {
-	if _, err := vs.vr.GetVoucherByID(ctx, voucherID); err != nil {
-		return err
-	}
 	return vs.vr.HardDeleteVoucherCascade(ctx, voucherID)
 }
 
