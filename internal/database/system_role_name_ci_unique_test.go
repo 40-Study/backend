@@ -87,7 +87,7 @@ func TestSystemRoleNameCIUnique_DuplicatesStopLoudly_NothingDeleted_ThenCleanRun
 		t.Fatal("còn tên trùng không phân biệt hoa thường mà RunPostMigrations vẫn thành công")
 	}
 	msg := err.Error()
-	for _, want := range []string{systemRoleNameCIIndex, "2 nhóm", strings.ToLower(prefix), keep.String(), dupLive.String(), dupSoft.String(), "Không dòng nào bị sửa hay xoá"} {
+	for _, want := range []string{systemRoleNameCIIndex, "2 group(s)", strings.ToLower(prefix), keep.String(), dupLive.String(), dupSoft.String(), "No row was modified or deleted", "renaming is safer than deleting"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("lỗi thiếu %q: %s", want, msg)
 		}

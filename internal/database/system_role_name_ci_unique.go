@@ -7,8 +7,8 @@ package database
 //
 // An toàn với dữ liệu cũ: index phủ cả vai đã xoá mềm (giống SystemRoleNameTakenFold, Unscoped). TRƯỚC khi tạo, dò các nhóm
 // tên trùng nhau theo lower(name); còn nhóm nào thì trả lỗi nêu rõ tên + id từng dòng và DỪNG (API không khởi động), KHÔNG tự xoá,
-// đổi tên hay gộp dòng nào: vai trò đang gắn với user và quyền, chọn dòng nào giữ là quyết định của người vận hành. Đổi tên
-// hoặc xoá hẳn các dòng thừa rồi khởi động lại; lần sau dò sạch thì tạo index. Idempotent (IF NOT EXISTS).
+// đổi tên hay gộp dòng nào: vai trò đang gắn với user và quyền, chọn dòng nào giữ là quyết định của người vận hành. Nên đổi
+// tên các dòng thừa (an toàn hơn xoá hẳn: vai đang được tham chiếu có thể vướng khoá ngoại) rồi khởi động lại; lần sau dò sạch thì tạo index. Idempotent (IF NOT EXISTS).
 
 import (
 	"fmt"
@@ -45,8 +45,10 @@ func runSystemRoleNameCIUnique(db *gorm.DB) error {
 		for i, d := range dups {
 			groups[i] = fmt.Sprintf("%q: %s", d.Folded, d.Rows)
 		}
-		return fmt.Errorf("post-migration %q refused: %d nhóm vai trò hệ thống trùng tên không phân biệt hoa thường (kể cả vai đã xoá mềm), "+
-			"không thể tạo unique index %s. Không dòng nào bị sửa hay xoá. Hãy đổi tên hoặc xoá hẳn các dòng thừa rồi khởi động lại. Nhóm trùng: %s",
+		return fmt.Errorf("post-migration %q refused: %d group(s) of system_roles names collide case-insensitively (soft-deleted rows included), "+
+			"so unique index %s cannot be created. No row was modified or deleted. Rename the extra rows "+
+			"(UPDATE system_roles SET name = '<new name>' WHERE id = '<id>'): renaming is safer than deleting, because a role still referenced by "+
+			"user_system_roles or system_role_permissions can fail to delete on a foreign key or take its assignments with it. Then restart. Colliding groups: %s",
 			"unique index on lower(system_roles.name)", len(dups), systemRoleNameCIIndex, strings.Join(groups, "; "))
 	}
 	if err := db.Exec(systemRoleNameCIIndexSQL).Error; err != nil {

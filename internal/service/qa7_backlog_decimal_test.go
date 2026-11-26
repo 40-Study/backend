@@ -43,17 +43,37 @@ func TestQA7B_PlatformFeePercent_SoMuKhongLo_TuChoiNhanh(t *testing.T) {
 	}
 }
 
+// qa7bValidContestReq: mọi thứ hợp lệ trừ phần trăm chứng nhận, nên lỗi field certificate_min_percentage chỉ có thể đến từ
+// chính phép kiểm đó. Request này đi hết lịch, giải, khoá học rồi dừng ở ErrContestQuizInvalid (quiz_id rỗng, chưa chạm repo).
+func qa7bValidContestReq(p decimal.Decimal) *dto.ContestUpsertRequest {
+	now := time.Now()
+	return &dto.ContestUpsertRequest{
+		Title: "QA7B contest", StartTime: now.Add(24 * time.Hour), EndTime: now.Add(48 * time.Hour),
+		DurationMinutes: 60, CertificateMinPercentage: &p,
+	}
+}
+
+func qa7bPercentageFieldError(err error) bool {
+	var ve *ContestValidationError
+	return errors.As(err, &ve) && len(ve.Errors) == 1 && ve.Errors[0].Field == "certificate_min_percentage"
+}
+
 func TestQA7B_ContestCertificateMinPercentage_SoMuKhongLo_TuChoiNhanh(t *testing.T) {
-	svc := &ContestService{}
-	for _, in := range append(qa7bHugeExponents, "-1", "100.01") {
-		p := decimal.RequireFromString(in)
+	svc := &ContestService{now: time.Now}
+	validate := func(in string) error {
+		return svc.validateUpsert(context.Background(), &ContestActor{}, qa7bValidContestReq(decimal.RequireFromString(in)), uuid.New(), nil)
+	}
+	for _, in := range append(append([]string{}, qa7bHugeExponents...), "-1", "100.01") {
 		qa7bFast(t, "validateUpsert "+in, func() {
-			// Kiểm % là kiểm ĐẦU TIÊN của validateUpsert nên service rỗng đủ để thấy lỗi field.
-			err := svc.validateUpsert(context.Background(), nil, &dto.ContestUpsertRequest{CertificateMinPercentage: &p}, uuid.New(), nil)
-			if err == nil || err.Error() == "" {
-				t.Errorf("%s: muốn lỗi certificate_min_percentage, nhận %v", in, err)
+			if err := validate(in); !qa7bPercentageFieldError(err) {
+				t.Errorf("%s: err=%v, muốn lỗi field certificate_min_percentage", in, err)
 			}
 		})
+	}
+	for _, in := range []string{"0", "55.5", "100"} { // hợp lệ: qua phép kiểm %, dừng ở bước sau
+		if err := validate(in); qa7bPercentageFieldError(err) || !errors.Is(err, ErrContestQuizInvalid) {
+			t.Errorf("%s: err=%v, muốn ErrContestQuizInvalid (đã qua phép kiểm %%)", in, err)
+		}
 	}
 }
 
