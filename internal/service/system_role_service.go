@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"study.com/v1/internal/apperr"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -29,6 +30,19 @@ type SystemRoleServiceInterface interface {
 // được xoá qua API quản trị. Handler trả 409 SYSTEM_ROLE_PROTECTED.
 var ErrSystemRoleProtected = errors.New("built-in system role cannot be deleted")
 
+// ErrSystemRoleNameExists (QA7-A02, C14): tạo/đổi tên vai trò hệ thống trùng tên đã có (kể cả vai đã xoá mềm: unique index vẫn
+// giữ chỗ) hoặc trùng tên vai dựng sẵn (so không phân biệt hoa thường, như tên org role). Handler trả 409 ERR_ROLE_NAME_EXISTS.
+var ErrSystemRoleNameExists = apperr.ConflictCode("ERR_ROLE_NAME_EXISTS", "Tên vai trò đã tồn tại (kể cả vai trò đã xoá hoặc tên hệ thống dành riêng). Hãy chọn tên khác.")
+
+// ErrSystemRoleNotFound / ErrSystemRolePermissionsInvalid (QA7 review M2): lỗi nghiệp vụ đã biết của vai trò hệ thống, an toàn để hiện
+// nguyên văn. Trước đây là errors.New thường nên handler không phân biệt được với lỗi DB và đưa err.Error() ra body.
+var (
+	ErrSystemRoleNotFound           = apperr.NotFound("Không tìm thấy vai trò.")
+	ErrSystemRolePermissionsInvalid = apperr.BadRequest("Một hoặc nhiều quyền không tồn tại.")
+	// Thêm quyền đã có sẵn trong vai trò: trước đây rơi vào lỗi khoá chính thô của DB (và bị đưa ra body).
+	ErrSystemRolePermissionsAlreadyGranted = apperr.Conflict("Vai trò đã có một hoặc nhiều quyền này.")
+)
+
 type SystemRoleService struct {
 	repo           repository.SystemRoleRepositoryInterface
 	permissionRepo repository.PermissionRepositoryInterface
@@ -39,6 +53,12 @@ func NewSystemRoleService(repo repository.SystemRoleRepositoryInterface, permiss
 }
 
 func (s *SystemRoleService) CreateSystemRole(ctx context.Context, req dto.CreateSystemRoleDTO) (*dto.SystemRoleResponseDTO, error) {
+	if model.OrgRoleNameReserved(req.Name) {
+		return nil, ErrSystemRoleNameExists
+	}
+	if err := s.ensureNameFree(ctx, req.Name, uuid.Nil); err != nil {
+		return nil, err
+	}
 	role := &model.SystemRole{
 		Name: req.Name,
 	}
@@ -48,10 +68,28 @@ func (s *SystemRoleService) CreateSystemRole(ctx context.Context, req dto.Create
 	}
 
 	if err := s.repo.CreateSystemRole(ctx, role); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrSystemRoleNameExists
+		}
 		return nil, err
 	}
 
 	return toSystemRoleResponseDTO(role), nil
+}
+
+// ensureNameFree (QA7 review M4): tên vai tự tạo duy nhất KHÔNG phân biệt hoa thường ("Moderator" và "moderator" là một), kể cả vai đã
+// xoá mềm (unique index vẫn giữ chỗ). excludeID bỏ qua chính vai đang đổi tên để đổi hoa/thường tên của mình vẫn được.
+// Kiểm trước khi ghi nên hai request đồng thời khác hoa/thường vẫn có thể cùng lọt qua; unique index theo lower(name)
+// (cần migration) mới đóng hẳn khe đó, chưa làm ở vòng này. Trùng ĐÚNG chữ vẫn do unique index hiện có chặn (isUniqueViolation).
+func (s *SystemRoleService) ensureNameFree(ctx context.Context, name string, excludeID uuid.UUID) error {
+	taken, err := s.repo.SystemRoleNameTakenFold(ctx, name, excludeID)
+	if err != nil {
+		return err
+	}
+	if taken {
+		return ErrSystemRoleNameExists
+	}
+	return nil
 }
 
 func (s *SystemRoleService) GetSystemRoleByID(ctx context.Context, id uuid.UUID) (*dto.SystemRoleDetailResponseDTO, error) {
@@ -60,7 +98,7 @@ func (s *SystemRoleService) GetSystemRoleByID(ctx context.Context, id uuid.UUID)
 		return nil, err
 	}
 	if role == nil {
-		return nil, errors.New("system role not found")
+		return nil, ErrSystemRoleNotFound
 	}
 
 	return toSystemRoleDetailResponseDTO(role), nil
@@ -98,10 +136,19 @@ func (s *SystemRoleService) UpdateSystemRole(ctx context.Context, id uuid.UUID, 
 		return nil, err
 	}
 	if role == nil {
-		return nil, errors.New("system role not found")
+		return nil, ErrSystemRoleNotFound
 	}
 
 	if req.Name != nil {
+		// Giữ nguyên tên hiện tại là hợp lệ (kể cả vai dựng sẵn); đổi sang tên dành riêng thì bị chặn như lúc tạo.
+		if *req.Name != role.Name {
+			if model.OrgRoleNameReserved(*req.Name) {
+				return nil, ErrSystemRoleNameExists
+			}
+			if err := s.ensureNameFree(ctx, *req.Name, role.ID); err != nil {
+				return nil, err
+			}
+		}
 		role.Name = *req.Name
 	}
 	if req.Description != nil {
@@ -110,6 +157,9 @@ func (s *SystemRoleService) UpdateSystemRole(ctx context.Context, id uuid.UUID, 
 	}
 
 	if err := s.repo.UpdateSystemRole(ctx, role); err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrSystemRoleNameExists
+		}
 		return nil, err
 	}
 
@@ -122,7 +172,7 @@ func (s *SystemRoleService) DeleteSystemRole(ctx context.Context, id uuid.UUID, 
 		return err
 	}
 	if role == nil {
-		return errors.New("system role not found")
+		return ErrSystemRoleNotFound
 	}
 	if model.IsBuiltInSystemRole(role.Name) {
 		return ErrSystemRoleProtected
@@ -143,7 +193,7 @@ func (s *SystemRoleService) AddPermissionsToSystemRole(ctx context.Context, role
 		return err
 	}
 	if role == nil {
-		return errors.New("system role not found")
+		return ErrSystemRoleNotFound
 	}
 
 	count, err := s.permissionRepo.CountPermissionsByIDs(ctx, req.PermissionIDs)
@@ -151,10 +201,16 @@ func (s *SystemRoleService) AddPermissionsToSystemRole(ctx context.Context, role
 		return err
 	}
 	if int(count) != len(req.PermissionIDs) {
-		return errors.New("one or more permission IDs do not exist")
+		return ErrSystemRolePermissionsInvalid
 	}
 
-	return s.repo.AddPermissionsToSystemRole(ctx, roleID, req.PermissionIDs)
+	if err := s.repo.AddPermissionsToSystemRole(ctx, roleID, req.PermissionIDs); err != nil {
+		if isUniqueViolation(err) {
+			return ErrSystemRolePermissionsAlreadyGranted
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *SystemRoleService) RemovePermissionsFromSystemRole(ctx context.Context, roleID uuid.UUID, req dto.RemovePermissionsFromSystemRoleDTO) error {
@@ -163,7 +219,7 @@ func (s *SystemRoleService) RemovePermissionsFromSystemRole(ctx context.Context,
 		return err
 	}
 	if role == nil {
-		return errors.New("system role not found")
+		return ErrSystemRoleNotFound
 	}
 
 	return s.repo.RemovePermissionsFromSystemRole(ctx, roleID, req.PermissionIDs)
@@ -175,7 +231,7 @@ func (s *SystemRoleService) SetSystemRolePermissions(ctx context.Context, roleID
 		return err
 	}
 	if role == nil {
-		return errors.New("system role not found")
+		return ErrSystemRoleNotFound
 	}
 
 	count, err := s.permissionRepo.CountPermissionsByIDs(ctx, req.PermissionIDs)
@@ -183,7 +239,7 @@ func (s *SystemRoleService) SetSystemRolePermissions(ctx context.Context, roleID
 		return err
 	}
 	if int(count) != len(req.PermissionIDs) {
-		return errors.New("one or more permission IDs do not exist")
+		return ErrSystemRolePermissionsInvalid
 	}
 
 	return s.repo.SetSystemRolePermissions(ctx, roleID, req.PermissionIDs)
@@ -195,7 +251,7 @@ func (s *SystemRoleService) GetSystemRolePermissions(ctx context.Context, roleID
 		return nil, err
 	}
 	if permissions == nil {
-		return nil, errors.New("system role not found")
+		return nil, ErrSystemRoleNotFound
 	}
 
 	permDTOs := make([]dto.PermissionResponseDTO, len(permissions))

@@ -1087,6 +1087,10 @@ func (s *ScheduleService) GetMyAttendances(ctx context.Context, studentID uuid.U
 		// QA5 R2: GetStudentAttendanceHistory preload Session + Session.Class, đủ để nói dòng này của lớp nào, buổi nào.
 		result[i].ClassName = att.Session.Class.Name
 		result[i].SessionTitle = attendanceSessionTitle(&att.Session)
+		// QA7-S7-01 (C15): ngày + giờ bắt đầu theo lịch của buổi. Dữ liệu giờ hỏng thì để vắng, không bịa một mốc giờ.
+		if start, err := att.Session.StartTime.On(att.Session.Date, sessionDayZone); err == nil {
+			result[i].SessionStartTime = &start
+		}
 	}
 	return result, total, nil
 }

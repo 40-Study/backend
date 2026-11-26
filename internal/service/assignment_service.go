@@ -52,6 +52,8 @@ type AssignmentServiceInterface interface {
 	// GetByClass (R4): bài tập của một lớp. Quản lý lớp (GV, chủ khoá, người tạo, admin, chủ/quản trị tổ chức) thấy cả
 	// bản nháp, học viên đang học chỉ thấy bản đã công bố; người ngoài (hoặc lớp không tồn tại) nhận ErrClassNotFound.
 	GetByClass(ctx context.Context, actorID uuid.UUID, isAdmin bool, classID uuid.UUID, page, pageSize int) (*dto.AssignmentListDTO, error)
+	// GetMine (QA7-S7-09, C16): mọi bài đã công bố học viên thấy được (mọi lớp/phiên đang học), cùng dạng với GetBySession kèm my_submission.
+	GetMine(ctx context.Context, actorID uuid.UUID, page, pageSize int) (*dto.AssignmentListDTO, error)
 	Update(ctx context.Context, id uuid.UUID, req dto.UpdateAssignmentDTO) (*model.Assignment, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	Publish(ctx context.Context, id uuid.UUID, livekitSvc LivekitServiceInterface) (*model.Assignment, error)
@@ -333,6 +335,29 @@ func (s *AssignmentService) GetByClass(ctx context.Context, actorID uuid.UUID, i
 	}
 
 	assignments, total, err := s.repo.GetByClass(ctx, classID, page, pageSize, audience != ClassAudienceManager)
+	if err != nil {
+		return nil, err
+	}
+	data, err := s.toResponseDTOsWithMySubmission(ctx, actorID, assignments)
+	if err != nil {
+		return nil, err
+	}
+	return &dto.AssignmentListDTO{Data: data, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+func (s *AssignmentService) GetMine(ctx context.Context, actorID uuid.UUID, page, pageSize int) (*dto.AssignmentListDTO, error) {
+	if page < 1 {
+		page = 1
+	}
+	// QA7 review L1: page_size > 100 bị kẹp về 100 (không rơi về 20): client xin 200 mà nhận 20 thì vòng duyệt
+	// "items.length < PAGE_SIZE" của web dừng sau trang 1. Thiếu/<1 mới về mặc định 20.
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	assignments, total, err := s.repo.GetVisibleToStudent(ctx, actorID, page, pageSize)
 	if err != nil {
 		return nil, err
 	}

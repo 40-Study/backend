@@ -28,6 +28,18 @@ func RespondServiceError(c *fiber.Ctx, err error, genericMessage string) error {
 
 	log.Printf("[ERROR] %s %s: %v", c.Method(), c.Path(), err)
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		"code":    "ERR_INTERNAL",
 		"message": genericMessage,
 	})
+}
+
+// invalidIDResponse: 400 {code: ERR_INVALID_ID, message} cho id trên URL/query sai định dạng; message tiếng Việt nêu đối tượng,
+// không bao giờ chứa lỗi parse của Go (vd "invalid UUID length: 14").
+func invalidIDResponse(c *fiber.Ctx, message string) error {
+	return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_INVALID_ID", "message": message})
+}
+
+// notFoundResponse: 404 {code: ERR_NOT_FOUND, message} (cùng mã apperr.NotFound mang theo).
+func notFoundResponse(c *fiber.Ctx, message string) error {
+	return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"code": apperr.NotFoundCode, "message": message})
 }

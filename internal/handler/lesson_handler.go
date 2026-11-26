@@ -11,6 +11,21 @@ import (
 	"study.com/v1/internal/utils"
 )
 
+// lessonBodyFieldMessages: duration_minutes có kiểu sai (2.5, "abc") -> ERR_VALIDATION nêu đúng trường (C12).
+var lessonBodyFieldMessages = map[string]string{"duration_minutes": lessonDurationMessage}
+
+// lessonValidationFailed: 400 ERR_VALIDATION; thời lượng có câu tiếng Việt riêng, trường khác giữ câu validate chung.
+func lessonValidationFailed(c *fiber.Ctx, errs []utils.ValidationError) error {
+	msg := "Dữ liệu bài học không hợp lệ."
+	for _, e := range errs {
+		if e.Field == "duration_minutes" {
+			msg = e.Message
+			break
+		}
+	}
+	return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_VALIDATION", "message": msg, "errors": errs})
+}
+
 type LessonHandler struct {
 	service     service.LessonServiceInterface
 	permChecker *middleware.PermissionChecker
@@ -37,10 +52,7 @@ func lessonForbiddenResponse(c *fiber.Ctx, err error) bool {
 func (h *LessonHandler) CreateLesson(c *fiber.Ctx) error {
 	sectionID, err := uuid.Parse(c.Params("section_id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid section ID",
-			"error":   err.Error(),
-		})
+		return invalidIDResponse(c, "ID chương không hợp lệ.")
 	}
 
 	userID, ok := c.Locals("user_id").(uuid.UUID)
@@ -52,17 +64,11 @@ func (h *LessonHandler) CreateLesson(c *fiber.Ctx) error {
 
 	var req dto.CreateLessonDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
+		return invalidBodyResponse(c, err, lessonBodyFieldMessages)
 	}
 
-	if errors := utils.ValidateStruct(req); len(errors) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
+	if errs := append(utils.ValidateStruct(req), lessonDurationError(req.DurationMins)...); len(errs) > 0 {
+		return lessonValidationFailed(c, errs)
 	}
 
 	lesson, err := h.service.CreateLesson(c.Context(), sectionID, userID, req)
@@ -70,10 +76,7 @@ func (h *LessonHandler) CreateLesson(c *fiber.Ctx) error {
 		if lessonForbiddenResponse(c, err) {
 			return nil
 		}
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to create lesson",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -85,10 +88,7 @@ func (h *LessonHandler) CreateLesson(c *fiber.Ctx) error {
 func (h *LessonHandler) GetAllLessons(c *fiber.Ctx) error {
 	sectionID, err := uuid.Parse(c.Params("section_id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid section ID",
-			"error":   err.Error(),
-		})
+		return invalidIDResponse(c, "ID chương không hợp lệ.")
 	}
 
 	// C-1 (review vòng 2): route nằm sau middleware.AuthMiddleware (course_router.go) nên user_id
@@ -105,13 +105,10 @@ func (h *LessonHandler) GetAllLessons(c *fiber.Ctx) error {
 	lessons, err := h.service.GetAllLessons(c.Context(), sectionID, userID, isAdmin)
 	if err != nil {
 		// D4 (QA vòng 2): chương không tồn tại / khoá chưa xuất bản mà người xem không có quyền.
-		if errors.Is(err, service.ErrCourseHidden) || err.Error() == "section not found" {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "Section not found"})
+		if errors.Is(err, service.ErrCourseHidden) {
+			return notFoundResponse(c, "Không tìm thấy chương.")
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to retrieve lessons",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -123,10 +120,7 @@ func (h *LessonHandler) GetAllLessons(c *fiber.Ctx) error {
 func (h *LessonHandler) GetLessonByID(c *fiber.Ctx) error {
 	lessonID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid lesson ID",
-			"error":   err.Error(),
-		})
+		return invalidIDResponse(c, "ID bài học không hợp lệ.")
 	}
 
 	// B-2 (review vòng 2): route nằm sau middleware.AuthMiddleware (course_router.go) nên
@@ -142,10 +136,12 @@ func (h *LessonHandler) GetLessonByID(c *fiber.Ctx) error {
 
 	lesson, err := h.service.GetLessonByID(c.Context(), lessonID, userID, isAdmin)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Lesson not found",
-			"error":   err.Error(),
-		})
+		// Khoá chưa xuất bản mà người xem không có quyền, hoặc bài không thuộc khoá: cùng 404 với bài không tồn tại.
+		// Lỗi không xác định (DB, ...) là 500 ERR_INTERNAL, không giả làm 404 (QA7 review M2/L6).
+		if errors.Is(err, service.ErrCourseHidden) || errors.Is(err, service.ErrLessonNotInCourse) {
+			return notFoundResponse(c, "Không tìm thấy bài học.")
+		}
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -157,10 +153,7 @@ func (h *LessonHandler) GetLessonByID(c *fiber.Ctx) error {
 func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
 	lessonID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid lesson ID",
-			"error":   err.Error(),
-		})
+		return invalidIDResponse(c, "ID bài học không hợp lệ.")
 	}
 
 	userID, ok := c.Locals("user_id").(uuid.UUID)
@@ -172,17 +165,11 @@ func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
 
 	var req dto.UpdateLessonDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
+		return invalidBodyResponse(c, err, lessonBodyFieldMessages)
 	}
 
-	if errors := utils.ValidateStruct(req); len(errors) > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
+	if errs := append(utils.ValidateStruct(req), lessonDurationError(req.DurationMins)...); len(errs) > 0 {
+		return lessonValidationFailed(c, errs)
 	}
 
 	isAdmin := isAdminActor(c, h.permChecker, userID)
@@ -202,10 +189,7 @@ func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
 				"message": "LESSON_HAS_NO_VIDEO",
 			})
 		}
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to update lesson",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -217,10 +201,7 @@ func (h *LessonHandler) UpdateLesson(c *fiber.Ctx) error {
 func (h *LessonHandler) DeleteLesson(c *fiber.Ctx) error {
 	lessonID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid lesson ID",
-			"error":   err.Error(),
-		})
+		return invalidIDResponse(c, "ID bài học không hợp lệ.")
 	}
 
 	userID, ok := c.Locals("user_id").(uuid.UUID)
@@ -235,10 +216,7 @@ func (h *LessonHandler) DeleteLesson(c *fiber.Ctx) error {
 		if lessonForbiddenResponse(c, err) {
 			return nil
 		}
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to delete lesson",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -249,18 +227,12 @@ func (h *LessonHandler) DeleteLesson(c *fiber.Ctx) error {
 func (h *LessonHandler) ReorderLessons(c *fiber.Ctx) error {
 	sectionID, err := uuid.Parse(c.Params("section_id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid section ID",
-			"error":   err.Error(),
-		})
+		return invalidIDResponse(c, "ID chương không hợp lệ.")
 	}
 
 	var req dto.ReorderDTO
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Invalid request body",
-			"error":   err.Error(),
-		})
+		return invalidBodyResponse(c, err, nil)
 	}
 
 	if errors := utils.ValidateStruct(req); len(errors) > 0 {
@@ -282,10 +254,7 @@ func (h *LessonHandler) ReorderLessons(c *fiber.Ctx) error {
 		if lessonForbiddenResponse(c, err) {
 			return nil
 		}
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Failed to reorder lessons",
-			"error":   err.Error(),
-		})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

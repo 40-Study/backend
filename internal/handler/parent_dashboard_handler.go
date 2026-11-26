@@ -18,17 +18,17 @@ func NewParentDashboardHandler(svc service.ParentDashboardServiceInterface) *Par
 func (h *ParentDashboardHandler) GetChildOverview(c *fiber.Ctx) error {
 	parentID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok || parentID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"code": "ERR_UNAUTHORIZED", "message": "Vui lòng đăng nhập để tiếp tục."})
 	}
 
 	childID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid child id"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_INVALID_ID", "message": "ID học sinh không hợp lệ."})
 	}
 
 	overview, err := h.svc.GetChildOverview(c.Context(), parentID, childID)
 	if err != nil {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.JSON(fiber.Map{
@@ -41,12 +41,12 @@ func (h *ParentDashboardHandler) GetChildOverview(c *fiber.Ctx) error {
 func (h *ParentDashboardHandler) GetChildCourses(c *fiber.Ctx) error {
 	parentID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok || parentID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"code": "ERR_UNAUTHORIZED", "message": "Vui lòng đăng nhập để tiếp tục."})
 	}
 
 	childID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid child id"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_INVALID_ID", "message": "ID học sinh không hợp lệ."})
 	}
 
 	page := c.QueryInt("page", 1)
@@ -54,7 +54,7 @@ func (h *ParentDashboardHandler) GetChildCourses(c *fiber.Ctx) error {
 
 	courses, err := h.svc.GetChildCourses(c.Context(), parentID, childID, page, pageSize)
 	if err != nil {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.JSON(fiber.Map{
@@ -67,17 +67,17 @@ func (h *ParentDashboardHandler) GetChildCourses(c *fiber.Ctx) error {
 func (h *ParentDashboardHandler) GetChildGrades(c *fiber.Ctx) error {
 	parentID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok || parentID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"code": "ERR_UNAUTHORIZED", "message": "Vui lòng đăng nhập để tiếp tục."})
 	}
 
 	childID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid child id"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_INVALID_ID", "message": "ID học sinh không hợp lệ."})
 	}
 
 	grades, err := h.svc.GetChildGrades(c.Context(), parentID, childID)
 	if err != nil {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.JSON(fiber.Map{
@@ -90,17 +90,17 @@ func (h *ParentDashboardHandler) GetChildGrades(c *fiber.Ctx) error {
 func (h *ParentDashboardHandler) GetChildSchedule(c *fiber.Ctx) error {
 	parentID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok || parentID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"code": "ERR_UNAUTHORIZED", "message": "Vui lòng đăng nhập để tiếp tục."})
 	}
 
 	childID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid child id"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_INVALID_ID", "message": "ID học sinh không hợp lệ."})
 	}
 
 	schedule, err := h.svc.GetChildSchedule(c.Context(), parentID, childID)
 	if err != nil {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.JSON(fiber.Map{
@@ -113,17 +113,17 @@ func (h *ParentDashboardHandler) GetChildSchedule(c *fiber.Ctx) error {
 func (h *ParentDashboardHandler) GetChildTimetable(c *fiber.Ctx) error {
 	parentID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok || parentID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"code": "ERR_UNAUTHORIZED", "message": "Vui lòng đăng nhập để tiếp tục."})
 	}
 
 	childID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid child id"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_INVALID_ID", "message": "ID học sinh không hợp lệ."})
 	}
 
 	timetable, err := h.svc.GetChildTimetable(c.Context(), parentID, childID)
 	if err != nil {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.JSON(fiber.Map{
@@ -136,12 +136,12 @@ func (h *ParentDashboardHandler) GetChildTimetable(c *fiber.Ctx) error {
 func (h *ParentDashboardHandler) GetChildAttendance(c *fiber.Ctx) error {
 	parentID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok || parentID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"code": "ERR_UNAUTHORIZED", "message": "Vui lòng đăng nhập để tiếp tục."})
 	}
 
 	childID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid child id"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_INVALID_ID", "message": "ID học sinh không hợp lệ."})
 	}
 
 	page := c.QueryInt("page", 1)
@@ -149,7 +149,7 @@ func (h *ParentDashboardHandler) GetChildAttendance(c *fiber.Ctx) error {
 
 	attendance, err := h.svc.GetChildAttendance(c.Context(), parentID, childID, page, pageSize)
 	if err != nil {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.JSON(fiber.Map{
@@ -162,12 +162,12 @@ func (h *ParentDashboardHandler) GetChildAttendance(c *fiber.Ctx) error {
 func (h *ParentDashboardHandler) GetChildAssignments(c *fiber.Ctx) error {
 	parentID, ok := c.Locals("user_id").(uuid.UUID)
 	if !ok || parentID == uuid.Nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"code": "ERR_UNAUTHORIZED", "message": "Vui lòng đăng nhập để tiếp tục."})
 	}
 
 	childID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid child id"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"code": "ERR_INVALID_ID", "message": "ID học sinh không hợp lệ."})
 	}
 
 	page := c.QueryInt("page", 1)
@@ -175,7 +175,7 @@ func (h *ParentDashboardHandler) GetChildAssignments(c *fiber.Ctx) error {
 
 	assignments, err := h.svc.GetChildAssignments(c.Context(), parentID, childID, page, pageSize)
 	if err != nil {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+		return RespondServiceError(c, err, internalErrorMessage)
 	}
 
 	return c.JSON(fiber.Map{

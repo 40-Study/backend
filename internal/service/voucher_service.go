@@ -11,6 +11,7 @@ import (
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"study.com/v1/internal/apperr"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
@@ -170,12 +171,12 @@ func NewVoucherService(vr *repository.VoucherRepository, ur *repository.UserRepo
 func (vs *VoucherService) validateVoucherRequest(req *dto.CreateVoucherRequest) error {
 	if req.StartDate != nil && req.EndDate != nil {
 		if req.EndDate.Before(*req.StartDate) {
-			return errors.New("Ngày kết thúc phải sau ngày bắt đầu.")
+			return apperr.BadRequest("Ngày kết thúc phải sau ngày bắt đầu.")
 		}
 	}
 
 	if req.DiscountPercent != nil && (*req.DiscountPercent < 0 || *req.DiscountPercent > 100) {
-		return errors.New("Phần trăm giảm phải nằm trong khoảng từ 0 đến 100.")
+		return apperr.BadRequest("Phần trăm giảm phải nằm trong khoảng từ 0 đến 100.")
 	}
 
 	return nil
@@ -219,14 +220,14 @@ func (vs *VoucherService) CreateVoucher(ctx context.Context, req *dto.CreateVouc
 		switch model.DiscountMethod(req.DiscountMethod) {
 		case model.DiscountMethodFixed:
 			if req.DiscountAmountMoney == nil {
-				return nil, errors.New("Vui lòng nhập số tiền giảm (giảm tiền cố định).")
+				return nil, apperr.BadRequest("Vui lòng nhập số tiền giảm (giảm tiền cố định).")
 			}
 			d := decimal.NewFromFloat(*req.DiscountAmountMoney)
 			voucher.DiscountAmountMoney = &d
 
 		case model.DiscountMethodPercent:
 			if req.DiscountPercent == nil {
-				return nil, errors.New("Vui lòng nhập phần trăm giảm.")
+				return nil, apperr.BadRequest("Vui lòng nhập phần trăm giảm.")
 			}
 			d := decimal.NewFromFloat(*req.DiscountPercent)
 			voucher.DiscountPercent = &d
@@ -240,13 +241,13 @@ func (vs *VoucherService) CreateVoucher(ctx context.Context, req *dto.CreateVouc
 		switch model.DiscountMethod(req.DiscountMethod) {
 		case model.DiscountMethodFixed:
 			if req.DiscountAmountPoints == nil {
-				return nil, errors.New("Vui lòng nhập số điểm giảm (giảm điểm cố định).")
+				return nil, apperr.BadRequest("Vui lòng nhập số điểm giảm (giảm điểm cố định).")
 			}
 			voucher.DiscountAmountPoints = *req.DiscountAmountPoints
 
 		case model.DiscountMethodPercent:
 			if req.DiscountPercent == nil {
-				return nil, errors.New("Vui lòng nhập phần trăm giảm.")
+				return nil, apperr.BadRequest("Vui lòng nhập phần trăm giảm.")
 			}
 			d := decimal.NewFromFloat(*req.DiscountPercent)
 			voucher.DiscountPercent = &d
@@ -463,7 +464,7 @@ func (vs *VoucherService) UpdateVoucher(ctx context.Context, voucherID uuid.UUID
 	}
 	if voucher.StartDate != nil && voucher.EndDate != nil {
 		if !voucher.StartDate.Before(*voucher.EndDate) {
-			return nil, errors.New("Ngày bắt đầu phải trước ngày kết thúc.")
+			return nil, apperr.BadRequest("Ngày bắt đầu phải trước ngày kết thúc.")
 		}
 	}
 
@@ -490,10 +491,10 @@ func (vs *VoucherService) DeleteVoucher(ctx context.Context, voucherID uuid.UUID
 	return vs.vr.DeleteVoucher(ctx, voucherID)
 }
 
+// RestoreVoucher khôi phục voucher ĐÃ XOÁ MỀM. Không tra trước bằng GetVoucherByID (lookup có scope, không thấy dòng đã xoá nên
+// restore không bao giờ thành công, QA7 review M3): repository tự lọc `deleted_at IS NOT NULL` và trả ErrVoucherNotFound
+// khi không có dòng nào để khôi phục (id không tồn tại, hoặc voucher chưa bị xoá).
 func (vs *VoucherService) RestoreVoucher(ctx context.Context, voucherID uuid.UUID) error {
-	if _, err := vs.vr.GetVoucherByID(ctx, voucherID); err != nil {
-		return errors.New("voucher not found in deleted records")
-	}
 	return vs.vr.RestoreVoucher(ctx, voucherID)
 }
 
