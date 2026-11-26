@@ -20,3 +20,10 @@ func DecimalExponentWithinBounds(v decimal.Decimal) bool {
 	exp := v.Exponent()
 	return exp <= DecimalExponentMax && exp >= -DecimalScaleMax
 }
+
+// DecimalInClosedRange báo lo <= v <= hi cho số lấy từ request: exponent của v bị chặn TRƯỚC khi so sánh (xem
+// DecimalExponentWithinBounds) nên `1e20000000` trả false ngay thay vì đốt CPU rescale. lo/hi do code đặt (hằng số), không
+// cần kiểm. Dùng cho mọi kiểm khoảng trên decimal.Decimal đến từ body (phí nền tảng, % chứng chỉ, ...).
+func DecimalInClosedRange(v, lo, hi decimal.Decimal) bool {
+	return DecimalExponentWithinBounds(v) && !v.LessThan(lo) && !v.GreaterThan(hi)
+}

@@ -11,6 +11,7 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/model"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 // Lỗi nghiệp vụ rút tiền (Phase 4). Handler map từng lỗi sang HTTP status + mã `error` của contract.
@@ -81,7 +82,8 @@ func availableBalance(earnings decimal.Decimal, sums repository.TeacherPayoutSum
 
 // validateWithdrawalAmount — kiểm tra số tiền trước khi mở transaction (không cần khoá).
 func validateWithdrawalAmount(amount, minAmount decimal.Decimal) error {
-	if !amount.IsPositive() {
+	// QA7 backlog (#155): số mũ ngoài biên bị loại trước LessThan/GreaterThan (rescale 10^|exp|), xem utils.DecimalExponentWithinBounds.
+	if !utils.DecimalExponentWithinBounds(amount) || !amount.IsPositive() {
 		return ruleErr(ErrWithdrawalInvalidAmount, nil)
 	}
 	if amount.LessThan(minAmount) {

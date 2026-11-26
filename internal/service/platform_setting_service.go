@@ -8,6 +8,7 @@ import (
 	"github.com/shopspring/decimal"
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 // ErrInvalidPlatformFeePercent — % phải nằm trong [0, 100].
@@ -35,7 +36,8 @@ func (s *PlatformSettingService) GetPlatformFeePercent(ctx context.Context) (dec
 }
 
 func (s *PlatformSettingService) SetPlatformFeePercent(ctx context.Context, actorID uuid.UUID, percent decimal.Decimal) error {
-	if percent.LessThan(decimal.Zero) || percent.GreaterThan(decimal.NewFromInt(100)) {
+	// QA7 backlog (#155): số mũ khổng lồ (1e20000000) bị loại trước khi so sánh, xem utils.DecimalInClosedRange.
+	if !utils.DecimalInClosedRange(percent, decimal.Zero, decimal.NewFromInt(100)) {
 		return ErrInvalidPlatformFeePercent
 	}
 	return s.repo.SetPlatformFeePercent(ctx, percent, actorID)

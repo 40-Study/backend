@@ -127,7 +127,8 @@ func (s *ContestService) checkQuiz(ctx context.Context, quizID, ownerID uuid.UUI
 // validateUpsert gom mọi kiểm tra của tạo/sửa theo thứ tự rẻ → đắt.
 func (s *ContestService) validateUpsert(ctx context.Context, actor *ContestActor, req *dto.ContestUpsertRequest,
 	ownerID uuid.UUID, selfID *uuid.UUID) error {
-	if p := req.CertificateMinPercentage; p != nil && (p.LessThan(decimal.Zero) || p.GreaterThan(decimal.NewFromInt(100))) {
+	// QA7 backlog (#155): số mũ khổng lồ bị loại trước khi so sánh, xem utils.DecimalInClosedRange.
+	if p := req.CertificateMinPercentage; p != nil && !utils.DecimalInClosedRange(*p, decimal.Zero, decimal.NewFromInt(100)) {
 		return invalidField("certificate_min_percentage", "certificate_min_percentage must be between 0 and 100")
 	}
 	if err := validateSchedule(req.StartTime, req.EndTime, req.DurationMinutes, s.now()); err != nil {
