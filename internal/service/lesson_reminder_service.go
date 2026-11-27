@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -115,10 +116,7 @@ func (s *LessonReminderService) deliver(ctx context.Context, occurrence reminder
 			return err
 		}
 		for _, child := range children {
-			childContent := fmt.Sprintf("%s có buổi %s bắt đầu lúc %s.", child.Name, occurrence.Title, when)
-			if mins > 0 {
-				childContent = fmt.Sprintf("%s có buổi %s lúc %s.", child.Name, occurrence.Title, when)
-			}
+			childContent := childReminderContent(child.Name, occurrence.Title, when, mins)
 			key := fmt.Sprintf("%s:%s:%d:child:%s", baseKey, userID, mins, child.ID)
 			if err := s.save(ctx, key, userID, title, childContent, "child_schedule", child.ID, now); err != nil {
 				return err
@@ -152,6 +150,24 @@ func (s *LessonReminderService) deliver(ctx context.Context, occurrence reminder
 }
 
 // teacherReminderContent: câu nhắc dành cho giảng viên của lớp (mins>0: báo trước 15 phút).
+// childReminderContent là câu nhắc gửi phụ huynh cho một người con (mins > 0: nhắc trước 15 phút).
+func childReminderContent(childName, title, when string, mins int) string {
+	subject := childReminderSubject(title)
+	if mins > 0 {
+		return fmt.Sprintf("%s có %s lúc %s.", childName, subject, when)
+	}
+	return fmt.Sprintf("%s có %s bắt đầu lúc %s.", childName, subject, when)
+}
+
+// childReminderSubject (Q9-PG-08): tiêu đề buổi đã mở đầu bằng "Buổi N: ..." thì giữ nguyên ("có Buổi 21: Pandas"),
+// không thêm chữ "buổi" lần nữa; tiêu đề khác ("Python") vẫn đọc thành "buổi Python".
+func childReminderSubject(title string) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(title)), "buổi") {
+		return strings.TrimSpace(title)
+	}
+	return "buổi " + title
+}
+
 func teacherReminderContent(title, when string, mins int) string {
 	if mins > 0 {
 		return fmt.Sprintf("%s · %s. Buổi dạy sắp bắt đầu, hãy chuẩn bị bài giảng.", title, when)
