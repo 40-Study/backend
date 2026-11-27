@@ -35,10 +35,10 @@ func NewUserAdminHandler(userAdminService service.UserAdminServiceInterface) *Us
 // GetUsers — GET /api/users?keyword=&role=&status=&page=&limit=
 func (h *UserAdminHandler) GetUsers(c *fiber.Ctx) error {
 	status := c.Query("status", "")
-	if status != "" && status != "active" && status != "locked" {
+	if status != "" && status != "active" && status != "locked" && status != "self_deleted" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid query params",
-			"errors":  []string{"status must be 'active' or 'locked'"},
+			"errors":  []string{"status must be 'active', 'locked' or 'self_deleted'"},
 		})
 	}
 
