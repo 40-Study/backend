@@ -192,6 +192,15 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		// thật nằm ở field "error" mà interceptor phía FE không đọc tới), nên người dùng bị
 		// khoá thấy y hệt thông báo sai mật khẩu. "code" cho phép FE khớp chắc chắn, không cần
 		// so chuỗi message dễ vỡ khi dịch ngôn ngữ.
+		// Q9-PG-05: tài khoản tự xoá nói rõ là "đã bị xoá", không giống khoá của admin. Cũng KHÔNG đặt cờ lockout
+		// (mật khẩu đã đúng), như nhánh ErrUserInactive bên dưới.
+		if errors.Is(err, service.ErrAccountDeleted) {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"message": "Tài khoản đã bị xoá. Liên hệ hỗ trợ nếu muốn khôi phục.",
+				"code":    "ERR_ACCOUNT_DELETED",
+				"error":   err.Error(),
+			})
+		}
 		if errors.Is(err, service.ErrUserInactive) {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"message": "Tài khoản đã bị khoá",
