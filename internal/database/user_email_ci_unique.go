@@ -32,11 +32,19 @@ const userEmailCIDuplicatesSQL = `
 const userEmailCIIndexSQL = `CREATE UNIQUE INDEX IF NOT EXISTS ` + userEmailCIIndex + ` ON users (lower(email)) WHERE deleted_at IS NULL`
 
 // Bản đầu của index (trước review L2) là index đầy đủ: bỏ đi để tạo lại dạng partial.
+// KHÔNG dùng view pg_indexes: nó gọi pg_get_indexdef() trên index của MỌI schema, và planner có thể tính cột indexdef trước
+// khi lọc schemaname. Khi gói test khác đang DROP SCHEMA tạm song song, index đó biến mất giữa chừng và câu lệnh chết với
+// "could not open relation with OID n" (SQLSTATE XX000). Thay vào đó phân giải đúng OID index của schema hiện tại bằng
+// to_regclass (không bao giờ ném lỗi, trả NULL khi chưa có) rồi chỉ gọi pg_get_indexdef trên OID đó. Idempotent: DB mới
+// (chưa có index) hoặc index đã partial thì không làm gì.
 const dropFullUserEmailCIIndexSQL = `
-	DO $$ BEGIN
-		IF EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = '` + userEmailCIIndex + `'
-			AND indexdef NOT ILIKE '%WHERE%') THEN
-			EXECUTE 'DROP INDEX ` + userEmailCIIndex + `';
+	DO $$
+	DECLARE idx regclass := to_regclass(quote_ident(current_schema()) || '.' || quote_ident('` + userEmailCIIndex + `'));
+	BEGIN
+		IF idx IS NOT NULL
+			AND EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = idx)
+			AND pg_get_indexdef(idx) NOT ILIKE '%WHERE%' THEN
+			EXECUTE 'DROP INDEX ' || idx::text;
 		END IF;
 	END $$;
 `

@@ -6,7 +6,9 @@ package database
 
 import (
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -126,5 +128,71 @@ func TestUserEmailCIUnique_PartialLikeH3_SoftDeletedDoesNotLockEmail_ReplacesFul
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.ConstraintName != userEmailCIIndex {
 		t.Fatalf("biến thể hoa/thường của user còn sống: err=%v, muốn 23505 trên %s", err, userEmailCIIndex)
+	}
+}
+
+// Hồi quy CI QA8 (PR #157): bước "drop full uq_users_email_ci" từng dò qua view pg_indexes, view gọi pg_get_indexdef() trên
+// index của MỌI schema. Gói test khác đang tạo/DROP schema tạm song song thì index biến mất giữa chừng và lệnh chết với
+// "could not open relation with OID n" (SQLSTATE XX000), làm ~30 test đỏ trên CI. Test này tạo/xoá index ở schema khác liên tục
+// trong lúc chạy bước xoá nhiều lần; đỏ nếu phép dò lại đụng tới index ngoài current_schema().
+func TestDropFullUserEmailCIIndex_ConcurrentSchemaChurn_NeverTouchesOtherSchemas(t *testing.T) {
+	db := pgtest.IsolatedSchema(t, Migrate)
+	admin := pgtest.Open(t)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	// Schema nhiễu giống schema tạm thật: nhiều bảng, mỗi bảng một index biểu thức, rồi DROP CASCADE một phát.
+	churnSQL := `DO $$ BEGIN
+		EXECUTE 'CREATE SCHEMA ' || quote_ident('%[1]s');
+		FOR i IN 1..60 LOOP
+			EXECUTE format('CREATE TABLE %%I.t%%s (a text)', '%[1]s', i);
+			EXECUTE format('CREATE INDEX ON %%I.t%%s (lower(a))', '%[1]s', i);
+		END LOOP;
+		-- Cùng tên index với schema thật: phép dò theo indexname (không theo schema) sẽ khớp cả bản này.
+		EXECUTE format('CREATE TABLE %%I.users (email text)', '%[1]s');
+		EXECUTE format('CREATE UNIQUE INDEX ` + userEmailCIIndex + ` ON %%I.users (lower(email))', '%[1]s');
+	END $$`
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				name := "churn_" + strings.ReplaceAll(uuid.NewString()[:12], "-", "")
+				// Lỗi của luồng nhiễu không phải đối tượng kiểm: chỉ cần nó liên tục tạo/xoá index ở schema khác.
+				_ = admin.Exec(fmt.Sprintf(churnSQL, name)).Error
+				_ = admin.Exec(`DROP SCHEMA IF EXISTS ` + name + ` CASCADE`).Error
+			}
+		}()
+	}
+	defer func() {
+		close(stop)
+		wg.Wait()
+	}()
+
+	for i := 0; i < 400; i++ {
+		if err := db.Exec(dropFullUserEmailCIIndexSQL).Error; err != nil {
+			t.Fatalf("lần %d: bước xoá index đầy đủ chạm index schema khác: %v", i, err)
+		}
+	}
+}
+
+// Idempotent trên DB mới: chưa có index thì bước xoá không làm gì, không lỗi.
+func TestDropFullUserEmailCIIndex_NoIndexYet_NoOp(t *testing.T) {
+	db := pgtest.IsolatedSchema(t, Migrate)
+	if err := db.Exec(`DROP INDEX IF EXISTS ` + userEmailCIIndex).Error; err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := db.Exec(dropFullUserEmailCIIndexSQL).Error; err != nil {
+			t.Fatalf("lần %d: %v", i, err)
+		}
+	}
+	if userEmailIndexExists(t, db) {
+		t.Fatalf("index %s không được tự xuất hiện", userEmailCIIndex)
 	}
 }
