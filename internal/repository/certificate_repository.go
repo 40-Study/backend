@@ -3,12 +3,12 @@ package repository
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"study.com/v1/internal/model"
+	"study.com/v1/internal/utils"
 )
 
 type CertificateRepositoryInterface interface {
@@ -55,7 +55,7 @@ func (r *CertificateRepository) GetCertificateByNumber(ctx context.Context, numb
 	err := r.db.WithContext(ctx).
 		Preload("User").
 		Preload("Course").
-		First(&cert, "LOWER(certificate_number) = LOWER(?)", strings.TrimSpace(number)).Error
+		First(&cert, "LOWER(certificate_number) = LOWER(?)", utils.NormalizeCertificateNumber(number)).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
