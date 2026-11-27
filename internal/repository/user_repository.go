@@ -323,6 +323,7 @@ func (r *UserRepository) LockOrUnlockUser(
 			user.LockedReason = nil
 			user.LockedAt = nil
 			user.LockedBy = nil
+			user.SelfDeletedAt = nil // mở khoá/kích hoạt lại cũng xoá dấu tự xoá (Q9-PG-05)
 		}
 
 		if err := tx.Save(&user).Error; err != nil {

@@ -237,6 +237,20 @@ func RunPostMigrations(db *gorm.DB) error {
 			`,
 		},
 		{
+			// Q9-PG-05 (#158 M1): dấu tự xoá tài khoản. AutoMigrate đã thêm cột từ model.User; khối DO $$ này idempotent, cùng
+			// khuôn với entry locked_* ngay trên. Không backfill: dòng cũ không có dấu giữ nguyên "bị khoá".
+			name: "add self_deleted_at column to users (Q9-PG-05)",
+			sql: `
+				DO $$
+				BEGIN
+					IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+					               WHERE table_schema = current_schema() AND table_name='users' AND column_name='self_deleted_at') THEN
+						ALTER TABLE users ADD COLUMN self_deleted_at TIMESTAMP;
+					END IF;
+				END $$;
+			`,
+		},
+		{
 			// Phase 3 duyệt khoá học (2026-09-28): nới chk_courses_status thêm 'rejected' — SQL
 			// SINH từ model.CourseStatuses (SSOT, course_status.go). AutoMigrate KHÔNG nới rộng
 			// constraint đã tồn tại theo tên trên DB cũ.

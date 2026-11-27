@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"net/url"
+	"strings"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/middleware"
@@ -123,7 +126,15 @@ func (h *CertificateHandler) GetCertificateByID(c *fiber.Ctx) error {
 }
 
 func (h *CertificateHandler) VerifyCertificate(c *fiber.Ctx) error {
-	number := c.Params("number")
+	// Q9-PG-09: fiber không giải mã %XX của tham số đường dẫn, nên "CERT-1%20" tới đây còn nguyên "%20" và không bao giờ
+	// khớp. Giải mã MỘT lần rồi bỏ khoảng trắng đầu/cuối (mã dán từ email hay kèm khoảng trắng).
+	number, unescapeErr := url.PathUnescape(c.Params("number"))
+	if unescapeErr != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "Certificate number is malformed",
+		})
+	}
+	number = strings.TrimSpace(number)
 	if number == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Certificate number is required",

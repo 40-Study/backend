@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -126,9 +127,13 @@ type Config struct {
 	Facebook FacebookOAuthConfig
 
 	// Frontend URL for OAuth redirect
-	FrontendURL                string `mapstructure:"FRONTEND_URL"`
-	ParentInvitationDailyLimit int    `mapstructure:"PARENT_INVITATION_DAILY_LIMIT"` // Số lần gửi lời mời phụ huynh tối đa trong 24 giờ của mỗi học sinh
-	TempDir                    string `mapstructure:"TEMP_DIR"`                      // Thư mục tạm để xử lý video, nên đặt ở ổ đĩa có dung lượng lớn và tốc độ cao (ví dụ: D:\temp\video-processing)
+	FrontendURL string `mapstructure:"FRONTEND_URL"`
+	// Q9-PG-01: Raw là chuỗi đọc từ env PARENT_INVITATION_DAILY_LIMIT; ParentInvitationDailyLimit là giá trị đã
+	// parse trong LoadConfig (thiếu/sai định dạng/âm -> DefaultParentInvitationDailyLimit, ghi log một lần; chỉ "0"
+	// đặt tường minh mới là "từ chối mọi lời mời").
+	ParentInvitationDailyLimitRaw string `mapstructure:"PARENT_INVITATION_DAILY_LIMIT"`
+	ParentInvitationDailyLimit    int    `mapstructure:"-"`        // Số lần gửi lời mời phụ huynh tối đa trong 24 giờ của mỗi học sinh
+	TempDir                       string `mapstructure:"TEMP_DIR"` // Thư mục tạm để xử lý video, nên đặt ở ổ đĩa có dung lượng lớn và tốc độ cao (ví dụ: D:\temp\video-processing)
 
 	// Phase 4 rút tiền giảng viên (quyết định chủ dự án #7: tối thiểu 100.000đ, cấu hình được).
 	// Raw là chuỗi đọc từ env WITHDRAWAL_MIN_AMOUNT; WithdrawalMinAmount là giá trị đã parse +
@@ -139,6 +144,23 @@ type Config struct {
 
 // DefaultWithdrawalMinAmount — mặc định của WITHDRAWAL_MIN_AMOUNT (VND).
 const DefaultWithdrawalMinAmount = "100000"
+
+// DefaultParentInvitationDailyLimit — mặc định của PARENT_INVITATION_DAILY_LIMIT khi biến thiếu hoặc không hợp lệ.
+const DefaultParentInvitationDailyLimit = 10
+
+// parseParentInvitationDailyLimit là hàm thuần để unit test. Trả hạn mức và một cảnh báo (rỗng nếu không có gì
+// đáng nói). Thiếu/rỗng/không phải số nguyên/âm -> mặc định kèm cảnh báo; "0" tường minh -> 0 (cố ý khoá tính năng).
+func parseParentInvitationDailyLimit(raw string) (int, string) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return DefaultParentInvitationDailyLimit, fmt.Sprintf("PARENT_INVITATION_DAILY_LIMIT is not set, using default %d", DefaultParentInvitationDailyLimit)
+	}
+	n, err := strconv.Atoi(trimmed)
+	if err != nil || n < 0 {
+		return DefaultParentInvitationDailyLimit, fmt.Sprintf("PARENT_INVITATION_DAILY_LIMIT=%q is not a non-negative integer, using default %d", raw, DefaultParentInvitationDailyLimit)
+	}
+	return n, ""
+}
 
 // DefaultPaymentReconcileIntervalMinutes — mặc định của PAYMENT_RECONCILE_INTERVAL_MINUTES.
 const DefaultPaymentReconcileIntervalMinutes = 10
@@ -237,6 +259,8 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("GITHUB_SCOPES", []string{"user:email"})
 	viper.SetDefault("FRONTEND_URL", "http://localhost:3000")
 	viper.SetDefault("WITHDRAWAL_MIN_AMOUNT", DefaultWithdrawalMinAmount)
+	// Q9-PG-01: default rỗng chỉ để Unmarshal thấy biến môi trường; parse + mặc định thật ở parseParentInvitationDailyLimit.
+	viper.SetDefault("PARENT_INVITATION_DAILY_LIMIT", "")
 
 	viper.AutomaticEnv()
 
@@ -327,6 +351,12 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 	config.WithdrawalMinAmount = minWithdrawal
+
+	inviteLimit, inviteWarning := parseParentInvitationDailyLimit(config.ParentInvitationDailyLimitRaw)
+	if inviteWarning != "" {
+		log.Printf("[config] %s", inviteWarning)
+	}
+	config.ParentInvitationDailyLimit = inviteLimit
 
 	reconcileMinutes, err := validatePaymentReconcileInterval(config.PaymentReconcileIntervalMinutes)
 	if err != nil {

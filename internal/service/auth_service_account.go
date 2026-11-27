@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -12,6 +13,10 @@ import (
 	"study.com/v1/internal/dto"
 	"study.com/v1/internal/repository"
 )
+
+// ErrInvalidDeletePassword (#142 M1): DELETE /auth/me sai mật khẩu -> 400 ERR_INVALID_PASSWORD. Giữ message "invalid password"
+// vì web cũ nhận ra mật khẩu sai qua câu này.
+var ErrInvalidDeletePassword = apperr.BadRequestCode("ERR_INVALID_PASSWORD", "invalid password")
 
 // ErrAccountHasBalance (QA8 T10, C22): giảng viên còn số dư ví hoặc yêu cầu rút tiền đang xử lý thì chưa xoá được tài khoản
 // (xoá = khoá đăng nhập, tiền còn lại không rút được nữa). Mã ổn định để web hiện đúng hướng dẫn.
@@ -58,7 +63,7 @@ func (s *AuthService) DeleteAccount(ctx context.Context, userID uuid.UUID, req d
 
 	// 2. Verify password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-		return errors.New("invalid password")
+		return ErrInvalidDeletePassword
 	}
 
 	// 3. Còn tiền trong ví giảng viên thì chưa cho xoá (sau bước mật khẩu để không lộ tình trạng ví cho người lạ)
@@ -67,7 +72,9 @@ func (s *AuthService) DeleteAccount(ctx context.Context, userID uuid.UUID, req d
 	}
 
 	// 4. Soft-delete: mark inactive
+	now := time.Now()
 	user.IsActive = false
+	user.SelfDeletedAt = &now // Q9-PG-05: Login dựa vào dấu này để báo "đã bị xoá" thay vì "đã bị khoá"
 	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
 		return fmt.Errorf("failed to deactivate account: %w", err)
 	}

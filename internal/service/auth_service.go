@@ -93,7 +93,16 @@ var (
 	// hieu hoa nhung con access token cu van gia han them duoc mot vong refresh 7 ngay qua route
 	// nay.
 	ErrUserInactive = errors.New("user account is inactive")
+	// ErrAccountDeleted (Q9-PG-05): tài khoản không hoạt động do CHÍNH chủ tài khoản xoá (DELETE /auth/me), không phải
+	// admin khoá. Bọc ErrUserInactive để mọi chỗ errors.Is(err, ErrUserInactive) (SwitchOrg, lockout) vẫn đúng.
+	ErrAccountDeleted = fmt.Errorf("account was deleted by its owner: %w", ErrUserInactive)
 )
+
+// isSelfDeactivated: tài khoản không hoạt động do chính chủ xoá, nhận biết bằng dấu self_deleted_at mà DeleteAccount ghi.
+// Mọi tài khoản không hoạt động khác (admin khoá, admin xoá mềm giảng viên, dữ liệu cũ không có dấu) giữ nguyên "bị khoá".
+func isSelfDeactivated(user *model.User) bool {
+	return !user.IsActive && user.SelfDeletedAt != nil
+}
 
 func NewAuthService(
 	cfg *config.Config,
@@ -330,6 +339,7 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 			user.FullName = fullName
 			user.IsVerified = true
 			user.IsActive = true
+			user.SelfDeletedAt = nil // kích hoạt lại tài khoản đã tự xoá (Q9-PG-05)
 			if err := tx.UpdateUser(ctx, user); err != nil {
 				return fmt.Errorf("failed to reactivate user: %w", err)
 			}
@@ -440,6 +450,9 @@ func (s *AuthService) Login(
 		// (thay vì errors.New rời rạc) để Login và SwitchOrg (:871) cùng chung 1 lỗi handler
 		// có thể errors.Is() — auth_handler.go giờ trả message + code riêng cho case này thay
 		// vì hoà lẫn vào "Login failed" chung (không phân biệt được với sai mật khẩu ở FE).
+		if isSelfDeactivated(user) {
+			return nil, ErrAccountDeleted
+		}
 		return nil, ErrUserInactive
 	}
 

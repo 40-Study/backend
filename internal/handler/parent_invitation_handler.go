@@ -43,6 +43,9 @@ func (h *ParentInvitationHandler) InviteParent(c *fiber.Ctx) error {
 	}
 
 	response, err := h.invitationService.InviteParent(c.Context(), userID, req)
+	if handled, sendErr := respondIfKnownError(c, err); handled {
+		return sendErr
+	}
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to send invitation",

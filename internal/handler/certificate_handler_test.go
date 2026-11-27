@@ -332,3 +332,41 @@ func TestGetCertificateByID_UnknownErrorIs500WithoutDetail(t *testing.T) {
 		t.Errorf("response lo chi tiet loi noi bo: %s", raw)
 	}
 }
+
+// Q9-PG-09: mã chứng chỉ dán vào URL kèm khoảng trắng (%20) đầu/cuối phải tra như mã sạch; mã chỉ toàn khoảng trắng bị từ chối.
+// Bỏ url.PathUnescape + TrimSpace trong VerifyCertificate -> stub nhận "CERT-2026-0001%20", test ĐỎ.
+func TestVerifyCertificate_TrimsEncodedWhitespace(t *testing.T) {
+	var got string
+	h := NewCertificateHandler(&stubCertificateService{
+		verifyFn: func(ctx context.Context, number string) (*dto.VerifyCertificateResponseDTO, error) {
+			got = number
+			return &dto.VerifyCertificateResponseDTO{Valid: true, CertificateNumber: number}, nil
+		},
+	}, nil)
+	app := fiber.New()
+	app.Get("/certificates/verify/:number", h.VerifyCertificate)
+
+	for _, path := range []string{
+		"/certificates/verify/CERT-2026-0001%20",
+		"/certificates/verify/%20CERT-2026-0001",
+		"/certificates/verify/%20CERT-2026-0001%20%0A",
+		"/certificates/verify/CERT-2026-0001",
+	} {
+		got = ""
+		resp, err := app.Test(httptest.NewRequest("GET", path, nil))
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if resp.StatusCode != fiber.StatusOK || got != "CERT-2026-0001" {
+			t.Errorf("%s: status=%d, service nhận %q, muốn 200 và \"CERT-2026-0001\"", path, resp.StatusCode, got)
+		}
+	}
+
+	resp, err := app.Test(httptest.NewRequest("GET", "/certificates/verify/%20%20", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Errorf("mã chỉ toàn khoảng trắng: status=%d, muốn 400", resp.StatusCode)
+	}
+}
