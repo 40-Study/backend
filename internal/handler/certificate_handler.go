@@ -2,12 +2,12 @@ package handler
 
 import (
 	"net/url"
-	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/middleware"
 	"study.com/v1/internal/service"
+	"study.com/v1/internal/utils"
 )
 
 type CertificateHandler struct {
@@ -134,7 +134,7 @@ func (h *CertificateHandler) VerifyCertificate(c *fiber.Ctx) error {
 			"message": "Certificate number is malformed",
 		})
 	}
-	number = strings.TrimSpace(number)
+	number = utils.NormalizeCertificateNumber(number) // Q10-PG-05: thêm ký tự vô hình/NBSP
 	if number == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Certificate number is required",

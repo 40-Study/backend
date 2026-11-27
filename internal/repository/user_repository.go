@@ -318,6 +318,9 @@ func (r *UserRepository) LockOrUnlockUser(
 			now := time.Now()
 			user.LockedAt = &now
 			user.LockedBy = &actorID
+			// Admin khoá SAU khi chính chủ tự xoá: hành động mới nhất thắng -> đọc là "Đã khoá" (đăng nhập báo bị khoá),
+			// không còn dấu tự xoá cũ (#159 L1).
+			user.SelfDeletedAt = nil
 		} else {
 			user.IsActive = true
 			user.LockedReason = nil

@@ -16,6 +16,7 @@ import (
 	"study.com/v1/internal/model"
 	rabbitmq_queue "study.com/v1/internal/queue/rabbitmq"
 	"study.com/v1/internal/repository"
+	"study.com/v1/internal/utils"
 )
 
 type CertificateServiceInterface interface {
@@ -340,7 +341,8 @@ func (s *CertificateService) canViewCertificate(ctx context.Context, ownerID, vi
 
 func (s *CertificateService) VerifyCertificate(ctx context.Context, number string) (*dto.VerifyCertificateResponseDTO, error) {
 	// QA6-PG-05: bỏ khoảng trắng và gộp kiểu chữ để mọi cách gõ cùng một số dùng chung một khoá cache.
-	number = strings.TrimSpace(number)
+	// Q10-PG-05: cả ký tự vô hình (zero-width, BOM) và NBSP dán từ app chat.
+	number = utils.NormalizeCertificateNumber(number)
 	// Check cache
 	if s.redis != nil {
 		cacheKey := certVerifyCachePrefix + strings.ToLower(number)

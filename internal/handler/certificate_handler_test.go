@@ -370,3 +370,42 @@ func TestVerifyCertificate_TrimsEncodedWhitespace(t *testing.T) {
 		t.Errorf("mã chỉ toàn khoảng trắng: status=%d, muốn 400", resp.StatusCode)
 	}
 }
+
+// Q10-PG-05: zero-width space/BOM/word joiner và NBSP (dán từ app chat, URL-encode thành %E2%80%8B...) phải bị bỏ trước
+// khi tới service; mã chỉ toàn ký tự vô hình bị từ chối 400. Bỏ utils.NormalizeCertificateNumber khỏi handler -> ĐỎ.
+func TestVerifyCertificate_StripsInvisibleCharacters(t *testing.T) {
+	var got string
+	h := NewCertificateHandler(&stubCertificateService{
+		verifyFn: func(ctx context.Context, number string) (*dto.VerifyCertificateResponseDTO, error) {
+			got = number
+			return &dto.VerifyCertificateResponseDTO{Valid: true, CertificateNumber: number}, nil
+		},
+	}, nil)
+	app := fiber.New()
+	app.Get("/certificates/verify/:number", h.VerifyCertificate)
+
+	for name, path := range map[string]string{
+		"zero-width space cuối": "/certificates/verify/CERT-2026-0001%E2%80%8B",
+		"BOM đầu":               "/certificates/verify/%EF%BB%BFCERT-2026-0001",
+		"NBSP hai đầu":          "/certificates/verify/%C2%A0CERT-2026-0001%C2%A0",
+		"NBSP giữa mã":          "/certificates/verify/CERT-%C2%A02026-0001",
+		"word joiner giữa mã":   "/certificates/verify/CERT-%E2%81%A02026-0001",
+	} {
+		got = ""
+		resp, err := app.Test(httptest.NewRequest("GET", path, nil))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if resp.StatusCode != fiber.StatusOK || got != "CERT-2026-0001" {
+			t.Errorf("%s: status=%d, service nhận %q, muốn 200 và \"CERT-2026-0001\"", name, resp.StatusCode, got)
+		}
+	}
+
+	resp, err := app.Test(httptest.NewRequest("GET", "/certificates/verify/%E2%80%8B%C2%A0", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != fiber.StatusBadRequest {
+		t.Errorf("mã chỉ toàn ký tự vô hình: status=%d, muốn 400", resp.StatusCode)
+	}
+}

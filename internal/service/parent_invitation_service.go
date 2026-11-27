@@ -23,6 +23,10 @@ import (
 // phụ huynh -> 403 ERR_FEATURE_DISABLED, không giả làm "đã hết hạn mức".
 var ErrParentInvitationDisabled = apperr.ForbiddenCode("ERR_FEATURE_DISABLED", "Tính năng mời phụ huynh đang tạm tắt.")
 
+// ErrParentInvitationDailyLimit (Q10 #159): học sinh đã dùng hết hạn mức lời mời phụ huynh trong 24 giờ -> 429
+// ERR_INVITATION_DAILY_LIMIT (câu tiếng Việt giữ nguyên) để web nhận biết theo mã, không đoán theo câu chữ.
+var ErrParentInvitationDailyLimit = apperr.TooManyRequestsCode("ERR_INVITATION_DAILY_LIMIT", "Bạn đã đạt giới hạn gửi lời mời phụ huynh trong ngày. Vui lòng thử lại sau 24 giờ.")
+
 type ParentInvitationServiceInterface interface {
 	InviteParent(ctx context.Context, studentUserID uuid.UUID, req dto.InviteParentRequestDto) (*dto.InviteParentResponseDto, error)
 	ValidateInvitationToken(ctx context.Context, token string) (*model.ParentInvitation, error)
@@ -90,11 +94,7 @@ func (s *ParentInvitationService) InviteParent(
 		}
 	}
 	if countInt >= int64(s.cfg.ParentInvitationDailyLimit) {
-		return &dto.InviteParentResponseDto{
-			Status:       "error",
-			Message:      "Bạn đã đạt giới hạn gửi lời mời phụ huynh trong ngày. Vui lòng thử lại sau 24 giờ.",
-			ParentExists: false,
-		}, nil
+		return nil, ErrParentInvitationDailyLimit
 	}
 	student, err := s.userRepo.FindUserByID(ctx, studentUserID)
 	if err != nil {
