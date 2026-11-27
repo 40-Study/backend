@@ -65,3 +65,8 @@ func ForbiddenCode(code, message string) *KnownError {
 func BadRequestCode(code, message string) *KnownError {
 	return &KnownError{Status: http.StatusBadRequest, Message: message, Code: code}
 }
+
+// TooManyRequestsCode: như HTTP 429 kèm mã lỗi ổn định cho client (hết hạn mức theo ngày, ...).
+func TooManyRequestsCode(code, message string) *KnownError {
+	return &KnownError{Status: http.StatusTooManyRequests, Message: message, Code: code}
+}

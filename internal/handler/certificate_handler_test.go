@@ -388,6 +388,7 @@ func TestVerifyCertificate_StripsInvisibleCharacters(t *testing.T) {
 		"zero-width space cuối": "/certificates/verify/CERT-2026-0001%E2%80%8B",
 		"BOM đầu":               "/certificates/verify/%EF%BB%BFCERT-2026-0001",
 		"NBSP hai đầu":          "/certificates/verify/%C2%A0CERT-2026-0001%C2%A0",
+		"NBSP giữa mã":          "/certificates/verify/CERT-%C2%A02026-0001",
 		"word joiner giữa mã":   "/certificates/verify/CERT-%E2%81%A02026-0001",
 	} {
 		got = ""

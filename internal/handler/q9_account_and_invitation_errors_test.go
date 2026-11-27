@@ -69,3 +69,16 @@ func TestQ9_InviteParent_FeatureDisabled_403ERR_FEATURE_DISABLED(t *testing.T) {
 		t.Fatalf("status=%d body=%s, muốn 403 ERR_FEATURE_DISABLED \"Tính năng mời phụ huynh đang tạm tắt.\"", code, raw)
 	}
 }
+
+// Q10 (#159): hết hạn mức lời mời trong ngày -> 429 ERR_INVITATION_DAILY_LIMIT, câu tiếng Việt cũ giữ nguyên (không còn 400).
+func TestQ10_InviteParent_DailyLimit_429ERR_INVITATION_DAILY_LIMIT(t *testing.T) {
+	h := handler.NewParentInvitationHandler(&q9InviteSvc{err: service.ErrParentInvitationDailyLimit})
+	app := fiber.New()
+	app.Use(qa7AsUser(uuid.New()))
+	app.Post("/invite", h.InviteParent)
+	code, out, raw := qa7Do(t, app, "POST", "/invite", `{"email":"phuhuynh@40study.test","relationship":"parent"}`)
+	const msg = "Bạn đã đạt giới hạn gửi lời mời phụ huynh trong ngày. Vui lòng thử lại sau 24 giờ."
+	if code != 429 || out["code"] != "ERR_INVITATION_DAILY_LIMIT" || out["message"] != msg {
+		t.Fatalf("status=%d body=%s, muốn 429 ERR_INVITATION_DAILY_LIMIT %q", code, raw, msg)
+	}
+}

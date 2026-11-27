@@ -31,13 +31,14 @@ func TestQA6_VerifyCertificate_KhongPhanBietHoaThuongVaKhoangTrang(t *testing.T)
 // Q10-PG-05: mã dán từ app chat hay kèm ký tự vô hình (zero-width space, BOM, word joiner) và NBSP; JS trim() và
 // strings.TrimSpace của Go không bỏ zero-width space nên trước đây ra "Không tìm thấy chứng chỉ" mà người dùng không
 // thấy lý do. Mọi biến thể phải ra đúng chứng chỉ gốc.
-func TestQ10_VerifyCertificate_BoKyTuVoHinhVaNBSP(t *testing.T) {
+func TestQ10_VerifyCertificate_PG_BoKyTuVoHinhVaNBSP(t *testing.T) {
 	rc := newRefundCertFixture(t)
 	ctx := context.Background()
 	zw, bom, wj, nbsp := "\u200b", "\ufeff", "\u2060", "\u00a0"
 	for name, input := range map[string]string{
 		"zero-width space cuối": rc.number + zw, "zero-width space đầu": zw + rc.number, "BOM": bom + rc.number,
 		"word joiner giữa mã": rc.number[:6] + wj + rc.number[6:], "NBSP hai đầu": nbsp + rc.number + nbsp,
+		"NBSP giữa mã":  rc.number[:6] + nbsp + rc.number[6:],
 		"hỗn hợp + hoa": " " + zw + nbsp + strings.ToUpper(rc.number) + zw + " ",
 	} {
 		v, err := rc.certSvc.VerifyCertificate(ctx, input)

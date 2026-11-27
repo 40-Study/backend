@@ -18,7 +18,7 @@ import (
 	"study.com/v1/internal/repository"
 )
 
-func TestQ10_AdminUserDTO_PhanBietTuXoaVoiAdminKhoa(t *testing.T) {
+func TestQ10_AdminUserDTO_PG_PhanBietTuXoaVoiAdminKhoa(t *testing.T) {
 	tx := isolatedAPISchema(t)
 	ctx := context.Background()
 
@@ -72,6 +72,25 @@ func TestQ10_AdminUserDTO_PhanBietTuXoaVoiAdminKhoa(t *testing.T) {
 	raw, _ := json.Marshal(byID[active.ID])
 	if !strings.Contains(string(raw), `"self_deleted_at":null`) {
 		t.Errorf("JSON danh sách thiếu self_deleted_at:null: %s", raw)
+	}
+
+	// #159 L1: admin khoá một tài khoản ĐÃ tự xoá -> hành động mới nhất thắng: có lý do khoá, không còn dấu tự xoá
+	// (nếu còn, web hiện "Đã tự xoá" và đăng nhập báo ERR_ACCOUNT_DELETED dù admin đã khoá sau đó).
+	lockedAfterDelete := mk("lockafterdel")
+	if err := tx.Model(&lockedAfterDelete).Updates(map[string]any{"is_active": false, "self_deleted_at": deletedAt}).Error; err != nil {
+		t.Fatalf("đánh dấu tự xoá (khoá sau): %v", err)
+	}
+	why := "vi phạm điều khoản"
+	locked, err := svc.UpdateUserStatus(ctx, lockedAfterDelete.ID, actor.ID, false, &why)
+	if err != nil {
+		t.Fatalf("admin khoá tài khoản đã tự xoá: %v", err)
+	}
+	if locked.IsActive || locked.SelfDeletedAt != nil || locked.LockedReason == nil || *locked.LockedReason != why {
+		t.Errorf("sau admin khoá: %+v, muốn is_active=false, self_deleted_at=nil, locked_reason=%q", locked, why)
+	}
+	var reread model.User
+	if err := tx.First(&reread, "id = ?", lockedAfterDelete.ID).Error; err != nil || reread.SelfDeletedAt != nil {
+		t.Errorf("đọc lại từ DB: self_deleted_at=%v err=%v, muốn nil", reread.SelfDeletedAt, err)
 	}
 
 	// Khôi phục qua đúng endpoint mở khoá: xoá dấu tự xoá.
