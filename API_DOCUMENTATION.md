@@ -1017,6 +1017,13 @@ Cả hai lỗi trả `{ "code": ..., "message": <câu tiếng Việt> }`.
 - **Tên tổ chức** `POST /api/organizations`, `PUT /api/organizations/:id`: tên trùng tổ chức khác không phân biệt hoa/thường trả `409 { "code": "ERR_ORG_NAME_EXISTS", "message": "Tên tổ chức đã tồn tại. Vui lòng chọn tên khác." }` (trước: `400` kèm "organization with this name already exists"). Đổi hoa/thường tên của chính tổ chức đó được. Không có index theo `lower(name)`: kiểm ở service (hai request đồng thời khác hoa/thường vẫn có thể cùng lọt).
 - **PG-07** Lỗi validate `full_name` (bắt buộc / tối thiểu / tối đa) của `POST /api/auth/register/request` và mọi DTO có trường này: `message` tiếng Việt ("Họ và tên tối đa 255 ký tự."); trường khác giữ câu cũ.
 
+### QA9 contract notes (backend-qa9)
+
+- **PG-01** `POST /api/invitations/invite`: hạn mức lời mời phụ huynh mỗi học sinh trong 24 giờ lấy từ `PARENT_INVITATION_DAILY_LIMIT`. Biến thiếu, rỗng, không phải số nguyên hoặc âm dùng mặc định **10** (ghi log một lần lúc khởi động); trước đây thiếu biến thì hạn mức là 0 và MỌI lời mời bị từ chối ngay lần đầu ("Bạn đã đạt giới hạn gửi lời mời phụ huynh trong ngày"). Chỉ đặt tường minh `PARENT_INVITATION_DAILY_LIMIT=0` mới tắt hẳn tính năng.
+- **PG-05** `POST /api/auth/login` vào tài khoản **tự xoá** (`DELETE /api/auth/me`, mật khẩu đúng): `401 { "code": "ERR_ACCOUNT_DELETED", "message": "Tài khoản đã bị xoá. Liên hệ hỗ trợ nếu muốn khôi phục.", "error": ... }`. Tài khoản bị admin khoá vẫn `401 ACCOUNT_LOCKED` "Tài khoản đã bị khoá". Phân biệt theo dấu vết khoá: admin khoá luôn ghi `locked_by`/`locked_at`, tự xoá thì không. Cả hai đều không tính vào bộ đếm khoá đăng nhập (mật khẩu đã đúng); sai mật khẩu vẫn chỉ trả lỗi thông tin đăng nhập chung, không lộ trạng thái tài khoản.
+- **PG-08** Thông báo nhắc buổi học gửi phụ huynh ("Đến giờ vào học" / "Lớp học bắt đầu sau 15 phút") không lặp chữ "buổi": tiêu đề buổi mở đầu bằng "Buổi" giữ nguyên ("Lê Văn C có Buổi 21: Pandas: đọc CSV bắt đầu lúc 19:30 · 26/11."), tiêu đề khác vẫn "có buổi <tiêu đề>". Chỉ ảnh hưởng thông báo tạo mới.
+- **PG-09** `GET /api/certificates/verify/:number`: tham số đường dẫn được giải mã `%XX` một lần rồi bỏ khoảng trắng hai đầu, nên `/verify/CERT-1%20` và `/verify/%20CERT-1` tra như `CERT-1` (trước đây còn nguyên `%20` nên không khớp, phản hồi lặp `%20` trong `certificate_number`). Chỉ toàn khoảng trắng hoặc `%` hỏng: `400`.
+
 ### Tạo/sửa khoá có phí và gửi duyệt (Q3-09)
 
 - `POST /api/courses`, `PUT /api/courses/:id`: khoá có phí (`is_free` bỏ trống hoặc `false`) phải có `price > 0` (sau làm
