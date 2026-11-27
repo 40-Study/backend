@@ -22,7 +22,7 @@ var ErrAdminUserNotFound = errors.New("user not found")
 type AdminUserListFilter struct {
 	Keyword string // khớp email/user_name/full_name, không phân biệt hoa/thường và dấu
 	Role    string // tên SystemRole, join user_system_roles
-	Status  string // "active" | "locked" -> map is_active
+	Status  string // "active" | "locked" | "self_deleted" -> is_active + self_deleted_at (Q11-ADMIN-03)
 	Page    int
 	Limit   int
 }
@@ -195,10 +195,15 @@ func (r *UserRepository) AdminListUsers(ctx context.Context, filter AdminUserLis
 		// QA3-08: thêm bỏ dấu tiếng Việt ("nguyen" ra "Nguyễn") — xem utils.ApplyAccentInsensitiveKeywordSearch.
 		query = utils.ApplyAccentInsensitiveKeywordSearch(query, filter.Keyword, "email", "user_name", "full_name")
 	}
-	if filter.Status == "active" {
+	// Q11-ADMIN-03: "locked" = admin khoá (không có dấu tự xoá); "self_deleted" = chính chủ xoá (vẫn is_active=false).
+	// Hai nhóm rời nhau nên total/phân trang chính xác, không cần tách phía client.
+	switch filter.Status {
+	case "active":
 		query = query.Where("is_active = ?", true)
-	} else if filter.Status == "locked" {
-		query = query.Where("is_active = ?", false)
+	case "locked":
+		query = query.Where("is_active = ? AND self_deleted_at IS NULL", false)
+	case "self_deleted":
+		query = query.Where("is_active = ? AND self_deleted_at IS NOT NULL", false)
 	}
 	if filter.Role != "" {
 		query = query.Where(
