@@ -27,6 +27,7 @@ type resendFakeUserRepo struct {
 func (f *resendFakeUserRepo) FindUserByEmail(context.Context, string) (*model.User, error) {
 	return nil, nil
 }
+func (f *resendFakeUserRepo) UserNameExists(context.Context, string) (bool, error) { return false, nil }
 func (f *resendFakeUserRepo) CreateUser(_ context.Context, u *model.User) error {
 	f.created = append(f.created, u)
 	return nil
@@ -115,4 +116,8 @@ func pendingAttempts(t *testing.T, mr *miniredis.Miniredis, email string) int {
 		t.Fatal(err)
 	}
 	return p.Attempts
+}
+
+func (f *resendFakeUserRepo) WithUserNameLock(_ context.Context, _ string, fn func(repository.UserRepositoryInterface) error) error {
+	return fn(f)
 }

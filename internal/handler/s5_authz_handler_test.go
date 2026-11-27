@@ -14,6 +14,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/repository"
 	"study.com/v1/internal/service"
 )
 
@@ -54,7 +55,7 @@ func (s *s5ScheduleSvc) CreateSession(_ context.Context, _, actor uuid.UUID, _ b
 	s.rec(actor)
 	return &dto.ClassSessionResponseDTO{}, s.err
 }
-func (s *s5ScheduleSvc) GetSessionsByClass(_ context.Context, _, actor uuid.UUID, _ bool, _, _ int) (*dto.ClassSessionListDTO, error) {
+func (s *s5ScheduleSvc) GetSessionsByClass(_ context.Context, _, actor uuid.UUID, _ bool, _, _ int, _ repository.SessionListOptions) (*dto.ClassSessionListDTO, error) {
 	s.rec(actor)
 	return &dto.ClassSessionListDTO{}, s.err
 }

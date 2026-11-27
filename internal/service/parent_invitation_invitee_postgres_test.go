@@ -66,8 +66,9 @@ func TestParentInvitation_Postgres_LoiMoiTheoEmailChiNguoiDuocMoiChapNhan(t *tes
 		t.Fatalf("lời mời bị đổi trạng thái bởi người không được mời: %q", got)
 	}
 
-	// Đúng người: email khác hoa thường (biến thể khác tài khoản trên vì idx_users_email phân biệt
-	// hoa thường), đang là phụ huynh.
+	// Đúng người: email khác hoa thường, đang là phụ huynh. Từ QA8 (C18) uq_users_email_ci cấm hai tài khoản cùng email khác
+	// hoa/thường, nên trả email của tài khoản "cùng email, không phải phụ huynh" đi chỗ khác trước khi phụ huynh thật nhận biến thể này.
+	f.setEmail(&sameEmailNoParent, "moved-"+email)
 	realParent := f.user("real-parent", "PARENT")
 	f.setEmail(&realParent, strings.ToUpper(email[:1])+email[1:])
 	if err := inv.RespondToInvitation(f.ctx, row.ID, realParent.ID, "accept"); err != nil {

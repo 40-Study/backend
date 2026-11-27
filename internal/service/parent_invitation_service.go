@@ -66,6 +66,8 @@ func (s *ParentInvitationService) InviteParent(
 	studentUserID uuid.UUID,
 	req dto.InviteParentRequestDto,
 ) (*dto.InviteParentResponseDto, error) {
+	// QA8 PG-01 (C18): email tài khoản luôn lưu chữ thường, nên lời mời lưu đúng dạng đó để LinkInvitationToNewUser khớp.
+	req.Email = utils.NormalizeEmail(req.Email)
 	count_key := constants.KeyParentInviteRateLimit(studentUserID)
 	countInt := int64(0)
 	count, err := s.redisClient.Get(ctx, count_key).Result()
@@ -92,7 +94,7 @@ func (s *ParentInvitationService) InviteParent(
 	}
 	// Cho phép tự mời chính mình nếu account có role PARENT
 	// (1 người vừa là student vừa là parent trên cùng hệ thống)
-	if student.Email == req.Email {
+	if utils.NompareEmails(student.Email, req.Email) {
 		hasParentRole := false
 		roles, _ := s.userSystemRoleRepo.FindByUserIDWithDetails(ctx, studentUserID, "active")
 		for _, r := range roles {

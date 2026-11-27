@@ -58,6 +58,21 @@ var BuiltInSystemRoleNames = []string{
 	"SYSTEM_ADMIN", "ORG_OWNER", "TEACHER", "TEACHER_APPLICANT", "STUDENT", "PARENT",
 }
 
+// OrgScopedSystemRoleNames: vai hệ thống chỉ là "khuôn" của vai theo tổ chức: chủ tổ chức thật được gán trong TỪNG tổ chức
+// (user_organization_roles), gán vai hệ thống này cho ai đó không làm họ thành chủ tổ chức nào mà chỉ tạo thẻ vai trò chết ở
+// lần đăng nhập sau (QA8 A04, C23). Danh sách cùng nguồn với web (admin/_lib/org-scoped-role.ts).
+var OrgScopedSystemRoleNames = []string{"ORG_OWNER"}
+
+// IsOrgScopedSystemRole báo name có phải vai hệ thống gán theo tổ chức không (so khớp chính xác, như IsBuiltInSystemRole).
+func IsOrgScopedSystemRole(name string) bool {
+	for _, n := range OrgScopedSystemRoleNames {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
 // OrgRoleNameReserved (review #144, phát hiện 1): tên org role không được trùng tên vai hệ thống dựng sẵn. Chọn org role lúc
 // đăng nhập thì TÊN vai thành claim active_role, mà một số cổng chỉ so chuỗi claim (open-design đòi "TEACHER", lesson
 // code và contest đòi "STUDENT", DenyActiveRole chặn "PARENT"). Vai tên TEACHER trong tổ chức sẽ biến người được gán

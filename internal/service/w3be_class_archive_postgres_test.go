@@ -306,7 +306,7 @@ func TestW3BE_LopLuuTru_ChiDoc_Postgres(t *testing.T) {
 		reads := map[string]error{}
 		_, reads["học viên"] = e.classes.GetStudentsByClass(ctx, class.ID, e.ownerA.ID, false, 1, 20)
 		_, reads["giảng viên"] = e.classes.GetTeachersByClass(ctx, class.ID, e.ownerA.ID, false, 1, 20)
-		_, reads["buổi học"] = e.schedule.GetSessionsByClass(ctx, class.ID, e.ownerA.ID, false, 1, 20)
+		_, reads["buổi học"] = e.schedule.GetSessionsByClass(ctx, class.ID, e.ownerA.ID, false, 1, 20, repository.SessionListOptions{})
 		_, reads["thời khoá biểu"] = e.schedule.GetClassTimetable(ctx, class.ID, e.ownerA.ID, false)
 		_, reads["điểm danh"] = e.attendance.GetAllAttendances(ctx, class.ID, e.ownerA.ID, false, "", 1, 20)
 		_, reads["bảng điểm"] = grades.GetGradesByClass(ctx, class.ID, e.ownerA.ID)

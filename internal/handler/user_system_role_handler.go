@@ -102,6 +102,9 @@ func (h *UserSystemRoleHandler) AssignSystemRolesToUser(c *fiber.Ctx) error {
 
 	// Goi service
 	result, err := h.userSystemRoleService.AssignSystemRolesToUser(c.Context(), userID, req, granterUUID)
+	if handled, sendErr := respondIfKnownError(c, err); handled {
+		return sendErr
+	}
 	if err != nil {
 		status := fiber.StatusInternalServerError
 		errMsg := err.Error()

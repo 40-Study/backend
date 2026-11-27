@@ -496,6 +496,12 @@ func RunPostMigrations(db *gorm.DB) error {
 		return err
 	}
 
+	// Unique index theo lower(email) cho users (QA8 PG-01, C18): dò email trùng hoa/thường trước, trùng thì dừng với lỗi rõ ràng,
+	// xem user_email_ci_unique.go.
+	if err := runUserEmailCIUnique(db); err != nil {
+		return err
+	}
+
 	logNotValidCheckConstraints(db)
 
 	log.Printf("Post-migrations applied: %d statement group(s)\n", len(statements))

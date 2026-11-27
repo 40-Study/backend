@@ -56,6 +56,9 @@ func (h *OrganizationHandler) CreateOrganization(c *fiber.Ctx) error {
 	}
 
 	org, err := h.service.CreateOrganization(c.Context(), creatorUserID, req)
+	if handled, sendErr := respondIfKnownError(c, err); handled {
+		return sendErr
+	}
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to create organization",
@@ -151,6 +154,9 @@ func (h *OrganizationHandler) UpdateOrganization(c *fiber.Ctx) error {
 	}
 
 	org, err := h.service.UpdateOrganization(c.Context(), id, req)
+	if handled, sendErr := respondIfKnownError(c, err); handled {
+		return sendErr
+	}
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Failed to update organization",

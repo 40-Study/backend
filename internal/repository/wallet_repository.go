@@ -188,7 +188,7 @@ func (r *WalletRepository) GetTeacherTransactions(teacherID uuid.UUID, txType st
 			orders.payment_method,
 			courses.title AS course_name,
 			courses.id AS course_id,
-			users.user_name AS buyer_name,
+			COALESCE(NULLIF(BTRIM(users.full_name), ''), users.user_name) AS buyer_name,
 			order_items.final_price,
 			orders.currency,
 			orders.created_at,

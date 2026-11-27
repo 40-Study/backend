@@ -89,11 +89,12 @@ func contestInvalidQuery(c *fiber.Ctx, field string) error {
 	return contestValidationFailed(c, []utils.ValidationError{{Field: field, Tag: "oneof", Message: field + " is invalid"}})
 }
 
-// withContestID parse :id rồi gọi fn; id sai → 400 INVALID_ID.
+// withContestID parse :id rồi gọi fn; id sai → 400 ERR_INVALID_ID (QA8 A08, C24: cùng mã với đơn hàng/người dùng/voucher
+// để trang chi tiết admin nhận ra "không tìm thấy" thay vì khối lỗi + "Thử lại" vô nghĩa). 404 vẫn là CONTEST_NOT_FOUND.
 func withContestID(c *fiber.Ctx, fn func(id uuid.UUID) error) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "Invalid contest ID", "code": "INVALID_ID"})
+		return invalidIDResponse(c, "Mã cuộc thi không hợp lệ.")
 	}
 	return fn(id)
 }

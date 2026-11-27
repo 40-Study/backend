@@ -55,9 +55,11 @@ func (r *OrganizationRepository) GetOrganizationByID(ctx context.Context, id uui
 	return &org, nil
 }
 
+// GetOrganizationByName khớp tên KHÔNG phân biệt hoa thường (QA8, C-org: "Trung tâm A" và "trung tâm a" là cùng một tên). Chỉ xét
+// tổ chức chưa xoá mềm, như trước đây. Không có unique index theo lower(name): kiểm trùng nằm ở service.
 func (r *OrganizationRepository) GetOrganizationByName(ctx context.Context, name string) (*model.Organization, error) {
 	var org model.Organization
-	err := r.db.WithContext(ctx).Where("name = ?", name).First(&org).Error
+	err := r.db.WithContext(ctx).Where("lower(name) = lower(?)", name).First(&org).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

@@ -8,8 +8,41 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"study.com/v1/internal/apperr"
 	"study.com/v1/internal/dto"
+	"study.com/v1/internal/repository"
 )
+
+// ErrAccountHasBalance (QA8 T10, C22): giảng viên còn số dư ví hoặc yêu cầu rút tiền đang xử lý thì chưa xoá được tài khoản
+// (xoá = khoá đăng nhập, tiền còn lại không rút được nữa). Mã ổn định để web hiện đúng hướng dẫn.
+var ErrAccountHasBalance = apperr.ConflictCode("ERR_ACCOUNT_HAS_BALANCE",
+	"Ví của bạn còn số dư hoặc còn yêu cầu rút tiền đang xử lý. Hãy rút hết và chờ yêu cầu hoàn tất trước khi xoá tài khoản.")
+
+// TeacherMoneyReader: phần đọc ví giảng viên mà DeleteAccount cần (repository.WalletRepository thoả mãn).
+type TeacherMoneyReader interface {
+	GetTeacherEarnings(teacherID uuid.UUID) (*repository.TeacherEarningsRow, error)
+	GetTeacherPayoutSums(teacherID uuid.UUID) (repository.TeacherPayoutSums, error)
+}
+
+// ensureNoTeacherMoney trả ErrAccountHasBalance khi số dư khả dụng > 0 (cùng công thức availableBalance của ví) hoặc còn yêu
+// cầu rút pending/approved. Người dùng không có khoá học bán được có thu nhập 0 nên không bị chặn.
+func (s *AuthService) ensureNoTeacherMoney(userID uuid.UUID) error {
+	if s.teacherMoney == nil {
+		return errors.New("teacher money reader is not configured")
+	}
+	earnings, err := s.teacherMoney.GetTeacherEarnings(userID)
+	if err != nil {
+		return fmt.Errorf("failed to read teacher earnings: %w", err)
+	}
+	sums, err := s.teacherMoney.GetTeacherPayoutSums(userID)
+	if err != nil {
+		return fmt.Errorf("failed to read teacher payouts: %w", err)
+	}
+	if sums.Open.IsPositive() || availableBalance(earnings.TotalEarnings, sums).IsPositive() {
+		return ErrAccountHasBalance
+	}
+	return nil
+}
 
 // DeleteAccount verifies the user's password then soft-deletes the account
 // by setting IsActive = false and revoking all sessions.
@@ -28,13 +61,18 @@ func (s *AuthService) DeleteAccount(ctx context.Context, userID uuid.UUID, req d
 		return errors.New("invalid password")
 	}
 
-	// 3. Soft-delete: mark inactive
+	// 3. Còn tiền trong ví giảng viên thì chưa cho xoá (sau bước mật khẩu để không lộ tình trạng ví cho người lạ)
+	if err := s.ensureNoTeacherMoney(userID); err != nil {
+		return err
+	}
+
+	// 4. Soft-delete: mark inactive
 	user.IsActive = false
 	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
 		return fmt.Errorf("failed to deactivate account: %w", err)
 	}
 
-	// 4. Revoke all sessions
+	// 5. Revoke all sessions
 	if err := s.LogoutAllDevice(ctx, userID); err != nil {
 		log.Printf("[WARN] Failed to logout all devices for user %s: %v", userID, err)
 	}

@@ -29,7 +29,7 @@ type ScheduleServiceInterface interface {
 
 	// ClassSession
 	CreateSession(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, req dto.CreateClassSessionDTO) (*dto.ClassSessionResponseDTO, error)
-	GetSessionsByClass(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.ClassSessionListDTO, error)
+	GetSessionsByClass(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, page, pageSize int, opts repository.SessionListOptions) (*dto.ClassSessionListDTO, error)
 	GetSessionByID(ctx context.Context, id, actorID uuid.UUID, isAdmin bool) (*dto.ClassSessionResponseDTO, error)
 	UpdateSession(ctx context.Context, id, actorID uuid.UUID, isAdmin bool, req dto.UpdateClassSessionDTO) (*dto.ClassSessionResponseDTO, error)
 	CancelSession(ctx context.Context, id, actorID uuid.UUID, isAdmin bool, reason string) error
@@ -517,7 +517,7 @@ func (s *ScheduleService) CreateSession(ctx context.Context, classID, actorID uu
 	return s.mapSessionToDTO(session), nil
 }
 
-func (s *ScheduleService) GetSessionsByClass(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, page, pageSize int) (*dto.ClassSessionListDTO, error) {
+func (s *ScheduleService) GetSessionsByClass(ctx context.Context, classID, actorID uuid.UUID, isAdmin bool, page, pageSize int, opts repository.SessionListOptions) (*dto.ClassSessionListDTO, error) {
 	if err := s.requireClassRead(ctx, actorID, isAdmin, classID); err != nil {
 		return nil, err
 	}
@@ -528,7 +528,7 @@ func (s *ScheduleService) GetSessionsByClass(ctx context.Context, classID, actor
 		pageSize = 20
 	}
 
-	sessions, total, err := s.repo.GetSessionsByClassID(ctx, classID, page, pageSize)
+	sessions, total, page, err := s.repo.GetSessionsByClassID(ctx, classID, page, pageSize, opts)
 	if err != nil {
 		return nil, err
 	}
