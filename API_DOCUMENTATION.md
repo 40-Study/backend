@@ -1024,6 +1024,11 @@ Cả hai lỗi trả `{ "code": ..., "message": <câu tiếng Việt> }`.
 - **PG-08** Thông báo nhắc buổi học gửi phụ huynh ("Đến giờ vào học" / "Lớp học bắt đầu sau 15 phút") không lặp chữ "buổi": tiêu đề buổi mở đầu bằng "Buổi" giữ nguyên ("Lê Văn C có Buổi 21: Pandas: đọc CSV bắt đầu lúc 19:30 · 26/11."), tiêu đề khác vẫn "có buổi <tiêu đề>". Chỉ ảnh hưởng thông báo tạo mới.
 - **PG-09** `GET /api/certificates/verify/:number`: tham số đường dẫn được giải mã `%XX` một lần rồi bỏ khoảng trắng hai đầu, nên `/verify/CERT-1%20` và `/verify/%20CERT-1` tra như `CERT-1` (trước đây còn nguyên `%20` nên không khớp, phản hồi lặp `%20` trong `certificate_number`). Chỉ toàn khoảng trắng hoặc `%` hỏng: `400`.
 
+### QA10 contract notes (backend-qa10)
+
+- **ADMIN-03** `GET /api/users` (mỗi phần tử `items[]`) và `GET /api/users/:id`, và phản hồi `PUT /api/users/:id/status` (cùng DTO chi tiết) có thêm `self_deleted_at` (`string|null`, ISO 8601, luôn có mặt trong JSON). Khác `null` ⇔ chính chủ đã xoá tài khoản (`DELETE /api/auth/me`); khi đó `is_active=false` và `locked_reason`/`locked_at` thường là `null`. Tài khoản đang hoạt động, bị admin khoá, hoặc đã được khôi phục: `null`. Chỉ DTO admin lộ trường này (không có ở `/api/auth/me`, hồ sơ công khai). Khôi phục dùng đúng endpoint mở khoá `PUT /api/users/:id/status` `{ "is_active": true }`, đồng thời xoá `self_deleted_at`.
+- **PG-05** `GET /api/certificates/verify/:number`: ngoài khoảng trắng hai đầu (PG-09), mã còn bỏ mọi ký tự định dạng vô hình ở **bất kỳ vị trí nào** (Unicode Cf: zero-width space/non-joiner/joiner U+200B-U+200D, word joiner U+2060, BOM U+FEFF, U+200E/F, U+00AD...) và NBSP U+00A0 trước khi tra; mã chứng chỉ chỉ gồm ASCII nên không mất thông tin. Mã chỉ toàn ký tự vô hình/khoảng trắng: `400` như mã rỗng. Khoá cache dùng mã đã làm sạch (mọi biến thể chung một khoá).
+
 ### Tạo/sửa khoá có phí và gửi duyệt (Q3-09)
 
 - `POST /api/courses`, `PUT /api/courses/:id`: khoá có phí (`is_free` bỏ trống hoặc `false`) phải có `price > 0` (sau làm
