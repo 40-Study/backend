@@ -22,12 +22,24 @@ const userEmailCIIndex = "uq_users_email_ci"
 const userEmailCIDuplicatesSQL = `
 	SELECT lower(email) AS folded, string_agg(email || ' (id=' || id::text || ')', ', ' ORDER BY created_at, id) AS rows
 	FROM users
+	WHERE deleted_at IS NULL
 	GROUP BY lower(email)
 	HAVING count(*) > 1
 	ORDER BY lower(email);
 `
 
-const userEmailCIIndexSQL = `CREATE UNIQUE INDEX IF NOT EXISTS ` + userEmailCIIndex + ` ON users (lower(email))`
+// Cùng phạm vi xoá mềm với idx_users_email (H3): user đã xoá mềm không khoá email vĩnh viễn (QA8 review L2).
+const userEmailCIIndexSQL = `CREATE UNIQUE INDEX IF NOT EXISTS ` + userEmailCIIndex + ` ON users (lower(email)) WHERE deleted_at IS NULL`
+
+// Bản đầu của index (trước review L2) là index đầy đủ: bỏ đi để tạo lại dạng partial.
+const dropFullUserEmailCIIndexSQL = `
+	DO $$ BEGIN
+		IF EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = '` + userEmailCIIndex + `'
+			AND indexdef NOT ILIKE '%WHERE%') THEN
+			EXECUTE 'DROP INDEX ` + userEmailCIIndex + `';
+		END IF;
+	END $$;
+`
 
 type userEmailDuplicate struct {
 	Folded string
@@ -45,11 +57,14 @@ func runUserEmailCIUnique(db *gorm.DB) error {
 		for i, d := range dups {
 			groups[i] = fmt.Sprintf("%q: %s", d.Folded, d.Rows)
 		}
-		return fmt.Errorf("post-migration %q refused: %d group(s) of users emails collide case-insensitively (soft-deleted rows included), "+
+		return fmt.Errorf("post-migration %q refused: %d group(s) of users emails collide case-insensitively (soft-deleted rows excluded), "+
 			"so unique index %s cannot be created. No row was modified or deleted. Decide which account of each group to keep, "+
 			"then change the email of the others (UPDATE users SET email = '<new email>' WHERE id = '<id>') or merge them by hand; "+
 			"accounts are referenced by orders, enrollments and points, so never delete one blindly. Then restart. Colliding groups: %s",
 			"unique index on lower(users.email)", len(dups), userEmailCIIndex, strings.Join(groups, "; "))
+	}
+	if err := db.Exec(dropFullUserEmailCIIndexSQL).Error; err != nil {
+		return fmt.Errorf("post-migration %q failed: %w", "drop full "+userEmailCIIndex, err)
 	}
 	if err := db.Exec(userEmailCIIndexSQL).Error; err != nil {
 		return fmt.Errorf("post-migration %q failed: %w", "create "+userEmailCIIndex, err)

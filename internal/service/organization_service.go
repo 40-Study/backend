@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,19 @@ import (
 
 // ErrOrgNameExists (QA8): tên tổ chức đã dùng (không phân biệt hoa thường). Mã ổn định để web hiện dưới ô tên.
 var ErrOrgNameExists = apperr.ConflictCode("ERR_ORG_NAME_EXISTS", "Tên tổ chức đã tồn tại. Vui lòng chọn tên khác.")
+
+// ErrOrgNameTooShort: tên chỉ toàn khoảng trắng (hoặc ngắn hơn 2 ký tự sau khi cắt) qua được validate min=2 nên chặn lại ở đây.
+var ErrOrgNameTooShort = apperr.BadRequestCode("ERR_VALIDATION", "Tên tổ chức phải có ít nhất 2 ký tự.")
+
+const orgNameMinRunes = 2
+
+func trimOrgName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if len([]rune(name)) < orgNameMinRunes {
+		return "", ErrOrgNameTooShort
+	}
+	return name, nil
+}
 
 type OrganizationServiceInterface interface {
 	CreateOrganization(ctx context.Context, creatorUserID uuid.UUID, req dto.CreateOrganizationDTO) (*dto.OrganizationResponseDTO, error)
@@ -48,6 +62,12 @@ func NewOrganizationService(repo repository.OrganizationRepositoryInterface) *Or
 // Người tạo cần chuyển active_org_id sang tổ chức mới (SwitchOrg/SelectOrg, luồng đã có sẵn)
 // để permission có hiệu lực — không cần sửa gì thêm ở đó.
 func (s *OrganizationService) CreateOrganization(ctx context.Context, creatorUserID uuid.UUID, req dto.CreateOrganizationDTO) (*dto.OrganizationResponseDTO, error) {
+	// QA8 review L4: "Trung tâm A " và "Trung tâm A" là cùng một tên.
+	name, err := trimOrgName(req.Name)
+	if err != nil {
+		return nil, err
+	}
+	req.Name = name
 	existing, err := s.repo.GetOrganizationByName(ctx, req.Name)
 	if err != nil {
 		return nil, err
@@ -148,6 +168,11 @@ func (s *OrganizationService) UpdateOrganization(ctx context.Context, id uuid.UU
 	}
 
 	if req.Name != nil {
+		trimmed, err := trimOrgName(*req.Name)
+		if err != nil {
+			return nil, err
+		}
+		req.Name = &trimmed
 		existing, err := s.repo.GetOrganizationByName(ctx, *req.Name)
 		if err != nil {
 			return nil, err

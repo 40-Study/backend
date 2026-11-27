@@ -98,3 +98,33 @@ func TestUserEmailCIUnique_DuplicatesStopLoudly_NothingChanged_ThenCleanRunSucce
 		t.Fatalf("thiếu index %s sau khi dọn trùng", userEmailCIIndex)
 	}
 }
+
+// QA8 review L2: index cùng phạm vi xoá mềm với idx_users_email (H3). Đỏ khi bỏ `WHERE deleted_at IS NULL` (đăng ký lại email
+// của user đã xoá mềm bị 23505) hoặc bỏ bước thay index đầy đủ cũ (DB đã chạy bản trước vẫn giữ index đầy đủ).
+func TestUserEmailCIUnique_PartialLikeH3_SoftDeletedDoesNotLockEmail_ReplacesFullIndex(t *testing.T) {
+	db := pgtest.IsolatedSchema(t, Migrate)
+	if err := db.Exec(`DROP INDEX IF EXISTS ` + userEmailCIIndex + `; CREATE UNIQUE INDEX ` + userEmailCIIndex + ` ON users (lower(email))`).Error; err != nil {
+		t.Fatal(err)
+	}
+	base := "qa8.soft." + uuid.NewString()[:6] + "@40study.test"
+	gone := newUserWithEmail(t, db, base, true)
+	if err := db.Delete(&model.User{}, "id = ?", gone).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := RunPostMigrations(db); err != nil {
+		t.Fatalf("RunPostMigrations: %v", err)
+	}
+	var def string
+	if err := db.Raw(`SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?`, userEmailCIIndex).Scan(&def).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(def, "deleted_at IS NULL") {
+		t.Fatalf("index chưa partial: %s", def)
+	}
+	newUserWithEmail(t, db, strings.ToUpper(base), true) // email của user đã xoá mềm dùng lại được
+	err := db.Create(&model.User{Email: base, PasswordHash: "x", UserName: "qa8-" + uuid.NewString()[:8]}).Error
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.ConstraintName != userEmailCIIndex {
+		t.Fatalf("biến thể hoa/thường của user còn sống: err=%v, muốn 23505 trên %s", err, userEmailCIIndex)
+	}
+}

@@ -319,7 +319,7 @@ func (s *OAuthService) createOAuthUser(ctx context.Context, providerName string,
 
 	// Link pending parent invitations to the newly created user
 	if s.parentInvitationSvc != nil && userInfo.Email != nil {
-		_ = s.parentInvitationSvc.LinkInvitationToNewUser(ctx, *userInfo.Email, user.ID)
+		_ = s.parentInvitationSvc.LinkInvitationToNewUser(ctx, user.Email, user.ID) // QA8 M1: email đã chuẩn hoá
 	}
 
 	return user, nil

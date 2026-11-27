@@ -6,10 +6,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"study.com/v1/internal/apperr"
+	"study.com/v1/internal/repository"
 )
 
 // ErrUserNameCode: mã lỗi ổn định cho tên đăng nhập đã dùng / dành riêng; web hiện dưới ô tên đăng nhập.
@@ -31,6 +33,11 @@ var reservedUserNames = map[string]struct{}{
 // ensureUserNameAvailable: nil khi `name` dùng được. `ownName` là tên hiện tại của CHÍNH tài khoản đang thao tác
 // ("" khi tạo mới): đổi hoa/thường tên của mình hoặc giữ nguyên tên (kể cả tên dành riêng của seed) không bị chặn.
 func (s *AuthService) ensureUserNameAvailable(ctx context.Context, name, ownName string) error {
+	return ensureUserNameAvailableIn(ctx, s.userRepo, name, ownName)
+}
+
+// ensureUserNameAvailableIn: như trên nhưng đọc qua `repo` (repo gắn transaction trong WithUserNameLock).
+func ensureUserNameAvailableIn(ctx context.Context, repo repository.UserRepositoryInterface, name, ownName string) error {
 	name = strings.TrimSpace(name)
 	if ownName != "" && strings.EqualFold(name, strings.TrimSpace(ownName)) {
 		return nil
@@ -38,7 +45,7 @@ func (s *AuthService) ensureUserNameAvailable(ctx context.Context, name, ownName
 	if _, reserved := reservedUserNames[strings.ToLower(name)]; reserved {
 		return ErrUserNameReserved
 	}
-	taken, err := s.userRepo.UserNameExists(ctx, name)
+	taken, err := repo.UserNameExists(ctx, name)
 	if err != nil {
 		return fmt.Errorf("failed to check user name: %w", err)
 	}
@@ -47,3 +54,15 @@ func (s *AuthService) ensureUserNameAvailable(ctx context.Context, name, ownName
 	}
 	return nil
 }
+
+
+// ErrRegisterOTPRejected: Register đã so OTP thật và từ chối (sai mã / quá số lần). Chỉ lỗi này được tính vào bộ đếm khoá
+// đăng nhập; lỗi DB/Redis thì không (QA8 review L1).
+var ErrRegisterOTPRejected = errors.New("register otp rejected")
+
+type registerOTPRejectedError struct{ msg string }
+
+func (e registerOTPRejectedError) Error() string        { return e.msg }
+func (e registerOTPRejectedError) Is(target error) bool { return target == ErrRegisterOTPRejected }
+
+func registerOTPRejected(msg string) error { return registerOTPRejectedError{msg: msg} }

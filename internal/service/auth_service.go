@@ -283,7 +283,7 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 	if pending.Attempts >= maxOTPAttempts {
 		// Delete pending registration to force user to request new OTP
 		_ = s.redisClient.Del(ctx, pendingKey).Err()
-		return nil, errors.New("too many failed attempts, please request a new OTP")
+		return nil, registerOTPRejected("too many failed attempts, please request a new OTP")
 	}
 
 	if !utils.VerifyOTP(req.OTP, pending.OTPHash, req.Email) {
@@ -294,7 +294,7 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 			_ = s.redisClient.Set(ctx, pendingKey, pendingBytes, ttl).Err()
 		}
 		remaining := maxOTPAttempts - pending.Attempts
-		return nil, fmt.Errorf("invalid OTP, %d attempts remaining", remaining)
+		return nil, registerOTPRejected(fmt.Sprintf("invalid OTP, %d attempts remaining", remaining))
 	}
 
 	var fullName *string
@@ -319,25 +319,27 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 			return nil, errors.New("existing user not found")
 		}
 
-		if err := s.ensureUserNameAvailable(ctx, pending.UserName, user.UserName); err != nil {
+		// QA8 M2: kiểm tra tên + ghi trong cùng transaction giữ khoá theo tên, để hai lần xác thực đồng thời không cùng lọt.
+		ownName := user.UserName
+		if err := s.userRepo.WithUserNameLock(ctx, pending.UserName, func(tx repository.UserRepositoryInterface) error {
+			if err := ensureUserNameAvailableIn(ctx, tx, pending.UserName, ownName); err != nil {
+				return err
+			}
+			user.PasswordHash = pending.PasswordHash
+			user.UserName = pending.UserName
+			user.FullName = fullName
+			user.IsVerified = true
+			user.IsActive = true
+			if err := tx.UpdateUser(ctx, user); err != nil {
+				return fmt.Errorf("failed to reactivate user: %w", err)
+			}
+			return nil
+		}); err != nil {
 			return nil, err
-		}
-		// Update user info với data mới
-		user.PasswordHash = pending.PasswordHash
-		user.UserName = pending.UserName
-		user.FullName = fullName
-		user.IsVerified = true
-		user.IsActive = true
-
-		if err := s.userRepo.UpdateUser(ctx, user); err != nil {
-			return nil, fmt.Errorf("failed to reactivate user: %w", err)
 		}
 	} else {
 		// Hai người đăng ký cùng tên gần như đồng thời đều qua bước xin OTP: người xác thực sau gặp tên đã bị lấy (QA8 PG-02).
-		if err := s.ensureUserNameAvailable(ctx, pending.UserName, ""); err != nil {
-			return nil, err
-		}
-		// Tạo user mới
+		// Kiểm tra + tạo nằm trong transaction giữ khoá theo tên (QA8 M2) nên hai lần xác thực đồng thời cũng không cùng lọt.
 		user = &model.User{
 			Email:        pending.Email,
 			PasswordHash: pending.PasswordHash,
@@ -346,9 +348,16 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 			IsVerified:   true,
 			IsActive:     true,
 		}
-
-		if err := s.userRepo.CreateUser(ctx, user); err != nil {
-			return nil, fmt.Errorf("failed to create user: %w", err)
+		if err := s.userRepo.WithUserNameLock(ctx, pending.UserName, func(tx repository.UserRepositoryInterface) error {
+			if err := ensureUserNameAvailableIn(ctx, tx, pending.UserName, ""); err != nil {
+				return err
+			}
+			if err := tx.CreateUser(ctx, user); err != nil {
+				return fmt.Errorf("failed to create user: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return nil, err
 		}
 	}
 
@@ -1226,6 +1235,7 @@ func (s *AuthService) UpdateMe(ctx context.Context, userID uuid.UUID, req dto.Up
 	// ===== 1. Build updates map (only non-nil fields) =====
 	updates := make(map[string]interface{})
 
+	currentUserName := ""
 	if req.Username != nil {
 		// QA8 PG-02 (C19): tên mới không được trùng (không phân biệt hoa thường) hay dành riêng; giữ nguyên tên hiện tại thì qua.
 		current, err := s.userRepo.FindUserByID(ctx, userID)
@@ -1235,9 +1245,7 @@ func (s *AuthService) UpdateMe(ctx context.Context, userID uuid.UUID, req dto.Up
 		if current == nil {
 			return nil, errors.New("user not found")
 		}
-		if err := s.ensureUserNameAvailable(ctx, *req.Username, current.UserName); err != nil {
-			return nil, err
-		}
+		currentUserName = current.UserName
 		updates["user_name"] = *req.Username
 	}
 
@@ -1276,7 +1284,20 @@ func (s *AuthService) UpdateMe(ctx context.Context, userID uuid.UUID, req dto.Up
 	}
 
 	// ===== 3. Update in database =====
-	if err := s.userRepo.UpdateUserProfile(ctx, userID, updates); err != nil {
+	// QA8 M2: đổi tên thì kiểm tra + ghi trong transaction giữ khoá theo tên mới (hai PUT đồng thời không cùng lọt).
+	if req.Username != nil {
+		if err := s.userRepo.WithUserNameLock(ctx, *req.Username, func(tx repository.UserRepositoryInterface) error {
+			if err := ensureUserNameAvailableIn(ctx, tx, *req.Username, currentUserName); err != nil {
+				return err
+			}
+			if err := tx.UpdateUserProfile(ctx, userID, updates); err != nil {
+				return fmt.Errorf("failed to update profile: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	} else if err := s.userRepo.UpdateUserProfile(ctx, userID, updates); err != nil {
 		return nil, fmt.Errorf("failed to update profile: %w", err)
 	}
 

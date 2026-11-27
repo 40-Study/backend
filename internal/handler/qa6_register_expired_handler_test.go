@@ -6,7 +6,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -33,7 +33,7 @@ func TestQA6_RegisterVerify_HetHan410(t *testing.T) {
 		wantCode string
 	}{
 		{"hết hạn", service.ErrRegistrationNotPending, fiber.StatusGone, "ERR_REGISTRATION_EXPIRED"},
-		{"sai OTP", errors.New("invalid OTP, 4 attempts remaining"), fiber.StatusBadRequest, ""},
+		{"sai OTP", fmt.Errorf("%w: invalid OTP, 4 attempts remaining", service.ErrRegisterOTPRejected), fiber.StatusBadRequest, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app := fiber.New()

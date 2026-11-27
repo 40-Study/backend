@@ -88,9 +88,12 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 		// Tên đăng nhập bị người khác lấy trong lúc chờ OTP (QA8 PG-02): lỗi nghiệp vụ, không tính vào bộ đếm khoá.
 		return sendErr
 	}
+	if err != nil && !errors.Is(err, service.ErrRegisterOTPRejected) {
+		// QA8 review L1: lỗi DB/Redis không phải OTP bị từ chối: 500 chung, không tính vào bộ đếm khoá, không lộ lỗi gốc.
+		return RespondServiceError(c, err, "Register failed")
+	}
 	if err != nil {
-		// Review vòng 4 (PR #69): request đã qua ValidateStruct (otp đủ 6 số) — lỗi ở đây là
-		// service thực sự so sánh OTP thật và từ chối (sai mã/hết hạn/không có phiên chờ), không
+		// Review vòng 4 (PR #69): service thực sự so sánh OTP thật và từ chối (sai mã/quá số lần), không
 		// phải request rác. Xem comment ở Login cho lý do đầy đủ.
 		c.Locals(middleware.AuthCredentialRejectedLocalsKey, true)
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{

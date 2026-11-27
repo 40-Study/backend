@@ -117,3 +117,7 @@ func pendingAttempts(t *testing.T, mr *miniredis.Miniredis, email string) int {
 	}
 	return p.Attempts
 }
+
+func (f *resendFakeUserRepo) WithUserNameLock(_ context.Context, _ string, fn func(repository.UserRepositoryInterface) error) error {
+	return fn(f)
+}

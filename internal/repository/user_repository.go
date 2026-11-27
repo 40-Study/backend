@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,6 +38,10 @@ type UserRepositoryInterface interface {
 	// UserNameExists — đã có tài khoản (kể cả đã xoá mềm: tên cũ vẫn có thể còn nằm ở dữ liệu liên quan)
 	// dùng user_name này chưa, so không phân biệt hoa thường. Dùng để sinh user_name OAuth không trùng.
 	UserNameExists(ctx context.Context, userName string) (bool, error)
+	// WithUserNameLock chạy fn trong MỘT transaction giữ pg_advisory_xact_lock(hashtext(lower(userName))): hai thao tác
+	// kiểm tra-rồi-ghi cùng một tên (không phân biệt hoa thường) bị tuần tự hoá, vì chưa có unique index trên user_name
+	// (seed còn tên trùng). fn nhận repo gắn với transaction; mọi đọc/ghi tên phải đi qua repo đó.
+	WithUserNameLock(ctx context.Context, userName string, fn func(tx UserRepositoryInterface) error) error
 	UpdateUser(ctx context.Context, user *model.User) error
 	UpdateUserProfile(ctx context.Context, userID uuid.UUID, updates map[string]interface{}) error
 	UpdatePasswordHash(ctx context.Context, userID uuid.UUID, newPasswordHash string) error
@@ -104,6 +110,15 @@ func (r *UserRepository) UserNameExists(ctx context.Context, userName string) (b
 	var n int64
 	err := r.db.WithContext(ctx).Unscoped().Model(&model.User{}).Where("lower(user_name) = lower(?)", userName).Limit(1).Count(&n).Error
 	return n > 0, err
+}
+
+func (r *UserRepository) WithUserNameLock(ctx context.Context, userName string, fn func(tx UserRepositoryInterface) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(lower(?)))", strings.TrimSpace(userName)).Error; err != nil {
+			return fmt.Errorf("lock user name: %w", err)
+		}
+		return fn(&UserRepository{db: tx})
+	})
 }
 
 func (r *UserRepository) FindUserByPhone(ctx context.Context, phone string) (*model.User, error) {
