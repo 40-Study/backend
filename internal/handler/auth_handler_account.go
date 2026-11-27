@@ -44,9 +44,8 @@ func (h *AuthHandler) DeleteAccount(c *fiber.Ctx) error {
 		return sendErr
 	}
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": err.Error(),
-		})
+		// Lỗi không xác định (DB, ...) -> 500 ERR_INTERNAL, không đưa err.Error() ra client (#142 M1).
+		return RespondServiceError(c, err, "Không thể xoá tài khoản. Vui lòng thử lại sau.")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

@@ -33,6 +33,10 @@ type User struct {
 	LockedAt     *time.Time `gorm:"column:locked_at" json:"locked_at,omitempty"`
 	LockedBy     *uuid.UUID `gorm:"type:uuid;column:locked_by" json:"locked_by,omitempty"`
 
+	// Q9-PG-05: thời điểm CHÍNH chủ tài khoản xoá tài khoản (DELETE /auth/me). Ghi dấu tường minh thay vì suy ra từ
+	// "không có dấu vết admin khoá" (xoá mềm giảng viên của admin cũng không ghi locked_*). Xoá khi kích hoạt lại/mở khoá.
+	SelfDeletedAt *time.Time `gorm:"column:self_deleted_at" json:"-"`
+
 	// Many-to-many relationship with roles
 	UserOrganizationRoles []UserOrganizationRole `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
 	UserSystemRoles       []UserSystemRole       `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`

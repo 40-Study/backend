@@ -98,10 +98,10 @@ var (
 	ErrAccountDeleted = fmt.Errorf("account was deleted by its owner: %w", ErrUserInactive)
 )
 
-// isSelfDeactivated: tài khoản không hoạt động mà không có dấu vết admin khoá. Admin khoá (LockOrUnlockUser) luôn ghi
-// locked_by/locked_at; DeleteAccount chỉ đặt is_active=false nên hai trường này vẫn rỗng.
+// isSelfDeactivated: tài khoản không hoạt động do chính chủ xoá, nhận biết bằng dấu self_deleted_at mà DeleteAccount ghi.
+// Mọi tài khoản không hoạt động khác (admin khoá, admin xoá mềm giảng viên, dữ liệu cũ không có dấu) giữ nguyên "bị khoá".
 func isSelfDeactivated(user *model.User) bool {
-	return !user.IsActive && user.LockedBy == nil && user.LockedAt == nil
+	return !user.IsActive && user.SelfDeletedAt != nil
 }
 
 func NewAuthService(
@@ -339,6 +339,7 @@ func (s *AuthService) Register(ctx context.Context, req dto.VerifyOtpRequestDto)
 			user.FullName = fullName
 			user.IsVerified = true
 			user.IsActive = true
+			user.SelfDeletedAt = nil // kích hoạt lại tài khoản đã tự xoá (Q9-PG-05)
 			if err := tx.UpdateUser(ctx, user); err != nil {
 				return fmt.Errorf("failed to reactivate user: %w", err)
 			}

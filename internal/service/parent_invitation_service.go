@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"study.com/v1/internal/apperr"
 	"study.com/v1/internal/config"
 	"study.com/v1/internal/constants"
 	"study.com/v1/internal/dto"
@@ -17,6 +18,10 @@ import (
 	"study.com/v1/internal/repository"
 	"study.com/v1/internal/utils"
 )
+
+// ErrParentInvitationDisabled (Q9-PG-01, #158 L3): PARENT_INVITATION_DAILY_LIMIT=0 đặt tường minh nghĩa là tắt tính năng mời
+// phụ huynh -> 403 ERR_FEATURE_DISABLED, không giả làm "đã hết hạn mức".
+var ErrParentInvitationDisabled = apperr.ForbiddenCode("ERR_FEATURE_DISABLED", "Tính năng mời phụ huynh đang tạm tắt.")
 
 type ParentInvitationServiceInterface interface {
 	InviteParent(ctx context.Context, studentUserID uuid.UUID, req dto.InviteParentRequestDto) (*dto.InviteParentResponseDto, error)
@@ -66,6 +71,9 @@ func (s *ParentInvitationService) InviteParent(
 	studentUserID uuid.UUID,
 	req dto.InviteParentRequestDto,
 ) (*dto.InviteParentResponseDto, error) {
+	if s.cfg.ParentInvitationDailyLimit == 0 {
+		return nil, ErrParentInvitationDisabled
+	}
 	// QA8 PG-01 (C18): email tài khoản luôn lưu chữ thường, nên lời mời lưu đúng dạng đó để LinkInvitationToNewUser khớp.
 	req.Email = utils.NormalizeEmail(req.Email)
 	count_key := constants.KeyParentInviteRateLimit(studentUserID)

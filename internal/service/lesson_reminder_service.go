@@ -149,7 +149,6 @@ func (s *LessonReminderService) deliver(ctx context.Context, occurrence reminder
 	return nil
 }
 
-// teacherReminderContent: câu nhắc dành cho giảng viên của lớp (mins>0: báo trước 15 phút).
 // childReminderContent là câu nhắc gửi phụ huynh cho một người con (mins > 0: nhắc trước 15 phút).
 func childReminderContent(childName, title, when string, mins int) string {
 	subject := childReminderSubject(title)
@@ -168,6 +167,7 @@ func childReminderSubject(title string) string {
 	return "buổi " + title
 }
 
+// teacherReminderContent: câu nhắc dành cho giảng viên của lớp (mins>0: báo trước 15 phút).
 func teacherReminderContent(title, when string, mins int) string {
 	if mins > 0 {
 		return fmt.Sprintf("%s · %s. Buổi dạy sắp bắt đầu, hãy chuẩn bị bài giảng.", title, when)

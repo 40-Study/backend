@@ -56,6 +56,11 @@ func ConflictCode(code, message string) *KnownError {
 	return &KnownError{Status: http.StatusConflict, Message: message, Code: code}
 }
 
+// ForbiddenCode: như Forbidden (HTTP 403) nhưng kèm mã lỗi ổn định cho client.
+func ForbiddenCode(code, message string) *KnownError {
+	return &KnownError{Status: http.StatusForbidden, Message: message, Code: code}
+}
+
 // BadRequestCode: như BadRequest (HTTP 400) nhưng kèm mã lỗi ổn định cho client.
 func BadRequestCode(code, message string) *KnownError {
 	return &KnownError{Status: http.StatusBadRequest, Message: message, Code: code}
