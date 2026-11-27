@@ -84,18 +84,19 @@ func (s *UserAdminService) ListUsers(ctx context.Context, filter repository.Admi
 	items := make([]dto.AdminUserListItemDTO, len(users))
 	for i, u := range users {
 		items[i] = dto.AdminUserListItemDTO{
-			ID:           u.ID,
-			Email:        u.Email,
-			UserName:     u.UserName,
-			FullName:     u.FullName,
-			AvatarURL:    u.AvatarURL,
-			IsActive:     u.IsActive,
-			IsVerified:   u.IsVerified,
-			LockedReason: u.LockedReason,
-			LockedAt:     u.LockedAt,
-			LastLoginAt:  u.LastLoginAt,
-			CreatedAt:    u.CreatedAt,
-			SystemRoles:  rolesByUser[u.ID],
+			ID:            u.ID,
+			Email:         u.Email,
+			UserName:      u.UserName,
+			FullName:      u.FullName,
+			AvatarURL:     u.AvatarURL,
+			IsActive:      u.IsActive,
+			IsVerified:    u.IsVerified,
+			LockedReason:  u.LockedReason,
+			LockedAt:      u.LockedAt,
+			SelfDeletedAt: u.SelfDeletedAt,
+			LastLoginAt:   u.LastLoginAt,
+			CreatedAt:     u.CreatedAt,
+			SystemRoles:   rolesByUser[u.ID],
 		}
 		if items[i].SystemRoles == nil {
 			items[i].SystemRoles = []string{}
@@ -186,20 +187,21 @@ func (s *UserAdminService) toDetailDTO(ctx context.Context, user *model.User) (*
 	}
 
 	return &dto.AdminUserDetailDTO{
-		ID:           user.ID,
-		Email:        user.Email,
-		UserName:     user.UserName,
-		FullName:     user.FullName,
-		AvatarURL:    user.AvatarURL,
-		Phone:        user.Phone,
-		DateOfBirth:  user.DateOfBirth,
-		IsActive:     user.IsActive,
-		IsVerified:   user.IsVerified,
-		LockedReason: user.LockedReason,
-		LockedAt:     user.LockedAt,
-		LastLoginAt:  user.LastLoginAt,
-		CreatedAt:    user.CreatedAt,
-		SystemRoles:  roleDetails,
+		ID:            user.ID,
+		Email:         user.Email,
+		UserName:      user.UserName,
+		FullName:      user.FullName,
+		AvatarURL:     user.AvatarURL,
+		Phone:         user.Phone,
+		DateOfBirth:   user.DateOfBirth,
+		IsActive:      user.IsActive,
+		IsVerified:    user.IsVerified,
+		LockedReason:  user.LockedReason,
+		LockedAt:      user.LockedAt,
+		SelfDeletedAt: user.SelfDeletedAt,
+		LastLoginAt:   user.LastLoginAt,
+		CreatedAt:     user.CreatedAt,
+		SystemRoles:   roleDetails,
 	}, nil
 }
 

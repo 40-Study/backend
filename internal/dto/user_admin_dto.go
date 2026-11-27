@@ -20,9 +20,12 @@ type AdminUserListItemDTO struct {
 	IsVerified   bool       `json:"is_verified"`
 	LockedReason *string    `json:"locked_reason"`
 	LockedAt     *time.Time `json:"locked_at"`
-	LastLoginAt  *time.Time `json:"last_login_at"`
-	CreatedAt    time.Time  `json:"created_at"`
-	SystemRoles  []string   `json:"system_roles"`
+	// SelfDeletedAt != nil: chính chủ đã xoá tài khoản (DELETE /api/auth/me), khác với admin khoá (Q10-ADMIN-03).
+	// Chỉ có ở DTO admin; nil với tài khoản đang hoạt động, bị admin khoá hoặc đã được khôi phục.
+	SelfDeletedAt *time.Time `json:"self_deleted_at"`
+	LastLoginAt   *time.Time `json:"last_login_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	SystemRoles   []string   `json:"system_roles"`
 }
 
 // AdminUserListResponseDTO — envelope "data" của GET /api/users.
@@ -43,20 +46,22 @@ type AdminUserSystemRoleDTO struct {
 
 // AdminUserDetailDTO — envelope "data" của GET /api/users/:id.
 type AdminUserDetailDTO struct {
-	ID           uuid.UUID                `json:"id"`
-	Email        string                   `json:"email"`
-	UserName     string                   `json:"user_name"`
-	FullName     *string                  `json:"full_name"`
-	AvatarURL    *string                  `json:"avatar_url"`
-	Phone        *string                  `json:"phone"`
-	DateOfBirth  *time.Time               `json:"date_of_birth"`
-	IsActive     bool                     `json:"is_active"`
-	IsVerified   bool                     `json:"is_verified"`
-	LockedReason *string                  `json:"locked_reason"`
-	LockedAt     *time.Time               `json:"locked_at"`
-	LastLoginAt  *time.Time               `json:"last_login_at"`
-	CreatedAt    time.Time                `json:"created_at"`
-	SystemRoles  []AdminUserSystemRoleDTO `json:"system_roles"`
+	ID           uuid.UUID  `json:"id"`
+	Email        string     `json:"email"`
+	UserName     string     `json:"user_name"`
+	FullName     *string    `json:"full_name"`
+	AvatarURL    *string    `json:"avatar_url"`
+	Phone        *string    `json:"phone"`
+	DateOfBirth  *time.Time `json:"date_of_birth"`
+	IsActive     bool       `json:"is_active"`
+	IsVerified   bool       `json:"is_verified"`
+	LockedReason *string    `json:"locked_reason"`
+	LockedAt     *time.Time `json:"locked_at"`
+	// SelfDeletedAt: xem AdminUserListItemDTO (Q10-ADMIN-03).
+	SelfDeletedAt *time.Time               `json:"self_deleted_at"`
+	LastLoginAt   *time.Time               `json:"last_login_at"`
+	CreatedAt     time.Time                `json:"created_at"`
+	SystemRoles   []AdminUserSystemRoleDTO `json:"system_roles"`
 }
 
 // UpdateUserStatusRequestDTO — body của PUT /api/users/:id/status.
